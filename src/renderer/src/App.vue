@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSessionsStore } from './stores/sessions.store'
+import { useUiStore } from './stores/ui.store'
 import TitleBar from './components/shell/TitleBar.vue'
 import SessionManagerView from './components/sessions/SessionManagerView.vue'
 import FilePane from './components/files/FilePane.vue'
 import BottomDock from './components/shell/BottomDock.vue'
 
 const sessions = useSessionsStore()
+const ui = useUiStore()
 const isConnected = computed(() => sessions.status === 'connected')
 </script>
 
 <template>
-  <UApp>
+  <UApp :toaster="{ position: 'bottom-right', duration: 4000 }">
     <div class="flex h-screen flex-col bg-default text-default">
       <TitleBar />
       <div class="min-h-0 flex-1">
@@ -19,12 +21,21 @@ const isConnected = computed(() => sessions.status === 'connected')
         <div v-else class="flex h-full flex-col">
           <div class="flex items-center justify-between border-b border-muted px-3 py-1.5">
             <span class="text-xs text-muted">Session {{ sessions.activeSessionId }}</span>
-            <UButton color="neutral" variant="outline" size="xs" @click="sessions.disconnect()">
-              Disconnect
-            </UButton>
+            <div class="flex items-center gap-2">
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
+                @click="ui.toggleLocalPane()"
+              />
+              <UButton color="neutral" variant="outline" size="xs" @click="sessions.disconnect()">
+                Disconnect
+              </UButton>
+            </div>
           </div>
           <div class="flex min-h-0 flex-1">
-            <FilePane side="local" class="min-w-0 flex-1" />
+            <FilePane v-if="ui.showLocalPane" side="local" class="min-w-0 flex-1" />
             <FilePane side="remote" class="min-w-0 flex-1" />
           </div>
           <BottomDock />

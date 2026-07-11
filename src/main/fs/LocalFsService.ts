@@ -2,7 +2,10 @@ import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
-import type { FileEntry, FileListResult } from '../../shared/contract'
+import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+
+/** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
+const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 /** Lists a local directory. Falls back to the OS home directory when no path is given. */
 export async function list(dirPath?: string): Promise<FileListResult> {
@@ -49,6 +52,25 @@ export async function rename(fromPath: string, toPath: string): Promise<void> {
     await fs.rename(fromPath, toPath)
   } catch (e) {
     throw new SshError('UNKNOWN', `Cannot rename "${fromPath}": ${(e as Error).message}`)
+  }
+}
+
+/** Reads a local file's content as text, capped at MAX_TEXT_PREVIEW_BYTES. */
+export async function readFileText(filePath: string): Promise<FileReadResult> {
+  const stats = await fs.stat(filePath)
+  const length = Math.min(stats.size, MAX_TEXT_PREVIEW_BYTES)
+  const handle = await fs.open(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, 0)
+    return {
+      path: filePath,
+      content: buffer.toString('utf-8'),
+      truncated: stats.size > MAX_TEXT_PREVIEW_BYTES,
+      size: stats.size
+    }
+  } finally {
+    await handle.close()
   }
 }
 

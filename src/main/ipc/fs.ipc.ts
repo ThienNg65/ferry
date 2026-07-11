@@ -1,5 +1,5 @@
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type FileListResult } from '../../shared/contract'
+import { INVOKE_CHANNELS, type FileListResult, type FileReadResult } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
 
@@ -13,6 +13,7 @@ export function registerFsHandlers(): void {
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
     LocalFs.remove(targetPath as string, Boolean(isDir))
   )
+  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
 
   handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath) =>
     RemoteFs.listRemote(sessionId as string, dirPath as string | undefined)
@@ -25,5 +26,8 @@ export function registerFsHandlers(): void {
   )
   handle<void>(INVOKE_CHANNELS.fsRemoteDelete, (sessionId, targetPath) =>
     RemoteFs.removeRemote(sessionId as string, targetPath as string)
+  )
+  handle<FileReadResult>(INVOKE_CHANNELS.fsRemoteReadFile, (sessionId, filePath) =>
+    RemoteFs.readFile(sessionId as string, filePath as string)
   )
 }

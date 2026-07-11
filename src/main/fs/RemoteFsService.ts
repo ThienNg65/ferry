@@ -1,6 +1,9 @@
 import { SessionManager } from '../ssh/SessionManager'
 import type { SftpEntry } from '../ssh/RemoteShell'
-import type { FileEntry, FileListResult } from '../../shared/contract'
+import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+
+/** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
+const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
   const trimmed = basePath.length > 1 && basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
@@ -40,6 +43,13 @@ export async function mkdirRemote(sessionId: string, dirPath: string): Promise<v
 /** Renames/moves a remote path. */
 export async function renameRemote(sessionId: string, fromPath: string, toPath: string): Promise<void> {
   await SessionManager.getInstance().shell(sessionId).rename(fromPath, toPath)
+}
+
+/** Reads a remote file's content as text, capped at MAX_TEXT_PREVIEW_BYTES. */
+export async function readFile(sessionId: string, filePath: string): Promise<FileReadResult> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const result = await shell.readFile(filePath, MAX_TEXT_PREVIEW_BYTES)
+  return { path: filePath, ...result }
 }
 
 /** Recursively deletes a remote file or directory. */

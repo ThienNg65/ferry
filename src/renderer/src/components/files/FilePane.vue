@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, UnzipResult } from '@shared/contract'
+import type { DownloadsPathResult, FileEntry, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -9,9 +9,11 @@ import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
+import { useNotify } from '../../composables/useNotify'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
+import FilePreviewDialog from './FilePreviewDialog.vue'
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -21,12 +23,15 @@ const sessions = useSessionsStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
+const notify = useNotify()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
 const showNewFolder = ref(false)
 const newFolderName = ref('')
 const isDropTarget = ref(false)
+const previewOpen = ref(false)
+const previewEntry = ref<FileEntry | null>(null)
 
 onMounted(() => {
   void store.load()
@@ -44,7 +49,10 @@ const showTail = computed(() => props.side === 'remote' && sessions.status === '
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
     void store.openDir(entry.path)
+    return
   }
+  previewEntry.value = entry
+  previewOpen.value = true
 }
 
 function onMkdirClick(): void {
@@ -70,8 +78,9 @@ async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): 
     const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
     await transfers.enqueue(sessionId, 'upload', entry.path, remoteTarget)
   } else {
-    const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
-    const localTarget = `${localFs.currentPath}${sep}${entry.name}`
+    const { path: downloadsDir } = await invoke<DownloadsPathResult>(INVOKE_CHANNELS.systemGetDownloadsPath)
+    const sep = downloadsDir.includes('\\') ? '\\' : '/'
+    const localTarget = `${downloadsDir}${sep}${entry.name}`
     await transfers.enqueue(sessionId, 'download', localTarget, entry.path)
   }
 }
@@ -100,8 +109,11 @@ async function onExtract(entry: FileEntry): Promise<void> {
       targetDir: remoteFs.currentPath
     })
     await remoteFs.load()
+    notify.success('Extracted', entry.name)
   } catch (e) {
-    remoteFs.error = e instanceof Error ? e.message : String(e)
+    const message = e instanceof Error ? e.message : String(e)
+    remoteFs.error = message
+    notify.error('Extract failed', message)
   }
 }
 
@@ -184,6 +196,13 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
       @transfer="onTransfer"
       @tail="onTail"
       @extract="onExtract"
+    />
+    <FilePreviewDialog
+      v-model:open="previewOpen"
+      :entry="previewEntry"
+      :side="side"
+      @tail="onTail"
+      @download="onTransfer"
     />
   </div>
 </template>

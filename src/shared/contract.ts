@@ -136,6 +136,14 @@ export interface FileListResult {
   entries: FileEntry[]
 }
 
+/** Result of reading a text file's content for preview — capped, never the full file for huge logs. */
+export interface FileReadResult {
+  path: string
+  content: string
+  truncated: boolean
+  size: number
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +233,29 @@ export interface UnzipResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — system paths
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Result of resolving an OS-standard directory path. */
+export interface DownloadsPathResult {
+  path: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain models — window chrome
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Payload for the `window:state-change` channel. */
+export interface WindowStateEvent {
+  isMaximized: boolean
+}
+
+/** Result of querying the current window's maximized state. */
+export interface WindowIsMaximizedResult {
+  isMaximized: boolean
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Channels — request/response (invoke)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -251,6 +282,8 @@ export const INVOKE_CHANNELS = {
   fsRemoteMkdir: 'fs:remote:mkdir',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
+  fsLocalReadFile: 'fs:local:readFile',
+  fsRemoteReadFile: 'fs:remote:readFile',
   // transfers
   transferEnqueue: 'transfer:enqueue',
   transferCancel: 'transfer:cancel',
@@ -263,7 +296,14 @@ export const INVOKE_CHANNELS = {
   activityHistory: 'activity:history',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
-  dialogPickFolder: 'dialog:pickFolder'
+  dialogPickFolder: 'dialog:pickFolder',
+  // system paths
+  systemGetDownloadsPath: 'system:getDownloadsPath',
+  // window chrome
+  windowMinimize: 'window:minimize',
+  windowMaximizeToggle: 'window:maximizeToggle',
+  windowClose: 'window:close',
+  windowIsMaximized: 'window:isMaximized'
 } as const
 
 /** Union of every valid invoke channel string. */
@@ -280,7 +320,8 @@ export const EVENT_CHANNELS = {
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',
-  activityEvent: 'activity:event'
+  activityEvent: 'activity:event',
+  windowStateChange: 'window:state-change'
 } as const
 
 /** Union of every valid event channel string. */

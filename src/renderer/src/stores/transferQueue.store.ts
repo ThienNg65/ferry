@@ -2,6 +2,11 @@ import { defineStore } from 'pinia'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { TransferEnqueueResult, TransferEvent, TransferKind, TransferState } from '@shared/contract'
 import { invoke, onEvent } from '../api'
+import { useNotify } from '../composables/useNotify'
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
 
 export interface TransferItemState {
   transferId: string
@@ -36,6 +41,7 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       if (this.unsubscribe) {
         return
       }
+      const notify = useNotify()
       this.unsubscribe = onEvent<TransferEvent>(EVENT_CHANNELS.transferEvent, (evt) => {
         const existing = this.items.get(evt.transferId)
         this.items.set(evt.transferId, {
@@ -50,6 +56,12 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           etaMs: evt.etaMs ?? 0,
           error: evt.error
         })
+        const name = basename(existing?.remotePath || existing?.localPath || '')
+        if (evt.state === 'done') {
+          notify.success(evt.kind === 'download' ? 'Download complete' : 'Upload complete', name)
+        } else if (evt.state === 'error') {
+          notify.error(evt.kind === 'download' ? 'Download failed' : 'Upload failed', evt.error ?? name)
+        }
       })
     },
 

@@ -8,6 +8,9 @@ import { registerFsHandlers } from './ipc/fs.ipc'
 import { registerTransferHandlers } from './ipc/transfer.ipc'
 import { registerTailHandlers } from './ipc/tail.ipc'
 import { registerUnzipHandlers } from './ipc/unzip.ipc'
+import { registerSystemHandlers } from './ipc/system.ipc'
+import { registerWindowHandlers } from './ipc/window.ipc'
+import { EVENT_CHANNELS, type WindowStateEvent } from '../shared/contract'
 
 /** Development mode flag — set by electron-vite. */
 const IS_DEV = !app.isPackaged
@@ -15,9 +18,13 @@ const IS_DEV = !app.isPackaged
 /** Resolved path to the compiled preload script. */
 const PRELOAD_PATH = path.join(__dirname, '../preload/index.js')
 
+/** The single application window — referenced by the window-control IPC handlers. */
+let mainWindow: BrowserWindow | null = null
+
 /**
  * Creates the single application BrowserWindow with hardened security
- * settings and a custom frameless title bar (drawn by the renderer).
+ * settings and a fully custom frameless title bar (drawn by the renderer,
+ * including minimize/maximize/close buttons — see TitleBar.vue).
  *
  * Security flags applied:
  *  - `nodeIntegration: false`    — Node.js APIs are not exposed in the renderer
@@ -34,15 +41,10 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#18181b',
+    // 'hidden' alone removes ALL native chrome on Windows (no OS-drawn caption
+    // buttons at all) — intentional, since TitleBar.vue renders its own
+    // minimize/maximize/close buttons wired to the window:* IPC channels below.
     titleBarStyle: 'hidden',
-    // Native Windows overlay draws real minimize/maximize/close buttons over
-    // our custom draggable title bar — required on Windows since 'hidden'
-    // alone removes ALL window chrome, leaving no way to close the window.
-    titleBarOverlay: {
-      color: '#18181b',
-      symbolColor: '#a1a1aa',
-      height: 36
-    },
     webPreferences: {
       preload: PRELOAD_PATH,
       nodeIntegration: false,
@@ -67,6 +69,15 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  const broadcastWindowState = (): void => {
+    const payload: WindowStateEvent = { isMaximized: win.isMaximized() }
+    if (!win.isDestroyed()) {
+      win.webContents.send(EVENT_CHANNELS.windowStateChange, payload)
+    }
+  }
+  win.on('maximize', broadcastWindowState)
+  win.on('unmaximize', broadcastWindowState)
+
   const devUrl = IS_DEV ? process.env['ELECTRON_RENDERER_URL'] : undefined
   if (devUrl) {
     win.loadURL(devUrl)
@@ -87,6 +98,8 @@ function registerAllHandlers(): void {
   registerTransferHandlers()
   registerTailHandlers()
   registerUnzipHandlers()
+  registerSystemHandlers()
+  registerWindowHandlers(() => mainWindow)
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
@@ -96,11 +109,11 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   registerAllHandlers()
-  createWindow()
+  mainWindow = createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      mainWindow = createWindow()
     }
   })
 })

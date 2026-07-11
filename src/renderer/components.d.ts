@@ -15,6 +15,7 @@ declare module 'vue' {
     BottomDock: typeof import('./src/components/shell/BottomDock.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
+    FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']
     FileRow: typeof import('./src/components/files/FileRow.vue')['default']
     FileToolbar: typeof import('./src/components/files/FileToolbar.vue')['default']
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
@@ -22,6 +23,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']
+    SiteFormDialog: typeof import('./src/components/sessions/SiteFormDialog.vue')['default']
     TitleBar: typeof import('./src/components/shell/TitleBar.vue')['default']
     TransferItem: typeof import('./src/components/transfers/TransferItem.vue')['default']
     TransferQueue: typeof import('./src/components/transfers/TransferQueue.vue')['default']
@@ -32,6 +34,8 @@ declare module 'vue' {
     UFormField: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/FormField.vue')['default']
     UIcon: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/vue/components/Icon.vue')['default']
     UInput: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Input.vue')['default']
+    UModal: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Modal.vue')['default']
     UProgress: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Progress.vue')['default']
+    URadioGroup: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/RadioGroup.vue')['default']
   }
 }

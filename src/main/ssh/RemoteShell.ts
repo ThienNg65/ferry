@@ -310,6 +310,31 @@ export class RemoteShell {
     })
   }
 
+  /** Reads a remote file's content as text, capped at `maxBytes` (huge files are truncated, not rejected). */
+  async readFile(remotePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean; size: number }> {
+    const sftp = await this.sftp()
+    const stats = await this.stat(remotePath)
+    const length = Math.min(stats.size ?? 0, maxBytes)
+    if (length === 0) {
+      return { content: '', truncated: false, size: stats.size ?? 0 }
+    }
+    return new Promise((resolve, reject) => {
+      const stream = sftp.createReadStream(remotePath, { start: 0, end: length - 1 })
+      const chunks: Buffer[] = []
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+      stream.on('error', (readErr: Error) => {
+        reject(new SshError('SFTP', `Failed to read "${remotePath}": ${readErr.message}`))
+      })
+      stream.on('close', () => {
+        resolve({
+          content: Buffer.concat(chunks).toString('utf-8'),
+          truncated: (stats.size ?? 0) > maxBytes,
+          size: stats.size ?? 0
+        })
+      })
+    })
+  }
+
   /** Creates a remote directory. */
   async mkdir(remotePath: string): Promise<void> {
     const sftp = await this.sftp()
