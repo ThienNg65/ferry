@@ -1,0 +1,40 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme {
+  --font-sans: '-apple-system', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'SF Mono', Consolas, monospace;
+}
+
+@theme static {
+  --color-brand-50: #eff8ff;
+  --color-brand-100: #dbeefe;
+  --color-brand-200: #bfe2fe;
+  --color-brand-300: #92cffd;
+  --color-brand-400: #5cb2fa;
+  --color-brand-500: #0a84ff;
+  --color-brand-600: #0968d6;
+  --color-brand-700: #0a53ab;
+  --color-brand-800: #0e468c;
+  --color-brand-900: #123c73;
+  --color-brand-950: #0d264d;
+}
+
+:root {
+  --ui-radius: 0.5rem;
+  --ui-primary: var(--ui-color-primary-600);
+}
+
+.dark {
+  --ui-primary: var(--ui-color-primary-400);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}

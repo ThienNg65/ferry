@@ -1,0 +1,30 @@
+appId: com.ferry.app
+productName: Ferry
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+# ssh2's optional native deps (cpu-features) cannot run from inside an asar
+# archive — unpack them alongside the app. safeStorage needs no such
+# handling: it's built into Electron itself, no native npm dependency.
+asarUnpack:
+  - node_modules/ssh2/**/*
+  - node_modules/cpu-features/**/*
+  - node_modules/nan/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+  # Brand the installer/app by dropping a 256x256+ icon at build/icon.ico
+  # and adding:  icon: build/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Ferry
+asar: true
