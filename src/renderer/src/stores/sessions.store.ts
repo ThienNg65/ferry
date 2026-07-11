@@ -9,25 +9,66 @@ import type {
 } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { useRemoteFsStore } from './remoteFs.store'
+import { useTerminalStreamsStore } from './terminalStreams.store'
 
-interface SessionsState {
-  activeSessionId: string | null
+/** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
+export interface SessionTab {
+  /** Client-generated, stable for the tab's whole life (independent of `sessionId`, which can be reassigned on reconnect). */
+  tabId: string
+  /** Null while the tab is showing the site picker (not connected yet). */
+  sessionId: string | null
+  label: string | null
+  /** Null means "picker" — no connection attempt has been made yet for this tab. */
   status: SessionStatus | null
   statusMessage: string | null
   connecting: boolean
-  pendingLabel: string | null
+}
+
+interface SessionsState {
+  tabs: SessionTab[]
+  activeTabId: string
   unsubscribeStatus: (() => void) | null
 }
 
-export const useSessionsStore = defineStore('sessions', {
-  state: (): SessionsState => ({
-    activeSessionId: null,
+function freshTab(): SessionTab {
+  return {
+    tabId: crypto.randomUUID(),
+    sessionId: null,
+    label: null,
     status: null,
     statusMessage: null,
-    connecting: false,
-    pendingLabel: null,
-    unsubscribeStatus: null
-  }),
+    connecting: false
+  }
+}
+
+export const useSessionsStore = defineStore('sessions', {
+  state: (): SessionsState => {
+    const initial = freshTab()
+    return {
+      tabs: [initial],
+      activeTabId: initial.tabId,
+      unsubscribeStatus: null
+    }
+  },
+
+  getters: {
+    activeTab(state): SessionTab {
+      return state.tabs.find((t) => t.tabId === state.activeTabId) ?? state.tabs[0]
+    },
+    activeSessionId(): string | null {
+      return this.activeTab.sessionId
+    },
+    status(): SessionStatus | null {
+      return this.activeTab.status
+    },
+    statusMessage(): string | null {
+      return this.activeTab.statusMessage
+    },
+    connecting(): boolean {
+      return this.activeTab.connecting
+    }
+  },
 
   actions: {
     ensureStatusSubscription(): void {
@@ -36,40 +77,55 @@ export const useSessionsStore = defineStore('sessions', {
       }
       const notify = useNotify()
       this.unsubscribeStatus = onEvent<SessionStatusEvent>(EVENT_CHANNELS.sessionStatus, (evt) => {
-        if (evt.sessionId !== this.activeSessionId) {
+        const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
+        if (!tab) {
           return
         }
-        const wasConnected = this.status === 'connected'
-        this.status = evt.status
-        this.statusMessage = evt.message ?? null
+        const wasConnected = tab.status === 'connected'
+        tab.status = evt.status
+        tab.statusMessage = evt.message ?? null
         if (wasConnected && evt.status === 'error') {
-          notify.error('Connection lost', evt.message)
+          notify.error('Connection lost', tab.label ? `${tab.label}: ${evt.message ?? ''}` : evt.message)
         }
       })
     },
 
-    /** Shared connect path for both quick-connect and saved-site connect. */
+    /** Opens a new picker tab (site not chosen yet) and activates it. */
+    openNewTab(): void {
+      const tab = freshTab()
+      this.tabs.push(tab)
+      this.activeTabId = tab.tabId
+    },
+
+    setActiveTab(tabId: string): void {
+      if (this.tabs.some((t) => t.tabId === tabId)) {
+        this.activeTabId = tabId
+      }
+    },
+
+    /** Shared connect path for both quick-connect and saved-site connect — always targets the active tab. */
     async openSession(
       request: { siteId: string } | { quickConnect: QuickConnectInput },
       label: string
     ): Promise<void> {
       this.ensureStatusSubscription()
-      this.connecting = true
-      this.statusMessage = null
-      this.pendingLabel = label
+      const tab = this.activeTab
+      tab.connecting = true
+      tab.statusMessage = null
+      tab.label = label
       const notify = useNotify()
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, request)
-        this.activeSessionId = result.sessionId
-        this.status = result.status
+        tab.sessionId = result.sessionId
+        tab.status = result.status
         notify.success(`Connected to ${label}`)
       } catch (e) {
-        this.status = 'error'
-        this.statusMessage = e instanceof Error ? e.message : String(e)
-        notify.error('Connection failed', this.statusMessage)
+        tab.status = 'error'
+        tab.statusMessage = e instanceof Error ? e.message : String(e)
+        notify.error('Connection failed', tab.statusMessage)
         throw e
       } finally {
-        this.connecting = false
+        tab.connecting = false
       }
     },
 
@@ -81,14 +137,27 @@ export const useSessionsStore = defineStore('sessions', {
       await this.openSession({ siteId: site.id }, site.name)
     },
 
-    async disconnect(): Promise<void> {
-      if (!this.activeSessionId) {
+    /** Closes and removes a tab entirely, disconnecting its session first if connected. */
+    async closeTab(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab) {
         return
       }
-      await invoke<void>(INVOKE_CHANNELS.sessionClose, this.activeSessionId)
-      this.activeSessionId = null
-      this.status = null
-      this.statusMessage = null
+      if (tab.sessionId) {
+        await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
+        useRemoteFsStore().clearSession(tab.sessionId)
+        useTerminalStreamsStore().disposeForSession(tab.sessionId)
+      }
+      const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
+      this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
+      if (this.tabs.length === 0) {
+        this.openNewTab()
+        return
+      }
+      if (this.activeTabId === tabId) {
+        const neighborIndex = Math.min(closedIndex, this.tabs.length - 1)
+        this.activeTabId = this.tabs[neighborIndex].tabId
+      }
     }
   }
 })

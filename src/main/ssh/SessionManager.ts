@@ -7,6 +7,7 @@ import { SshError } from './errors'
 import { SiteStore } from '../sites/SiteStore'
 import { ActivityLog } from '../activity/ActivityLog'
 import { TailManager } from '../tail/TailManager'
+import { TerminalManager } from '../terminal/TerminalManager'
 import {
   EVENT_CHANNELS,
   type QuickConnectInput,
@@ -215,6 +216,7 @@ export class SessionManager {
     }
     entry.status = 'disconnected'
     TailManager.getInstance().stopAllForSession(sessionId)
+    TerminalManager.getInstance().closeAllForSession(sessionId)
     entry.client.end()
     this.sessions.delete(sessionId)
     this.broadcastStatus(sessionId, 'disconnected')

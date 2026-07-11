@@ -24,6 +24,8 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']
     SiteFormDialog: typeof import('./src/components/sessions/SiteFormDialog.vue')['default']
+    SiteTabBar: typeof import('./src/components/shell/SiteTabBar.vue')['default']
+    TerminalView: typeof import('./src/components/terminal/TerminalView.vue')['default']
     TitleBar: typeof import('./src/components/shell/TitleBar.vue')['default']
     TransferItem: typeof import('./src/components/transfers/TransferItem.vue')['default']
     TransferQueue: typeof import('./src/components/transfers/TransferQueue.vue')['default']

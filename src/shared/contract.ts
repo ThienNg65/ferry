@@ -222,6 +222,27 @@ export interface ActivityEntry {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — terminal
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Result of opening an interactive SSH shell (PTY) for a session. */
+export interface TerminalOpenResult {
+  terminalId: string
+}
+
+/** Payload for the `terminal:data` channel — raw output bytes from the remote shell. */
+export interface TerminalDataEvent {
+  terminalId: string
+  data: Uint8Array
+}
+
+/** Payload for the `terminal:exit` channel. */
+export interface TerminalExitEvent {
+  terminalId: string
+  exitCode: number | null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote unzip
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -290,6 +311,11 @@ export const INVOKE_CHANNELS = {
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
+  // terminal
+  terminalOpen: 'terminal:open',
+  terminalWrite: 'terminal:write',
+  terminalResize: 'terminal:resize',
+  terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
   // activity log
@@ -320,6 +346,8 @@ export const EVENT_CHANNELS = {
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',
+  terminalData: 'terminal:data',
+  terminalExit: 'terminal:exit',
   activityEvent: 'activity:event',
   windowStateChange: 'window:state-change'
 } as const

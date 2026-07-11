@@ -7,6 +7,7 @@ import { registerDialogHandlers } from './ipc/dialog.ipc'
 import { registerFsHandlers } from './ipc/fs.ipc'
 import { registerTransferHandlers } from './ipc/transfer.ipc'
 import { registerTailHandlers } from './ipc/tail.ipc'
+import { registerTerminalHandlers } from './ipc/terminal.ipc'
 import { registerUnzipHandlers } from './ipc/unzip.ipc'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerWindowHandlers } from './ipc/window.ipc'
@@ -97,6 +98,7 @@ function registerAllHandlers(): void {
   registerFsHandlers()
   registerTransferHandlers()
   registerTailHandlers()
+  registerTerminalHandlers()
   registerUnzipHandlers()
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)

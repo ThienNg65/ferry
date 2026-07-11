@@ -1,16 +1,27 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
+import { useSessionsStore } from '../../stores/sessions.store'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import ActivityLog from '../logs/ActivityLog.vue'
+import TerminalView from '../terminal/TerminalView.vue'
 
-type DockTab = 'transfers' | 'tail' | 'activity'
+type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity'
 
 const tailStreams = useTailStreamsStore()
+const sessions = useSessionsStore()
 
 const collapsed = ref(false)
 const tab = ref<DockTab>('transfers')
+/** Once true, TerminalView stays mounted forever (see its own v-show sibling below) so its xterm instances and scrollback never get torn down by dock-tab switching. */
+const terminalEverShown = ref(false)
+const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
+
+function openTerminalTab(): void {
+  tab.value = 'terminal'
+  terminalEverShown.value = true
+}
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -36,6 +47,14 @@ function basename(path: string): string {
           @click="tab = 'tail'"
         />
         <UButton
+          label="Terminal"
+          size="xs"
+          :color="tab === 'terminal' ? 'primary' : 'neutral'"
+          :variant="tab === 'terminal' ? 'soft' : 'ghost'"
+          :disabled="sessions.status !== 'connected'"
+          @click="openTerminalTab"
+        />
+        <UButton
           label="Activity"
           size="xs"
           :color="tab === 'activity' ? 'primary' : 'neutral'"
@@ -51,7 +70,7 @@ function basename(path: string): string {
         @click="collapsed = !collapsed"
       />
     </div>
-    <div v-if="!collapsed" class="flex min-h-0 flex-1 flex-col border-t border-muted">
+    <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TransferQueue v-if="tab === 'transfers'" />
       <template v-else-if="tab === 'tail'">
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center gap-1 border-b border-muted px-2 py-1">
@@ -87,6 +106,9 @@ function basename(path: string): string {
         </div>
       </template>
       <ActivityLog v-else-if="tab === 'activity'" />
+    </div>
+    <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">
+      <TerminalView v-if="terminalEverShown" :active="terminalActive" />
     </div>
   </div>
 </template>

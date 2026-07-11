@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { DownloadsPathResult, FileEntry, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
@@ -8,6 +8,7 @@ import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
+import { useUiStore } from '../../stores/ui.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import FileToolbar from './FileToolbar.vue'
@@ -22,6 +23,7 @@ const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
+const ui = useUiStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
 
@@ -33,9 +35,40 @@ const isDropTarget = ref(false)
 const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 
-onMounted(() => {
-  void store.load()
-})
+/** Slim always-visible rail when Local is hidden — never fully unmounts (see ui.store.ts). */
+const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
+const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
+
+if (props.side === 'local') {
+  onMounted(() => {
+    void store.load()
+  })
+} else {
+  // One remote FilePane instance is shared by every open site tab — load lazily
+  // per-session the first time a tab's session becomes active (remoteFs.store.ts
+  // caches each session's listing, so switching back to an already-loaded tab
+  // is instant and re-fetches nothing).
+  watch(
+    () => sessions.activeSessionId,
+    (id) => {
+      if (id && remoteFs.needsLoad(id)) {
+        void remoteFs.load()
+      }
+    },
+    { immediate: true }
+  )
+}
+
+// Collapsing the rail no longer unmounts this pane, so restore the safety
+// property the old v-if gave for free: close any stranded preview dialog.
+watch(
+  () => ui.showLocalPane,
+  (visible) => {
+    if (!visible && props.side === 'local') {
+      previewOpen.value = false
+    }
+  }
+)
 
 const transferIcon = computed(() => {
   if (sessions.status !== 'connected') {
@@ -112,7 +145,7 @@ async function onExtract(entry: FileEntry): Promise<void> {
     notify.success('Extracted', entry.name)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    remoteFs.error = message
+    remoteFs.setError(message)
     notify.error('Extract failed', message)
   }
 }
@@ -158,51 +191,62 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
 <template>
   <div
     class="flex h-full flex-col border-r border-muted outline-none last:border-r-0"
-    :class="isDropTarget ? 'ring-2 ring-primary ring-inset' : ''"
+    :class="[collapsedRail ? 'w-10 shrink-0' : 'min-w-0 flex-1', isDropTarget ? 'ring-2 ring-primary ring-inset' : '']"
     tabindex="0"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
     @keydown="onKeydown"
   >
-    <div class="border-b border-muted px-3 py-1">
-      <span class="text-xs font-medium uppercase tracking-wide text-muted">{{ side }}</span>
-    </div>
-    <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
-    <FileToolbar @up="store.goUp" @refresh="store.load()" @mkdir="onMkdirClick" />
-    <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
-      <UInput
-        v-model="newFolderName"
+    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted px-3">
+      <span v-if="showBody" class="text-xs font-medium uppercase tracking-wide text-muted">{{ side }}</span>
+      <UButton
+        v-if="side === 'local'"
         size="xs"
-        placeholder="New folder name"
-        class="flex-1"
-        autofocus
-        @keyup.enter="submitMkdir"
-        @keyup.esc="showNewFolder = false"
+        variant="ghost"
+        color="neutral"
+        :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
+        :aria-label="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'"
+        @click="ui.toggleLocalPane()"
       />
-      <UButton size="xs" @click="submitMkdir">Create</UButton>
     </div>
-    <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
-    <FileList
-      :entries="store.entries"
-      :selected="store.selected"
-      :side="side"
-      :transfer-icon="transferIcon"
-      :show-tail="showTail"
-      :allow-extract="showTail"
-      @select="store.toggleSelect"
-      @open="onOpen"
-      @remove="(entry: FileEntry) => store.remove(entry)"
-      @transfer="onTransfer"
-      @tail="onTail"
-      @extract="onExtract"
-    />
-    <FilePreviewDialog
-      v-model:open="previewOpen"
-      :entry="previewEntry"
-      :side="side"
-      @tail="onTail"
-      @download="onTransfer"
-    />
+    <template v-if="showBody">
+      <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
+      <FileToolbar @up="store.goUp" @refresh="store.load()" @mkdir="onMkdirClick" />
+      <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
+        <UInput
+          v-model="newFolderName"
+          size="xs"
+          placeholder="New folder name"
+          class="flex-1"
+          autofocus
+          @keyup.enter="submitMkdir"
+          @keyup.esc="showNewFolder = false"
+        />
+        <UButton size="xs" @click="submitMkdir">Create</UButton>
+      </div>
+      <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
+      <FileList
+        :entries="store.entries"
+        :selected="store.selected"
+        :side="side"
+        :transfer-icon="transferIcon"
+        :show-tail="showTail"
+        :allow-extract="showTail"
+        @select="store.toggleSelect"
+        @open="onOpen"
+        @remove="(entry: FileEntry) => store.remove(entry)"
+        @transfer="onTransfer"
+        @tail="onTail"
+        @extract="onExtract"
+      />
+      <FilePreviewDialog
+        v-model:open="previewOpen"
+        :entry="previewEntry"
+        :side="side"
+        @tail="onTail"
+        @download="onTransfer"
+      />
+    </template>
   </div>
 </template>

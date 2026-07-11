@@ -1,4 +1,4 @@
-import type { Client, SFTPWrapper, Stats } from 'ssh2'
+import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
 import { SshError } from './errors'
 import { withRetry } from './retry'
 
@@ -236,6 +236,29 @@ export class RemoteShell {
           }
           resolve(code)
         })
+      })
+    })
+  }
+
+  // ── Interactive shell (PTY) ───────────────────────────────────────────────────
+
+  /**
+   * Opens an interactive shell channel with a pseudo-terminal attached — the
+   * basis for the Terminal feature. Unlike {@link exec}/{@link execLines},
+   * the caller owns the returned channel directly (writes keystrokes, reads
+   * output, resizes via `setWindow`); there is no buffering/timeout wrapper
+   * here since a shell has no natural "done" state.
+   *
+   * @param opts - initial terminal size
+   */
+  openShell(opts: { cols: number; rows: number }): Promise<ClientChannel> {
+    return new Promise((resolve, reject) => {
+      this.client.shell({ term: 'xterm-256color', cols: opts.cols, rows: opts.rows }, (err, stream) => {
+        if (err) {
+          reject(new SshError('SSH_EXEC', err.message))
+          return
+        }
+        resolve(stream)
       })
     })
   }
