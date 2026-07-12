@@ -67,22 +67,30 @@ onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
 </script>
 
 <template>
-  <div class="relative h-full w-full">
-    <p v-if="!sessions.activeSessionId" class="px-3 py-6 text-center text-xs text-muted">
-      No active site connection
-    </p>
-    <p
-      v-else-if="!terminalStreams.knownSessionIds.includes(sessions.activeSessionId)"
-      class="px-3 py-6 text-center text-xs text-muted"
-    >
-      Opening terminal…
-    </p>
+  <div class="flex h-full w-full flex-col">
     <div
-      v-for="sessionId in terminalStreams.knownSessionIds"
-      :key="sessionId"
-      v-show="sessionId === sessions.activeSessionId"
-      class="h-full w-full px-1"
-      :ref="(el) => attachContainer(sessionId, el as Element | null)"
-    />
+      v-if="sessions.activeTab.hostLabel"
+      class="shrink-0 border-b border-muted px-3 py-1 text-xs text-muted"
+    >
+      {{ sessions.activeTab.hostLabel }}
+    </div>
+    <div class="relative min-h-0 flex-1">
+      <p v-if="!sessions.activeSessionId" class="px-3 py-6 text-center text-xs text-muted">
+        No active site connection
+      </p>
+      <p
+        v-else-if="!terminalStreams.knownSessionIds.includes(sessions.activeSessionId)"
+        class="px-3 py-6 text-center text-xs text-muted"
+      >
+        Opening terminal…
+      </p>
+      <div
+        v-for="sessionId in terminalStreams.knownSessionIds"
+        :key="sessionId"
+        v-show="sessionId === sessions.activeSessionId"
+        class="h-full w-full px-1"
+        :ref="(el) => attachContainer(sessionId, el as Element | null)"
+      />
+    </div>
   </div>
 </template>

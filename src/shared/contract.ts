@@ -192,36 +192,6 @@ export interface TailEndEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Domain models — activity log
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ActivityKind =
-  | 'connect-start'
-  | 'connect-ok'
-  | 'connect-error'
-  | 'disconnect'
-  | 'transfer-start'
-  | 'transfer-done'
-  | 'transfer-error'
-  | 'tail-start'
-  | 'tail-end'
-  | 'unzip-start'
-  | 'unzip-done'
-  | 'unzip-error'
-
-export type ActivityLevel = 'info' | 'warn' | 'error'
-
-/** One entry in the in-app activity log. Broadcast live and kept in a ring buffer. */
-export interface ActivityEntry {
-  id: string
-  kind: ActivityKind
-  level: ActivityLevel
-  sessionId?: string
-  message: string
-  at: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — terminal
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -318,8 +288,6 @@ export const INVOKE_CHANNELS = {
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
-  // activity log
-  activityHistory: 'activity:history',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',
@@ -348,7 +316,6 @@ export const EVENT_CHANNELS = {
   tailEnd: 'tail:end',
   terminalData: 'terminal:data',
   terminalExit: 'terminal:exit',
-  activityEvent: 'activity:event',
   windowStateChange: 'window:state-change'
 } as const
 

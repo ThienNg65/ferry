@@ -38,3 +38,34 @@ body,
 body {
   overflow: hidden;
 }
+
+/* Custom scrollbar — thin, rounded, using @nuxt/ui's own neutral-scale vars
+   so it stays in sync with the app's light/dark theme automatically. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-accented) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--ui-border-accented);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ui-color-neutral-400);
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ui-color-neutral-500);
+}

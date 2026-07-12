@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { useSessionsStore } from '../../stores/sessions.store'
+import { useUiStore } from '../../stores/ui.store'
 
 const sessions = useSessionsStore()
+const ui = useUiStore()
 
 function onCloseTab(event: MouseEvent, tabId: string): void {
   event.stopPropagation()
@@ -25,22 +27,37 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         class="size-3.5 shrink-0 text-error"
       />
       <span class="truncate">{{ tab.label ?? 'New Tab' }}</span>
-      <button
-        type="button"
-        aria-label="Close tab"
-        class="ml-0.5 shrink-0 rounded opacity-0 transition-opacity hover:bg-default group-hover:opacity-100"
-        @click="onCloseTab($event, tab.tabId)"
-      >
-        <UIcon name="i-lucide-x" class="size-3.5" />
-      </button>
+      <UTooltip text="Close tab">
+        <button
+          type="button"
+          aria-label="Close tab"
+          class="ml-0.5 shrink-0 rounded opacity-0 transition-opacity hover:bg-default group-hover:opacity-100"
+          @click="onCloseTab($event, tab.tabId)"
+        >
+          <UIcon name="i-lucide-x" class="size-3.5" />
+        </button>
+      </UTooltip>
     </div>
-    <UButton
-      icon="i-lucide-plus"
-      size="xs"
-      variant="ghost"
-      color="neutral"
-      aria-label="New tab"
-      @click="sessions.openNewTab()"
-    />
+    <UTooltip text="New tab">
+      <UButton
+        icon="i-lucide-plus"
+        size="xs"
+        variant="ghost"
+        color="neutral"
+        aria-label="New tab"
+        @click="sessions.openNewTab()"
+      />
+    </UTooltip>
+    <div class="flex-1"></div>
+    <UTooltip :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
+      <UButton
+        size="xs"
+        variant="ghost"
+        color="neutral"
+        :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
+        :aria-label="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'"
+        @click="ui.toggleLocalPane()"
+      />
+    </UTooltip>
   </div>
 </template>

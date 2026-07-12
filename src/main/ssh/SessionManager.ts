@@ -5,7 +5,6 @@ import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
 import { SiteStore } from '../sites/SiteStore'
-import { ActivityLog } from '../activity/ActivityLog'
 import { TailManager } from '../tail/TailManager'
 import { TerminalManager } from '../terminal/TerminalManager'
 import {
@@ -126,11 +125,6 @@ export class SessionManager {
       cwdRemote: initialCwd
     }
     this.sessions.set(sessionId, entry)
-    ActivityLog.getInstance().emit(
-      'connect-start',
-      `Connecting to ${input.username}@${input.host}:${input.port}`,
-      { sessionId }
-    )
 
     const connectConfig: ConnectConfig = {
       host: input.host,
@@ -183,10 +177,6 @@ export class SessionManager {
       entry.status = 'error'
       const message = e instanceof Error ? e.message : String(e)
       this.broadcastStatus(sessionId, 'error', message)
-      ActivityLog.getInstance().emit('connect-error', `Failed to connect to ${input.host}: ${message}`, {
-        sessionId,
-        level: 'error'
-      })
       this.sessions.delete(sessionId)
       throw e
     }
@@ -200,11 +190,6 @@ export class SessionManager {
       }
     })
     this.broadcastStatus(sessionId, 'connected')
-    ActivityLog.getInstance().emit(
-      'connect-ok',
-      `Connected to ${input.username}@${input.host}:${input.port}`,
-      { sessionId }
-    )
     return { sessionId, status: 'connected' }
   }
 
@@ -220,7 +205,6 @@ export class SessionManager {
     entry.client.end()
     this.sessions.delete(sessionId)
     this.broadcastStatus(sessionId, 'disconnected')
-    ActivityLog.getInstance().emit('disconnect', `Disconnected session ${sessionId}`, { sessionId })
   }
 
   private broadcastStatus(sessionId: string, status: SessionStatus, message?: string): void {

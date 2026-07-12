@@ -2,7 +2,6 @@ import { app, BrowserWindow, Menu, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSessionHandlers } from './ipc/session.ipc'
-import { registerActivityHandlers } from './ipc/activity.ipc'
 import { registerDialogHandlers } from './ipc/dialog.ipc'
 import { registerFsHandlers } from './ipc/fs.ipc'
 import { registerTransferHandlers } from './ipc/transfer.ipc'
@@ -42,6 +41,10 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#18181b',
+    // Dev-mode-only taskbar/window icon (packaged builds inherit the icon
+    // embedded in the exe via electron-builder's `win.icon`, since `resources/`
+    // isn't otherwise shipped into the packaged app's `files`).
+    icon: IS_DEV ? path.join(__dirname, '../../resources/favicon.ico') : undefined,
     // 'hidden' alone removes ALL native chrome on Windows (no OS-drawn caption
     // buttons at all) — intentional, since TitleBar.vue renders its own
     // minimize/maximize/close buttons wired to the window:* IPC channels below.
@@ -93,7 +96,6 @@ function createWindow(): BrowserWindow {
 function registerAllHandlers(): void {
   registerSitesHandlers()
   registerSessionHandlers()
-  registerActivityHandlers()
   registerDialogHandlers()
   registerFsHandlers()
   registerTransferHandlers()

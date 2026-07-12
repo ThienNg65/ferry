@@ -67,14 +67,9 @@ function formatEta(ms: number): string {
         />
         <span class="truncate">{{ label }}</span>
       </span>
-      <UButton
-        v-if="cancellable"
-        icon="i-lucide-x"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        @click="emit('cancel')"
-      />
+      <UTooltip v-if="cancellable" text="Cancel transfer">
+        <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
+      </UTooltip>
     </div>
     <UProgress :model-value="percent" :color="statusColor" size="xs" />
     <div class="flex items-center justify-between text-[11px] text-muted">

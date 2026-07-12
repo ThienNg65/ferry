@@ -32,35 +32,42 @@ function close(): void {
 
 <template>
   <div
-    class="flex h-9 shrink-0 items-center justify-between border-b border-muted bg-default/80 backdrop-blur"
+    class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-muted bg-default/80 backdrop-blur"
     style="-webkit-app-region: drag"
   >
-    <span class="px-3 text-xs font-medium text-muted">Ferry</span>
-    <div class="flex h-full items-stretch" style="-webkit-app-region: no-drag">
-      <button
-        type="button"
-        aria-label="Minimize"
-        class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
-        @click="minimize"
-      >
-        <UIcon name="i-lucide-minus" class="size-4" />
-      </button>
-      <button
-        type="button"
-        :aria-label="isMaximized ? 'Restore' : 'Maximize'"
-        class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
-        @click="toggleMaximize"
-      >
-        <UIcon :name="isMaximized ? 'i-lucide-copy' : 'i-lucide-square'" class="size-3.5" />
-      </button>
-      <button
-        type="button"
-        aria-label="Close"
-        class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-red-500 hover:text-white"
-        @click="close"
-      >
-        <UIcon name="i-lucide-x" class="size-4" />
-      </button>
+    <div></div>
+    <span class="justify-self-center text-xs font-medium text-muted">Ferry</span>
+    <div class="flex h-full items-stretch justify-self-end" style="-webkit-app-region: no-drag">
+      <UTooltip text="Minimize">
+        <button
+          type="button"
+          aria-label="Minimize"
+          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
+          @click="minimize"
+        >
+          <UIcon name="i-lucide-minus" class="size-4" />
+        </button>
+      </UTooltip>
+      <UTooltip :text="isMaximized ? 'Restore' : 'Maximize'">
+        <button
+          type="button"
+          :aria-label="isMaximized ? 'Restore' : 'Maximize'"
+          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
+          @click="toggleMaximize"
+        >
+          <UIcon :name="isMaximized ? 'i-lucide-copy' : 'i-lucide-square'" class="size-3.5" />
+        </button>
+      </UTooltip>
+      <UTooltip text="Close">
+        <button
+          type="button"
+          aria-label="Close"
+          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-red-500 hover:text-white"
+          @click="close"
+        >
+          <UIcon name="i-lucide-x" class="size-4" />
+        </button>
+      </UTooltip>
     </div>
   </div>
 </template>

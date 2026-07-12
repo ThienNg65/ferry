@@ -21,6 +21,15 @@ interface TerminalInstance {
  */
 const instances = new Map<string, TerminalInstance>()
 
+/**
+ * In-flight `ensureTerminal()` calls, keyed by sessionId. Needed because the
+ * check-then-act in `ensureTerminal` has an `await` gap — without this, two
+ * overlapping calls for the same session (e.g. the auto-open-on-connect call
+ * racing a user click on the Terminal dock tab) would both pass the
+ * `instances.get(sessionId)` check as undefined and each open a real PTY.
+ */
+const pending = new Map<string, Promise<string>>()
+
 function findByTerminalId(terminalId: string): TerminalInstance | undefined {
   for (const inst of instances.values()) {
     if (inst.terminalId === terminalId) {
@@ -59,27 +68,39 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       return instances.get(sessionId)
     },
 
-    /** Opens (or returns the existing) terminal for `sessionId`. */
+    /** Opens (or returns the existing/in-flight) terminal for `sessionId`. */
     async ensureTerminal(sessionId: string): Promise<string> {
       const existing = instances.get(sessionId)
       if (existing) {
         return existing.terminalId
       }
+      const inFlight = pending.get(sessionId)
+      if (inFlight) {
+        return inFlight
+      }
       ensureSubscriptions()
-      const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
-        sessionId,
-        cols: 80,
-        rows: 24
-      })
-      const term = new Terminal({ cursorBlink: true, convertEol: true })
-      const fit = new FitAddon()
-      term.loadAddon(fit)
-      term.onData((data) => {
-        void invoke<void>(INVOKE_CHANNELS.terminalWrite, { terminalId, data })
-      })
-      instances.set(sessionId, { terminalId, term, fit })
-      this.knownSessionIds.push(sessionId)
-      return terminalId
+      const openPromise = (async (): Promise<string> => {
+        const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
+          sessionId,
+          cols: 80,
+          rows: 24
+        })
+        const term = new Terminal({ cursorBlink: true, convertEol: true })
+        const fit = new FitAddon()
+        term.loadAddon(fit)
+        term.onData((data) => {
+          void invoke<void>(INVOKE_CHANNELS.terminalWrite, { terminalId, data })
+        })
+        instances.set(sessionId, { terminalId, term, fit })
+        this.knownSessionIds.push(sessionId)
+        return terminalId
+      })()
+      pending.set(sessionId, openPromise)
+      try {
+        return await openPromise
+      } finally {
+        pending.delete(sessionId)
+      }
     },
 
     /** Notifies the backend of a new pty size after a fit(). */

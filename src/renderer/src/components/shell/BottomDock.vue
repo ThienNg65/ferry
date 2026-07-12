@@ -4,10 +4,9 @@ import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
-import ActivityLog from '../logs/ActivityLog.vue'
 import TerminalView from '../terminal/TerminalView.vue'
 
-type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity'
+type DockTab = 'transfers' | 'tail' | 'terminal'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
@@ -54,21 +53,16 @@ function basename(path: string): string {
           :disabled="sessions.status !== 'connected'"
           @click="openTerminalTab"
         />
-        <UButton
-          label="Activity"
-          size="xs"
-          :color="tab === 'activity' ? 'primary' : 'neutral'"
-          :variant="tab === 'activity' ? 'soft' : 'ghost'"
-          @click="tab = 'activity'"
-        />
       </div>
-      <UButton
-        :icon="collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        @click="collapsed = !collapsed"
-      />
+      <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
+        <UButton
+          :icon="collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          @click="collapsed = !collapsed"
+        />
+      </UTooltip>
     </div>
     <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TransferQueue v-if="tab === 'transfers'" />
@@ -85,13 +79,15 @@ function basename(path: string): string {
             <button class="truncate" @click="tailStreams.activeTailId = openTail.tailId">
               {{ basename(openTail.remotePath) }}
             </button>
-            <UButton
-              icon="i-lucide-x"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              @click="tailStreams.close(openTail.tailId)"
-            />
+            <UTooltip text="Close tail">
+              <UButton
+                icon="i-lucide-x"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                @click="tailStreams.close(openTail.tailId)"
+              />
+            </UTooltip>
           </div>
         </div>
         <div class="min-h-0 flex-1">
@@ -105,7 +101,6 @@ function basename(path: string): string {
           </p>
         </div>
       </template>
-      <ActivityLog v-else-if="tab === 'activity'" />
     </div>
     <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TerminalView v-if="terminalEverShown" :active="terminalActive" />

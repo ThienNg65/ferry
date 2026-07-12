@@ -174,6 +174,11 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 async function onKeydown(event: KeyboardEvent): Promise<void> {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
+    event.preventDefault()
+    await store.load()
+    return
+  }
   if (event.key !== 'Delete' && event.key !== 'Backspace') {
     return
   }
@@ -200,19 +205,16 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   >
     <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted px-3">
       <span v-if="showBody" class="text-xs font-medium uppercase tracking-wide text-muted">{{ side }}</span>
-      <UButton
-        v-if="side === 'local'"
-        size="xs"
-        variant="ghost"
-        color="neutral"
-        :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
-        :aria-label="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'"
-        @click="ui.toggleLocalPane()"
-      />
     </div>
     <template v-if="showBody">
       <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
-      <FileToolbar @up="store.goUp" @refresh="store.load()" @mkdir="onMkdirClick" />
+      <FileToolbar
+        :side="side"
+        @up="store.goUp"
+        @refresh="store.load()"
+        @mkdir="onMkdirClick"
+        @toggle-permissions="ui.togglePermissionsDisplay()"
+      />
       <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
         <UInput
           v-model="newFolderName"

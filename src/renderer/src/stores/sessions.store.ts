@@ -18,7 +18,11 @@ export interface SessionTab {
   tabId: string
   /** Null while the tab is showing the site picker (not connected yet). */
   sessionId: string | null
+  /** Saved site id this tab is connected to, or null for quick-connect (ad-hoc, no stable identity to dedup on). */
+  siteId: string | null
   label: string | null
+  /** `username@host`, shown as the Terminal tab's live-shell label. */
+  hostLabel: string | null
   /** Null means "picker" — no connection attempt has been made yet for this tab. */
   status: SessionStatus | null
   statusMessage: string | null
@@ -35,7 +39,9 @@ function freshTab(): SessionTab {
   return {
     tabId: crypto.randomUUID(),
     sessionId: null,
+    siteId: null,
     label: null,
+    hostLabel: null,
     status: null,
     statusMessage: null,
     connecting: false
@@ -106,19 +112,26 @@ export const useSessionsStore = defineStore('sessions', {
     /** Shared connect path for both quick-connect and saved-site connect — always targets the active tab. */
     async openSession(
       request: { siteId: string } | { quickConnect: QuickConnectInput },
-      label: string
+      label: string,
+      hostLabel: string,
+      siteId: string | null
     ): Promise<void> {
       this.ensureStatusSubscription()
       const tab = this.activeTab
       tab.connecting = true
       tab.statusMessage = null
       tab.label = label
+      tab.hostLabel = hostLabel
+      tab.siteId = siteId
       const notify = useNotify()
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, request)
         tab.sessionId = result.sessionId
         tab.status = result.status
         notify.success(`Connected to ${label}`)
+        // Pre-open the interactive shell in the background so it's already
+        // connected by the time the user clicks the Terminal dock tab.
+        void useTerminalStreamsStore().ensureTerminal(result.sessionId)
       } catch (e) {
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
@@ -130,11 +143,30 @@ export const useSessionsStore = defineStore('sessions', {
     },
 
     async connect(input: QuickConnectInput): Promise<void> {
-      await this.openSession({ quickConnect: input }, input.name || input.host)
+      await this.openSession(
+        { quickConnect: input },
+        input.name || input.host,
+        `${input.username}@${input.host}`,
+        null
+      )
     },
 
+    /** Connects to a saved site — switches to an already-open/connecting tab for the same site instead of opening a duplicate connection. */
     async connectToSite(site: Site): Promise<void> {
-      await this.openSession({ siteId: site.id }, site.name)
+      const existing = this.tabs.find(
+        (t) => t.siteId === site.id && t.tabId !== this.activeTabId && (t.status === 'connected' || t.connecting)
+      )
+      if (existing) {
+        const previousTab = this.activeTab
+        const previousWasEmptyPicker =
+          previousTab.sessionId === null && previousTab.status === null && !previousTab.connecting
+        this.setActiveTab(existing.tabId)
+        if (previousWasEmptyPicker && previousTab.tabId !== existing.tabId) {
+          this.tabs = this.tabs.filter((t) => t.tabId !== previousTab.tabId)
+        }
+        return
+      }
+      await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */

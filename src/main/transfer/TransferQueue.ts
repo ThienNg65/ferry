@@ -3,7 +3,6 @@ import { createReadStream, createWriteStream } from 'fs'
 import { stat } from 'fs/promises'
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
-import { ActivityLog } from '../activity/ActivityLog'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
 
@@ -82,11 +81,6 @@ export class TransferQueue {
   private async run(job: TransferJob): Promise<void> {
     const { transferId, kind } = job
     this.broadcast({ transferId, kind, state: 'started' })
-    ActivityLog.getInstance().emit(
-      'transfer-start',
-      kind === 'upload' ? `Uploading to ${job.remotePath}` : `Downloading ${job.remotePath}`,
-      { sessionId: job.sessionId }
-    )
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
@@ -146,21 +140,10 @@ export class TransferQueue {
       })
 
       this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
-      ActivityLog.getInstance().emit(
-        'transfer-done',
-        kind === 'upload' ? `Uploaded to ${job.remotePath}` : `Downloaded to ${job.localPath}`,
-        { sessionId: job.sessionId }
-      )
     } catch (e) {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
       const message = e instanceof Error ? e.message : String(e)
       this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
-      if (!cancelled) {
-        ActivityLog.getInstance().emit('transfer-error', `Transfer failed: ${message}`, {
-          sessionId: job.sessionId,
-          level: 'error'
-        })
-      }
     }
   }
 

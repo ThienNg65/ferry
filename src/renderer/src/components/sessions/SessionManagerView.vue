@@ -92,22 +92,26 @@ async function confirmDelete(): Promise<void> {
               <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
               <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
             </button>
-            <UButton
-              icon="i-lucide-pencil"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="opacity-0 group-hover:opacity-100"
-              @click="openEditDialog(site)"
-            />
-            <UButton
-              icon="i-lucide-trash-2"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="opacity-0 group-hover:opacity-100"
-              @click="deleteTarget = site"
-            />
+            <UTooltip text="Edit site">
+              <UButton
+                icon="i-lucide-pencil"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="opacity-0 group-hover:opacity-100"
+                @click="openEditDialog(site)"
+              />
+            </UTooltip>
+            <UTooltip text="Delete site">
+              <UButton
+                icon="i-lucide-trash-2"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="opacity-0 group-hover:opacity-100"
+                @click="deleteTarget = site"
+              />
+            </UTooltip>
           </li>
         </ul>
       </UCard>

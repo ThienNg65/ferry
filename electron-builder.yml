@@ -18,8 +18,9 @@ win:
       arch:
         - x64
   artifactName: ${productName}-Setup-${version}.${ext}
-  # Brand the installer/app by dropping a 256x256+ icon at build/icon.ico
-  # and adding:  icon: build/icon.ico
+  # electron-builder auto-generates every required Windows icon resolution
+  # from this single square PNG (no pre-made .ico needed).
+  icon: resources/1024x1024.png
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
