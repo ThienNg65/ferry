@@ -3,13 +3,8 @@ import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, FileListResult } from '@shared/contract'
 import { invoke } from '../api'
 import { useSessionsStore } from './sessions.store'
-
-function sortEntries(a: FileEntry, b: FileEntry): number {
-  if (a.isDir !== b.isDir) {
-    return a.isDir ? -1 : 1
-  }
-  return a.name.localeCompare(b.name)
-}
+import { compareEntries, type SortColumn, type SortDirection } from '../utils/fileSort'
+import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
 
 /** Remote directory-browsing state for a single session. */
 interface PerSessionFs {
@@ -18,10 +13,22 @@ interface PerSessionFs {
   loading: boolean
   error: string | null
   selected: Set<string>
+  selectAnchor: string | null
+  sortColumn: SortColumn
+  sortDirection: SortDirection
 }
 
 function freshFsState(): PerSessionFs {
-  return { currentPath: '', entries: [], loading: false, error: null, selected: new Set() }
+  return {
+    currentPath: '',
+    entries: [],
+    loading: false,
+    error: null,
+    selected: new Set(),
+    selectAnchor: null,
+    sortColumn: 'name',
+    sortDirection: 'asc'
+  }
 }
 
 /** Read-only fallback for "no session (yet)" — never written into `bySession`. */
@@ -60,6 +67,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     selected(): Set<string> {
       return this.current.selected
     },
+    sortColumn(): SortColumn {
+      return this.current.sortColumn
+    },
+    sortDirection(): SortDirection {
+      return this.current.sortDirection
+    },
     /** True when `sessionId` has never been listed yet (no cached bucket). */
     needsLoad(state): (sessionId: string) => boolean {
       return (sessionId: string) => !state.bySession[sessionId]
@@ -90,13 +103,27 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath)
         entry.currentPath = result.path
-        entry.entries = result.entries.sort(sortEntries)
+        entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
+        entry.selectAnchor = null
       } catch (e) {
         entry.error = e instanceof Error ? e.message : String(e)
       } finally {
         entry.loading = false
       }
+    },
+
+    /** Clicking the active column flips its direction; clicking a new column selects it ascending. */
+    setSort(column: SortColumn): void {
+      const sessionId = this.activeSessionId()
+      const entry = this.ensureBucket(sessionId)
+      if (entry.sortColumn === column) {
+        entry.sortDirection = entry.sortDirection === 'asc' ? 'desc' : 'asc'
+      } else {
+        entry.sortColumn = column
+        entry.sortDirection = 'asc'
+      }
+      entry.entries = [...entry.entries].sort(compareEntries(entry.sortColumn, entry.sortDirection))
     },
 
     async openDir(dirPath: string): Promise<void> {
@@ -121,19 +148,44 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       await this.load()
     },
 
-    toggleSelect(path: string): void {
+    /** Renames `entry` in place, within its current parent directory. */
+    async rename(entry: FileEntry, newName: string): Promise<void> {
       const sessionId = this.activeSessionId()
-      const bucket = this.bySession[sessionId]
-      if (!bucket) {
-        return
-      }
-      const next = new Set(bucket.selected)
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
-      bucket.selected = next
+      const parent = entry.path.slice(0, entry.path.length - entry.name.length)
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessionId, entry.path, `${parent}${newName}`)
+      await this.load()
+    },
+
+    /** Plain click — selects exactly one entry. */
+    selectOnly(path: string): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      const result = selectOnly(path)
+      bucket.selected = result.selected
+      bucket.selectAnchor = result.anchor
+    },
+
+    /** Ctrl/Cmd+click — adds or removes one entry from the existing selection. */
+    toggleSelect(path: string): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      const result = toggleSelect(bucket.selected, path)
+      bucket.selected = result.selected
+      bucket.selectAnchor = result.anchor
+    },
+
+    /** Shift+click — selects every entry between the last-clicked row and `path`. */
+    selectRange(path: string): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      const result = selectRange(bucket.entries, bucket.selectAnchor, path)
+      bucket.selected = result.selected
+      bucket.selectAnchor = result.anchor
+    },
+
+    /** Ctrl/Cmd+A — selects every entry in the current listing. */
+    selectAll(): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      const result = selectAll(bucket.entries)
+      bucket.selected = result.selected
+      bucket.selectAnchor = result.anchor
     },
 
     /** Sets the error for the active session's bucket — used by call sites that can't route through `load()`'s own catch (e.g. extract failures). */

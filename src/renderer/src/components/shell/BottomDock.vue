@@ -28,7 +28,10 @@ function basename(path: string): string {
 </script>
 
 <template>
-  <div class="flex shrink-0 flex-col border-t border-muted" :class="collapsed ? '' : 'h-56'">
+  <div
+    class="flex shrink-0 flex-col overflow-hidden border-t border-muted transition-[height] duration-200 ease-in-out"
+    :class="collapsed ? 'h-9' : 'h-56'"
+  >
     <div class="flex items-center justify-between px-2 py-1">
       <div class="flex items-center gap-1">
         <UButton

@@ -1,9 +1,12 @@
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream } from 'fs'
 import { stat } from 'fs/promises'
+import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
+import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
+import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
 
 interface TransferJob {
@@ -13,6 +16,18 @@ interface TransferJob {
   localPath: string
   remotePath: string
   controller: AbortController
+  /** True when this job moves a whole directory tree rather than a single file. */
+  isTree: boolean
+}
+
+/** Joins a `/`-separated relative path onto a local root using the OS-native separator. */
+function joinLocal(root: string, relPath: string): string {
+  return path.join(root, ...relPath.split('/'))
+}
+
+/** Joins a `/`-separated relative path onto a remote (POSIX) root. */
+function joinRemote(root: string, relPath: string): string {
+  return `${root.replace(/\/$/, '')}/${relPath}`
 }
 
 /** Transfers running at once — the rest wait in the queue. */
@@ -40,10 +55,31 @@ export class TransferQueue {
     return TransferQueue.instance
   }
 
-  /** Queues a transfer and returns its id immediately; work happens in the background. */
+  /** Queues a single-file transfer and returns its id immediately; work happens in the background. */
   enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string): string {
+    return this.push(sessionId, kind, localPath, remotePath, false)
+  }
+
+  /**
+   * Queues a whole-directory transfer (recursive upload/download) and returns its id
+   * immediately. Progress/state for the entire tree is reported under this single id,
+   * aggregated across every file it contains — the renderer sees one queue row.
+   */
+  enqueueTree(sessionId: string, kind: TransferKind, localPath: string, remotePath: string): string {
+    return this.push(sessionId, kind, localPath, remotePath, true)
+  }
+
+  private push(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, isTree: boolean): string {
     const transferId = randomUUID()
-    const job: TransferJob = { transferId, sessionId, kind, localPath, remotePath, controller: new AbortController() }
+    const job: TransferJob = {
+      transferId,
+      sessionId,
+      kind,
+      localPath,
+      remotePath,
+      controller: new AbortController(),
+      isTree
+    }
     this.pending.push(job)
     this.broadcast({ transferId, kind, state: 'queued' })
     this.pump()
@@ -79,12 +115,16 @@ export class TransferQueue {
   }
 
   private async run(job: TransferJob): Promise<void> {
+    if (job.isTree) {
+      await this.runTree(job)
+      return
+    }
+
     const { transferId, kind } = job
     this.broadcast({ transferId, kind, state: 'started' })
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
-      const sftp = await shell.sftp()
       const totalBytes =
         kind === 'upload' ? (await stat(job.localPath)).size : (await shell.stat(job.remotePath)).size
 
@@ -102,46 +142,155 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
       }
 
-      await new Promise<void>((resolve, reject) => {
-        const readStream =
-          kind === 'upload' ? createReadStream(job.localPath) : sftp.createReadStream(job.remotePath)
-        const writeStream =
-          kind === 'upload' ? sftp.createWriteStream(job.remotePath) : createWriteStream(job.localPath)
-
-        let settled = false
-        const finish = (err?: Error): void => {
-          if (settled) {
-            return
-          }
-          settled = true
-          job.controller.signal.removeEventListener('abort', onAbort)
-          if (err) {
-            reject(err)
-          } else {
-            resolve()
-          }
-        }
-        const onAbort = (): void => {
-          readStream.destroy()
-          writeStream.destroy()
-          finish(new SshError('CANCELLED', 'Transfer cancelled'))
-        }
-        job.controller.signal.addEventListener('abort', onAbort, { once: true })
-
-        let bytesMoved = 0
-        readStream.on('data', (chunk: Buffer | string) => {
-          bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
-          emitProgress(bytesMoved)
-        })
-        readStream.on('error', (e: Error) => finish(e))
-        writeStream.on('error', (e: Error) => finish(e))
-        writeStream.on('close', () => finish())
-        readStream.pipe(writeStream)
+      await this.runFile({
+        shell,
+        kind,
+        localPath: job.localPath,
+        remotePath: job.remotePath,
+        signal: job.controller.signal,
+        onProgress: emitProgress
       })
 
       this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
     } catch (e) {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
+      const message = e instanceof Error ? e.message : String(e)
+      this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
+    }
+  }
+
+  /**
+   * Streams a single file between local disk and the remote SFTP subsystem.
+   * Shared by both a solo file job and each file inside a directory-tree job —
+   * callers own progress reporting/broadcasting via `onProgress`.
+   */
+  private async runFile(opts: {
+    shell: RemoteShell
+    kind: TransferKind
+    localPath: string
+    remotePath: string
+    signal: AbortSignal
+    onProgress: (bytesTransferred: number) => void
+  }): Promise<void> {
+    const sftp = await opts.shell.sftp()
+    await new Promise<void>((resolve, reject) => {
+      const readStream =
+        opts.kind === 'upload' ? createReadStream(opts.localPath) : sftp.createReadStream(opts.remotePath)
+      const writeStream =
+        opts.kind === 'upload' ? sftp.createWriteStream(opts.remotePath) : createWriteStream(opts.localPath)
+
+      let settled = false
+      const finish = (err?: Error): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        opts.signal.removeEventListener('abort', onAbort)
+        if (err) {
+          reject(err)
+        } else {
+          resolve()
+        }
+      }
+      const onAbort = (): void => {
+        readStream.destroy()
+        writeStream.destroy()
+        finish(new SshError('CANCELLED', 'Transfer cancelled'))
+      }
+      if (opts.signal.aborted) {
+        onAbort()
+        return
+      }
+      opts.signal.addEventListener('abort', onAbort, { once: true })
+
+      let bytesMoved = 0
+      readStream.on('data', (chunk: Buffer | string) => {
+        bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
+        opts.onProgress(bytesMoved)
+      })
+      readStream.on('error', (e: Error) => finish(e))
+      writeStream.on('error', (e: Error) => finish(e))
+      writeStream.on('close', () => finish())
+      readStream.pipe(writeStream)
+    })
+  }
+
+  /**
+   * Walks a directory tree (local for uploads, remote for downloads), recreates its
+   * directory structure at the destination, then transfers every file one at a time —
+   * aggregating byte progress across the whole tree under this job's single transferId.
+   */
+  private async runTree(job: TransferJob): Promise<void> {
+    const { transferId, kind } = job
+    this.broadcast({ transferId, kind, state: 'started' })
+
+    try {
+      const shell = SessionManager.getInstance().shell(job.sessionId)
+      const tree = kind === 'upload' ? await listRecursive(job.localPath) : await shell.readdirRecursive(job.remotePath)
+
+      if (kind === 'upload') {
+        await shell.mkdirRecursive(job.remotePath)
+      } else {
+        await mkdirLocalRecursive(job.localPath)
+      }
+
+      const dirs = tree.filter((e) => e.isDir)
+      const files = tree.filter((e) => !e.isDir)
+
+      for (const dir of dirs) {
+        if (job.controller.signal.aborted) {
+          throw new SshError('CANCELLED', 'Transfer cancelled')
+        }
+        if (kind === 'upload') {
+          await shell.mkdirRecursive(joinRemote(job.remotePath, dir.relPath))
+        } else {
+          await mkdirLocalRecursive(joinLocal(job.localPath, dir.relPath))
+        }
+      }
+
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+      let doneBytes = 0
+      let currentFileBytes = 0
+      const startedAt = Date.now()
+      let lastEmit = 0
+      const emitProgress = (): void => {
+        const now = Date.now()
+        const bytesTransferred = doneBytes + currentFileBytes
+        const isFinal = bytesTransferred >= totalBytes
+        if (now - lastEmit < PROGRESS_THROTTLE_MS && !isFinal) {
+          return
+        }
+        lastEmit = now
+        const elapsedSec = (now - startedAt) / 1000
+        const bytesPerSec = elapsedSec > 0 ? Math.round(bytesTransferred / elapsedSec) : 0
+        const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
+        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
+      }
+
+      for (const file of files) {
+        if (job.controller.signal.aborted) {
+          throw new SshError('CANCELLED', 'Transfer cancelled')
+        }
+        currentFileBytes = 0
+        await this.runFile({
+          shell,
+          kind,
+          localPath: joinLocal(job.localPath, file.relPath),
+          remotePath: joinRemote(job.remotePath, file.relPath),
+          signal: job.controller.signal,
+          onProgress: (bytesTransferred) => {
+            currentFileBytes = bytesTransferred
+            emitProgress()
+          }
+        })
+        doneBytes += file.size
+        currentFileBytes = 0
+        emitProgress()
+      }
+
+      this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
+    } catch (e) {
+      const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
       this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
     }

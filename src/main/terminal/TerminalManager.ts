@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import type { ClientChannel } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
+import { shellEscape } from '../ssh/shellEscape'
 import { EVENT_CHANNELS, type TerminalDataEvent, type TerminalExitEvent } from '../../shared/contract'
 
 interface TerminalEntry {
@@ -61,6 +62,14 @@ export class TerminalManager {
       this.terminals.delete(terminalId)
       this.broadcastExit(terminalId, entry.exitCode)
     })
+
+    // Land the fresh shell in the site's configured remote start path, if any
+    // (SessionManager.cwd() is already seeded from Site.remoteInitialPath at
+    // connect time — '.' means no real path was configured, so skip the cd).
+    const cwd = SessionManager.getInstance().cwd(sessionId)
+    if (cwd && cwd !== '.') {
+      stream.write(`cd ${shellEscape(cwd)}\n`)
+    }
   }
 
   /** Sends keystrokes/input to a shell. */

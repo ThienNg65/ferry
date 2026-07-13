@@ -65,13 +65,20 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       })
     },
 
-    async enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string): Promise<void> {
+    async enqueue(
+      sessionId: string,
+      kind: TransferKind,
+      localPath: string,
+      remotePath: string,
+      isDir = false
+    ): Promise<void> {
       this.ensureSubscription()
       const result = await invoke<TransferEnqueueResult>(INVOKE_CHANNELS.transferEnqueue, {
         sessionId,
         kind,
         localPath,
-        remotePath
+        remotePath,
+        isDir
       })
       this.items.set(result.transferId, {
         transferId: result.transferId,

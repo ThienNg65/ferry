@@ -3,7 +3,9 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { WindowIsMaximizedResult, WindowStateEvent } from '@shared/contract'
 import { invoke, onEvent } from '../../api'
+import { useGlobalActivity } from '../../composables/useGlobalActivity'
 
+const { isBusy, label: activityLabel } = useGlobalActivity()
 const isMaximized = ref(false)
 let unsubscribe: (() => void) | null = null
 
@@ -36,7 +38,14 @@ function close(): void {
     style="-webkit-app-region: drag"
   >
     <div></div>
-    <span class="justify-self-center text-xs font-medium text-muted">Ferry</span>
+    <div class="flex items-center gap-1.5 justify-self-center">
+      <Transition name="fade">
+        <UTooltip v-if="isBusy" :text="activityLabel">
+          <span class="size-1.5 rounded-full bg-primary animate-pulse" />
+        </UTooltip>
+      </Transition>
+      <span class="text-xs font-medium text-muted">Ferry</span>
+    </div>
     <div class="flex h-full items-stretch justify-self-end" style="-webkit-app-region: no-drag">
       <UTooltip text="Minimize">
         <button

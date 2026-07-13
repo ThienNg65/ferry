@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
+import type { Terminal } from '@xterm/xterm'
+import type { FitAddon } from '@xterm/addon-fit'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type { TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
@@ -85,6 +85,9 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           cols: 80,
           rows: 24
         })
+        // Deferred to first actual use — @xterm/xterm isn't parsed/evaluated
+        // until a terminal is opened, keeping it off the cold-start path.
+        const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
         const term = new Terminal({ cursorBlink: true, convertEol: true })
         const fit = new FitAddon()
         term.loadAddon(fit)

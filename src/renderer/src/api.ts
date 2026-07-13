@@ -1,4 +1,15 @@
-import type { IpcResult } from '@shared/contract'
+import { INVOKE_CHANNELS, type IpcResult } from '@shared/contract'
+import { useIpcActivityStore } from './stores/ipcActivity.store'
+
+/** Channels excluded from the global busy tracker — high-frequency (per-keystroke/resize) or semantically unrelated to "SSH/SFTP work is happening". */
+const QUIET_CHANNELS = new Set<string>([
+  INVOKE_CHANNELS.terminalWrite,
+  INVOKE_CHANNELS.terminalResize,
+  INVOKE_CHANNELS.windowMinimize,
+  INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowClose,
+  INVOKE_CHANNELS.windowIsMaximized
+])
 
 /**
  * Normalises an argument into a plain, structured-cloneable value before it
@@ -27,11 +38,18 @@ function toCloneable(value: unknown): unknown {
  * @param args    - handler arguments (normalised to cloneable plain objects)
  */
 export async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  const res = (await window.api.invoke(channel, ...args.map(toCloneable))) as IpcResult<T>
-  if (!res.ok) {
-    throw new Error(res.message)
+  const tracked = !QUIET_CHANNELS.has(channel)
+  const activity = tracked ? useIpcActivityStore() : null
+  activity?.increment()
+  try {
+    const res = (await window.api.invoke(channel, ...args.map(toCloneable))) as IpcResult<T>
+    if (!res.ok) {
+      throw new Error(res.message)
+    }
+    return res.data
+  } finally {
+    activity?.decrement()
   }
-  return res.data
 }
 
 /**

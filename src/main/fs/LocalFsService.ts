@@ -86,3 +86,46 @@ export async function remove(targetPath: string, isDir: boolean): Promise<void> 
     throw new SshError('UNKNOWN', `Cannot delete "${targetPath}": ${(e as Error).message}`)
   }
 }
+
+/** One entry in a recursively-walked directory tree, path relative (`/`-separated) to the walk root. */
+export interface TreeEntry {
+  relPath: string
+  isDir: boolean
+  size: number
+}
+
+/** Recursively walks a local directory, depth-first, parent directories before their children. */
+export async function listRecursive(dirPath: string): Promise<TreeEntry[]> {
+  const results: TreeEntry[] = []
+
+  async function walk(currentPath: string, relBase: string): Promise<void> {
+    const dirents = await fs.readdir(currentPath, { withFileTypes: true })
+    for (const dirent of dirents) {
+      const relPath = relBase ? `${relBase}/${dirent.name}` : dirent.name
+      const fullPath = path.join(currentPath, dirent.name)
+      if (dirent.isDirectory()) {
+        results.push({ relPath, isDir: true, size: 0 })
+        await walk(fullPath, relPath)
+      } else if (dirent.isFile()) {
+        const stats = await fs.stat(fullPath)
+        results.push({ relPath, isDir: false, size: stats.size })
+      }
+    }
+  }
+
+  try {
+    await walk(dirPath, '')
+  } catch (e) {
+    throw new SshError('NOT_FOUND', `Cannot list "${dirPath}": ${(e as Error).message}`)
+  }
+  return results
+}
+
+/** Creates a local directory and any missing parent directories (no error if it already exists). */
+export async function mkdirRecursive(dirPath: string): Promise<void> {
+  try {
+    await fs.mkdir(dirPath, { recursive: true })
+  } catch (e) {
+    throw new SshError('UNKNOWN', `Cannot create "${dirPath}": ${(e as Error).message}`)
+  }
+}

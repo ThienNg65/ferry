@@ -1,6 +1,7 @@
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
 import { SshError } from './errors'
 import { withRetry } from './retry'
+import { shellEscape } from './shellEscape'
 
 /** Result of a buffered remote command. */
 export interface ExecResult {
@@ -412,6 +413,36 @@ export class RemoteShell {
         resolve()
       })
     })
+  }
+
+  /** Creates a remote directory and any missing parent directories (`mkdir -p`; no error if it already exists). */
+  async mkdirRecursive(remotePath: string): Promise<void> {
+    await this.exec(`mkdir -p ${shellEscape(remotePath)}`)
+  }
+
+  /** Recursively walks a remote directory over SFTP, depth-first, parent directories before their children. */
+  async readdirRecursive(remotePath: string): Promise<{ relPath: string; isDir: boolean; size: number }[]> {
+    const results: { relPath: string; isDir: boolean; size: number }[] = []
+
+    const walk = async (currentPath: string, relBase: string): Promise<void> => {
+      const entries = await this.readdir(currentPath)
+      for (const entry of entries) {
+        if (entry.filename === '.' || entry.filename === '..') {
+          continue
+        }
+        const relPath = relBase ? `${relBase}/${entry.filename}` : entry.filename
+        const childPath = `${currentPath.replace(/\/$/, '')}/${entry.filename}`
+        if (entry.isDirectory) {
+          results.push({ relPath, isDir: true, size: 0 })
+          await walk(childPath, relPath)
+        } else {
+          results.push({ relPath, isDir: false, size: entry.size })
+        }
+      }
+    }
+
+    await walk(remotePath, '')
+    return results
   }
 
   /**

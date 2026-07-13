@@ -79,7 +79,7 @@ function onDownload(): void {
   <UModal
     :open="open"
     :title="entry?.name ?? ''"
-    :ui="{ content: 'max-w-2xl' }"
+    :ui="{ content: 'max-w-4xl' }"
     @update:open="emit('update:open', $event)"
   >
     <template #actions>
@@ -110,7 +110,7 @@ function onDownload(): void {
           title="File truncated"
           description="Only the first part of this file is shown — download it to see the rest."
         />
-        <pre class="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs">{{ content }}</pre>
+        <pre class="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs">{{ content }}</pre>
       </div>
     </template>
 

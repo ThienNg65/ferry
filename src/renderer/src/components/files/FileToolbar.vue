@@ -1,11 +1,12 @@
 <script setup lang="ts">
-defineProps<{ side: 'local' | 'remote' }>()
+defineProps<{ side: 'local' | 'remote'; loading?: boolean; selectedCount?: number; transferIcon?: string }>()
 
 const emit = defineEmits<{
   up: []
   refresh: []
   mkdir: []
   'toggle-permissions': []
+  'transfer-selected': []
 }>()
 </script>
 
@@ -15,7 +16,14 @@ const emit = defineEmits<{
       <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" @click="emit('up')" />
     </UTooltip>
     <UTooltip text="Refresh (Ctrl+R)">
-      <UButton icon="i-lucide-refresh-cw" color="neutral" variant="ghost" size="xs" @click="emit('refresh')" />
+      <UButton
+        icon="i-lucide-refresh-cw"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+        @click="emit('refresh')"
+      />
     </UTooltip>
     <UTooltip text="New folder">
       <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" @click="emit('mkdir')" />
@@ -28,6 +36,14 @@ const emit = defineEmits<{
         size="xs"
         @click="emit('toggle-permissions')"
       />
+    </UTooltip>
+    <UTooltip
+      v-if="selectedCount && transferIcon"
+      :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"
+    >
+      <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" @click="emit('transfer-selected')">
+        {{ selectedCount }}
+      </UButton>
     </UTooltip>
   </div>
 </template>

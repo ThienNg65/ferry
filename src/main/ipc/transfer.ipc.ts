@@ -8,18 +8,18 @@ interface TransferEnqueueRequest {
   kind: TransferKind
   localPath: string
   remotePath: string
+  /** True to recursively transfer a whole directory tree instead of a single file. */
+  isDir?: boolean
 }
 
 /** Registers handlers for enqueueing and cancelling transfers. */
 export function registerTransferHandlers(): void {
   handle<TransferEnqueueResult>(INVOKE_CHANNELS.transferEnqueue, (req) => {
     const request = req as TransferEnqueueRequest
-    const transferId = TransferQueue.getInstance().enqueue(
-      request.sessionId,
-      request.kind,
-      request.localPath,
-      request.remotePath
-    )
+    const queue = TransferQueue.getInstance()
+    const transferId = request.isDir
+      ? queue.enqueueTree(request.sessionId, request.kind, request.localPath, request.remotePath)
+      : queue.enqueue(request.sessionId, request.kind, request.localPath, request.remotePath)
     return { transferId }
   })
 

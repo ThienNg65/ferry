@@ -28,7 +28,7 @@ export type IpcErrorCode =
   | 'SSH_EXEC'
   | 'SFTP'
   | 'CANCELLED'
-  | 'UNZIP_NOT_FOUND'
+  | 'ARCHIVE_TOOL_NOT_FOUND'
   | 'AUTH'
 
 /** Successful response wrapper. */
@@ -232,6 +232,11 @@ export interface DownloadsPathResult {
   path: string
 }
 
+/** Result of reading the running app's version (always reflects `package.json`). */
+export interface AppVersionResult {
+  version: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — window chrome
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,6 +298,8 @@ export const INVOKE_CHANNELS = {
   dialogPickFolder: 'dialog:pickFolder',
   // system paths
   systemGetDownloadsPath: 'system:getDownloadsPath',
+  systemGetAppVersion: 'system:getAppVersion',
+  systemStartDrag: 'system:startDrag',
   // window chrome
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',

@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import type { QuickConnectInput, Site } from '@shared/contract'
+import { INVOKE_CHANNELS } from '@shared/contract'
+import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
+import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import SiteFormDialog from './SiteFormDialog.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
+const version = ref('')
 
 onMounted(() => {
   void sites.fetchSites()
+  void invoke<AppVersionResult>(INVOKE_CHANNELS.systemGetAppVersion).then((result) => {
+    version.value = result.version
+  })
 })
 
 const form = reactive<QuickConnectInput>({
@@ -78,7 +84,8 @@ async function confirmDelete(): Promise<void> {
           </div>
         </template>
 
-        <div v-if="sites.sites.length === 0" class="py-4 text-center text-xs text-muted">
+        <div v-if="sites.loading" class="py-4 text-center text-xs text-muted">Loading sites…</div>
+        <div v-else-if="sites.sites.length === 0" class="py-4 text-center text-xs text-muted">
           No saved sites yet — add one, or use Quick Connect below.
         </div>
         <ul v-else class="flex flex-col gap-1">
@@ -147,6 +154,8 @@ async function confirmDelete(): Promise<void> {
           <UButton block :loading="sessions.connecting" @click="onConnect">Connect</UButton>
         </template>
       </UCard>
+
+      <p v-if="version" class="text-center text-[11px] text-muted">Ferry v{{ version }}</p>
     </div>
 
     <SiteFormDialog v-model:open="formOpen" :site="editingSite" />
