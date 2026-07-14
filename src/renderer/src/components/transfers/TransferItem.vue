@@ -13,7 +13,7 @@ const props = defineProps<{
   error?: string
 }>()
 
-const emit = defineEmits<{ cancel: [] }>()
+const emit = defineEmits<{ cancel: []; retry: [] }>()
 
 const percent = computed(() =>
   props.totalBytes > 0 ? Math.min(100, Math.round((props.bytesTransferred / props.totalBytes) * 100)) : 0
@@ -37,6 +37,7 @@ const statusColor = computed(() => {
 const cancellable = computed(
   () => props.state === 'queued' || props.state === 'started' || props.state === 'progress'
 )
+const retryable = computed(() => props.state === 'error' || props.state === 'cancelled')
 
 function formatBytes(n: number): string {
   if (n < 1024) {
@@ -69,6 +70,9 @@ function formatEta(ms: number): string {
       </span>
       <UTooltip v-if="cancellable" text="Cancel transfer">
         <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
+      </UTooltip>
+      <UTooltip v-if="retryable" text="Retry transfer">
+        <UButton icon="i-lucide-rotate-cw" color="neutral" variant="ghost" size="xs" @click="emit('retry')" />
       </UTooltip>
     </div>
     <UProgress :model-value="percent" :color="statusColor" size="xs" />

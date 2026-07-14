@@ -24,6 +24,7 @@ onMounted(() => {
       :eta-ms="item.etaMs"
       :error="item.error"
       @cancel="store.cancel(item.transferId)"
+      @retry="store.retry(item.transferId)"
     />
     <p v-if="store.list.length === 0" class="px-3 py-6 text-center text-xs text-muted">No transfers yet</p>
   </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
@@ -10,6 +10,18 @@ import SiteFormDialog from './SiteFormDialog.vue'
 const sessions = useSessionsStore()
 const sites = useSitesStore()
 const version = ref('')
+
+const keyboardAnswers = ref<string[]>([])
+watch(
+  () => sessions.pendingKeyboardPrompt,
+  (prompt) => {
+    keyboardAnswers.value = prompt ? prompt.prompts.map(() => '') : []
+  }
+)
+
+async function submitKeyboardAnswers(): Promise<void> {
+  await sessions.respondKeyboardInteractive([...keyboardAnswers.value])
+}
 
 onMounted(() => {
   void sites.fetchSites()
@@ -174,6 +186,73 @@ async function confirmDelete(): Promise<void> {
       <template #footer>
         <UButton color="neutral" variant="outline" @click="deleteTarget = null">Cancel</UButton>
         <UButton color="error" :loading="deleting" @click="confirmDelete">Delete</UButton>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="Boolean(sessions.pendingHostKeyMismatch)"
+      title="Host key changed"
+      :ui="{ footer: 'justify-end' }"
+      @update:open="(v: boolean) => { if (!v) sessions.dismissHostKeyMismatch(sessions.activeTabId) }"
+    >
+      <template #body>
+        <div class="flex flex-col gap-3">
+          <UAlert
+            color="warning"
+            variant="soft"
+            icon="i-lucide-shield-alert"
+            title="This could mean a man-in-the-middle attack"
+          />
+          <p class="text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
+          <p class="text-xs text-muted">
+            Only continue if you're certain the change is legitimate — e.g. the server was reinstalled or its key was
+            deliberately rotated.
+          </p>
+        </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="sessions.dismissHostKeyMismatch(sessions.activeTabId)">
+          Cancel
+        </UButton>
+        <UButton
+          color="warning"
+          :loading="sessions.connecting"
+          @click="sessions.acceptHostKeyAndRetry(sessions.activeTabId)"
+        >
+          Trust new key &amp; connect
+        </UButton>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="Boolean(sessions.pendingKeyboardPrompt)"
+      title="Authentication required"
+      :ui="{ footer: 'justify-end' }"
+      @update:open="(v: boolean) => { if (!v) sessions.cancelKeyboardInteractive() }"
+    >
+      <template #body>
+        <div class="flex flex-col gap-3">
+          <p v-if="sessions.pendingKeyboardPrompt?.instructions" class="text-sm text-default">
+            {{ sessions.pendingKeyboardPrompt.instructions }}
+          </p>
+          <UFormField
+            v-for="(prompt, i) in sessions.pendingKeyboardPrompt?.prompts ?? []"
+            :key="i"
+            :label="prompt.prompt"
+          >
+            <UInput
+              v-model="keyboardAnswers[i]"
+              :type="prompt.echo ? 'text' : 'password'"
+              class="w-full"
+              autofocus
+              @keyup.enter="submitKeyboardAnswers"
+            />
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="sessions.cancelKeyboardInteractive">Cancel</UButton>
+        <UButton @click="submitKeyboardAnswers">Submit</UButton>
       </template>
     </UModal>
   </div>

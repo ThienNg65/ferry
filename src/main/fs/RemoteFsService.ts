@@ -45,6 +45,11 @@ export async function renameRemote(sessionId: string, fromPath: string, toPath: 
   await SessionManager.getInstance().shell(sessionId).rename(fromPath, toPath)
 }
 
+/** Sets a remote path's permissions (mode is an octal string, e.g. "0755"). */
+export async function chmodRemote(sessionId: string, targetPath: string, mode: string): Promise<void> {
+  await SessionManager.getInstance().shell(sessionId).chmod(targetPath, mode)
+}
+
 /** Reads a remote file's content as text, capped at MAX_TEXT_PREVIEW_BYTES. */
 export async function readFile(sessionId: string, filePath: string): Promise<FileReadResult> {
   const shell = SessionManager.getInstance().shell(sessionId)

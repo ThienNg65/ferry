@@ -52,6 +52,7 @@ const emit = defineEmits<{
   rename: [entry: FileEntry, newName: string]
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
+  chmod: [entry: FileEntry]
 }>()
 
 const notify = useNotify()
@@ -82,6 +83,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   }
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
   items.push({ label: 'Copy path', icon: 'i-lucide-copy', onSelect: () => void copyPath() })
+  if (props.side === 'remote' && props.entry.permissions) {
+    items.push({ label: 'Permissions…', icon: 'i-lucide-key-round', onSelect: () => emit('chmod', props.entry) })
+  }
   items.push({ type: 'separator' })
   items.push({
     label: 'Delete',

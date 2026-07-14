@@ -71,11 +71,12 @@ export class RemoteShell {
   // ── Buffered exec ──────────────────────────────────────────────────────────
 
   /**
-   * Runs a remote command and resolves with its full output.
-   *
-   * Rejects with {@link SshError} `SSH_EXEC` on a non-zero exit code (these are
-   * not retried — the command may have had side effects), `SSH_TIMEOUT` on
-   * timeout, or `CANCELLED` when the signal aborts.
+   * Runs a remote command and resolves with its full output, including the
+   * exit code — a non-zero exit is NOT rejected (the command may have had
+   * side effects, and "failure" is command-specific); callers check
+   * `result.code` themselves (see {@link UnzipService.extractRemote}).
+   * Only rejects with {@link SshError} `SSH_TIMEOUT` on timeout, `SSH_EXEC` if
+   * the channel itself fails to open, or `CANCELLED` when the signal aborts.
    *
    * @param command - shell command to run
    * @param opts    - timeout / signal / retry
@@ -366,6 +367,20 @@ export class RemoteShell {
       sftp.mkdir(remotePath, (mkdirErr) => {
         if (mkdirErr) {
           reject(new SshError('SFTP', `Failed to create "${remotePath}": ${mkdirErr.message}`))
+          return
+        }
+        resolve()
+      })
+    })
+  }
+
+  /** Sets a remote path's permissions. `mode` is an octal string (e.g. "0755" or "755"). */
+  async chmod(remotePath: string, mode: string): Promise<void> {
+    const sftp = await this.sftp()
+    return new Promise<void>((resolve, reject) => {
+      sftp.chmod(remotePath, parseInt(mode, 8), (chmodErr) => {
+        if (chmodErr) {
+          reject(new SshError('SFTP', `Failed to set permissions on "${remotePath}": ${chmodErr.message}`))
           return
         }
         resolve()

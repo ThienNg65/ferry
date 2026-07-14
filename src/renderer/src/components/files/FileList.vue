@@ -25,6 +25,7 @@ const emit = defineEmits<{
   rename: [entry: FileEntry, newName: string]
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
+  chmod: [entry: FileEntry]
   sort: [column: SortColumn]
 }>()
 </script>
@@ -93,6 +94,7 @@ const emit = defineEmits<{
         @rename="(entry, newName) => emit('rename', entry, newName)"
         @cancel-rename="emit('cancel-rename')"
         @start-rename="emit('start-rename', $event)"
+        @chmod="emit('chmod', $event)"
       />
       <p v-if="entries.length === 0" class="px-3 py-6 text-center text-xs text-muted">Empty folder</p>
     </div>

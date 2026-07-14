@@ -2,6 +2,18 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.6.0 — WinSCP-parity Phase 2: security & auth, plus the first real-server test suite
+
+Closes Phase 2 of `.claude/plan/ferry-winscp-parity-roadmap.md` — the trust/security gaps flagged in the original gap analysis as "would concern a security-conscious WinSCP user." This is also the first release with any automated tests: 76 passing, including real-server integration suites run against a local Docker SFTP/SSH container (not mocks) — see `.claude/PROJECT_MAP.md`'s Build/run/test section.
+
+**Security & auth parity:**
+- Host-key verification (trust-on-first-use, pinned per host:port) — a changed key now blocks the connection with a clear warning and an explicit "trust and continue" instead of connecting silently. This was a real MITM exposure before.
+- Real keyboard-interactive/2FA — a genuine OTP/verification-code prompt is now shown to the user instead of the password being blindly replayed into it (which just failed).
+- SSH-agent authentication (Windows OpenSSH Agent / Pageant / `$SSH_AUTH_SOCK`, with an optional per-site path override).
+- Jump-host (bastion) support — tunnel a connection through an intermediate SSH host.
+- Editable permissions — a WinSCP-style chmod dialog (owner/group/other × read/write/execute) on the permissions column, replacing the old read-only display.
+- Transfer retry — a retry button on any failed or cancelled transfer, instead of only being able to cancel.
+
 ## 0.5.0 — Round 5 UX/perf polish + WinSCP-parity Phase 1
 
 An honest gap analysis against WinSCP (see `.claude/plan/ferry-winscp-parity-roadmap.md`) found several table-stakes file-manager basics missing entirely. This release closes Phase 1 of that roadmap — the "daily-driver blockers" — alongside a separate, previously-uncommitted round of UX/perf polish.

@@ -16,6 +16,7 @@ import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
+import ChmodDialog from './ChmodDialog.vue'
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -37,6 +38,8 @@ const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
+const chmodOpen = ref(false)
+const chmodTarget = ref<FileEntry | null>(null)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -329,6 +332,19 @@ function onStartRename(entry: FileEntry): void {
   store.selectOnly(entry.path)
   renamingPath.value = entry.path
 }
+
+function onOpenChmod(entry: FileEntry): void {
+  chmodTarget.value = entry
+  chmodOpen.value = true
+}
+
+async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
+  try {
+    await remoteFs.chmod(entry, mode)
+  } catch (e) {
+    notify.error('Could not change permissions', e instanceof Error ? e.message : String(e))
+  }
+}
 </script>
 
 <template>
@@ -396,6 +412,7 @@ function onStartRename(entry: FileEntry): void {
         @start-rename="onStartRename"
         @sort="store.setSort"
         @extract="onExtract"
+        @chmod="onOpenChmod"
       />
       <FilePreviewDialog
         v-model:open="previewOpen"
@@ -404,6 +421,7 @@ function onStartRename(entry: FileEntry): void {
         @tail="onTail"
         @download="onTransfer"
       />
+      <ChmodDialog v-model:open="chmodOpen" :entry="chmodTarget" @submit="onSubmitChmod" />
       <UModal
         :open="Boolean(extractConflict)"
         title="Folder already exists"

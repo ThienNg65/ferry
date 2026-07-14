@@ -10,10 +10,13 @@ function basename(path: string): string {
 
 export interface TransferItemState {
   transferId: string
+  /** Carried along so a failed transfer can be re-enqueued from scratch without the caller re-supplying it — see `retry()`. */
+  sessionId: string
   kind: TransferKind
   state: TransferState
   localPath: string
   remotePath: string
+  isDir: boolean
   bytesTransferred: number
   totalBytes: number
   bytesPerSec: number
@@ -46,10 +49,12 @@ export const useTransferQueueStore = defineStore('transferQueue', {
         const existing = this.items.get(evt.transferId)
         this.items.set(evt.transferId, {
           transferId: evt.transferId,
+          sessionId: existing?.sessionId ?? '',
           kind: evt.kind,
           state: evt.state,
           localPath: existing?.localPath ?? '',
           remotePath: existing?.remotePath ?? '',
+          isDir: existing?.isDir ?? false,
           bytesTransferred: evt.bytesTransferred ?? existing?.bytesTransferred ?? 0,
           totalBytes: evt.totalBytes ?? existing?.totalBytes ?? 0,
           bytesPerSec: evt.bytesPerSec ?? 0,
@@ -82,10 +87,12 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       })
       this.items.set(result.transferId, {
         transferId: result.transferId,
+        sessionId,
         kind,
         state: 'queued',
         localPath,
         remotePath,
+        isDir,
         bytesTransferred: 0,
         totalBytes: 0,
         bytesPerSec: 0,
@@ -95,6 +102,16 @@ export const useTransferQueueStore = defineStore('transferQueue', {
 
     async cancel(transferId: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.transferCancel, transferId)
+    },
+
+    /** Re-enqueues a failed (or cancelled) transfer from scratch as a fresh job — the old row is dropped in favor of the new one. */
+    async retry(transferId: string): Promise<void> {
+      const item = this.items.get(transferId)
+      if (!item) {
+        return
+      }
+      this.items.delete(transferId)
+      await this.enqueue(item.sessionId, item.kind, item.localPath, item.remotePath, item.isDir)
     }
   }
 })

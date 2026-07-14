@@ -30,6 +30,7 @@ export type IpcErrorCode =
   | 'CANCELLED'
   | 'ARCHIVE_TOOL_NOT_FOUND'
   | 'AUTH'
+  | 'HOST_KEY_MISMATCH'
 
 /** Successful response wrapper. */
 export interface IpcOk<T> {
@@ -61,8 +62,35 @@ export function err(code: IpcErrorCode, message: string): IpcErr {
 // Domain models — sites / auth
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Supported authentication methods (extensible — 'agent' can be added later). */
-export type AuthMethod = 'password' | 'privateKey'
+/** Supported authentication methods. `agent` delegates to a running ssh-agent/Pageant/Windows OpenSSH Agent — no secret stored by Ferry at all. */
+export type AuthMethod = 'password' | 'privateKey' | 'agent'
+
+/**
+ * A saved jump-host (bastion) hop — the SSH connection tunnels through this
+ * host before reaching the real target. Only password/private-key auth are
+ * supported for the hop itself (not agent, not a further nested jump host) —
+ * a deliberate scope limit, not an oversight.
+ */
+export interface JumpHostConfig {
+  host: string
+  port: number
+  username: string
+  authMethod: 'password' | 'privateKey'
+  privateKeyPath?: string
+  password?: string
+  passphrase?: string
+}
+
+/** {@link JumpHostConfig} as returned to the renderer — booleans instead of decrypted secrets, mirroring {@link Site}. */
+export interface JumpHostInfo {
+  host: string
+  port: number
+  username: string
+  authMethod: 'password' | 'privateKey'
+  privateKeyPath?: string
+  hasPassword: boolean
+  hasPassphrase: boolean
+}
 
 /**
  * A saved connection profile. Never carries decrypted secrets — only booleans
@@ -78,10 +106,13 @@ export interface Site {
   authMethod: AuthMethod
   /** Path to a private key file on disk (privateKey auth only). */
   privateKeyPath?: string
+  /** Overrides the platform-default ssh-agent socket/pipe path (agent auth only) — e.g. a custom `SSH_AUTH_SOCK`, or the literal `pageant`. */
+  agentPath?: string
   remoteInitialPath?: string
   localInitialPath?: string
   hasPassword: boolean
   hasPassphrase: boolean
+  jumpHost?: JumpHostInfo
   createdAt: string
   updatedAt: string
 }
@@ -94,10 +125,12 @@ export interface SiteInput {
   username: string
   authMethod: AuthMethod
   privateKeyPath?: string
+  agentPath?: string
   remoteInitialPath?: string
   localInitialPath?: string
   password?: string
   passphrase?: string
+  jumpHost?: JumpHostConfig
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
@@ -114,6 +147,33 @@ export type SessionStatus = 'connecting' | 'connected' | 'error' | 'disconnected
 export interface SessionOpenResult {
   sessionId: string
   status: SessionStatus
+}
+
+/** One challenge within a keyboard-interactive auth round (e.g. an OTP/2FA code prompt). */
+export interface KeyboardInteractivePrompt {
+  prompt: string
+  /** False for a password-style prompt the UI should mask. */
+  echo: boolean
+}
+
+/**
+ * Push-event payload for `session:keyboard-interactive-prompt` — sent only for
+ * prompts the saved password couldn't auto-answer (e.g. a genuine 2FA/OTP
+ * challenge, not a plain "Password:" re-ask).
+ */
+export interface KeyboardInteractiveRequestEvent {
+  requestId: string
+  sessionId: string
+  name: string
+  instructions: string
+  prompts: KeyboardInteractivePrompt[]
+}
+
+/** Request payload for `session:keyboard-interactive-respond`. */
+export interface KeyboardInteractiveRespondRequest {
+  requestId: string
+  /** Must be the same length as the originating event's `prompts`. */
+  responses: string[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,6 +328,7 @@ export const INVOKE_CHANNELS = {
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
+  sessionKeyboardInteractiveRespond: 'session:keyboard-interactive-respond',
   // local filesystem
   fsLocalList: 'fs:local:list',
   fsLocalMkdir: 'fs:local:mkdir',
@@ -278,6 +339,7 @@ export const INVOKE_CHANNELS = {
   fsRemoteMkdir: 'fs:remote:mkdir',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
+  fsRemoteChmod: 'fs:remote:chmod',
   fsLocalReadFile: 'fs:local:readFile',
   fsRemoteReadFile: 'fs:remote:readFile',
   // transfers
@@ -317,6 +379,7 @@ export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNEL
 /** Channels the main process pushes to the renderer via `webContents.send`. */
 export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
+  keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   transferEvent: 'transfer:event',
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',

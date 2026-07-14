@@ -27,6 +27,9 @@ export function registerFsHandlers(): void {
   handle<void>(INVOKE_CHANNELS.fsRemoteDelete, (sessionId, targetPath) =>
     RemoteFs.removeRemote(sessionId as string, targetPath as string)
   )
+  handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) =>
+    RemoteFs.chmodRemote(sessionId as string, targetPath as string, mode as string)
+  )
   handle<FileReadResult>(INVOKE_CHANNELS.fsRemoteReadFile, (sessionId, filePath) =>
     RemoteFs.readFile(sessionId as string, filePath as string)
   )

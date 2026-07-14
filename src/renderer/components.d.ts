@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     BottomDock: typeof import('./src/components/shell/BottomDock.vue')['default']
+    ChmodDialog: typeof import('./src/components/files/ChmodDialog.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']

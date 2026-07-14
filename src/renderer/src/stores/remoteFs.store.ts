@@ -156,6 +156,13 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       await this.load()
     },
 
+    /** Sets `entry`'s permissions. `mode` is an octal string (e.g. "0755"). */
+    async chmod(entry: FileEntry, mode: string): Promise<void> {
+      const sessionId = this.activeSessionId()
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteChmod, sessionId, entry.path, mode)
+      await this.load()
+    },
+
     /** Plain click — selects exactly one entry. */
     selectOnly(path: string): void {
       const bucket = this.ensureBucket(this.activeSessionId())

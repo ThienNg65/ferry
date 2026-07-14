@@ -2,7 +2,18 @@ import Store from 'electron-store'
 import { randomUUID } from 'crypto'
 import { safeStorage } from 'electron'
 import { SshError } from '../ssh/errors'
-import type { AuthMethod, Site, SiteInput } from '../../shared/contract'
+import type { AuthMethod, JumpHostConfig, JumpHostInfo, Site, SiteInput } from '../../shared/contract'
+
+/** On-disk shape of a saved jump-host hop — secrets encrypted-at-rest like the top-level site. */
+interface StoredJumpHost {
+  host: string
+  port: number
+  username: string
+  authMethod: 'password' | 'privateKey'
+  privateKeyPath?: string
+  secretPassword?: string
+  secretPassphrase?: string
+}
 
 /** On-disk shape of a saved site — secrets are encrypted-at-rest, never plaintext. */
 interface StoredSite {
@@ -13,12 +24,14 @@ interface StoredSite {
   username: string
   authMethod: AuthMethod
   privateKeyPath?: string
+  agentPath?: string
   remoteInitialPath?: string
   localInitialPath?: string
   /** Base64 ciphertext from `safeStorage.encryptString`. */
   secretPassword?: string
   /** Base64 ciphertext from `safeStorage.encryptString`. */
   secretPassphrase?: string
+  jumpHost?: StoredJumpHost
   createdAt: string
   updatedAt: string
 }
@@ -44,6 +57,30 @@ function decrypt(ciphertext: string | undefined): string | undefined {
   return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
 }
 
+function toPublicJumpHost(j: StoredJumpHost): JumpHostInfo {
+  return {
+    host: j.host,
+    port: j.port,
+    username: j.username,
+    authMethod: j.authMethod,
+    privateKeyPath: j.privateKeyPath,
+    hasPassword: Boolean(j.secretPassword),
+    hasPassphrase: Boolean(j.secretPassphrase)
+  }
+}
+
+function toStoredJumpHost(j: JumpHostConfig, existing?: StoredJumpHost): StoredJumpHost {
+  return {
+    host: j.host,
+    port: j.port,
+    username: j.username,
+    authMethod: j.authMethod,
+    privateKeyPath: j.privateKeyPath,
+    secretPassword: j.password !== undefined ? encrypt(j.password) : existing?.secretPassword,
+    secretPassphrase: j.passphrase !== undefined ? encrypt(j.passphrase) : existing?.secretPassphrase
+  }
+}
+
 function toPublicSite(s: StoredSite): Site {
   return {
     id: s.id,
@@ -53,10 +90,12 @@ function toPublicSite(s: StoredSite): Site {
     username: s.username,
     authMethod: s.authMethod,
     privateKeyPath: s.privateKeyPath,
+    agentPath: s.agentPath,
     remoteInitialPath: s.remoteInitialPath,
     localInitialPath: s.localInitialPath,
     hasPassword: Boolean(s.secretPassword),
     hasPassphrase: Boolean(s.secretPassphrase),
+    jumpHost: s.jumpHost ? toPublicJumpHost(s.jumpHost) : undefined,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt
   }
@@ -93,10 +132,12 @@ export class SiteStore {
       username: input.username,
       authMethod: input.authMethod,
       privateKeyPath: input.privateKeyPath,
+      agentPath: input.agentPath,
       remoteInitialPath: input.remoteInitialPath,
       localInitialPath: input.localInitialPath,
       secretPassword: encrypt(input.password),
       secretPassphrase: encrypt(input.passphrase),
+      jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost) : undefined,
       createdAt: now,
       updatedAt: now
     }
@@ -121,11 +162,13 @@ export class SiteStore {
       username: input.username,
       authMethod: input.authMethod,
       privateKeyPath: input.privateKeyPath,
+      agentPath: input.agentPath,
       remoteInitialPath: input.remoteInitialPath,
       localInitialPath: input.localInitialPath,
       secretPassword: input.password !== undefined ? encrypt(input.password) : existing.secretPassword,
       secretPassphrase:
         input.passphrase !== undefined ? encrypt(input.passphrase) : existing.secretPassphrase,
+      jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost, existing.jumpHost) : undefined,
       updatedAt: new Date().toISOString()
     }
     sites[idx] = updated
@@ -150,5 +193,14 @@ export class SiteStore {
       throw new SshError('NOT_FOUND', `Site ${id} not found`)
     }
     return { password: decrypt(site.secretPassword), passphrase: decrypt(site.secretPassphrase) }
+  }
+
+  /** Decrypts a site's jump-host secrets, if it has one configured. Never returned to the renderer. */
+  getDecryptedJumpHostSecrets(id: string): { password?: string; passphrase?: string } | undefined {
+    const site = this.getRaw(id)
+    if (!site?.jumpHost) {
+      return undefined
+    }
+    return { password: decrypt(site.jumpHost.secretPassword), passphrase: decrypt(site.jumpHost.secretPassphrase) }
   }
 }

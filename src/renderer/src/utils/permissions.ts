@@ -1,8 +1,15 @@
 /** rwx bits for one of owner/group/other, parsed from a single octal digit (0-7). */
-interface Triplet {
+export interface Triplet {
   read: boolean
   write: boolean
   execute: boolean
+}
+
+/** The three owner/group/other triplets that make up a mode — the shape the chmod dialog edits directly. */
+export interface ModeTriplets {
+  owner: Triplet
+  group: Triplet
+  other: Triplet
 }
 
 function parseTriplet(digit: number): Triplet {
@@ -13,8 +20,27 @@ function parseTriplet(digit: number): Triplet {
   }
 }
 
+function tripletToDigit(t: Triplet): number {
+  return (t.read ? 0b100 : 0) | (t.write ? 0b010 : 0) | (t.execute ? 0b001 : 0)
+}
+
 function tripletToRwx(t: Triplet): string {
   return `${t.read ? 'r' : '-'}${t.write ? 'w' : '-'}${t.execute ? 'x' : '-'}`
+}
+
+/** Parses the last 3 digits of an octal mode string into editable owner/group/other triplets. */
+export function parseMode(octal: string): ModeTriplets {
+  const digits = octal.slice(-3).padStart(3, '0')
+  return {
+    owner: parseTriplet(Number(digits[0])),
+    group: parseTriplet(Number(digits[1])),
+    other: parseTriplet(Number(digits[2]))
+  }
+}
+
+/** Inverse of {@link parseMode} — formats triplets back into a 3-digit octal string (e.g. "755") for chmod. */
+export function formatMode(triplets: ModeTriplets): string {
+  return [triplets.owner, triplets.group, triplets.other].map(tripletToDigit).join('')
 }
 
 /**

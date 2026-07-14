@@ -1,13 +1,14 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type {
+  KeyboardInteractiveRequestEvent,
   QuickConnectInput,
   Site,
   SessionOpenResult,
   SessionStatus,
   SessionStatusEvent
 } from '@shared/contract'
-import { invoke, onEvent } from '../api'
+import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
@@ -27,12 +28,27 @@ export interface SessionTab {
   status: SessionStatus | null
   statusMessage: string | null
   connecting: boolean
+  /** Set when the last connect attempt failed because the server's host key changed — surfaced as a warning dialog, not a plain toast, since accepting it needs an explicit user decision. */
+  pendingHostKeyMismatch: PendingHostKeyMismatch | null
+}
+
+type ConnectRequest = { siteId: string } | { quickConnect: QuickConnectInput }
+
+interface PendingHostKeyMismatch {
+  message: string
+  request: ConnectRequest
+  label: string
+  hostLabel: string
+  siteId: string | null
 }
 
 interface SessionsState {
   tabs: SessionTab[]
   activeTabId: string
   unsubscribeStatus: (() => void) | null
+  unsubscribeKeyboardInteractive: (() => void) | null
+  /** A live keyboard-interactive challenge (2FA/OTP) awaiting the user's answer — global, not per-tab, since only one connect attempt is normally in flight at a time. */
+  pendingKeyboardPrompt: KeyboardInteractiveRequestEvent | null
 }
 
 function freshTab(): SessionTab {
@@ -44,7 +60,8 @@ function freshTab(): SessionTab {
     hostLabel: null,
     status: null,
     statusMessage: null,
-    connecting: false
+    connecting: false,
+    pendingHostKeyMismatch: null
   }
 }
 
@@ -54,7 +71,9 @@ export const useSessionsStore = defineStore('sessions', {
     return {
       tabs: [initial],
       activeTabId: initial.tabId,
-      unsubscribeStatus: null
+      unsubscribeStatus: null,
+      unsubscribeKeyboardInteractive: null,
+      pendingKeyboardPrompt: null
     }
   },
 
@@ -73,6 +92,9 @@ export const useSessionsStore = defineStore('sessions', {
     },
     connecting(): boolean {
       return this.activeTab.connecting
+    },
+    pendingHostKeyMismatch(): PendingHostKeyMismatch | null {
+      return this.activeTab.pendingHostKeyMismatch
     }
   },
 
@@ -109,23 +131,63 @@ export const useSessionsStore = defineStore('sessions', {
       }
     },
 
+    ensureKeyboardInteractiveSubscription(): void {
+      if (this.unsubscribeKeyboardInteractive) {
+        return
+      }
+      this.unsubscribeKeyboardInteractive = onEvent<KeyboardInteractiveRequestEvent>(
+        EVENT_CHANNELS.keyboardInteractivePrompt,
+        (evt) => {
+          this.pendingKeyboardPrompt = evt
+        }
+      )
+    },
+
+    /** Submits the user's answers to the current keyboard-interactive challenge (e.g. a typed OTP code). */
+    async respondKeyboardInteractive(responses: string[]): Promise<void> {
+      const pending = this.pendingKeyboardPrompt
+      if (!pending) {
+        return
+      }
+      this.pendingKeyboardPrompt = null
+      await invoke<void>(INVOKE_CHANNELS.sessionKeyboardInteractiveRespond, {
+        requestId: pending.requestId,
+        responses
+      })
+    },
+
+    /** User dismissed the challenge without answering — sends empty answers, which the server will simply reject as failed auth. */
+    async cancelKeyboardInteractive(): Promise<void> {
+      const pending = this.pendingKeyboardPrompt
+      if (!pending) {
+        return
+      }
+      await this.respondKeyboardInteractive(pending.prompts.map(() => ''))
+    },
+
     /** Shared connect path for both quick-connect and saved-site connect — always targets the active tab. */
     async openSession(
-      request: { siteId: string } | { quickConnect: QuickConnectInput },
+      request: ConnectRequest,
       label: string,
       hostLabel: string,
-      siteId: string | null
+      siteId: string | null,
+      trustHostKeyChange = false
     ): Promise<void> {
       this.ensureStatusSubscription()
+      this.ensureKeyboardInteractiveSubscription()
       const tab = this.activeTab
       tab.connecting = true
       tab.statusMessage = null
+      tab.pendingHostKeyMismatch = null
       tab.label = label
       tab.hostLabel = hostLabel
       tab.siteId = siteId
       const notify = useNotify()
       try {
-        const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, request)
+        const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
+          ...request,
+          trustHostKeyChange
+        })
         tab.sessionId = result.sessionId
         tab.status = result.status
         notify.success(`Connected to ${label}`)
@@ -135,7 +197,11 @@ export const useSessionsStore = defineStore('sessions', {
       } catch (e) {
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
-        notify.error('Connection failed', tab.statusMessage)
+        if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
+          tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId }
+        } else {
+          notify.error('Connection failed', tab.statusMessage)
+        }
         throw e
       } finally {
         tab.connecting = false
@@ -149,6 +215,26 @@ export const useSessionsStore = defineStore('sessions', {
         `${input.username}@${input.host}`,
         null
       )
+    },
+
+    /** User accepted a changed host key after being warned — retries the exact same connect attempt with the override set. */
+    async acceptHostKeyAndRetry(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      const pending = tab?.pendingHostKeyMismatch
+      if (!tab || !pending) {
+        return
+      }
+      tab.pendingHostKeyMismatch = null
+      this.setActiveTab(tabId)
+      await this.openSession(pending.request, pending.label, pending.hostLabel, pending.siteId, true)
+    },
+
+    /** User declined a changed host key — just clears the warning, leaving the tab in its error state. */
+    dismissHostKeyMismatch(tabId: string): void {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (tab) {
+        tab.pendingHostKeyMismatch = null
+      }
     },
 
     /** Connects to a saved site — switches to an already-open/connecting tab for the same site instead of opening a duplicate connection. */
