@@ -33,7 +33,8 @@ const form = reactive<SiteInput>({
   remoteInitialPath: '',
   localInitialPath: '',
   password: '',
-  passphrase: ''
+  passphrase: '',
+  group: ''
 })
 
 const useJumpHost = ref(false)
@@ -67,6 +68,7 @@ function resetForm(site?: Site | null): void {
   form.localInitialPath = site?.localInitialPath ?? ''
   form.password = ''
   form.passphrase = ''
+  form.group = site?.group ?? ''
   useJumpHost.value = Boolean(site?.jumpHost)
   jumpForm.host = site?.jumpHost?.host ?? ''
   jumpForm.port = site?.jumpHost?.port ?? 22
@@ -166,7 +168,8 @@ async function save(): Promise<void> {
     localInitialPath: form.localInitialPath || undefined,
     password: form.password ? form.password : undefined,
     passphrase: form.passphrase ? form.passphrase : undefined,
-    jumpHost
+    jumpHost,
+    group: (form.group ?? '').trim() || undefined
   }
   try {
     if (props.site) {
@@ -193,9 +196,17 @@ async function save(): Promise<void> {
   >
     <template #body>
       <div class="flex flex-col gap-3">
-        <UFormField label="Name" hint="Optional">
-          <UInput v-model="form.name" :placeholder="form.host || 'Defaults to hostname'" class="w-full" />
-        </UFormField>
+        <div class="flex gap-3">
+          <UFormField label="Name" hint="Optional" class="flex-1">
+            <UInput v-model="form.name" :placeholder="form.host || 'Defaults to hostname'" class="w-full" />
+          </UFormField>
+          <UFormField label="Group" hint="Optional" class="flex-1">
+            <UInput v-model="form.group" list="ferry-site-groups" placeholder="e.g. Work" class="w-full" />
+          </UFormField>
+        </div>
+        <datalist id="ferry-site-groups">
+          <option v-for="name in sites.groupNames" :key="name" :value="name" />
+        </datalist>
         <div class="flex gap-3">
           <UFormField label="Host" class="flex-1">
             <UInput v-model="form.host" placeholder="example.com" class="w-full" />

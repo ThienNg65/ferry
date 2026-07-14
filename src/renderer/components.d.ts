@@ -18,6 +18,7 @@ declare module 'vue' {
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']
     FileRow: typeof import('./src/components/files/FileRow.vue')['default']
     FileToolbar: typeof import('./src/components/files/FileToolbar.vue')['default']
+    ImportSessionsDialog: typeof import('./src/components/sessions/ImportSessionsDialog.vue')['default']
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
     PathBreadcrumb: typeof import('./src/components/files/PathBreadcrumb.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

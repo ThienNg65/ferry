@@ -8,7 +8,7 @@ import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
-import { isArchive } from '../../utils/fileTypes'
+import { isArchive, iconForFile } from '../../utils/fileTypes'
 
 const props = defineProps<{
   entry: FileEntry
@@ -151,7 +151,7 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
 </script>
 
 <template>
-  <ContextMenu :items="contextMenuItems">
+  <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
   <div
     class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
     :class="selected ? 'bg-accented text-highlighted' : 'text-default hover:bg-muted'"
@@ -162,7 +162,7 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
     @dragend="clearDrag"
   >
     <UIcon
-      :name="entry.isDir ? 'i-lucide-folder' : 'i-lucide-file'"
+      :name="iconForFile(entry.name, entry.isDir)"
       class="size-4 shrink-0 text-muted"
     />
     <UInput
@@ -191,51 +191,17 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
     </div>
     <div v-else-if="side === 'remote'" class="w-36 shrink-0"></div>
     <div class="flex w-7 shrink-0 items-center justify-center">
-      <UTooltip v-if="showTail && !entry.isDir" text="Tail this file live">
+      <UTooltip text="Delete">
         <UButton
-          icon="i-lucide-scroll-text"
+          icon="i-lucide-trash-2"
           color="neutral"
           variant="ghost"
           size="xs"
           class="opacity-0 group-hover:opacity-100"
-          @click.stop="emit('tail', entry)"
+          @click.stop="emit('remove', entry)"
         />
       </UTooltip>
     </div>
-    <div class="flex w-7 shrink-0 items-center justify-center">
-      <UTooltip v-if="allowExtract && isArchiveFile" text="Extract here">
-        <UButton
-          icon="i-lucide-archive-restore"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          class="opacity-0 group-hover:opacity-100"
-          @click.stop="emit('extract', entry)"
-        />
-      </UTooltip>
-    </div>
-    <div class="flex w-7 shrink-0 items-center justify-center">
-      <UTooltip v-if="transferIcon" :text="transferTooltip">
-        <UButton
-          :icon="transferIcon"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          class="opacity-0 group-hover:opacity-100"
-          @click.stop="emit('transfer', entry)"
-        />
-      </UTooltip>
-    </div>
-    <UTooltip text="Delete">
-      <UButton
-        icon="i-lucide-trash-2"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        class="opacity-0 group-hover:opacity-100"
-        @click.stop="emit('remove', entry)"
-      />
-    </UTooltip>
   </div>
   </ContextMenu>
 </template>

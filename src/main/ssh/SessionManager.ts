@@ -178,8 +178,12 @@ export class SessionManager {
         authMethod: site.authMethod,
         privateKeyPath: site.privateKeyPath,
         agentPath: site.agentPath,
-        password: secrets.password,
-        passphrase: secrets.passphrase,
+        // Gated on the site's own authMethod, not just "is a password stored" —
+        // otherwise a site switched to privateKey/agent auth would still hand a
+        // leftover stored password to any keyboard-interactive prompt matching
+        // /password/i (see keyboardInteractive.ts's partitionPrompts).
+        password: site.authMethod === 'password' ? secrets.password : undefined,
+        passphrase: site.authMethod === 'privateKey' ? secrets.passphrase : undefined,
         jumpHost: site.jumpHost
           ? {
               host: site.jumpHost.host,
@@ -187,8 +191,8 @@ export class SessionManager {
               username: site.jumpHost.username,
               authMethod: site.jumpHost.authMethod,
               privateKeyPath: site.jumpHost.privateKeyPath,
-              password: jumpSecrets?.password,
-              passphrase: jumpSecrets?.passphrase
+              password: site.jumpHost.authMethod === 'password' ? jumpSecrets?.password : undefined,
+              passphrase: site.jumpHost.authMethod === 'privateKey' ? jumpSecrets?.passphrase : undefined
             }
           : undefined
       },

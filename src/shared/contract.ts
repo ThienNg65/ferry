@@ -113,6 +113,8 @@ export interface Site {
   hasPassword: boolean
   hasPassphrase: boolean
   jumpHost?: JumpHostInfo
+  /** Free-text group/folder name for organizing the site list — undefined means ungrouped. */
+  group?: string
   createdAt: string
   updatedAt: string
 }
@@ -131,10 +133,30 @@ export interface SiteInput {
   password?: string
   passphrase?: string
   jumpHost?: JumpHostConfig
+  group?: string
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
 export interface QuickConnectInput extends SiteInput {}
+
+/**
+ * A saved session found in a third-party client's config during an import
+ * scan — not yet a Ferry site until the user picks it and it's created via
+ * the normal `sites:create` path. Never carries a password: WinSCP's stored
+ * password is only reversibly *obfuscated* (not real encryption) and PuTTY
+ * doesn't store passwords at all, so importing one reliably without risking a
+ * silently-wrong decoded credential is out of scope — the user re-enters it
+ * after import, same as any other password field.
+ */
+export interface ImportedSessionCandidate {
+  source: 'winscp' | 'putty'
+  name: string
+  host: string
+  port: number
+  username: string
+  privateKeyPath?: string
+  remoteInitialPath?: string
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — sessions
@@ -325,6 +347,8 @@ export const INVOKE_CHANNELS = {
   sitesCreate: 'sites:create',
   sitesUpdate: 'sites:update',
   sitesDelete: 'sites:delete',
+  sitesDuplicate: 'sites:duplicate',
+  sitesImportScan: 'sites:import-scan',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',

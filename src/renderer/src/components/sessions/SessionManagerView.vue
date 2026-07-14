@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import SiteFormDialog from './SiteFormDialog.vue'
+import ImportSessionsDialog from './ImportSessionsDialog.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
@@ -63,6 +64,8 @@ function openCreateDialog(): void {
   formOpen.value = true
 }
 
+const importOpen = ref(false)
+
 function openEditDialog(site: Site): void {
   editingSite.value = site
   formOpen.value = true
@@ -83,6 +86,63 @@ async function confirmDelete(): Promise<void> {
     deleting.value = false
   }
 }
+
+const duplicatingId = ref<string | null>(null)
+
+async function onDuplicate(site: Site): Promise<void> {
+  duplicatingId.value = site.id
+  try {
+    await sites.duplicateSite(site.id)
+  } finally {
+    duplicatingId.value = null
+  }
+}
+
+const searchQuery = ref('')
+
+const filteredSites = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) {
+    return sites.sites
+  }
+  return sites.sites.filter(
+    (s) =>
+      s.name.toLowerCase().includes(q) ||
+      s.host.toLowerCase().includes(q) ||
+      s.username.toLowerCase().includes(q)
+  )
+})
+
+interface SiteGroupSection {
+  /** Null means "no header" — used when no site has a group at all, to keep the plain flat-list look. */
+  name: string | null
+  sites: Site[]
+}
+
+/** Groups by `site.group`, alphabetically; ungrouped sites trail under "Ungrouped" only once some grouping is in use. */
+const groupedSites = computed<SiteGroupSection[]>(() => {
+  if (!filteredSites.value.some((s) => s.group)) {
+    return [{ name: null, sites: filteredSites.value }]
+  }
+  const byGroup = new Map<string, Site[]>()
+  const ungrouped: Site[] = []
+  for (const site of filteredSites.value) {
+    if (site.group) {
+      const list = byGroup.get(site.group) ?? []
+      list.push(site)
+      byGroup.set(site.group, list)
+    } else {
+      ungrouped.push(site)
+    }
+  }
+  const sections = Array.from(byGroup.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, list]) => ({ name, sites: list }))
+  if (ungrouped.length > 0) {
+    sections.push({ name: 'Ungrouped', sites: ungrouped })
+  }
+  return sections
+})
 </script>
 
 <template>
@@ -92,7 +152,18 @@ async function confirmDelete(): Promise<void> {
         <template #header>
           <div class="flex items-center justify-between">
             <h1 class="text-base font-medium text-highlighted">Sites</h1>
-            <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
+            <div class="flex items-center gap-1.5">
+              <UTooltip text="Import from WinSCP/PuTTY">
+                <UButton
+                  icon="i-lucide-import"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  @click="importOpen = true"
+                />
+              </UTooltip>
+              <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
+            </div>
           </div>
         </template>
 
@@ -100,39 +171,67 @@ async function confirmDelete(): Promise<void> {
         <div v-else-if="sites.sites.length === 0" class="py-4 text-center text-xs text-muted">
           No saved sites yet — add one, or use Quick Connect below.
         </div>
-        <ul v-else class="flex flex-col gap-1">
-          <li
-            v-for="site in sites.sites"
-            :key="site.id"
-            class="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
-          >
-            <UIcon name="i-lucide-server" class="size-4 shrink-0 text-muted" />
-            <button class="min-w-0 flex-1 text-left" @click="onConnectSite(site)">
-              <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
-              <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
-            </button>
-            <UTooltip text="Edit site">
-              <UButton
-                icon="i-lucide-pencil"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                class="opacity-0 group-hover:opacity-100"
-                @click="openEditDialog(site)"
-              />
-            </UTooltip>
-            <UTooltip text="Delete site">
-              <UButton
-                icon="i-lucide-trash-2"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                class="opacity-0 group-hover:opacity-100"
-                @click="deleteTarget = site"
-              />
-            </UTooltip>
-          </li>
-        </ul>
+        <template v-else>
+          <UInput
+            v-model="searchQuery"
+            icon="i-lucide-search"
+            placeholder="Search sites…"
+            size="xs"
+            class="mb-2 w-full"
+          />
+          <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
+            No sites match "{{ searchQuery }}".
+          </p>
+          <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
+            <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
+              {{ section.name }}
+            </div>
+            <ul class="flex flex-col gap-1">
+              <li
+                v-for="site in section.sites"
+                :key="site.id"
+                class="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
+              >
+                <UIcon name="i-lucide-server" class="size-4 shrink-0 text-muted" />
+                <button class="min-w-0 flex-1 text-left" @click="onConnectSite(site)">
+                  <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
+                  <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
+                </button>
+                <UTooltip text="Duplicate site">
+                  <UButton
+                    icon="i-lucide-copy"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :loading="duplicatingId === site.id"
+                    class="opacity-0 group-hover:opacity-100"
+                    @click="onDuplicate(site)"
+                  />
+                </UTooltip>
+                <UTooltip text="Edit site">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    class="opacity-0 group-hover:opacity-100"
+                    @click="openEditDialog(site)"
+                  />
+                </UTooltip>
+                <UTooltip text="Delete site">
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    class="opacity-0 group-hover:opacity-100"
+                    @click="deleteTarget = site"
+                  />
+                </UTooltip>
+              </li>
+            </ul>
+          </div>
+        </template>
       </UCard>
 
       <UCard>
@@ -171,6 +270,7 @@ async function confirmDelete(): Promise<void> {
     </div>
 
     <SiteFormDialog v-model:open="formOpen" :site="editingSite" />
+    <ImportSessionsDialog v-model:open="importOpen" />
 
     <UModal
       :open="Boolean(deleteTarget)"

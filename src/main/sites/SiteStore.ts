@@ -32,6 +32,7 @@ interface StoredSite {
   /** Base64 ciphertext from `safeStorage.encryptString`. */
   secretPassphrase?: string
   jumpHost?: StoredJumpHost
+  group?: string
   createdAt: string
   updatedAt: string
 }
@@ -57,6 +58,22 @@ function decrypt(ciphertext: string | undefined): string | undefined {
   return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
 }
 
+/**
+ * Retains a secret only when the current auth method actually uses it —
+ * otherwise returns `undefined` (clearing it) even if an old encrypted value
+ * exists. Without this, switching a site from password auth to privateKey/agent
+ * would leave the stale password ciphertext in the store forever, and
+ * `SessionManager`'s keyboard-interactive auto-answer would keep replaying it
+ * into any prompt matching `/password/i` regardless of the site's configured
+ * auth method.
+ */
+export function pickSecret(wants: boolean, provided: string | undefined, existing: string | undefined): string | undefined {
+  if (!wants) {
+    return undefined
+  }
+  return provided !== undefined ? encrypt(provided) : existing
+}
+
 function toPublicJumpHost(j: StoredJumpHost): JumpHostInfo {
   return {
     host: j.host,
@@ -76,8 +93,8 @@ function toStoredJumpHost(j: JumpHostConfig, existing?: StoredJumpHost): StoredJ
     username: j.username,
     authMethod: j.authMethod,
     privateKeyPath: j.privateKeyPath,
-    secretPassword: j.password !== undefined ? encrypt(j.password) : existing?.secretPassword,
-    secretPassphrase: j.passphrase !== undefined ? encrypt(j.passphrase) : existing?.secretPassphrase
+    secretPassword: pickSecret(j.authMethod === 'password', j.password, existing?.secretPassword),
+    secretPassphrase: pickSecret(j.authMethod === 'privateKey', j.passphrase, existing?.secretPassphrase)
   }
 }
 
@@ -96,6 +113,7 @@ function toPublicSite(s: StoredSite): Site {
     hasPassword: Boolean(s.secretPassword),
     hasPassphrase: Boolean(s.secretPassphrase),
     jumpHost: s.jumpHost ? toPublicJumpHost(s.jumpHost) : undefined,
+    group: s.group,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt
   }
@@ -135,9 +153,10 @@ export class SiteStore {
       agentPath: input.agentPath,
       remoteInitialPath: input.remoteInitialPath,
       localInitialPath: input.localInitialPath,
-      secretPassword: encrypt(input.password),
-      secretPassphrase: encrypt(input.passphrase),
+      secretPassword: pickSecret(input.authMethod === 'password', input.password, undefined),
+      secretPassphrase: pickSecret(input.authMethod === 'privateKey', input.passphrase, undefined),
       jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost) : undefined,
+      group: input.group || undefined,
       createdAt: now,
       updatedAt: now
     }
@@ -165,10 +184,10 @@ export class SiteStore {
       agentPath: input.agentPath,
       remoteInitialPath: input.remoteInitialPath,
       localInitialPath: input.localInitialPath,
-      secretPassword: input.password !== undefined ? encrypt(input.password) : existing.secretPassword,
-      secretPassphrase:
-        input.passphrase !== undefined ? encrypt(input.passphrase) : existing.secretPassphrase,
+      secretPassword: pickSecret(input.authMethod === 'password', input.password, existing.secretPassword),
+      secretPassphrase: pickSecret(input.authMethod === 'privateKey', input.passphrase, existing.secretPassphrase),
       jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost, existing.jumpHost) : undefined,
+      group: input.group || undefined,
       updatedAt: new Date().toISOString()
     }
     sites[idx] = updated
@@ -179,6 +198,26 @@ export class SiteStore {
   delete(id: string): void {
     const sites = this.store.get('sites').filter((s) => s.id !== id)
     this.store.set('sites', sites)
+  }
+
+  /** Clones a saved site (new id/name/timestamps) — encrypted secrets are copied as-is, no re-encryption needed. */
+  duplicate(id: string): Site {
+    const sites = this.store.get('sites')
+    const existing = sites.find((s) => s.id === id)
+    if (!existing) {
+      throw new SshError('NOT_FOUND', `Site ${id} not found`)
+    }
+    const now = new Date().toISOString()
+    const copy: StoredSite = {
+      ...existing,
+      id: randomUUID(),
+      name: `${existing.name} copy`,
+      createdAt: now,
+      updatedAt: now
+    }
+    sites.push(copy)
+    this.store.set('sites', sites)
+    return toPublicSite(copy)
   }
 
   /** Raw stored record (still has ciphertext, not decrypted) — main-process only. */

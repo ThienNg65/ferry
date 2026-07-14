@@ -25,6 +25,21 @@ function shellEscape(value: string): string {
 }
 
 /**
+ * Clamps `historyLines` to a safe non-negative integer. This value is
+ * interpolated directly (unquoted) into a remote shell command as `tail -n
+ * ${historyLines}`, and the IPC boundary only casts the incoming request to
+ * its TypeScript type without runtime validation — so a compromised or buggy
+ * renderer could otherwise smuggle arbitrary shell syntax through this field.
+ */
+function sanitizeHistoryLines(value: number): number {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n) || n < 0) {
+    return 200
+  }
+  return Math.min(n, 100_000)
+}
+
+/**
  * TailManager — `tail -F` multiplexer over the SSH exec channel.
  *
  * Uses `-F` (retry + follow-by-name), not plain `-f`, so a rotated/truncated
@@ -100,7 +115,7 @@ export class TailManager {
     const controller = new AbortController()
     this.tails.set(tailId, { controller, sessionId, remotePath, remotePid: null, lastActive: Date.now() })
     this.ensureReaper()
-    void this.follow(tailId, historyLines, 0)
+    void this.follow(tailId, sanitizeHistoryLines(historyLines), 0)
   }
 
   /** Runs one `tail -F` attempt and reconnects on transient end. */

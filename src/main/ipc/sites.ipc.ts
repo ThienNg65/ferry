@@ -1,6 +1,7 @@
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type Site, type SiteInput } from '../../shared/contract'
+import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
 import { SiteStore } from '../sites/SiteStore'
+import { scanImportCandidates } from '../sites/SessionImporter'
 
 /** Registers CRUD handlers for saved connection profiles. */
 export function registerSitesHandlers(): void {
@@ -18,5 +19,13 @@ export function registerSitesHandlers(): void {
 
   handle<void>(INVOKE_CHANNELS.sitesDelete, (id) => {
     SiteStore.getInstance().delete(id as string)
+  })
+
+  handle<Site>(INVOKE_CHANNELS.sitesDuplicate, (id) => {
+    return SiteStore.getInstance().duplicate(id as string)
+  })
+
+  handle<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan, () => {
+    return scanImportCandidates()
   })
 }

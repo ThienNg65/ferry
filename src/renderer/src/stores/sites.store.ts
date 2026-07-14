@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { Site, SiteInput } from '@shared/contract'
+import type { ImportedSessionCandidate, Site, SiteInput } from '@shared/contract'
 import { invoke } from '../api'
 
 /** Defaults the site name to the hostname when the user leaves it blank. */
@@ -19,6 +19,19 @@ export const useSitesStore = defineStore('sites', {
     sites: [],
     loading: false
   }),
+
+  getters: {
+    /** Distinct group names in use, sorted — feeds the "Group" field's datalist suggestions. */
+    groupNames(state): string[] {
+      const names = new Set<string>()
+      for (const site of state.sites) {
+        if (site.group) {
+          names.add(site.group)
+        }
+      }
+      return Array.from(names).sort((a, b) => a.localeCompare(b))
+    }
+  },
 
   actions: {
     async fetchSites(): Promise<void> {
@@ -43,6 +56,16 @@ export const useSitesStore = defineStore('sites', {
     async deleteSite(id: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.sitesDelete, id)
       this.sites = this.sites.filter((s) => s.id !== id)
+    },
+
+    async duplicateSite(id: string): Promise<void> {
+      await invoke<Site>(INVOKE_CHANNELS.sitesDuplicate, id)
+      await this.fetchSites()
+    },
+
+    /** Scans WinSCP/PuTTY's saved sessions (Windows only) — read-only, does not create anything. */
+    async scanImportCandidates(): Promise<ImportedSessionCandidate[]> {
+      return invoke<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan)
     }
   }
 })

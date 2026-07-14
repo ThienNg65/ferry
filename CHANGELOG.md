@@ -2,6 +2,26 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.7.0 — Bug fixes, WinSCP-parity Phase 4 (partial), and a security/performance review
+
+Two real bugs reported from manual testing, fixed; three of Phase 4's six items landed; and a dedicated security + performance review of the existing Phase 1/2 work, with the findings acted on rather than just reported. 104 tests passing (up from 76).
+
+**Bug fixes:**
+- Right-click → Rename no longer opens the inline edit box and instantly closes it again — the context menu was stealing focus back a moment after the rename input appeared.
+- The per-row action-button column is back to a single Delete button — tail/extract/transfer's hover icons were redundant now that the right-click context menu covers them.
+
+**WinSCP-parity Phase 4 (partial):**
+- Saved sites can be grouped (a free-text tag, e.g. "Work"), searched, and duplicated.
+- Per-file-type icons — images, video, audio, code, archives, spreadsheets, and documents each get their own icon instead of one generic file icon.
+- Import existing WinSCP and PuTTY sessions from this machine's saved sessions (Windows registry scan). Passwords are deliberately never imported — neither client stores one in a form Ferry can safely decode.
+
+**Security fixes (found in this release's own review):**
+- A site's stored password could keep getting silently replayed into keyboard-interactive prompts even after switching that site to key- or agent-based auth. Switching a site's auth method now clears the secret it no longer uses.
+- The remote log-tail feature's history-line count was passed into a remote shell command without validation — a possible injection point if the app's renderer process were ever compromised. Now validated before use.
+
+**Performance fix (found in this release's own review):**
+- Uploading/downloading a whole folder moved one file at a time, even on a high-latency connection. Up to 4 files now transfer concurrently within a single folder transfer.
+
 ## 0.6.0 — WinSCP-parity Phase 2: security & auth, plus the first real-server test suite
 
 Closes Phase 2 of `.claude/plan/ferry-winscp-parity-roadmap.md` — the trust/security gaps flagged in the original gap analysis as "would concern a security-conscious WinSCP user." This is also the first release with any automated tests: 76 passing, including real-server integration suites run against a local Docker SFTP/SSH container (not mocks) — see `.claude/PROJECT_MAP.md`'s Build/run/test section.

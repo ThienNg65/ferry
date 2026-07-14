@@ -70,9 +70,6 @@ const emit = defineEmits<{
       </button>
       <span v-if="side === 'remote'" class="w-36 shrink-0 text-right">Permissions</span>
       <span class="w-7 shrink-0" />
-      <span class="w-7 shrink-0" />
-      <span class="w-7 shrink-0" />
-      <span class="w-7 shrink-0" />
     </div>
     <div class="flex-1 overflow-y-auto px-1 py-1">
       <FileRow

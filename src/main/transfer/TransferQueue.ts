@@ -32,6 +32,8 @@ function joinRemote(root: string, relPath: string): string {
 
 /** Transfers running at once — the rest wait in the queue. */
 const MAX_CONCURRENT = 3
+/** Files (or mkdir calls) running at once within a single directory-tree job. Over a high-latency link, moving one file at a time makes wall time dominated by per-file round trips rather than bandwidth — see the roadmap's Phase 3 performance review. */
+const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
 
@@ -217,8 +219,11 @@ export class TransferQueue {
 
   /**
    * Walks a directory tree (local for uploads, remote for downloads), recreates its
-   * directory structure at the destination, then transfers every file one at a time —
-   * aggregating byte progress across the whole tree under this job's single transferId.
+   * directory structure at the destination, then transfers its files — up to
+   * {@link TREE_ITEM_CONCURRENCY} at once, not one at a time, since a serial walk
+   * makes wall time dominated by per-file round-trip latency rather than bandwidth
+   * on anything but a very low-latency link — aggregating byte progress across the
+   * whole tree under this job's single transferId.
    */
   private async runTree(job: TransferJob): Promise<void> {
     const { transferId, kind } = job
@@ -237,7 +242,7 @@ export class TransferQueue {
       const dirs = tree.filter((e) => e.isDir)
       const files = tree.filter((e) => !e.isDir)
 
-      for (const dir of dirs) {
+      await this.runConcurrent(dirs, TREE_ITEM_CONCURRENCY, async (dir) => {
         if (job.controller.signal.aborted) {
           throw new SshError('CANCELLED', 'Transfer cancelled')
         }
@@ -246,16 +251,22 @@ export class TransferQueue {
         } else {
           await mkdirLocalRecursive(joinLocal(job.localPath, dir.relPath))
         }
-      }
+      })
 
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
-      let currentFileBytes = 0
+      // Multiple files stream concurrently now, so "bytes so far" is doneBytes
+      // (fully-finished files) plus whatever each still-in-flight file has moved.
+      const inFlightBytes = new Map<number, number>()
       const startedAt = Date.now()
       let lastEmit = 0
       const emitProgress = (): void => {
         const now = Date.now()
-        const bytesTransferred = doneBytes + currentFileBytes
+        let inFlightTotal = 0
+        for (const bytes of inFlightBytes.values()) {
+          inFlightTotal += bytes
+        }
+        const bytesTransferred = doneBytes + inFlightTotal
         const isFinal = bytesTransferred >= totalBytes
         if (now - lastEmit < PROGRESS_THROTTLE_MS && !isFinal) {
           return
@@ -267,32 +278,72 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
       }
 
-      for (const file of files) {
-        if (job.controller.signal.aborted) {
-          throw new SshError('CANCELLED', 'Transfer cancelled')
-        }
-        currentFileBytes = 0
-        await this.runFile({
-          shell,
-          kind,
-          localPath: joinLocal(job.localPath, file.relPath),
-          remotePath: joinRemote(job.remotePath, file.relPath),
-          signal: job.controller.signal,
-          onProgress: (bytesTransferred) => {
-            currentFileBytes = bytesTransferred
-            emitProgress()
+      await this.runConcurrent(
+        files.map((file, index) => ({ file, index })),
+        TREE_ITEM_CONCURRENCY,
+        async ({ file, index }) => {
+          if (job.controller.signal.aborted) {
+            throw new SshError('CANCELLED', 'Transfer cancelled')
           }
-        })
-        doneBytes += file.size
-        currentFileBytes = 0
-        emitProgress()
-      }
+          inFlightBytes.set(index, 0)
+          await this.runFile({
+            shell,
+            kind,
+            localPath: joinLocal(job.localPath, file.relPath),
+            remotePath: joinRemote(job.remotePath, file.relPath),
+            signal: job.controller.signal,
+            onProgress: (bytesTransferred) => {
+              inFlightBytes.set(index, bytesTransferred)
+              emitProgress()
+            }
+          })
+          inFlightBytes.delete(index)
+          doneBytes += file.size
+          emitProgress()
+        }
+      )
 
       this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
       this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
+    }
+  }
+
+  /**
+   * Runs `items` through `worker` with at most `concurrency` in flight at once.
+   * If any worker throws, no new items are started and the first error is
+   * rethrown once every already-in-flight worker has settled — mirroring the
+   * previous serial loop's "stop on first failure" behavior, just bounded-parallel
+   * instead of one-at-a-time.
+   */
+  private async runConcurrent<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+    let nextIndex = 0
+    let stopped = false
+    let firstError: unknown
+
+    const runNext = async (): Promise<void> => {
+      while (!stopped) {
+        const i = nextIndex++
+        if (i >= items.length) {
+          return
+        }
+        try {
+          await worker(items[i])
+        } catch (e) {
+          if (!stopped) {
+            stopped = true
+            firstError = e
+          }
+          return
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runNext()))
+    if (stopped) {
+      throw firstError
     }
   }
 

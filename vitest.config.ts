@@ -1,6 +1,13 @@
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@renderer': resolve(__dirname, 'src/renderer/src'),
+      '@shared': resolve(__dirname, 'src/shared')
+    }
+  },
   test: {
     // Several suites (RemoteShell/SessionManager/TransferQueue integration
     // tests) share real, disk-backed state across files — KnownHostsStore's
