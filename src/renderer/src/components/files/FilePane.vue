@@ -400,7 +400,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
     class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-10 shrink-0' : side === 'local' ? 'min-w-0 w-1/2' : 'min-w-0 flex-1',
-      isDropTarget ? 'ring-2 ring-primary ring-inset' : ''
+      isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
     @dragover="onDragOver"
@@ -408,7 +408,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
     @drop="onDrop"
     @keydown="onKeydown"
   >
-    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted px-3">
+    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted px-3">
       <div v-if="showBody" class="flex items-center gap-1.5">
         <UIcon :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'" class="size-3.5 text-highlighted" />
         <span class="text-xs font-semibold uppercase tracking-wide text-highlighted">{{ side }}</span>

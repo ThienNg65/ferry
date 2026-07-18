@@ -26,6 +26,9 @@ onMounted(() => {
       @cancel="store.cancel(item.transferId)"
       @retry="store.retry(item.transferId)"
     />
-    <p v-if="store.list.length === 0" class="px-3 py-6 text-center text-xs text-muted">No transfers yet</p>
+    <div v-if="store.list.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+      <UIcon name="i-lucide-arrow-down-up" class="size-5 text-dimmed" />
+      <p class="text-xs text-dimmed">No transfers yet</p>
+    </div>
   </div>
 </template>

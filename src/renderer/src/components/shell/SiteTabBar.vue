@@ -12,12 +12,16 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 overflow-x-auto border-b border-muted bg-default/80 px-2 py-1">
+  <div class="flex items-center gap-1 overflow-x-auto border-b border-default bg-muted px-2 py-1">
     <div
       v-for="tab in sessions.tabs"
       :key="tab.tabId"
-      class="group flex max-w-48 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs"
-      :class="tab.tabId === sessions.activeTabId ? 'bg-accented text-highlighted' : 'text-muted hover:bg-muted'"
+      class="group flex max-w-48 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-l-2 px-2 py-1 text-xs"
+      :class="
+        tab.tabId === sessions.activeTabId
+          ? 'border-primary bg-primary/10 font-medium text-primary'
+          : 'border-transparent text-muted hover:bg-elevated hover:text-default'
+      "
       @click="sessions.setActiveTab(tab.tabId)"
     >
       <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />

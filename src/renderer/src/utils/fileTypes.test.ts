@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { iconForFile } from './fileTypes'
+import { colorForFile, iconForFile } from './fileTypes'
 
 describe('iconForFile', () => {
   it('always returns the folder icon for directories, regardless of name', () => {
@@ -31,5 +31,31 @@ describe('iconForFile', () => {
   it('falls back to the generic file icon for unknown/no extension', () => {
     expect(iconForFile('LICENSE', false)).toBe('i-lucide-file')
     expect(iconForFile('binary.exe', false)).toBe('i-lucide-file')
+  })
+})
+
+describe('colorForFile', () => {
+  it('colors directories with the primary accent', () => {
+    expect(colorForFile('archive.zip', true)).toBe('text-primary')
+  })
+
+  it('gives one representative bucket per type a distinct muted color', () => {
+    expect(colorForFile('backup.zip', false)).toBe('text-amber-600 dark:text-amber-400')
+    expect(colorForFile('photo.png', false)).toBe('text-violet-600 dark:text-violet-400')
+    expect(colorForFile('clip.mp4', false)).toBe('text-rose-600 dark:text-rose-400')
+    expect(colorForFile('song.mp3', false)).toBe('text-pink-600 dark:text-pink-400')
+    expect(colorForFile('data.csv', false)).toBe('text-emerald-600 dark:text-emerald-400')
+    expect(colorForFile('index.ts', false)).toBe('text-teal-600 dark:text-teal-400')
+    expect(colorForFile('package.json', false)).toBe('text-teal-600 dark:text-teal-400')
+  })
+
+  it('keeps plain documents quiet (text-muted), restraint on the long tail', () => {
+    expect(colorForFile('README.md', false)).toBe('text-muted')
+    expect(colorForFile('notes.txt', false)).toBe('text-muted')
+  })
+
+  it('falls back to text-dimmed for unknown/no extension', () => {
+    expect(colorForFile('LICENSE', false)).toBe('text-dimmed')
+    expect(colorForFile('binary.exe', false)).toBe('text-dimmed')
   })
 })

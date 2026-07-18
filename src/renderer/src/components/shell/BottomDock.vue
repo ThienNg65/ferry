@@ -31,10 +31,10 @@ function basename(path: string): string {
 
 <template>
   <div
-    class="flex shrink-0 flex-col overflow-hidden border-t border-muted transition-[height] duration-200 ease-in-out"
+    class="flex shrink-0 flex-col overflow-hidden border-t border-default transition-[height] duration-200 ease-in-out"
     :class="collapsed ? 'h-9' : 'h-56'"
   >
-    <div class="flex items-center justify-between px-2 py-1">
+    <div class="flex items-center justify-between bg-muted px-2 py-1">
       <div class="flex items-center gap-1">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
@@ -99,7 +99,9 @@ function basename(path: string): string {
             :key="openTail.tailId"
             class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs"
             :class="
-              tailStreams.activeTailId === openTail.tailId ? 'bg-accented text-highlighted' : 'text-muted hover:bg-muted'
+              tailStreams.activeTailId === openTail.tailId
+                ? 'bg-primary/10 font-medium text-primary'
+                : 'text-muted hover:bg-muted'
             "
           >
             <button class="truncate" @click="tailStreams.activeTailId = openTail.tailId">
@@ -122,9 +124,10 @@ function basename(path: string): string {
             :key="tailStreams.activeTailId"
             :tail-id="tailStreams.activeTailId"
           />
-          <p v-else class="px-3 py-6 text-center text-xs text-muted">
-            Click the tail icon on a remote file to follow it live
-          </p>
+          <div v-else class="flex h-full flex-col items-center justify-center gap-1 px-3 py-6 text-center">
+            <UIcon name="i-lucide-scroll-text" class="size-5 text-dimmed" />
+            <p class="text-xs text-dimmed">Click the tail icon on a remote file to follow it live</p>
+          </div>
         </div>
       </template>
     </div>

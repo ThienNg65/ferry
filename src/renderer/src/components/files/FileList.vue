@@ -34,7 +34,7 @@ const emit = defineEmits<{
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted"
+      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-default"
     >
       <span class="size-4 shrink-0" />
       <button type="button" class="flex-1 truncate text-left hover:text-highlighted" @click="emit('sort', 'name')">
@@ -95,7 +95,10 @@ const emit = defineEmits<{
         @start-rename="emit('start-rename', $event)"
         @chmod="emit('chmod', $event)"
       />
-      <p v-if="entries.length === 0" class="px-3 py-6 text-center text-xs text-muted">Empty folder</p>
+      <div v-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+        <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
+        <p class="text-xs text-dimmed">Empty folder</p>
+      </div>
     </div>
   </div>
 </template>

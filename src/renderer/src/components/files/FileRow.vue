@@ -8,7 +8,7 @@ import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
-import { isArchive, iconForFile } from '../../utils/fileTypes'
+import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
 
 const props = defineProps<{
   entry: FileEntry
@@ -155,8 +155,12 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
   <div
-    class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
-    :class="selected ? 'bg-accented text-highlighted' : 'text-default hover:bg-muted'"
+    class="group flex cursor-default select-none items-center gap-2 rounded-md border-l-2 px-3 py-1.5 text-[13px]"
+    :class="
+      selected
+        ? 'border-primary bg-primary/10 text-highlighted'
+        : 'border-transparent text-default hover:bg-muted'
+    "
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"
     @dblclick="emit('open', entry)"
@@ -165,7 +169,8 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
   >
     <UIcon
       :name="iconForFile(entry.name, entry.isDir)"
-      class="size-4 shrink-0 text-muted"
+      class="size-4 shrink-0"
+      :class="colorForFile(entry.name, entry.isDir)"
     />
     <UInput
       v-if="renaming"
@@ -181,11 +186,11 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
       @blur="submitRename"
     />
     <span v-else class="flex-1 truncate">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-xs text-muted">{{ formatSize(entry.size, entry.isDir) }}</span>
-    <span class="w-40 shrink-0 text-right text-xs text-muted">{{ formatDate(entry.modifiedAt) }}</span>
+    <span class="w-20 shrink-0 text-right text-xs text-dimmed">{{ formatSize(entry.size, entry.isDir) }}</span>
+    <span class="w-40 shrink-0 text-right text-xs text-dimmed">{{ formatDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
-        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
+        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-dimmed">
           {{ technicalPermissions }}
         </span>
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>

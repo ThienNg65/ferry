@@ -49,7 +49,7 @@ function close(): void {
 
 <template>
   <div
-    class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-muted bg-default/80 backdrop-blur"
+    class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-muted bg-muted/80 backdrop-blur"
     style="-webkit-app-region: drag"
   >
     <div class="flex items-center" style="-webkit-app-region: no-drag">
@@ -89,7 +89,7 @@ function close(): void {
           </button>
         </UTooltip>
       </Transition>
-      <span class="text-xs font-medium text-muted">Ferry</span>
+      <span class="text-xs font-medium text-toned">Ferry</span>
     </div>
     <div class="flex h-full items-stretch justify-self-end" style="-webkit-app-region: no-drag">
       <UTooltip text="Minimize">
