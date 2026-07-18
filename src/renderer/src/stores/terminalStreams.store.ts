@@ -2,8 +2,9 @@ import { defineStore } from 'pinia'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
-import type { TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
+import type { ClipboardTextResult, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
+import { terminalKeyAction } from '../utils/terminalKeys'
 
 interface TerminalInstance {
   terminalId: string
@@ -29,6 +30,27 @@ const instances = new Map<string, TerminalInstance>()
  * `instances.get(sessionId)` check as undefined and each open a real PTY.
  */
 const pending = new Map<string, Promise<string>>()
+
+/** Copies the terminal's current selection to the OS clipboard, then clears it. */
+function copySelection(term: Terminal): void {
+  if (term.hasSelection()) {
+    void navigator.clipboard.writeText(term.getSelection())
+    term.clearSelection()
+  }
+}
+
+/**
+ * Reads the OS clipboard (main-process side — reliable under the sandboxed
+ * renderer, unlike navigator.clipboard.readText()) and pastes it. `paste()`
+ * (not `write()`) so bracketed-paste mode works in vim/zsh, and the text flows
+ * through the existing onData → terminal:write path like typed input.
+ */
+async function pasteInto(term: Terminal): Promise<void> {
+  const { text } = await invoke<ClipboardTextResult>(INVOKE_CHANNELS.systemClipboardReadText)
+  if (text) {
+    term.paste(text)
+  }
+}
 
 function findByTerminalId(terminalId: string): TerminalInstance | undefined {
   for (const inst of instances.values()) {
@@ -94,6 +116,24 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         term.onData((data) => {
           void invoke<void>(INVOKE_CHANNELS.terminalWrite, { terminalId, data })
         })
+        // Clipboard shortcuts (Ctrl+C copies only when a selection exists —
+        // otherwise it stays a SIGINT; Ctrl+V/Ctrl+Shift+V/Shift+Insert paste).
+        // Returning false stops xterm's own processing; preventDefault stops
+        // Chromium's native paste from double-firing into the hidden textarea.
+        term.attachCustomKeyEventHandler((ev) => {
+          const action = terminalKeyAction(ev, term.hasSelection())
+          if (action === 'copy') {
+            ev.preventDefault()
+            copySelection(term)
+            return false
+          }
+          if (action === 'paste') {
+            ev.preventDefault()
+            void pasteInto(term)
+            return false
+          }
+          return true
+        })
         instances.set(sessionId, { terminalId, term, fit })
         this.knownSessionIds.push(sessionId)
         return terminalId
@@ -103,6 +143,27 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         return await openPromise
       } finally {
         pending.delete(sessionId)
+      }
+    },
+
+    /** Moves keyboard focus into a session's terminal (no-op if none is open). */
+    focus(sessionId: string): void {
+      instances.get(sessionId)?.term.focus()
+    },
+
+    /**
+     * Right-click convention (PuTTY/WinSCP): copy the selection if there is
+     * one, otherwise paste the clipboard at the prompt.
+     */
+    async copyOrPaste(sessionId: string): Promise<void> {
+      const inst = instances.get(sessionId)
+      if (!inst) {
+        return
+      }
+      if (inst.term.hasSelection()) {
+        copySelection(inst.term)
+      } else {
+        await pasteInto(inst.term)
       }
     },
 

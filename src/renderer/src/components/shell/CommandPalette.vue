@@ -16,6 +16,12 @@ const ui = useUiStore()
 const settingsDialog = useSettingsDialog()
 
 function onKeydown(event: KeyboardEvent): void {
+  // Terminal-first: while the xterm textarea is focused, Ctrl+K belongs to the
+  // shell (readline kill-to-end-of-line) — the palette stays reachable from
+  // everywhere else.
+  if (event.target instanceof HTMLElement && event.target.closest('.xterm')) {
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     open.value = !open.value

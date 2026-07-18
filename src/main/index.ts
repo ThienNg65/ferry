@@ -118,8 +118,15 @@ function registerAllHandlers(): void {
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
-  // No default menu bar — replaced by the in-app command palette / app menu.
-  Menu.setApplicationMenu(null)
+  // No default menu bar on Windows/Linux — replaced by the in-app command
+  // palette; Chromium dispatches native edit commands (copy/paste in inputs)
+  // without a menu there. macOS is different: Cmd+C/V only work via menu-role
+  // accelerators, so keep a minimal app+edit menu on darwin.
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
 
   registerAllHandlers()
   TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)

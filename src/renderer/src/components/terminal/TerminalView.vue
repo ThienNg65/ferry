@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch } from 'vue'
+import { nextTick, onBeforeUnmount, watch } from 'vue'
 import '@xterm/xterm/css/xterm.css'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
@@ -28,6 +28,12 @@ function attachContainer(sessionId: string, el: Element | null): void {
   }
   inst.term.open(el as HTMLElement)
   attachedSessions.add(sessionId)
+  // Terminal convention: right-click copies the selection if there is one,
+  // otherwise pastes. The listener lives exactly as long as the container div.
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    void terminalStreams.copyOrPaste(sessionId)
+  })
 }
 
 async function fitAndResize(sessionId: string): Promise<void> {
@@ -49,7 +55,16 @@ async function syncActiveTerminal(): Promise<void> {
     return
   }
   await terminalStreams.ensureTerminal(sessionId)
+  // A freshly-created terminal's v-for container hasn't rendered yet at this
+  // point (ensureTerminal only just pushed to knownSessionIds) — wait a tick so
+  // attachContainer's term.open() has run before fitting.
+  await nextTick()
   await fitAndResize(sessionId)
+  // Focus so keystrokes land in the shell immediately — without this the user
+  // has to click inside the terminal before any key (incl. Ctrl+C) works.
+  if (props.active) {
+    terminalStreams.focus(sessionId)
+  }
 }
 
 watch(() => [props.active, sessions.activeSessionId] as const, () => void syncActiveTerminal(), {

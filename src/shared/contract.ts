@@ -319,6 +319,11 @@ export interface AppVersionResult {
   version: string
 }
 
+/** Result of reading the OS clipboard's current text content (main-process side). */
+export interface ClipboardTextResult {
+  text: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — auto-update
 // ─────────────────────────────────────────────────────────────────────────────
@@ -423,6 +428,7 @@ export const INVOKE_CHANNELS = {
   systemGetDownloadsPath: 'system:getDownloadsPath',
   systemGetAppVersion: 'system:getAppVersion',
   systemStartDrag: 'system:startDrag',
+  systemClipboardReadText: 'system:clipboardReadText',
   // window chrome
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',

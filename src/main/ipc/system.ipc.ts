@@ -1,6 +1,11 @@
-import { app, nativeImage } from 'electron'
+import { app, clipboard, nativeImage } from 'electron'
 import { handle, handleWithEvent } from './envelope'
-import { INVOKE_CHANNELS, type AppVersionResult, type DownloadsPathResult } from '../../shared/contract'
+import {
+  INVOKE_CHANNELS,
+  type AppVersionResult,
+  type ClipboardTextResult,
+  type DownloadsPathResult
+} from '../../shared/contract'
 
 /** 1x1 transparent PNG — `WebContents.startDrag` requires a non-empty icon; the OS drag ghost is what matters, not this. */
 const DRAG_ICON_DATA_URL =
@@ -13,6 +18,13 @@ export function registerSystemHandlers(): void {
   }))
   handle<AppVersionResult>(INVOKE_CHANNELS.systemGetAppVersion, () => ({
     version: app.getVersion()
+  }))
+
+  // Main-side clipboard read for the Terminal's paste path — unconditional and
+  // synchronous, unlike the sandboxed renderer's navigator.clipboard.readText(),
+  // which is permission- and focus-dependent across Electron/OS combinations.
+  handle<ClipboardTextResult>(INVOKE_CHANNELS.systemClipboardReadText, () => ({
+    text: clipboard.readText()
   }))
 
   // Starts a native OS drag session for a LOCAL file/folder, letting the renderer's
