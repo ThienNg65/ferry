@@ -2,6 +2,22 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.10.0 — UX & visibility pass: visual hierarchy, live operation progress, terminal keyboard fix, remote resource monitor
+
+Customer feedback on 0.9.0 raised four issues, all addressed this round: the UI was "modern, minimal, but hard to distinguish the content"; only file transfers reported progress, so remote extract/compress, local compress, and recursive deletes ran silently for up to 5 minutes behind a 6px title-bar dot; the Terminal's Ctrl+C/Ctrl+V "did nothing" (only typing + Enter worked); and there was no way to see a connected server's memory or CPU usage. 134 unit tests passing.
+
+**New features:**
+- **Activity dock tab** — remote extract/compress, local compress, and recursive deletes now show real progress and elapsed time instead of running silently. Multi-select delete is now one operation with an item-count progress, not N separate silent deletes. Compress/extract are cancellable; deletes are not (can't safely abort `rm -rf` mid-flight).
+- **Monitor dock tab** — live CPU% (aggregate + per-core sparkline), memory/swap, load averages, and uptime for the connected remote server, polled every 2s over the existing SSH connection via a single combined `/proc` read — no extra connections or PID-tracking.
+
+**Bug fixes:**
+- **Terminal keyboard** — Ctrl+C (copy selection or SIGINT), Ctrl+Shift+C, Ctrl+V/Ctrl+Shift+V/Shift+Insert (paste), and right-click copy-or-paste now all work. Root cause was the terminal never receiving keyboard focus except right after a direct click on the xterm canvas.
+
+**Visual hierarchy:**
+- Chrome regions (title bar, site tab bar, pane headers, dock header) now sit on a distinct `bg-muted` surface with borders at region boundaries, instead of one flat background shared with content everywhere.
+- Selected rows use an unmistakable `bg-primary/10` tint instead of two nearly-identical zinc shades previously shared with hover.
+- Per-file-type icon colors (archives amber, images violet, video rose, audio pink, spreadsheets emerald, code/json teal) and three-tier text contrast (headers vs. size/date/permissions metadata).
+
 ## 0.9.0 — WinSCP-parity Phase 4 continued: compress, bandwidth limit, tab persistence, theme, command palette
 
 The remaining WinSCP-parity Phase 4 items land: an inverse to the existing "Extract here" action, an app-wide transfer speed cap, tabs that survive a restart, a light/dark toggle, and a Ctrl/Cmd+K command palette — plus the first (currently inert) scaffolding for auto-update. 92 unit tests passing.

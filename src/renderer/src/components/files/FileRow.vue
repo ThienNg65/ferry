@@ -155,11 +155,11 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
   <div
-    class="group flex cursor-default select-none items-center gap-2 rounded-md border-l-2 px-3 py-1.5 text-[13px]"
+    class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
     :class="
       selected
-        ? 'border-primary bg-primary/10 text-highlighted'
-        : 'border-transparent text-default hover:bg-muted'
+        ? 'bg-primary/10 text-highlighted'
+        : 'text-default hover:bg-muted'
     "
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"

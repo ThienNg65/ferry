@@ -1,111 +1,69 @@
-# Handoff — File-op performance pass: exec-first delete, optimistic UI, parallel local stat (2026-07-17)
+# Handoff — Ferry Feature Round 6 (UX & Visibility Pass)
 
 ## Goal
 
-User feedback: Ferry feels much slower than WinSCP (and than a plain terminal)
-for delete/rename/chmod/"move to any folder" (navigating a local folder).
-Concretely: `rm -rf a/` in a real shell is instant; deleting the same folder
-`a/` from Ferry's file pane visibly waits. Goal was to find and fix the
-actual causes, not just "make it feel faster" cosmetically — see
-`.claude/plan/ferry-perf-fileops-plan.md` for the plan this session executed
-against (also saved to `C:\Users\nvtthien\.claude\plans\read-the-hanoff-md-the-zippy-glacier.md`
-by the harness).
+Customer feedback on v0.9.0 raised four issues; this round addresses all four:
 
-## Status: all 4 planned fixes implemented and verified against a real SFTP/SSH test container; typecheck/build/tests all clean
+1. **Visual hierarchy** — the UI was "modern, minimal, but hard to distinguish the content." Every region shared one flat background with only hairline borders; selected vs. hovered rows used two adjacent, nearly-identical zinc shades; all metadata text and file icons were uniformly gray.
+2. **Progress visibility** — only file transfers reported progress. Remote extract/compress, local compress, and recursive deletes ran silently behind a 6px title-bar dot for up to 5 minutes with no feedback.
+3. **Terminal keyboard** — Ctrl+C/Ctrl+V "did nothing," only typing + Enter worked.
+4. **Remote resource monitor** — no way to see the connected server's total memory, memory usage, or CPU usage.
 
-`npm run typecheck`, `npm run build`, and `npm test` are all clean. Beyond
-the usual mocked/pure-logic unit tests, this round's core claim — that
-`deleteRecursive` now does ONE exec instead of N SFTP round-trips, and
-correctly falls back when exec isn't available — was verified against a real
-`linuxserver/openssh-server` Docker container (spun up, tested, torn down
-this session; see "Everything tried that failed" for a real Windows/Git-Bash
-gotcha hit while doing this). The full integration suite (`RemoteShell`,
-`TransferQueue`, `SessionManager`) passed against that container; the
-pre-existing `SessionManager.jumphost.integration.test.ts` failed, but this
-looks like an environment-setup gap in the single ad-hoc container used this
-session (jump-host testing needs a "self-jump" trick per an earlier session's
-notes in this same file's history — not investigated further, unrelated to
-this session's changes).
+Full design/decision record: [`.claude/plan/ferry-feature-round6-plan.md`](.claude/plan/ferry-feature-round6-plan.md) (also the harness plan file this session worked from).
 
-**As always, the Electron GUI itself was not visually driven this round** —
-nothing in this environment can click into the actual app window. The
-verification above is real (a live SSH server, live exec/SFTP calls,
-assertions on actual before/after filesystem state) but it did not click a
-"Delete" button in the running app.
+## Current state
 
-## What was done
+**All four workstreams are implemented, unit-tested, typechecked, and committed.** Nothing is mid-flight or half-finished. `npm run typecheck` and `npm test` both pass clean as of the last commit (134 unit tests passing, 28 pre-existing integration tests self-skip — no Docker SFTP/SSH test container running in this environment).
 
-### 1. Remote recursive delete: one `rm -rf` exec instead of a per-entry SFTP walk
+Commit sequence (newest first):
+```
+6b8d994 Update import                                                    ← made outside this session, see below
+28b0af6 docs: update PROJECT_MAP for round-6
+98958d8 style: visual hierarchy pass
+da940af feat: Monitor dock tab — remote CPU/memory/load resource monitor
+1c0e46b feat: Activity dock tab — live progress for every long-running operation
+e2f5692 fix: terminal keyboard interaction — focus, copy/paste, right-click
+```
 
-This is the direct fix for the user's own comparison. [`RemoteShell.ts`](src/main/ssh/RemoteShell.ts)'s
-`deleteRecursive` used to `stat` → `readdir` → recurse → `unlink`/`rmdir`
-one entry at a time — deleting a folder with hundreds of files was hundreds
-of sequential SFTP round-trips. It now tries a single
-`rm -rf -- ${shellEscape(path)}` exec first (same SSH connection already
-kept open for Tail/Terminal/Unzip/Compress) and only falls back to the
-renamed-private `deleteRecursiveSftp` walk if the exec throws (no shell
-access at all — e.g. a restricted sftp-only chroot account) or exits
-non-zero. `removeRemote` in `RemoteFsService.ts` needed no changes — it
-already just calls `shell.deleteRecursive(path)`.
+**`6b8d994` was made by the repo owner directly (not this session)**, after presumably running the real packaged/dev Electron app (something this session couldn't do — see "tried that failed" below) and reacting to what they saw:
+- Removed the now-redundant explicit `import UChip from '@nuxt/ui/components/Chip.vue'` deep-import from `BottomDock.vue` — `components.d.ts` picked up a real `UChip` global-registration entry (an artifact of this session's own `npm run dev` run for the CSS-verification check), so the deep-import workaround this session added is no longer necessary there.
+- In `SiteTabBar.vue`: dropped the `border-l-2` left-accent-bar treatment from the active-tab styling (kept just `bg-primary/10 text-primary font-medium`), and changed the tab bar's bottom border from `border-default` to the softer `border-accented`.
 
-### 2. Stores patch the file list in place instead of reloading after every mutation
-
-`remove`/`rename`/`chmod` in both [`localFs.store.ts`](src/renderer/src/stores/localFs.store.ts)
-and [`remoteFs.store.ts`](src/renderer/src/stores/remoteFs.store.ts) used to
-end with `await this.load()` — a full extra directory reload (an SFTP
-`readdir` round-trip remotely, or a full local re-list) after an operation
-that already told the store exactly what changed. They now patch `entries`
-directly: `remove` filters the deleted path out, `rename` finds-and-updates
-the entry then re-sorts (a new name can change alphabetical position),
-`chmod` (remote only) just overwrites `entry.permissions` in place (padded to
-the existing 4-digit octal format if the dialog handed back a 3-digit one).
-
-### 3. Multi-select delete: parallel, with one patch, instead of N sequential (delete+reload) round-trips
-
-Added `removeMany(entries)` to both stores: fires every delete concurrently
-via `Promise.allSettled`, then patches `entries`/`selected` once at the end.
-Entries whose delete failed stay in the listing; if any failed, `removeMany`
-throws an `Error` naming them so the caller can show one toast instead of
-silently losing the failure. [`FilePane.vue`](src/renderer/src/components/files/FilePane.vue)'s
-`onKeydown` (Delete/Backspace on a multi-selection) now calls
-`await store.removeMany(targets)` wrapped in try/catch → `notify.error(...)`,
-instead of the old `for (const entry of targets) { await store.remove(entry) }`
-loop — which, combined with fix #2 above, used to mean N sequential
-(delete + full directory reload) round-trips for an N-file multi-delete.
-
-### 4. Local directory listing stats entries in parallel
-
-[`LocalFsService.ts`](src/main/fs/LocalFsService.ts)'s `list()` used to
-`for (const dirent of dirents) { await fs.stat(...) }` one at a time. Changed
-to `Promise.all(dirents.map(...))`, keeping the same "vanished/inaccessible
-entry gets silently skipped" behavior (now via returning `null` and filtering
-it out, instead of `continue`). This is the fix for "move to any folder"
-(interpreted as: opening/navigating a local folder with many entries) —
-remote listing didn't have this problem since SFTP's `readdir` already
-returns full attrs per entry in one round-trip, no follow-up stat needed.
+This reads as **real user feedback on the visual-hierarchy pass, applied live**: the left-accent-bar-on-selection idiom this session introduced (also used in `FileRow.vue` for selected file rows) was judged too much for the site-tab context specifically. `FileRow.vue`'s left-accent-bar was NOT touched — it's possible the user only tested/adjusted the site-tab bar so far, or deliberately kept it there. **This is worth surfacing to the user directly** (not just noting here) since it may mean the same treatment should come off `FileRow.vue` too, or that the site-tab call was context-specific and file rows are fine as-is — genuinely ambiguous from the diff alone.
 
 ## Files actively edited this session
 
-- `src/main/ssh/RemoteShell.ts` — `deleteRecursive` (exec-first) + new private `deleteRecursiveSftp` (renamed from the old body)
-- `src/main/ssh/RemoteShell.integration.test.ts` — two new real-server tests: one asserting exactly one `exec()` call deletes a nested tree, one forcing `exec()` to reject (`vi.spyOn`) and asserting the SFTP fallback still deletes correctly
-- `src/main/fs/LocalFsService.ts` — `list()`'s stat loop parallelized
-- `src/renderer/src/stores/localFs.store.ts` — `remove`/`rename` optimistic patch, new `removeMany`
-- `src/renderer/src/stores/remoteFs.store.ts` — `remove`/`rename`/`chmod` optimistic patch (per-session bucket), new `removeMany`
-- `src/renderer/src/components/files/FilePane.vue` — multi-select delete (`onKeydown`) calls `removeMany` + notifies on failure, instead of looping singular `remove`
-- `.claude/PROJECT_MAP.md` — two new Conventions bullets (exec-first delete + optimistic store patching) and three new "Where to go for X" rows
-- `.claude/plan/ferry-perf-fileops-plan.md` (new) — copy of the approved plan, per standing preference to keep plans in-repo
+Grouped by workstream (see individual commit messages for full rationale):
 
-No `shared/contract.ts` changes — every fix reuses existing IPC channels; batching is client-side (`Promise.allSettled` over the existing single-path delete channel), not a new bulk IPC call.
+- **Terminal fix**: `shared/contract.ts`, `main/ipc/system.ipc.ts`, `renderer/src/utils/terminalKeys.ts` (+test, new), `renderer/src/stores/terminalStreams.store.ts`, `renderer/src/components/terminal/TerminalView.vue`, `renderer/src/components/shell/CommandPalette.vue`, `main/index.ts` (darwin menu)
+- **Dock-state prereq**: `renderer/src/composables/useDockState.ts` (new), `renderer/src/components/shell/BottomDock.vue`
+- **Activity dock / operations**: `shared/contract.ts`, `main/operations/OperationRegistry.ts` (+test, new), `main/util/concurrency.ts` (new, extracted from `TransferQueue.ts`), `main/ipc/operations.ipc.ts` (new), `main/ipc/unzip.ipc.ts`, `main/ipc/archive.ipc.ts`, `main/ipc/fs.ipc.ts`, `main/unzip/UnzipService.ts`, `main/archive/CompressService.ts` (+test), `main/ssh/SessionManager.ts`, `main/index.ts`, `renderer/src/stores/operations.store.ts` (new), `renderer/src/stores/remoteFs.store.ts`, `renderer/src/stores/transferQueue.store.ts`, `renderer/src/components/activity/ActivityPanel.vue` + `ActivityItem.vue` (new), `renderer/src/components/shell/BottomDock.vue`, `TitleBar.vue`, `renderer/src/composables/useGlobalActivity.ts`, `renderer/src/components/transfers/TransferItem.vue`, `renderer/src/utils/format.ts` (new), `renderer/src/App.vue`
+- **Resource monitor**: `shared/contract.ts`, `main/monitor/procParse.ts` (+test, new), `main/monitor/MonitorManager.ts` (new), `main/ipc/monitor.ipc.ts` (new), `main/ssh/SessionManager.ts`, `main/index.ts`, `renderer/src/stores/monitor.store.ts` (new), `renderer/src/components/monitor/MonitorPanel.vue` (new), `renderer/src/components/shell/BottomDock.vue`
+- **Visual hierarchy**: `electron.vite.config.ts`, `renderer/src/components/shell/TitleBar.vue`, `SiteTabBar.vue`, `BottomDock.vue`, `renderer/src/components/files/FilePane.vue`, `FileList.vue`, `FileRow.vue`, `PathBreadcrumb.vue`, `renderer/src/utils/fileTypes.ts` (+test), `renderer/src/components/transfers/TransferQueue.vue`
+- **Docs**: `.claude/PROJECT_MAP.md`, `.claude/plan/ferry-feature-round6-plan.md` (new, copy of the approved plan)
 
-## Everything tried that failed (or needed a second pass)
+## Changes made (by feature)
 
-- **Verifying against a real test container hit a genuine Windows/Git-Bash gotcha, not a code bug.** Spun up `linuxserver/openssh-server` (per this repo's existing `RemoteShell.integration.test.ts` docker command) and ran `docker exec ferry-test-sftp mkdir -p /config/ferry-test` + `chown` to set up the test directory. Every single test in the suite then failed with `Failed to create ".../<uuid>": No such file` — looked at first like a real regression. It wasn't: this Bash tool runs Git Bash (MSYS), which auto-rewrites any argument that looks like an absolute POSIX path (`/config/ferry-test`, `/etc/passwd`, etc.) into a Windows path *before* invoking `docker.exe` — so `docker exec ferry-test-sftp mkdir -p /config/ferry-test` was silently creating some other mangled path inside the container, not the real `/config/ferry-test`, and every subsequent `ls`/`cat` "confirming" it worked was checking that same mangled path, not reality. Fixed by exporting `MSYS_NO_PATHCONV=1` before any `docker exec ... <container-absolute-path>` command, then redoing the `mkdir`/`chown` for real — after which all 17 `RemoteShell.integration.test.ts` tests (including the two new ones) passed. **Worth remembering for any future session that shells out to `docker exec`/`docker run` with container-side absolute paths from this Bash tool on this machine.**
-- **`SessionManager.jumphost.integration.test.ts` failed** (`Jump host tunnel to 127.0.0.1:2222 failed: Channel open failure`) against the single ad-hoc container this session stood up — everything else (17 `RemoteShell` + 5 `TransferQueue` + 4 `SessionManager` tests) passed against the same container. Didn't dig further since it's orthogonal to this session's file-op-perf work; a prior session's `PROJECT_MAP.md` notes jump-host was previously verified via a "self-jump trick" against the test container, which may need setup this session's single-container spin-up didn't replicate (e.g. `AllowTcpForwarding` or a second target container). Flag this if a future session needs jump-host specifically verified again.
-- **Nothing else failed** — the actual code changes (exec-first delete, optimistic store patches, `removeMany`, parallel local stat) all landed cleanly on the first pass, typecheck/build clean, no test regressions.
+1. **Terminal keyboard** — root cause was that `TerminalView.vue` never called `term.focus()`; the terminal only received keystrokes after a user clicked the xterm canvas directly. Fixed by focusing on every "became visible" path (already-existing watcher). Added `term.attachCustomKeyEventHandler` (pure decision table in `terminalKeys.ts`, fully unit-tested): Ctrl+C copies a selection or passes through as SIGINT with none, Ctrl+Shift+C explicit copy, Ctrl+V/Ctrl+Shift+V/Shift+Insert paste (via a new main-process `system:clipboardReadText` IPC — Electron's `clipboard.readText()`, chosen over the sandboxed renderer's `navigator.clipboard.readText()` for reliability). Right-click copies-or-pastes (PuTTY/WinSCP convention). CommandPalette's Ctrl+K now ignores keydowns while the terminal is focused. Added a minimal `appMenu`+`editMenu` on macOS only (Windows keeps `null`, unaffected).
+
+2. **Activity dock tab** — new `OperationRegistry` singleton (modeled on `TransferQueue`'s broadcast pattern) wraps remote extract/compress, local compress (real byte progress via archiver's own `'progress'` event), single recursive delete, and a new batched `fs:remote:deleteMany` (multi-select delete becomes ONE operation row with item-count progress, not N). Instrumentation happens at the IPC-handler level so services stay plain and unit-testable. Deletes are never cancellable (can't safely abort `rm -rf` mid-flight); compresses/extract are. New Activity dock tab lists these with determinate/indeterminate `UProgress` + elapsed time; running-count badges on Transfers/Activity tab buttons; title-bar busy dot is now clickable and opens the dock on Activity.
+
+3. **Resource monitor** — new `MonitorManager` singleton polls a connected session's server every 2s via one combined buffered `exec` (`/proc/stat`+`/proc/meminfo`+`/proc/loadavg`+`/proc/uptime`, `@@@`-delimited), computing CPU% from consecutive `/proc/stat` deltas. Deliberately a self-rescheduling `setTimeout` chain, not a long-lived stream — no PID-tracking/reconnect machinery needed. Pure parsers live in `procParse.ts` (fully unit-tested: MemAvailable fallback for pre-3.14 kernels, iowait-as-idle, CPU-hotplug mismatch, busybox-minimal stat, "no `/proc` at all" → `unsupported` not `error`). New Monitor dock tab (gated on connected, like Terminal) shows memory/swap bars, aggregate + per-core CPU with an inline SVG sparkline, load averages, and uptime — all within the dock's existing ~200px content budget.
+
+4. **Visual hierarchy** — wired the previously-orphaned Apple-blue `brand` palette (already defined in `main.css` but unused) as `@nuxt/ui`'s actual primary color, replacing stock Tailwind blue. Chrome regions (title bar, site tab bar, pane headers, dock header) now sit on `bg-muted` with `border-default` at major region boundaries, versus `bg-default` content — previously one flat surface everywhere. Selection moved from the indistinguishable `bg-accented`/`bg-muted` pairing to a `bg-primary/10` tint (+ a left accent bar on file rows) — unmistakable from hover in both themes. Per-file-type icon colors via a new `colorForFile()` (folders primary/blue, archives amber, images violet, video rose, audio pink, spreadsheets emerald, code/json teal; documents and unknowns stay quiet on purpose). Three-tier text contrast (headers → `text-default`, size/date/permissions → `text-dimmed`, was uniformly `text-muted`); breadcrumb now bolds the current directory's own name. Empty-state icons and a faint fill on the drag-drop target.
+
+## Everything tried that failed
+
+- **Visually verifying the Electron app via the Browser preview tool** pointed at the renderer's Vite dev server (`http://localhost:5173`, printed by `npm run dev`). This does NOT work: the renderer depends entirely on `window.api` (the `contextBridge` whitelist from `src/preload/index.ts`), which only exists inside a real Electron `BrowserWindow` — a plain browser tab has no preload, so `window.api` is `undefined` and `#app` mounts empty (confirmed via `document.getElementById('app').innerHTML.length === 0`, no thrown console error — a silent no-op, not a crash). This is expected/by-design, not a regression, and is now documented as Gotcha #13 in `PROJECT_MAP.md`. What DID work as a substitute check: confirming `main`/`preload`/`renderer` all built without errors in the dev log, and confirming new literal Tailwind class strings (`colorForFile`'s per-bucket colors) actually appeared in the served `main.css`'s generated CSS — a way to catch a class string being silently dropped without launching the full app.
+- **`parseUptime('')` initially returned `0` instead of `null`** — `Number('')` coerces to `0` in JS, not `NaN`, so the original `!Number.isFinite(value)` guard didn't catch an empty string. Fixed by explicitly checking for an empty first token before calling `Number()` on it. Caught immediately by the unit test suite (`procParse.test.ts`'s "returns null on garbage" case), not by any deeper investigation.
+- Nothing else outright failed. The one non-trivial investigation (confirming @nuxt/ui v4's `colors: { primary: 'brand' }` mechanism actually resolves a custom `@theme`-defined color name rather than only stock Tailwind palette names, via reading `node_modules/@nuxt/ui/dist/shared/ui.*.mjs`'s `resolveColors`/`getDefaultConfig`/generated-`@theme`-block source and its `type Color = ... | (string & {})` signature) worked out on the first real attempt — no dead ends, just took a while to trace through the built/minified source.
 
 ## Next step
 
-1. **Manual GUI verification, as always** — the Electron window itself hasn't been clicked through in this environment. Specifically worth confirming by hand: deleting a remote folder with 50+ files now feels instant rather than stepping through each file; multi-selecting 5-10 remote files and deleting doesn't visibly stutter; rename/chmod update the row without a full-list "flash"; opening a local folder with many files (e.g. Downloads) feels faster than before. Site to use per prior sessions: `127.0.0.1:2299` / `ferrytest` / `ferrytest123`, SFTP (spin up the same `linuxserver/openssh-server` container — see `RemoteShell.integration.test.ts`'s file header for the exact command — **remember `MSYS_NO_PATHCONV=1` for any `docker exec` with container-absolute-path arguments if driving it from this same Git-Bash tool**).
-2. **`mkdir`'s optimistic-insert was deliberately left out this round** (the plan flagged it as optional/lower-priority since it wasn't part of the user's complaint) — `mkdir` in both fs stores still calls `await this.load()`. If a future session wants full consistency with the new patch-in-place convention, add it there too, following the same pattern as `rename`'s re-sort.
-3. **Everything already flagged in prior rounds and still untouched**: sync/mirror local↔remote directories and edit-in-place (Phase 4 items 3/4, still not started — see `.claude/plan/ferry-winscp-parity-roadmap.md`), auto-update needing a real GitHub repo + release + signing cert, the two accepted-risk security findings (host-key-mismatch override has no nonce; `known_hosts.json`/`sites.json` have no integrity protection), and WinSCP folder-group (nested registry subkey) import recursion.
-4. **Jump-host integration test failure (see above)** — worth a dedicated look if jump-host functionality itself is ever in question; not believed to be caused by this session's changes (none of this session's edits touch `SessionManager.ts` or jump-host code at all).
+All three follow-ups below were closed out in a subsequent session (2026-07-18):
+
+1. **`6b8d994` visual tweak — resolved.** Asked the user directly; they confirmed `FileRow.vue`'s left-accent-bar-on-selection should be dropped too, for consistency with the simplified `SiteTabBar.vue` treatment. Done: removed `border-l-2`/`border-primary`/`border-transparent` from `FileRow.vue`, keeping just the `bg-primary/10 text-highlighted` tint for selected rows.
+2. **Real-server verification — done, with one known pre-existing gap.** The user had a real `ferry-test-sftp` container already running via Rancher Desktop (`docker ps` showed it mapped to `0.0.0.0:2299->2222/tcp`, up for 31+ hours). Ran the full integration suite against it: `RemoteShell` (17), `TransferQueue` (5), and `SessionManager` (4) all passed — 26 tests confirming the exec-first delete, SFTP round-trips, and connection lifecycle work against a real server. `SessionManager.jumphost.integration.test.ts` still fails ("Channel open failure: open failed") — this is the same pre-existing environment gap noted in this file's history (jump-host testing needs a "self-jump" trick not set up in this container), unrelated to round 6's changes (none of them touch jump-host tunneling). Also wrote a throwaway `vite-node` script (not committed — deleted after use) that drove the Monitor feature's actual `procParse.ts` functions (`splitSections`/`parseProcStat`/`parseMeminfo`/`parseLoadAvg`/`parseUptime`/`cpuPercentages`) against two real `/proc` samples from the container, once idle and once under a `yes`-process CPU load: real data parsed correctly (10 cores, real mem/swap/load/uptime figures) and `cpuPercentages` correctly reported busy aggregate (3.4%) > idle aggregate (2.4%) — confirms the delta-based CPU% pipeline is sound end-to-end against a live server. Note the magnitude was smaller than expected for ~20 busy-looping processes; likely because `/proc/stat` inside a container reflects the whole host's CPU (not a per-container cgroup view), and the host had other work running (Rancher Desktop's own k8s pods) — a real-world characteristic of `/proc`-based monitoring, not a bug. **Still not done and not achievable in this environment**: driving the actual Electron GUI (real xterm keyboard/clipboard events, the Monitor tab's rendered UI) — confirmed impossible here (see "Everything tried that failed" / PROJECT_MAP Gotcha #13); needs a real interactive session on the user's machine.
+3. **`CHANGELOG.md`/version bump — done.** Added a `## 0.10.0` entry (Keep-a-Changelog style, matching prior entries) summarizing all four round-6 workstreams; bumped `package.json`'s `version` and the `VERSION` file to `0.10.0` together.
+
+No blocking next step remains. The one still-open item is GUI-only manual verification (Terminal keyboard feel, Monitor tab rendering) — needs the user to drive the real packaged/dev app themselves.
