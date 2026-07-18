@@ -8,7 +8,7 @@ export default defineConfig({
     entry: resolve(__dirname, 'src/main/index.ts'),
     build: {
       rollupOptions: {
-        external: ['ssh2', 'electron-store']
+        external: ['ssh2', 'archiver', 'electron-store']
       }
     }
   },

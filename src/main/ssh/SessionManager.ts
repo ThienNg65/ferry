@@ -1,4 +1,4 @@
-import { Client, type ClientChannel, type ConnectConfig, type HostVerifier } from 'ssh2'
+import type { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2'
 import { randomUUID } from 'crypto'
 import { readFile } from 'fs/promises'
 import { BrowserWindow } from 'electron'
@@ -329,8 +329,13 @@ export class SessionManager {
     trustHostKeyChange = false
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     const sessionId = randomUUID()
-    const client = new Client()
-    const jumpClient = input.jumpHost ? new Client() : null
+    // Lazy-load ssh2 (a heavy module with a native optional dep) only when the
+    // user actually connects, keeping it off the app-startup critical path.
+    // Aliased so the runtime binding doesn't collide with the file-wide `Client`
+    // type-only import.
+    const { Client: SshClient } = await import('ssh2')
+    const client = new SshClient()
+    const jumpClient = input.jumpHost ? new SshClient() : null
     const entry: SessionEntry = {
       sessionId,
       siteId,
