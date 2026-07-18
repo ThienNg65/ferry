@@ -2,6 +2,19 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.8.0 — File-op performance pass, and a shell-injection fix found in review
+
+User feedback that Ferry felt much slower than WinSCP (and than a plain terminal) for delete/rename/chmod/navigate led to a focused performance pass tracking down the actual causes rather than cosmetic tweaks, plus a dedicated security review of the file-op changes that turned up a real remote-command-injection bug in the (separately in-progress) remote Extract feature — fixed before this release, with a regression test proving it.
+
+**Performance:**
+- Remote recursive delete now runs a single `rm -rf` over the already-open SSH connection instead of walking the tree one SFTP round-trip at a time — deleting a folder with hundreds of files is now one round-trip instead of hundreds. Falls back to the old per-entry SFTP walk only when exec isn't available at all (e.g. an sftp-only chroot account) or the shell command itself fails.
+- Delete/rename/chmod (both local and remote panes) patch the in-memory file list directly instead of doing a full directory reload after every mutation.
+- Multi-select delete fires every delete concurrently and patches the list once, instead of N sequential delete-then-reload round-trips.
+- Local directory listing stats entries in parallel instead of one at a time — speeds up opening local folders with many files.
+
+**Security fix (found in this release's own review):**
+- Remote Extract built its shell command by wrapping already-escaped paths in a hand-written double-quoted `sh -c "..."` string. Because `$(...)`/backticks are still live inside double quotes, a remote file or archive with a crafted name could execute arbitrary commands on the remote host the moment a user extracted it. Fixed by re-escaping the whole inner command as a single argument instead of stacking a second hand-built quoting layer around already-escaped values, with a new regression test that runs the built command through a real shell with an injection payload to prove it's inert. (The same bug was independently caught and fixed in the not-yet-released remote Compress feature before it ever shipped.)
+
 ## 0.7.0 — Bug fixes, WinSCP-parity Phase 4 (partial), and a security/performance review
 
 Two real bugs reported from manual testing, fixed; three of Phase 4's six items landed; and a dedicated security + performance review of the existing Phase 1/2 work, with the findings acted on rather than just reported. 104 tests passing (up from 76).
