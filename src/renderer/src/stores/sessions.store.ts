@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type {
+  AppSettings,
   KeyboardInteractiveRequestEvent,
   QuickConnectInput,
   Site,
@@ -12,6 +13,7 @@ import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
+import { useSitesStore } from './sites.store'
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
 export interface SessionTab {
@@ -99,6 +101,41 @@ export const useSessionsStore = defineStore('sessions', {
   },
 
   actions: {
+    /** Writes the siteId of every currently open, saved-site-backed tab to disk — restored (not auto-connected) on next launch. */
+    async persistOpenTabs(): Promise<void> {
+      const siteIds = this.tabs.filter((t): t is SessionTab & { siteId: string } => t.siteId !== null).map((t) => t.siteId)
+      await invoke<void>(INVOKE_CHANNELS.settingsSetOpenTabs, siteIds)
+    },
+
+    /**
+     * Recreates picker tabs for whatever saved sites were open at last shutdown.
+     * Deliberately does NOT auto-connect — restoring a tab is a UI-state
+     * convenience, not a background connection attempt with saved credentials,
+     * so the user still clicks to connect just like any other picker tab.
+     */
+    async restoreOpenTabs(): Promise<void> {
+      const sitesStore = useSitesStore()
+      await sitesStore.fetchSites()
+      const settings = await invoke<AppSettings>(INVOKE_CHANNELS.settingsGet)
+      const restored: SessionTab[] = []
+      for (const siteId of settings.openTabSiteIds) {
+        const site = sitesStore.sites.find((s) => s.id === siteId)
+        if (!site) {
+          continue
+        }
+        const tab = freshTab()
+        tab.siteId = site.id
+        tab.label = site.name
+        tab.hostLabel = `${site.username}@${site.host}`
+        restored.push(tab)
+      }
+      if (restored.length === 0) {
+        return
+      }
+      this.tabs = [...restored, ...this.tabs]
+      this.activeTabId = restored[0].tabId
+    },
+
     ensureStatusSubscription(): void {
       if (this.unsubscribeStatus) {
         return
@@ -182,6 +219,7 @@ export const useSessionsStore = defineStore('sessions', {
       tab.label = label
       tab.hostLabel = hostLabel
       tab.siteId = siteId
+      void this.persistOpenTabs()
       const notify = useNotify()
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
@@ -189,6 +227,14 @@ export const useSessionsStore = defineStore('sessions', {
           trustHostKeyChange
         })
         tab.sessionId = result.sessionId
+        // Preload the initial listing before flipping `status` — App.vue's
+        // picker→file-browser swap is gated on `status`, so this keeps the
+        // connecting/spinner UI up through the SFTP readdir too, instead of
+        // swapping to an empty file-browser shell first. Uses the
+        // explicit-sessionId variant, not `load()`, since this tab may no
+        // longer be `activeTab` by the time this resolves if the user
+        // switched tabs mid-connect.
+        await useRemoteFsStore().loadForSession(result.sessionId)
         tab.status = result.status
         notify.success(`Connected to ${label}`)
         // Pre-open the interactive shell in the background so it's already
@@ -268,6 +314,7 @@ export const useSessionsStore = defineStore('sessions', {
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
+      void this.persistOpenTabs()
       if (this.tabs.length === 0) {
         this.openNewTab()
         return

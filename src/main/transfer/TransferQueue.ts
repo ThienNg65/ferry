@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream } from 'fs'
 import { stat } from 'fs/promises'
+import { Transform } from 'stream'
 import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
@@ -38,6 +39,56 @@ const TREE_ITEM_CONCURRENCY = 4
 const PROGRESS_THROTTLE_MS = 200
 
 /**
+ * Global rate limiter shared by every concurrent transfer, so a configured
+ * cap is an app-wide ceiling (matching WinSCP's single "limit bandwidth"
+ * setting) rather than a per-file allowance that multiplies with concurrency.
+ *
+ * Implemented as a virtual schedule rather than a capped token bucket: each
+ * `acquire()` reserves the next available time slot proportional to its byte
+ * count (synchronously, before awaiting anything, so concurrent callers never
+ * race on the reservation) and resolves once that slot arrives. A request for
+ * more bytes than one second's worth of budget (e.g. a stream chunk bigger
+ * than a very low configured limit) just takes proportionally longer instead
+ * of deadlocking against a hard bucket-capacity cap.
+ */
+export class RateLimiter {
+  private limitBytesPerSec: number | null = null
+  private nextAvailableAt = 0
+
+  setLimitKBps(limitKBps: number | null): void {
+    this.limitBytesPerSec = limitKBps && limitKBps > 0 ? limitKBps * 1024 : null
+    this.nextAvailableAt = Date.now()
+  }
+
+  /** Resolves once `bytes` worth of budget is available. Resolves immediately when unlimited. */
+  async acquire(bytes: number): Promise<void> {
+    const limit = this.limitBytesPerSec
+    if (!limit) {
+      return
+    }
+    const now = Date.now()
+    const slotStart = Math.max(now, this.nextAvailableAt)
+    this.nextAvailableAt = slotStart + (bytes / limit) * 1000
+    const waitMs = slotStart - now
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    }
+  }
+}
+
+/** A pass-through `Transform` that delays each chunk until `limiter` grants it enough budget — the actual throttling hook in the pipe chain. */
+function createThrottleTransform(limiter: RateLimiter): Transform {
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      limiter
+        .acquire(chunk.length)
+        .then(() => callback(null, chunk))
+        .catch((e: Error) => callback(e))
+    }
+  })
+}
+
+/**
  * TransferQueue — bounded-concurrency upload/download queue.
  *
  * Uses SFTP read/write streams (not fastGet/fastPut) so cancellation is a
@@ -49,12 +100,18 @@ export class TransferQueue {
   private static instance: TransferQueue | null = null
   private readonly pending: TransferJob[] = []
   private readonly active = new Map<string, TransferJob>()
+  private readonly rateLimiter = new RateLimiter()
 
   static getInstance(): TransferQueue {
     if (TransferQueue.instance === null) {
       TransferQueue.instance = new TransferQueue()
     }
     return TransferQueue.instance
+  }
+
+  /** Sets (or clears, with `null`) the app-wide transfer rate cap — applies to every transfer already in flight, not just new ones. */
+  setBandwidthLimitKBps(limitKBps: number | null): void {
+    this.rateLimiter.setLimitKBps(limitKBps)
   }
 
   /** Queues a single-file transfer and returns its id immediately; work happens in the background. */
@@ -181,6 +238,8 @@ export class TransferQueue {
       const writeStream =
         opts.kind === 'upload' ? sftp.createWriteStream(opts.remotePath) : createWriteStream(opts.localPath)
 
+      const throttle = createThrottleTransform(this.rateLimiter)
+
       let settled = false
       const finish = (err?: Error): void => {
         if (settled) {
@@ -196,6 +255,7 @@ export class TransferQueue {
       }
       const onAbort = (): void => {
         readStream.destroy()
+        throttle.destroy()
         writeStream.destroy()
         finish(new SshError('CANCELLED', 'Transfer cancelled'))
       }
@@ -211,9 +271,10 @@ export class TransferQueue {
         opts.onProgress(bytesMoved)
       })
       readStream.on('error', (e: Error) => finish(e))
+      throttle.on('error', (e: Error) => finish(e))
       writeStream.on('error', (e: Error) => finish(e))
       writeStream.on('close', () => finish())
-      readStream.pipe(writeStream)
+      readStream.pipe(throttle).pipe(writeStream)
     })
   }
 

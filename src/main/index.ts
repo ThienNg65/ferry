@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
+import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerSessionHandlers } from './ipc/session.ipc'
 import { registerDialogHandlers } from './ipc/dialog.ipc'
 import { registerFsHandlers } from './ipc/fs.ipc'
@@ -8,8 +9,13 @@ import { registerTransferHandlers } from './ipc/transfer.ipc'
 import { registerTailHandlers } from './ipc/tail.ipc'
 import { registerTerminalHandlers } from './ipc/terminal.ipc'
 import { registerUnzipHandlers } from './ipc/unzip.ipc'
+import { registerArchiveHandlers } from './ipc/archive.ipc'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerWindowHandlers } from './ipc/window.ipc'
+import { registerUpdateHandlers } from './ipc/update.ipc'
+import { initAutoUpdater } from './update/AutoUpdater'
+import { AppSettingsStore } from './app/AppSettingsStore'
+import { TransferQueue } from './transfer/TransferQueue'
 import { EVENT_CHANNELS, type WindowStateEvent } from '../shared/contract'
 
 /** Development mode flag — set by electron-vite. */
@@ -95,6 +101,7 @@ function createWindow(): BrowserWindow {
 /** Registers all IPC channel handlers for the lifetime of the application. */
 function registerAllHandlers(): void {
   registerSitesHandlers()
+  registerSettingsHandlers()
   registerSessionHandlers()
   registerDialogHandlers()
   registerFsHandlers()
@@ -102,8 +109,10 @@ function registerAllHandlers(): void {
   registerTailHandlers()
   registerTerminalHandlers()
   registerUnzipHandlers()
+  registerArchiveHandlers()
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)
+  registerUpdateHandlers()
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
@@ -113,7 +122,9 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
 
   registerAllHandlers()
+  TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
   mainWindow = createWindow()
+  initAutoUpdater()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

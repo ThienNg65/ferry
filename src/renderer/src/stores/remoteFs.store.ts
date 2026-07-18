@@ -96,7 +96,19 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     async load(dirPath?: string): Promise<void> {
-      const sessionId = this.activeSessionId()
+      await this.loadForSession(this.activeSessionId(), dirPath)
+    },
+
+    /**
+     * Loads `sessionId`'s directory listing, independent of whichever tab is
+     * currently active. `load()` (above) delegates here for every normal
+     * call site (FilePane's watcher/Ctrl+R, openDir/goUp/mkdir). Used
+     * directly by `sessions.store.ts`'s `openSession()` to preload a
+     * just-connected session's first listing — resolving via
+     * `activeSessionId()` there would be wrong if the user switches tabs
+     * while that connect is still in flight.
+     */
+    async loadForSession(sessionId: string, dirPath?: string): Promise<void> {
       const entry = this.ensureBucket(sessionId)
       entry.loading = true
       entry.error = null
@@ -142,25 +154,64 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       await this.load()
     },
 
+    /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
     async remove(entry: FileEntry): Promise<void> {
       const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
       await invoke<void>(INVOKE_CHANNELS.fsRemoteDelete, sessionId, entry.path)
-      await this.load()
+      bucket.entries = bucket.entries.filter((e) => e.path !== entry.path)
+      bucket.selected.delete(entry.path)
+    },
+
+    /** Deletes every entry in `entries` concurrently, then patches the listing once — entries that fail to delete stay in the listing. */
+    async removeMany(entries: FileEntry[]): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const results = await Promise.allSettled(
+        entries.map((entry) => invoke<void>(INVOKE_CHANNELS.fsRemoteDelete, sessionId, entry.path))
+      )
+      const removedPaths = new Set<string>()
+      const failures: string[] = []
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled') {
+          removedPaths.add(entries[i].path)
+        } else {
+          failures.push(entries[i].name)
+        }
+      })
+      bucket.entries = bucket.entries.filter((e) => !removedPaths.has(e.path))
+      for (const path of removedPaths) {
+        bucket.selected.delete(path)
+      }
+      if (failures.length > 0) {
+        throw new Error(`Failed to delete: ${failures.join(', ')}`)
+      }
     },
 
     /** Renames `entry` in place, within its current parent directory. */
     async rename(entry: FileEntry, newName: string): Promise<void> {
       const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
       const parent = entry.path.slice(0, entry.path.length - entry.name.length)
-      await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessionId, entry.path, `${parent}${newName}`)
-      await this.load()
+      const newPath = `${parent}${newName}`
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessionId, entry.path, newPath)
+      const target = bucket.entries.find((e) => e.path === entry.path)
+      if (target) {
+        target.name = newName
+        target.path = newPath
+        bucket.entries = [...bucket.entries].sort(compareEntries(bucket.sortColumn, bucket.sortDirection))
+      }
     },
 
     /** Sets `entry`'s permissions. `mode` is an octal string (e.g. "0755"). */
     async chmod(entry: FileEntry, mode: string): Promise<void> {
       const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
       await invoke<void>(INVOKE_CHANNELS.fsRemoteChmod, sessionId, entry.path, mode)
-      await this.load()
+      const target = bucket.entries.find((e) => e.path === entry.path)
+      if (target) {
+        target.permissions = mode.length === 3 ? `0${mode}` : mode
+      }
     },
 
     /** Plain click — selects exactly one entry. */

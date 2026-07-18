@@ -5,6 +5,23 @@ directories:
   buildResources: build
 files:
   - out/**/*
+# Auto-update feed — electron-updater (wired in src/main/update/AutoUpdater.ts)
+# checks this on every launch of a packaged build. Replace owner/repo with the
+# real GitHub repo before cutting a release; until then this is inert
+# scaffolding (`checkForUpdatesAndNotify()` just fails quietly if the repo/
+# releases don't exist — see AutoUpdater.ts's error handling).
+publish:
+  provider: github
+  owner: REPLACE_WITH_GITHUB_OWNER
+  repo: REPLACE_WITH_GITHUB_REPO
+# Code signing is NOT configured here — electron-builder picks up a certificate
+# automatically from the standard CSC_LINK (path or base64 .pfx) + CSC_KEY_PASSWORD
+# env vars at package time, with no config needed for the common case. Neither
+# variable is set in this dev environment, so packaged builds here are
+# unsigned; `forceCodeSigning: false` (the default) keeps `npm run package`
+# working locally instead of hard-failing without a cert. Set both env vars in
+# CI/release builds to produce a signed installer.
+forceCodeSigning: false
 # ssh2's optional native deps (cpu-features) cannot run from inside an asar
 # archive — unpack them alongside the app. safeStorage needs no such
 # handling: it's built into Electron itself, no native npm dependency.

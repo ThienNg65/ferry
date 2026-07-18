@@ -17,7 +17,7 @@
  */
 import { Client } from 'ssh2'
 import { randomUUID } from 'crypto'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RemoteShell } from './RemoteShell'
 
 const HOST = '127.0.0.1'
@@ -225,5 +225,33 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
     await shell.exec(`printf 'x' > ${testDir}/lone.txt`)
     await shell.deleteRecursive(`${testDir}/lone.txt`)
     await expect(shell.stat(`${testDir}/lone.txt`)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('deleteRecursive() uses a single exec() call for the whole tree, not a per-entry SFTP walk', async () => {
+    await shell.mkdirRecursive(`${testDir}/fast/nested`)
+    await shell.exec(`printf 'x' > ${testDir}/fast/nested/leaf.txt`)
+    await shell.exec(`printf 'y' > ${testDir}/fast/sibling.txt`)
+
+    const execSpy = vi.spyOn(shell, 'exec')
+    await shell.deleteRecursive(`${testDir}/fast`)
+
+    expect(execSpy).toHaveBeenCalledTimes(1)
+    expect(execSpy.mock.calls[0][0]).toContain('rm -rf')
+    await expect(shell.stat(`${testDir}/fast`)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('deleteRecursive() falls back to the per-entry SFTP walk when exec is unavailable', async () => {
+    await shell.mkdirRecursive(`${testDir}/fallback/nested`)
+    await shell.exec(`printf 'x' > ${testDir}/fallback/nested/leaf.txt`)
+    await shell.exec(`printf 'y' > ${testDir}/fallback/sibling.txt`)
+
+    const execSpy = vi.spyOn(shell, 'exec').mockRejectedValue(new Error('exec unavailable'))
+    try {
+      await shell.deleteRecursive(`${testDir}/fallback`)
+    } finally {
+      execSpy.mockRestore()
+    }
+
+    await expect(shell.stat(`${testDir}/fallback`)).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })

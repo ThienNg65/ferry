@@ -71,16 +71,47 @@ export const useLocalFsStore = defineStore('localFs', {
       await this.load()
     },
 
+    /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
     async remove(entry: FileEntry): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.fsLocalDelete, entry.path, entry.isDir)
-      await this.load()
+      this.entries = this.entries.filter((e) => e.path !== entry.path)
+      this.selected.delete(entry.path)
+    },
+
+    /** Deletes every entry in `entries` concurrently, then patches the listing once — entries that fail to delete stay in the listing. */
+    async removeMany(entries: FileEntry[]): Promise<void> {
+      const results = await Promise.allSettled(
+        entries.map((entry) => invoke<void>(INVOKE_CHANNELS.fsLocalDelete, entry.path, entry.isDir))
+      )
+      const removedPaths = new Set<string>()
+      const failures: string[] = []
+      results.forEach((result, i) => {
+        if (result.status === 'fulfilled') {
+          removedPaths.add(entries[i].path)
+        } else {
+          failures.push(entries[i].name)
+        }
+      })
+      this.entries = this.entries.filter((e) => !removedPaths.has(e.path))
+      for (const path of removedPaths) {
+        this.selected.delete(path)
+      }
+      if (failures.length > 0) {
+        throw new Error(`Failed to delete: ${failures.join(', ')}`)
+      }
     },
 
     /** Renames `entry` in place, within its current parent directory. */
     async rename(entry: FileEntry, newName: string): Promise<void> {
       const parent = entry.path.slice(0, entry.path.length - entry.name.length)
-      await invoke<void>(INVOKE_CHANNELS.fsLocalRename, entry.path, `${parent}${newName}`)
-      await this.load()
+      const newPath = `${parent}${newName}`
+      await invoke<void>(INVOKE_CHANNELS.fsLocalRename, entry.path, newPath)
+      const target = this.entries.find((e) => e.path === entry.path)
+      if (target) {
+        target.name = newName
+        target.path = newPath
+        this.entries = [...this.entries].sort(compareEntries(this.sortColumn, this.sortDirection))
+      }
     },
 
     /** Plain click — selects exactly one entry. */

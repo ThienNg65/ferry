@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from 'vue'
+import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
+import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
+import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
+import { useUiStore } from './stores/ui.store'
 import { useGlobalActivity } from './composables/useGlobalActivity'
+import { useSettingsDialog } from './composables/useSettingsDialog'
+import { useNotify } from './composables/useNotify'
 import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 import SessionManagerView from './components/sessions/SessionManagerView.vue'
+import SettingsDialog from './components/shell/SettingsDialog.vue'
+import CommandPalette from './components/shell/CommandPalette.vue'
 
 // Only ever rendered once connected — deferring these keeps their whole
 // subtree (FileList/FileRow/FilePreviewDialog/TransferQueue/TerminalView/...)
@@ -15,6 +23,26 @@ const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomD
 const sessions = useSessionsStore()
 const isConnected = computed(() => sessions.status === 'connected')
 const { isBusy } = useGlobalActivity()
+const settingsDialog = useSettingsDialog()
+const notify = useNotify()
+
+useUiStore().initTheme()
+void sessions.restoreOpenTabs()
+
+// Only ever fires in a packaged build — see AutoUpdater.ts's app.isPackaged guard.
+const toast = useToast()
+onEvent<UpdateAvailableEvent>(EVENT_CHANNELS.updateAvailable, (evt) => {
+  notify.success('Update available', `Ferry v${evt.version} is downloading in the background`)
+})
+onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
+  toast.add({
+    title: 'Update ready',
+    description: `Restart Ferry to install v${evt.version}`,
+    color: 'success',
+    icon: 'i-lucide-check-circle',
+    actions: [{ label: 'Restart now', onClick: () => void invoke<void>(INVOKE_CHANNELS.updateInstallNow) }]
+  })
+})
 </script>
 
 <template>
@@ -35,5 +63,7 @@ const { isBusy } = useGlobalActivity()
         </Transition>
       </div>
     </div>
+    <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
+    <CommandPalette />
   </UApp>
 </template>

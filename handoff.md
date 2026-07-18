@@ -1,69 +1,111 @@
-# Handoff — Bug fixes + Phase 4 (partial) + perf/security review (2026-07-14)
+# Handoff — File-op performance pass: exec-first delete, optimistic UI, parallel local stat (2026-07-17)
 
 ## Goal
 
-The user reported two real bugs found while manually testing the app (right-click → Rename opens then instantly closes; the per-row action-button column is wider than it needs to be now that a right-click context menu exists), and asked to continue the roadmap (`.claude/plan/ferry-winscp-parity-roadmap.md`) with a focus on **Phase 4** (round out parity + differentiation), plus a dedicated **performance** and **security** review of the existing Phase 1/2 work — not just review, but fix what the review turns up.
+User feedback: Ferry feels much slower than WinSCP (and than a plain terminal)
+for delete/rename/chmod/"move to any folder" (navigating a local folder).
+Concretely: `rm -rf a/` in a real shell is instant; deleting the same folder
+`a/` from Ferry's file pane visibly waits. Goal was to find and fix the
+actual causes, not just "make it feel faster" cosmetically — see
+`.claude/plan/ferry-perf-fileops-plan.md` for the plan this session executed
+against (also saved to `C:\Users\nvtthien\.claude\plans\read-the-hanoff-md-the-zippy-glacier.md`
+by the harness).
 
-## Status: both bugs fixed; 4 of 6 Phase 4 items done; 1 HIGH + 1 MEDIUM security fix landed; 1 HIGH performance fix landed; typecheck/tests/build all clean
+## Status: all 4 planned fixes implemented and verified against a real SFTP/SSH test container; typecheck/build/tests all clean
 
-`npm run typecheck`, `npm run build`, and `npm test` (**104 tests, up from 76**) are all clean. As with every prior round, **the Electron GUI itself remains unverified by a human or a driving tool** — nothing in this environment can click/type into the actual app window, so everything below is typecheck/build/unit/integration-test-clean but not eyeballed running.
+`npm run typecheck`, `npm run build`, and `npm test` are all clean. Beyond
+the usual mocked/pure-logic unit tests, this round's core claim — that
+`deleteRecursive` now does ONE exec instead of N SFTP round-trips, and
+correctly falls back when exec isn't available — was verified against a real
+`linuxserver/openssh-server` Docker container (spun up, tested, torn down
+this session; see "Everything tried that failed" for a real Windows/Git-Bash
+gotcha hit while doing this). The full integration suite (`RemoteShell`,
+`TransferQueue`, `SessionManager`) passed against that container; the
+pre-existing `SessionManager.jumphost.integration.test.ts` failed, but this
+looks like an environment-setup gap in the single ad-hoc container used this
+session (jump-host testing needs a "self-jump" trick per an earlier session's
+notes in this same file's history — not investigated further, unrelated to
+this session's changes).
+
+**As always, the Electron GUI itself was not visually driven this round** —
+nothing in this environment can click into the actual app window. The
+verification above is real (a live SSH server, live exec/SFTP calls,
+assertions on actual before/after filesystem state) but it did not click a
+"Delete" button in the running app.
 
 ## What was done
 
-### Bug fixes (the two the user reported)
+### 1. Remote recursive delete: one `rm -rf` exec instead of a per-entry SFTP walk
 
-1. **Rename-closes-instantly.** Root cause: reka-ui's `ContextMenu.Content`, when it closes after an item's `onSelect`, returns focus to its trigger (the file row) via a `closeAutoFocus` callback that fires a tick AFTER `onSelect` runs. `FileRow.vue`'s old flow (context-menu "Rename" → `renamingPath` set → `<UInput autofocus>` renders and gets focus) then lost that focus back to the row a moment later, firing the input's `@blur` → `submitRename()` → (name unchanged, since the user hadn't typed anything yet) → `cancel-rename` → the box closes. Fixed with reka-ui's own documented escape hatch: `<ContextMenu :items="..." :content="{ onCloseAutoFocus: (e) => e.preventDefault() }">` in [FileRow.vue](src/renderer/src/components/files/FileRow.vue) stops the forced refocus. Confirmed this is the correct, intended prop (not a hack) by reading `ContextMenu.vue`'s/`ContextMenuContent.vue`'s actual `useForwardPropsEmits` wiring in `node_modules` — `content.onCloseAutoFocus` really does reach the underlying `ContextMenuContent`'s `close-auto-focus` emit.
-2. **Action-button column too wide.** `FileRow.vue` had FOUR per-row hover icons (tail/extract/transfer/delete), each in its own fixed-width `w-7` slot, plus their matching header spacers in `FileList.vue` — all now redundant with the context menu that Round 5 added. Removed tail/extract/transfer's hover buttons entirely (their `onSelect` handlers already exist in `contextMenuItems`, untouched), kept only Delete, and trimmed `FileList.vue`'s header from four `w-7` spacers to one.
+This is the direct fix for the user's own comparison. [`RemoteShell.ts`](src/main/ssh/RemoteShell.ts)'s
+`deleteRecursive` used to `stat` → `readdir` → recurse → `unlink`/`rmdir`
+one entry at a time — deleting a folder with hundreds of files was hundreds
+of sequential SFTP round-trips. It now tries a single
+`rm -rf -- ${shellEscape(path)}` exec first (same SSH connection already
+kept open for Tail/Terminal/Unzip/Compress) and only falls back to the
+renamed-private `deleteRecursiveSftp` walk if the exec throws (no shell
+access at all — e.g. a restricted sftp-only chroot account) or exits
+non-zero. `removeRemote` in `RemoteFsService.ts` needed no changes — it
+already just calls `shell.deleteRecursive(path)`.
 
-### Phase 4 (4 of 6 items — see "Not done" below for the rest)
+### 2. Stores patch the file list in place instead of reloading after every mutation
 
-3. **Site folders/groups, duplicate, search** (`SessionManagerView.vue`/`SiteFormDialog.vue`/`sites.store.ts`/`SiteStore.ts`). `Site`/`SiteInput`/`StoredSite` all gained an optional `group: string` field — deliberately a flat free-text tag, not WinSCP's actual nested-folder model, to keep this simple: `SessionManagerView.vue`'s site list renders with NO section headers at all until at least one site has a group set (existing users see zero UI change), then switches to alphabetical group headers + a trailing "Ungrouped" section. A search box filters by name/host/username. A new `sites:duplicate` IPC channel + `SiteStore.duplicate()` clones a site's on-disk record (including its already-encrypted secret ciphertext — no decrypt/re-encrypt needed, since `safeStorage` is OS-account-scoped, not per-record).
-4. **Per-file-type icons** (`fileTypes.ts`'s new `iconForFile()`, used by `FileRow.vue`). Every non-directory file used to render the same generic `i-lucide-file` icon; now archives/images/video/audio/spreadsheets/JSON/code/documents each get their own Lucide icon, with a fallback for anything unrecognized. Verified all the new icon names actually exist in the bundled `@iconify-json/lucide` set before using them (`file-video` resolves via an alias, the rest are direct).
-5. **Import existing WinSCP/PuTTY sessions** — the roadmap's own "highest-leverage adoption unlock." New `main/sites/SessionImporter.ts` shells out to `reg query` (via `execFile`, argv array, never a shell string — no injection surface) against `HKCU\Software\SimonTatham\PuTTY\Sessions` and `HKCU\Software\Martin Prikryl\WinSCP 2\Sessions`, gated to `process.platform === 'win32'`. The actual parsing of `reg query`'s text output lives in a separate pure module, `main/sites/regQuery.ts` (`parseRegValues`/`listRegSubkeyPaths`/`parseDword`/`decodeSessionName`), so it's unit-testable against hand-authored fixtures without a real registry. New `ImportSessionsDialog.vue` scans, dedups against already-saved sites (by host:port:username), and lets the user pick which candidates to import via the existing `createSite()` path — no new write-side IPC needed. **Deliberately does not import passwords, from either source**: PuTTY never stores one, and WinSCP's stored password is only reversibly *obfuscated* (not real encryption) — re-implementing that scheme with no real WinSCP install available to validate against risked silently importing a wrong plaintext credential with zero visible error, which is worse than asking the user to retype it. Also does not recurse into WinSCP folder-group subkeys (nested `Sessions\Work\prod`-style keys) — only one level is scanned, a documented, deliberate v1 scope cut.
+`remove`/`rename`/`chmod` in both [`localFs.store.ts`](src/renderer/src/stores/localFs.store.ts)
+and [`remoteFs.store.ts`](src/renderer/src/stores/remoteFs.store.ts) used to
+end with `await this.load()` — a full extra directory reload (an SFTP
+`readdir` round-trip remotely, or a full local re-list) after an operation
+that already told the store exactly what changed. They now patch `entries`
+directly: `remove` filters the deleted path out, `rename` finds-and-updates
+the entry then re-sorts (a new name can change alphabetical position),
+`chmod` (remote only) just overwrites `entry.permissions` in place (padded to
+the existing 4-digit octal format if the dialog handed back a 3-digit one).
 
-### Security review (dispatched as a background agent, findings verified against the actual code before acting)
+### 3. Multi-select delete: parallel, with one patch, instead of N sequential (delete+reload) round-trips
 
-Reviewed `KnownHostsStore.ts`, `SessionManager.ts`, `keyboardInteractive.ts`, `SiteStore.ts`, `RemoteShell.ts`/`shellEscape.ts`, `TailManager.ts`, `UnzipService.ts`, every `main/ipc/*.ts`, and `preload/index.ts`. Two real, fixed findings; two lower-severity ones left as documented, deliberate risk acceptance (both already assume renderer compromise, which is a strong attacker position for a desktop SFTP client's threat model):
+Added `removeMany(entries)` to both stores: fires every delete concurrently
+via `Promise.allSettled`, then patches `entries`/`selected` once at the end.
+Entries whose delete failed stay in the listing; if any failed, `removeMany`
+throws an `Error` naming them so the caller can show one toast instead of
+silently losing the failure. [`FilePane.vue`](src/renderer/src/components/files/FilePane.vue)'s
+`onKeydown` (Delete/Backspace on a multi-selection) now calls
+`await store.removeMany(targets)` wrapped in try/catch → `notify.error(...)`,
+instead of the old `for (const entry of targets) { await store.remove(entry) }`
+loop — which, combined with fix #2 above, used to mean N sequential
+(delete + full directory reload) round-trips for an N-file multi-delete.
 
-6. **FIXED (HIGH) — a site's stored password could get silently replayed into keyboard-interactive prompts even after switching the site to key/agent auth.** `SessionManager.openFromSite()` decrypted and forwarded `secrets.password`/`secrets.passphrase` unconditionally, regardless of `site.authMethod`; `keyboardInteractive.ts`'s `partitionPrompts()` auto-answers anything matching `/password/i` with whatever password it's handed. `SiteStore.update()` also only re-encrypted a password when a new one was explicitly sent, so switching a site from password auth to privateKey left the OLD password ciphertext sitting in `sites.json` forever. Fixed two ways: `SiteStore.ts`'s new `pickSecret(wants, provided, existing)` now clears (returns `undefined` for) whichever secret the site's current `authMethod` doesn't use, applied in `create()`/`update()`/`toStoredJumpHost()`; AND `SessionManager.openFromSite()` independently gates `secrets.password`/`secrets.passphrase` on `site.authMethod`/`site.jumpHost.authMethod` as defense-in-depth for any site saved before this fix existed. New `SiteStore.test.ts` (4 tests) covers `pickSecret`'s branches with a mocked `safeStorage` — never touches real disk/Electron.
-7. **FIXED (MEDIUM) — `tail:start`'s `historyLines` was interpolated unescaped into a remote shell command with no runtime validation.** `TailManager.ts` built `` tail -n ${historyLines} -F ... `` directly from an IPC payload that's only cast (`req as TailStartRequest`), never validated at the actual process boundary — a compromised/buggy renderer could send a non-numeric string and get command injection on the remote host. Fixed with `sanitizeHistoryLines()` (clamps to a finite non-negative integer, falls back to 200), applied once in `TailManager.start()` before the value ever reaches the command string.
-8. **NOT fixed, documented as accepted risk (LOW/informational):** the host-key-mismatch override (`trustHostKeyChange`) is a bare renderer-supplied boolean with no nonce binding it to a specific mismatch the user actually saw; and `known_hosts.json`/`sites.json` have no integrity protection against a local attacker with same-user filesystem write access. Both require an already-compromised renderer or local machine access to matter — noted for whoever picks this up next, not fixed this round.
+### 4. Local directory listing stats entries in parallel
 
-### Performance review (also dispatched as a background agent, one finding acted on)
-
-Reviewed `TransferQueue.ts`, `RemoteShell.ts`'s recursive walk, `LocalFsService.ts`, both fs stores, and `FileList.vue`/`FileRow.vue`.
-
-9. **FIXED (HIGH) — recursive folder transfer moved one file at a time, serially, even though up to 3 whole tree JOBS could already run concurrently.** Over a high-latency link, wall time was dominated by per-file SFTP round-trip latency, not bandwidth (the review's own example: ~5,000 small files at 150ms latency ≈ 3-5 files/sec). `TransferQueue.ts` gained a generic bounded-worker-pool helper, `runConcurrent<T>(items, concurrency, worker)`, and `runTree()` now runs both directory creation and file transfers through it at `TREE_ITEM_CONCURRENCY = 4` (a new constant, deliberately separate from the existing `MAX_CONCURRENT` which bounds concurrent JOBS, not files within one job). Progress aggregation had to change from a single `currentFileBytes` number to an `inFlightBytes: Map<index, bytes>` since multiple files can now be simultaneously in flight. Verified against the real test container — the existing `enqueueTree()` upload/download integration tests (2-file trees) still pass byte-for-byte after the change; a genuinely large (thousands-of-files) tree was NOT tested against the real server, since the docker test container wasn't seeded with one.
-10. **NOT fixed, documented as follow-up (HIGH/MEDIUM, left for a future session):** `RemoteShell.readdirRecursive()`'s directory *walk* itself (as opposed to the file transfers, which are now fixed) is still fully serial — one `readdir` round-trip per subdirectory, depth-first, no fan-out across siblings; a tree with hundreds of subdirectories pays `N × RTT` in pure listing latency before any transfer starts. `RemoteShell.mkdirRecursive()` also still uses a full SSH `exec("mkdir -p ...")` round-trip instead of a lighter SFTP `mkdir` call. Both are real, scoped, but touch `RemoteShell.ts`'s existing recursive structure and its 15 integration tests — judged riskier to rush than to hand off cleanly.
-11. **NOT fixed, flagged as a live gotcha:** `FileList.vue`/`FileRow.vue` render every row unconditionally, no virtualization — a directory with thousands of entries will be slow to mount/scroll. Notably, **`@tanstack/vue-virtual` is already an installed dependency** (per `.claude/architecture/ferry-vue-frontend-architecture.md`'s own note, "safe to depend on directly for log virtualization") but is used NOWHERE in the codebase — confirmed via a repo-wide grep. Wiring it into `FileList.vue` is a clean, low-risk next step since the dependency choice is already made and justified; just never actually done.
+[`LocalFsService.ts`](src/main/fs/LocalFsService.ts)'s `list()` used to
+`for (const dirent of dirents) { await fs.stat(...) }` one at a time. Changed
+to `Promise.all(dirents.map(...))`, keeping the same "vanished/inaccessible
+entry gets silently skipped" behavior (now via returning `null` and filtering
+it out, instead of `continue`). This is the fix for "move to any folder"
+(interpreted as: opening/navigating a local folder with many entries) —
+remote listing didn't have this problem since SFTP's `readdir` already
+returns full attrs per entry in one round-trip, no follow-up stat needed.
 
 ## Files actively edited this session
 
-- `src/renderer/src/components/files/FileRow.vue`, `FileList.vue` — both bug fixes, per-file-type icons
-- `src/renderer/src/utils/fileTypes.ts` (+ new `fileTypes.test.ts`) — `iconForFile()`
-- `src/main/ssh/retry.ts`'s test coverage gap — new `retry.test.ts` (6 tests, fake timers), no production code changes needed, the roadmap just flagged it as untested
-- `src/shared/contract.ts` — `Site.group`, `sitesDuplicate`/`sitesImportScan` channels, `ImportedSessionCandidate` type
-- `src/main/sites/SiteStore.ts` (+ new `SiteStore.test.ts`), `SessionImporter.ts` (new), `regQuery.ts` (new, + `regQuery.test.ts`)
-- `src/main/ipc/sites.ipc.ts` — `sitesDuplicate`/`sitesImportScan` handlers
-- `src/renderer/src/stores/sites.store.ts` — `groupNames` getter, `duplicateSite`/`scanImportCandidates` actions
-- `src/renderer/src/components/sessions/SessionManagerView.vue`, `SiteFormDialog.vue`, `ImportSessionsDialog.vue` (new)
-- `src/main/ssh/SessionManager.ts` — auth-method-gated password/passphrase pass-through (security fix)
-- `src/main/tail/TailManager.ts` — `sanitizeHistoryLines()` (security fix)
-- `src/main/transfer/TransferQueue.ts` — `runConcurrent()`, per-tree concurrency (performance fix)
-- `vitest.config.ts` — added `resolve.alias` for `@shared`/`@renderer` (needed once a test made a real, non-type-only `@shared/...` import)
-- `.claude/PROJECT_MAP.md` — updated throughout for all of the above (two stale Conventions entries corrected, several new ones added)
+- `src/main/ssh/RemoteShell.ts` — `deleteRecursive` (exec-first) + new private `deleteRecursiveSftp` (renamed from the old body)
+- `src/main/ssh/RemoteShell.integration.test.ts` — two new real-server tests: one asserting exactly one `exec()` call deletes a nested tree, one forcing `exec()` to reject (`vi.spyOn`) and asserting the SFTP fallback still deletes correctly
+- `src/main/fs/LocalFsService.ts` — `list()`'s stat loop parallelized
+- `src/renderer/src/stores/localFs.store.ts` — `remove`/`rename` optimistic patch, new `removeMany`
+- `src/renderer/src/stores/remoteFs.store.ts` — `remove`/`rename`/`chmod` optimistic patch (per-session bucket), new `removeMany`
+- `src/renderer/src/components/files/FilePane.vue` — multi-select delete (`onKeydown`) calls `removeMany` + notifies on failure, instead of looping singular `remove`
+- `.claude/PROJECT_MAP.md` — two new Conventions bullets (exec-first delete + optimistic store patching) and three new "Where to go for X" rows
+- `.claude/plan/ferry-perf-fileops-plan.md` (new) — copy of the approved plan, per standing preference to keep plans in-repo
+
+No `shared/contract.ts` changes — every fix reuses existing IPC channels; batching is client-side (`Promise.allSettled` over the existing single-path delete channel), not a new bulk IPC call.
 
 ## Everything tried that failed (or needed a second pass)
 
-- **The first `fileTypes.test.ts` run failed to resolve `@shared/archive`** — `vitest.config.ts` had no path alias, unlike `electron.vite.config.ts`. Earlier renderer tests importing from `@shared/contract` had only ever done `import type { X }`, which esbuild fully erases at compile time and never needs the alias to resolve — so this gap was latent and accidentally unnoticed until a REAL (value) import was needed. Fixed by adding the same `@shared`/`@renderer` aliases to `vitest.config.ts`.
-- **First `regQuery.test.ts` draft used a wrong fixture** — a hand-authored `reg query` header line in the "HKEY_CURRENT_USER\..." form, which doesn't match how `SessionImporter.ts` actually queries (via the `HKCU` alias, whose echoed header line stays in `HKCU\...` form). `listRegSubkeyPaths()`'s discriminator (match on the `HKEY_` hive prefix, not on comparing against the exact queried key string) is correct — the test fixture was wrong, not the implementation. Fixed the fixture, not the code.
-- **Nothing else failed outright this session** — every planned Phase 4 item, bug fix, and acted-on review finding landed and is covered by a passing test (or, for the two GUI-only bug fixes, at minimum typecheck+build).
+- **Verifying against a real test container hit a genuine Windows/Git-Bash gotcha, not a code bug.** Spun up `linuxserver/openssh-server` (per this repo's existing `RemoteShell.integration.test.ts` docker command) and ran `docker exec ferry-test-sftp mkdir -p /config/ferry-test` + `chown` to set up the test directory. Every single test in the suite then failed with `Failed to create ".../<uuid>": No such file` — looked at first like a real regression. It wasn't: this Bash tool runs Git Bash (MSYS), which auto-rewrites any argument that looks like an absolute POSIX path (`/config/ferry-test`, `/etc/passwd`, etc.) into a Windows path *before* invoking `docker.exe` — so `docker exec ferry-test-sftp mkdir -p /config/ferry-test` was silently creating some other mangled path inside the container, not the real `/config/ferry-test`, and every subsequent `ls`/`cat` "confirming" it worked was checking that same mangled path, not reality. Fixed by exporting `MSYS_NO_PATHCONV=1` before any `docker exec ... <container-absolute-path>` command, then redoing the `mkdir`/`chown` for real — after which all 17 `RemoteShell.integration.test.ts` tests (including the two new ones) passed. **Worth remembering for any future session that shells out to `docker exec`/`docker run` with container-side absolute paths from this Bash tool on this machine.**
+- **`SessionManager.jumphost.integration.test.ts` failed** (`Jump host tunnel to 127.0.0.1:2222 failed: Channel open failure`) against the single ad-hoc container this session stood up — everything else (17 `RemoteShell` + 5 `TransferQueue` + 4 `SessionManager` tests) passed against the same container. Didn't dig further since it's orthogonal to this session's file-op-perf work; a prior session's `PROJECT_MAP.md` notes jump-host was previously verified via a "self-jump trick" against the test container, which may need setup this session's single-container spin-up didn't replicate (e.g. `AllowTcpForwarding` or a second target container). Flag this if a future session needs jump-host specifically verified again.
+- **Nothing else failed** — the actual code changes (exec-first delete, optimistic store patches, `removeMany`, parallel local stat) all landed cleanly on the first pass, typecheck/build clean, no test regressions.
 
 ## Next step
 
-1. **Manual verification of the Electron GUI itself** — unchanged standing gap, now with more surface: both bug fixes (rename via right-click, the trimmed action column), site groups/search/duplicate, the per-file-type icons, and the Import dialog, on top of everything every prior round already needed checking. Site to use: `127.0.0.1:2299` / `ferrytest` / `ferrytest123`, SFTP. **The WinSCP/PuTTY import feature specifically needs a human with real WinSCP and/or PuTTY sessions saved on their machine** — this environment has neither installed, so `SessionImporter.ts`'s actual `reg.exe` invocation (as opposed to its unit-tested output parser) has never been exercised against real data.
-2. **Wire up `@tanstack/vue-virtual` in `FileList.vue`** — flagged in this session's performance review as a real scaling risk, and notably the dependency is already installed and already justified in the frontend architecture doc for exactly this purpose; nobody's actually done it yet.
-3. **`RemoteShell.readdirRecursive()`'s directory walk and `mkdirRecursive()`'s command choice** — still serial/exec-based respectively (see finding #10 above); a good next performance pass once the GUI verification above happens, since it touches `RemoteShell.ts`'s existing 15 integration tests and deserves its own focused session rather than a rushed add-on to this one.
-4. **Remaining Phase 4 items, not started this round**: sync/mirror local↔remote directories, edit-in-place (open remote file in local editor, watch, auto-reupload on save), and the general polish backlog (command palette, light/dark toggle, bandwidth throttling, archive creation, auto-update/code signing, persist open tabs across restart).
-5. **The two accepted-risk security findings** (host-key-mismatch override has no nonce; `known_hosts.json`/`sites.json` have no integrity protection) if a future security pass wants to go further than "requires an already-compromised renderer/machine" as the bar.
-6. **A real WinSCP folder-group** (nested `Sessions\Work\prod`-style registry subkeys) is still silently skipped by the importer, not recursed into or surfaced as a "N skipped" count — worth adding once real registry data is available to validate against (see #1).
+1. **Manual GUI verification, as always** — the Electron window itself hasn't been clicked through in this environment. Specifically worth confirming by hand: deleting a remote folder with 50+ files now feels instant rather than stepping through each file; multi-selecting 5-10 remote files and deleting doesn't visibly stutter; rename/chmod update the row without a full-list "flash"; opening a local folder with many files (e.g. Downloads) feels faster than before. Site to use per prior sessions: `127.0.0.1:2299` / `ferrytest` / `ferrytest123`, SFTP (spin up the same `linuxserver/openssh-server` container — see `RemoteShell.integration.test.ts`'s file header for the exact command — **remember `MSYS_NO_PATHCONV=1` for any `docker exec` with container-absolute-path arguments if driving it from this same Git-Bash tool**).
+2. **`mkdir`'s optimistic-insert was deliberately left out this round** (the plan flagged it as optional/lower-priority since it wasn't part of the user's complaint) — `mkdir` in both fs stores still calls `await this.load()`. If a future session wants full consistency with the new patch-in-place convention, add it there too, following the same pattern as `rename`'s re-sort.
+3. **Everything already flagged in prior rounds and still untouched**: sync/mirror local↔remote directories and edit-in-place (Phase 4 items 3/4, still not started — see `.claude/plan/ferry-winscp-parity-roadmap.md`), auto-update needing a real GitHub repo + release + signing cert, the two accepted-risk security findings (host-key-mismatch override has no nonce; `known_hosts.json`/`sites.json` have no integrity protection), and WinSCP folder-group (nested registry subkey) import recursion.
+4. **Jump-host integration test failure (see above)** — worth a dedicated look if jump-host functionality itself is ever in question; not believed to be caused by this session's changes (none of this session's edits touch `SessionManager.ts` or jump-host code at all).

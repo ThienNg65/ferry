@@ -22,6 +22,7 @@ const emit = defineEmits<{
   transfer: [entry: FileEntry]
   tail: [entry: FileEntry]
   extract: [entry: FileEntry]
+  compress: [entry: FileEntry]
   rename: [entry: FileEntry, newName: string]
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
@@ -88,6 +89,7 @@ const emit = defineEmits<{
         @transfer="emit('transfer', $event)"
         @tail="emit('tail', $event)"
         @extract="emit('extract', $event)"
+        @compress="emit('compress', $event)"
         @rename="(entry, newName) => emit('rename', entry, newName)"
         @cancel-rename="emit('cancel-rename')"
         @start-rename="emit('start-rename', $event)"

@@ -4,8 +4,12 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { WindowIsMaximizedResult, WindowStateEvent } from '@shared/contract'
 import { invoke, onEvent } from '../../api'
 import { useGlobalActivity } from '../../composables/useGlobalActivity'
+import { useUiStore } from '../../stores/ui.store'
+import { useSettingsDialog } from '../../composables/useSettingsDialog'
 
 const { isBusy, label: activityLabel } = useGlobalActivity()
+const ui = useUiStore()
+const settingsDialog = useSettingsDialog()
 const isMaximized = ref(false)
 let unsubscribe: (() => void) | null = null
 
@@ -37,7 +41,28 @@ function close(): void {
     class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-muted bg-default/80 backdrop-blur"
     style="-webkit-app-region: drag"
   >
-    <div></div>
+    <div class="flex items-center" style="-webkit-app-region: no-drag">
+      <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
+        <button
+          type="button"
+          aria-label="Toggle theme"
+          class="flex size-9 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
+          @click="ui.toggleTheme()"
+        >
+          <UIcon :name="ui.theme === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'" class="size-3.5" />
+        </button>
+      </UTooltip>
+      <UTooltip text="Settings">
+        <button
+          type="button"
+          aria-label="Settings"
+          class="flex size-9 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted"
+          @click="settingsDialog.open()"
+        >
+          <UIcon name="i-lucide-settings" class="size-3.5" />
+        </button>
+      </UTooltip>
+    </div>
     <div class="flex items-center gap-1.5 justify-self-center">
       <Transition name="fade">
         <UTooltip v-if="isBusy" :text="activityLabel">

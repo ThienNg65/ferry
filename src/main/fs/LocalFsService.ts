@@ -17,23 +17,25 @@ export async function list(dirPath?: string): Promise<FileListResult> {
     throw new SshError('NOT_FOUND', `Cannot list "${resolved}": ${(e as Error).message}`)
   }
 
-  const entries: FileEntry[] = []
-  for (const dirent of dirents) {
-    const fullPath = path.join(resolved, dirent.name)
-    try {
-      const stats = await fs.stat(fullPath)
-      entries.push({
-        name: dirent.name,
-        path: fullPath,
-        isDir: dirent.isDirectory(),
-        size: stats.size,
-        modifiedAt: stats.mtime.toISOString()
-      })
-    } catch {
-      // Entry vanished or became inaccessible mid-listing (e.g. broken symlink) — skip it.
-      continue
-    }
-  }
+  const statted = await Promise.all(
+    dirents.map(async (dirent): Promise<FileEntry | null> => {
+      const fullPath = path.join(resolved, dirent.name)
+      try {
+        const stats = await fs.stat(fullPath)
+        return {
+          name: dirent.name,
+          path: fullPath,
+          isDir: dirent.isDirectory(),
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString()
+        }
+      } catch {
+        // Entry vanished or became inaccessible mid-listing (e.g. broken symlink) — skip it.
+        return null
+      }
+    })
+  )
+  const entries: FileEntry[] = statted.filter((e): e is FileEntry => e !== null)
   return { path: resolved, entries }
 }
 

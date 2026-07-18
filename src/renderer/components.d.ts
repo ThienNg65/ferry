@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     BottomDock: typeof import('./src/components/shell/BottomDock.vue')['default']
     ChmodDialog: typeof import('./src/components/files/ChmodDialog.vue')['default']
+    CommandPalette: typeof import('./src/components/shell/CommandPalette.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']
@@ -24,6 +25,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']
+    SettingsDialog: typeof import('./src/components/shell/SettingsDialog.vue')['default']
     SiteFormDialog: typeof import('./src/components/sessions/SiteFormDialog.vue')['default']
     SiteTabBar: typeof import('./src/components/shell/SiteTabBar.vue')['default']
     TerminalView: typeof import('./src/components/terminal/TerminalView.vue')['default']

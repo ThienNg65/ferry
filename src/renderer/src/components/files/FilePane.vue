@@ -176,6 +176,51 @@ function firstAvailableName(base: string): string {
   return `${base} (${i})`
 }
 
+/** First archive name not already present in `store`'s current listing — `report.zip`, `report (1).zip`, ... */
+function firstAvailableZipName(baseZipName: string): string {
+  const existing = new Set(store.entries.map((e) => e.name))
+  if (!existing.has(baseZipName)) {
+    return baseZipName
+  }
+  const dot = baseZipName.lastIndexOf('.')
+  const stem = dot > 0 ? baseZipName.slice(0, dot) : baseZipName
+  const ext = dot > 0 ? baseZipName.slice(dot) : ''
+  let i = 1
+  while (existing.has(`${stem} (${i})${ext}`)) {
+    i += 1
+  }
+  return `${stem} (${i})${ext}`
+}
+
+/** Zips `entry` in place (same directory), local or remote depending on this pane's side — no download/upload round-trip. */
+async function onCompress(entry: FileEntry): Promise<void> {
+  const zipName = firstAvailableZipName(`${entry.name}.zip`)
+  try {
+    if (props.side === 'local') {
+      const sep = store.currentPath.includes('\\') ? '\\' : '/'
+      await invoke<void>(INVOKE_CHANNELS.archiveCompressLocal, {
+        sourcePath: entry.path,
+        destPath: `${store.currentPath}${sep}${zipName}`
+      })
+    } else {
+      const sessionId = sessions.activeSessionId
+      if (!sessionId) {
+        return
+      }
+      await invoke<UnzipResult>(INVOKE_CHANNELS.archiveCompressRemote, {
+        sessionId,
+        sourcePath: entry.path,
+        destPath: `${remoteFs.currentPath.replace(/\/$/, '')}/${zipName}`
+      })
+    }
+    await store.load()
+    notify.success('Compressed', `${entry.name} → ${zipName}`)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    notify.error('Compress failed', message)
+  }
+}
+
 async function performExtract(entry: FileEntry, folderName: string): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId) {
@@ -308,8 +353,11 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   event.preventDefault()
   const targets = store.entries.filter((e) => store.selected.has(e.path))
-  for (const entry of targets) {
-    await store.remove(entry)
+  try {
+    await store.removeMany(targets)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    notify.error('Delete failed', message)
   }
 }
 
@@ -412,6 +460,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @start-rename="onStartRename"
         @sort="store.setSort"
         @extract="onExtract"
+        @compress="onCompress"
         @chmod="onOpenChmod"
       />
       <FilePreviewDialog

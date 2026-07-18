@@ -2,6 +2,18 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.9.0 — WinSCP-parity Phase 4 continued: compress, bandwidth limit, tab persistence, theme, command palette
+
+The remaining WinSCP-parity Phase 4 items land: an inverse to the existing "Extract here" action, an app-wide transfer speed cap, tabs that survive a restart, a light/dark toggle, and a Ctrl/Cmd+K command palette — plus the first (currently inert) scaffolding for auto-update. 92 unit tests passing.
+
+**New features:**
+- **Compress to .zip** — the inverse of "Extract here", available from every file/folder's right-click menu. Zips in place: locally via the streamed `archiver` package (no memory blow-up on large folders), remotely via a single SSH-exec `zip -r` (no download/upload round-trip), both rooting the archive's internal paths at the source's own basename.
+- **Transfer bandwidth limit** — a new Settings dialog (gear icon in the title bar, or via the command palette) caps all transfers combined to a configurable KB/s ceiling, applied app-wide via a shared rate limiter rather than per-file (so it doesn't multiply with concurrency), and takes effect on transfers already in flight, not just new ones.
+- **Site tabs are restored across app restarts** — as picker tabs only, never auto-connected: the app remembers which saved sites had open tabs at last shutdown, but you still click to connect, so no saved credential or 2FA challenge fires unattended on launch.
+- **Light/dark theme toggle** — a sun/moon button in the title bar, defaulting to the OS's own preference on first run, persisted across restarts.
+- **Command palette (Ctrl/Cmd+K)** — quick actions (new tab, toggle theme, toggle the Local pane, open Settings) plus jump-to-site search, so connecting to a saved site no longer requires leaving the keyboard.
+- **Auto-update scaffolding** — packaged builds check GitHub Releases on launch and prompt to restart-and-install once a new version has finished downloading in the background. This is genuinely untested scaffolding, not a working feature yet: it needs a real published repo/release and a code-signing certificate, neither of which exists in this environment — safely inert (a no-op) until then.
+
 ## 0.8.0 — File-op performance pass, and a shell-injection fix found in review
 
 User feedback that Ferry felt much slower than WinSCP (and than a plain terminal) for delete/rename/chmod/navigate led to a focused performance pass tracking down the actual causes rather than cosmetic tweaks, plus a dedicated security review of the file-op changes that turned up a real remote-command-injection bug in the (separately in-progress) remote Extract feature — fixed before this release, with a regression test proving it.

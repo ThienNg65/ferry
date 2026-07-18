@@ -49,6 +49,7 @@ const emit = defineEmits<{
   transfer: [entry: FileEntry]
   tail: [entry: FileEntry]
   extract: [entry: FileEntry]
+  compress: [entry: FileEntry]
   rename: [entry: FileEntry, newName: string]
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
@@ -81,6 +82,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   if (props.allowExtract && isArchiveFile.value) {
     items.push({ label: 'Extract here', icon: 'i-lucide-archive-restore', onSelect: () => emit('extract', props.entry) })
   }
+  items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
   items.push({ label: 'Copy path', icon: 'i-lucide-copy', onSelect: () => void copyPath() })
   if (props.side === 'remote' && props.entry.permissions) {

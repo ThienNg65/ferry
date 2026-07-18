@@ -320,6 +320,36 @@ export interface AppVersionResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — auto-update
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Payload for the `update:available` channel — a newer version is being downloaded in the background. */
+export interface UpdateAvailableEvent {
+  version: string
+}
+
+/** Payload for the `update:downloaded` channel — a restart will install `version`. */
+export interface UpdateDownloadedEvent {
+  version: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain models — persisted app settings
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * App-wide settings persisted across restarts (not per-session/domain state) —
+ * mirrors `ui.store.ts`'s `localStorage` prefs, but for state only the main
+ * process can own (which site tabs were open; a transfer-wide rate limit).
+ */
+export interface AppSettings {
+  /** Saved-site ids of tabs open at last shutdown, in tab order — restored (not auto-connected) on next launch. */
+  openTabSiteIds: string[]
+  /** Global transfer rate cap in KB/s, or null for unlimited. */
+  bandwidthLimitKBps: number | null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — window chrome
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -349,6 +379,10 @@ export const INVOKE_CHANNELS = {
   sitesDelete: 'sites:delete',
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
+  // app settings
+  settingsGet: 'settings:get',
+  settingsSetOpenTabs: 'settings:setOpenTabs',
+  settingsSetBandwidthLimit: 'settings:setBandwidthLimit',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
@@ -379,6 +413,9 @@ export const INVOKE_CHANNELS = {
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
+  // archive creation ("compress to zip")
+  archiveCompressLocal: 'archive:compressLocal',
+  archiveCompressRemote: 'archive:compressRemote',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',
@@ -390,7 +427,9 @@ export const INVOKE_CHANNELS = {
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',
   windowClose: 'window:close',
-  windowIsMaximized: 'window:isMaximized'
+  windowIsMaximized: 'window:isMaximized',
+  // auto-update
+  updateInstallNow: 'update:installNow'
 } as const
 
 /** Union of every valid invoke channel string. */
@@ -410,7 +449,9 @@ export const EVENT_CHANNELS = {
   tailEnd: 'tail:end',
   terminalData: 'terminal:data',
   terminalExit: 'terminal:exit',
-  windowStateChange: 'window:state-change'
+  windowStateChange: 'window:state-change',
+  updateAvailable: 'update:available',
+  updateDownloaded: 'update:downloaded'
 } as const
 
 /** Union of every valid event channel string. */

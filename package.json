@@ -1,6 +1,6 @@
 {
   "name": "ferry",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/main/index.js",
   "scripts": {
@@ -15,17 +15,20 @@
   "dependencies": {
     "@iconify-json/lucide": "^1.2.0",
     "@iconify/vue": "^5.0.1",
-    "@tanstack/vue-virtual": "^3.10.0",
     "@nuxt/ui": "^4.9.0",
+    "@tanstack/vue-virtual": "^3.10.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "archiver": "^8.0.0",
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.9",
     "pinia": "^2.1.7",
     "ssh2": "^1.16.0",
     "vue": "^3.5.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@types/archiver": "^8.0.0",
     "@types/node": "^20.0.0",
     "@types/ssh2": "^1.15.0",
     "@vitejs/plugin-vue": "^5.0.0",
