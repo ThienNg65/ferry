@@ -1,8 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-// Not yet in the auto-generated global components.d.ts — deep-import instead
-// (same pattern as ContextMenu in FileRow.vue).
-import UChip from '@nuxt/ui/components/Chip.vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'

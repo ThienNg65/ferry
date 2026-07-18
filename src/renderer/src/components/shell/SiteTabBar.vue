@@ -12,11 +12,11 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 overflow-x-auto border-b border-default bg-muted px-2 py-1">
+  <div class="flex items-center gap-1 overflow-x-auto border-b border-accented bg-muted px-2 py-1">
     <div
       v-for="tab in sessions.tabs"
       :key="tab.tabId"
-      class="group flex max-w-48 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border-l-2 px-2 py-1 text-xs"
+      class="group flex max-w-48 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs"
       :class="
         tab.tabId === sessions.activeTabId
           ? 'border-primary bg-primary/10 font-medium text-primary'
