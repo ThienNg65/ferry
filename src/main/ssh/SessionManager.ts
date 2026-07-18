@@ -1,6 +1,6 @@
 import { Client, type ClientChannel, type ConnectConfig, type HostVerifier } from 'ssh2'
 import { randomUUID } from 'crypto'
-import { readFileSync } from 'fs'
+import { readFile } from 'fs/promises'
 import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
@@ -212,13 +212,13 @@ export class SessionManager {
   }
 
   /** Builds a `hostVerifier`-equipped `ConnectConfig` for one hop (the target host, or a jump host), keyed by its own host:port in `KnownHostsStore`. */
-  private buildConnectConfig(
+  private async buildConnectConfig(
     host: string,
     port: number,
     username: string,
     auth: HopAuth,
     trustHostKeyChange: boolean
-  ): { config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder } {
+  ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
     // (TypeScript's control-flow analysis doesn't track closure reassignments) —
@@ -256,7 +256,7 @@ export class SessionManager {
       if (!auth.privateKeyPath) {
         throw new SshError('VALIDATION', 'Private key path is required for private-key auth')
       }
-      config.privateKey = readFileSync(auth.privateKeyPath)
+      config.privateKey = await readFile(auth.privateKeyPath)
       if (auth.passphrase) {
         config.passphrase = auth.passphrase
       }
@@ -346,7 +346,7 @@ export class SessionManager {
       let sock: ClientChannel | undefined
       if (jumpClient && input.jumpHost) {
         const jump = input.jumpHost
-        const { config: jumpConfig, hostKeyMismatch: jumpMismatch } = this.buildConnectConfig(
+        const { config: jumpConfig, hostKeyMismatch: jumpMismatch } = await this.buildConnectConfig(
           jump.host,
           jump.port,
           jump.username,
@@ -366,7 +366,7 @@ export class SessionManager {
         sock = await this.forwardThroughJump(jumpClient, input.host, input.port)
       }
 
-      const { config: targetConfig, hostKeyMismatch } = this.buildConnectConfig(
+      const { config: targetConfig, hostKeyMismatch } = await this.buildConnectConfig(
         input.host,
         input.port,
         input.username,

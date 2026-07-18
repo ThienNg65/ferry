@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
@@ -68,10 +68,27 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  // Open external links in the OS browser, not in Electron.
+  // Open external links in the OS browser, not in Electron — but only for
+  // http(s). A URL rendered from remote SSH data (a log line, a filename) must
+  // never be able to invoke an arbitrary OS handler via file:/custom schemes.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    try {
+      const { protocol } = new URL(url)
+      if (protocol === 'http:' || protocol === 'https:') {
+        shell.openExternal(url)
+      }
+    } catch {
+      // Malformed URL — ignore, never open.
+    }
     return { action: 'deny' }
+  })
+
+  // Defense-in-depth: this is a single-window SPA with no vue-router, so no
+  // legitimate top-level navigation ever occurs. `will-navigate` does not fire
+  // for the initial loadURL/loadFile, so unconditionally blocking it prevents
+  // the renderer frame from ever being steered to untrusted content.
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
   })
 
   win.once('ready-to-show', () => {
@@ -131,6 +148,10 @@ app.whenReady().then(() => {
   } else {
     Menu.setApplicationMenu(null)
   }
+
+  // Deny every renderer permission request (camera, mic, geolocation,
+  // notifications, etc.) — a local-only SFTP client never needs any of them.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
 
   registerAllHandlers()
   TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
