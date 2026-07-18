@@ -5,11 +5,22 @@ import type { WindowIsMaximizedResult, WindowStateEvent } from '@shared/contract
 import { invoke, onEvent } from '../../api'
 import { useGlobalActivity } from '../../composables/useGlobalActivity'
 import { useUiStore } from '../../stores/ui.store'
+import { useSessionsStore } from '../../stores/sessions.store'
 import { useSettingsDialog } from '../../composables/useSettingsDialog'
+import { useDockState } from '../../composables/useDockState'
 
 const { isBusy, label: activityLabel } = useGlobalActivity()
 const ui = useUiStore()
+const sessions = useSessionsStore()
 const settingsDialog = useSettingsDialog()
+const { openDock } = useDockState()
+
+/** The dock only exists post-connect — the busy dot is a plain indicator otherwise. */
+function showActivity(): void {
+  if (sessions.status === 'connected') {
+    openDock('activity')
+  }
+}
 const isMaximized = ref(false)
 let unsubscribe: (() => void) | null = null
 
@@ -66,7 +77,16 @@ function close(): void {
     <div class="flex items-center gap-1.5 justify-self-center">
       <Transition name="fade">
         <UTooltip v-if="isBusy" :text="activityLabel">
-          <span class="size-1.5 rounded-full bg-primary animate-pulse" />
+          <button
+            type="button"
+            aria-label="Show activity"
+            class="flex items-center"
+            :class="sessions.status === 'connected' ? 'cursor-pointer' : 'cursor-default'"
+            style="-webkit-app-region: no-drag"
+            @click="showActivity"
+          >
+            <span class="size-2 rounded-full bg-primary animate-pulse" />
+          </button>
         </UTooltip>
       </Transition>
       <span class="text-xs font-medium text-muted">Ferry</span>

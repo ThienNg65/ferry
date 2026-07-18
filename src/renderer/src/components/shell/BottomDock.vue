@@ -1,26 +1,27 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+// Not yet in the auto-generated global components.d.ts — deep-import instead
+// (same pattern as ContextMenu in FileRow.vue).
+import UChip from '@nuxt/ui/components/Chip.vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
+import { useTransferQueueStore } from '../../stores/transferQueue.store'
+import { useOperationsStore } from '../../stores/operations.store'
+import { useDockState } from '../../composables/useDockState'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
-
-type DockTab = 'transfers' | 'tail' | 'terminal'
+import ActivityPanel from '../activity/ActivityPanel.vue'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
+const transfers = useTransferQueueStore()
+const operations = useOperationsStore()
 
-const collapsed = ref(false)
-const tab = ref<DockTab>('transfers')
-/** Once true, TerminalView stays mounted forever (see its own v-show sibling below) so its xterm instances and scrollback never get torn down by dock-tab switching. */
-const terminalEverShown = ref(false)
+// Dock open/tab state is shared via useDockState so other components (e.g.
+// the TitleBar busy indicator) can open the dock on a specific tab.
+const { collapsed, tab, terminalEverShown, openDock } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
-
-function openTerminalTab(): void {
-  tab.value = 'terminal'
-  terminalEverShown.value = true
-}
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -34,19 +35,30 @@ function basename(path: string): string {
   >
     <div class="flex items-center justify-between px-2 py-1">
       <div class="flex items-center gap-1">
-        <UButton
-          label="Transfers"
-          size="xs"
-          :color="tab === 'transfers' ? 'primary' : 'neutral'"
-          :variant="tab === 'transfers' ? 'soft' : 'ghost'"
-          @click="tab = 'transfers'"
-        />
+        <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
+          <UButton
+            label="Transfers"
+            size="xs"
+            :color="tab === 'transfers' ? 'primary' : 'neutral'"
+            :variant="tab === 'transfers' ? 'soft' : 'ghost'"
+            @click="openDock('transfers')"
+          />
+        </UChip>
+        <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
+          <UButton
+            label="Activity"
+            size="xs"
+            :color="tab === 'activity' ? 'primary' : 'neutral'"
+            :variant="tab === 'activity' ? 'soft' : 'ghost'"
+            @click="openDock('activity')"
+          />
+        </UChip>
         <UButton
           label="Log Tail"
           size="xs"
           :color="tab === 'tail' ? 'primary' : 'neutral'"
           :variant="tab === 'tail' ? 'soft' : 'ghost'"
-          @click="tab = 'tail'"
+          @click="openDock('tail')"
         />
         <UButton
           label="Terminal"
@@ -54,7 +66,7 @@ function basename(path: string): string {
           :color="tab === 'terminal' ? 'primary' : 'neutral'"
           :variant="tab === 'terminal' ? 'soft' : 'ghost'"
           :disabled="sessions.status !== 'connected'"
-          @click="openTerminalTab"
+          @click="openDock('terminal')"
         />
       </div>
       <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
@@ -69,6 +81,7 @@ function basename(path: string): string {
     </div>
     <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TransferQueue v-if="tab === 'transfers'" />
+      <ActivityPanel v-else-if="tab === 'activity'" />
       <template v-else-if="tab === 'tail'">
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center gap-1 border-b border-muted px-2 py-1">
           <div

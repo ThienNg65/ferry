@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, FileListResult } from '@shared/contract'
+import type { DeleteManyResult, FileEntry, FileListResult } from '@shared/contract'
 import { invoke } from '../api'
 import { useSessionsStore } from './sessions.store'
 import { compareEntries, type SortColumn, type SortDirection } from '../utils/fileSort'
@@ -163,28 +163,28 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       bucket.selected.delete(entry.path)
     },
 
-    /** Deletes every entry in `entries` concurrently, then patches the listing once — entries that fail to delete stay in the listing. */
+    /**
+     * Deletes every entry in `entries` as ONE main-side batch operation (a
+     * single Activity row with item-count progress), then patches the listing
+     * once — entries that fail to delete stay in the listing.
+     */
     async removeMany(entries: FileEntry[]): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
-      const results = await Promise.allSettled(
-        entries.map((entry) => invoke<void>(INVOKE_CHANNELS.fsRemoteDelete, sessionId, entry.path))
-      )
-      const removedPaths = new Set<string>()
-      const failures: string[] = []
-      results.forEach((result, i) => {
-        if (result.status === 'fulfilled') {
-          removedPaths.add(entries[i].path)
-        } else {
-          failures.push(entries[i].name)
-        }
+      const result = await invoke<DeleteManyResult>(INVOKE_CHANNELS.fsRemoteDeleteMany, {
+        sessionId,
+        paths: entries.map((e) => e.path)
       })
+      const removedPaths = new Set(result.deletedPaths)
       bucket.entries = bucket.entries.filter((e) => !removedPaths.has(e.path))
       for (const path of removedPaths) {
         bucket.selected.delete(path)
       }
-      if (failures.length > 0) {
-        throw new Error(`Failed to delete: ${failures.join(', ')}`)
+      if (result.failures.length > 0) {
+        const failedNames = result.failures.map(
+          (f) => entries.find((e) => e.path === f.path)?.name ?? f.path
+        )
+        throw new Error(`Failed to delete: ${failedNames.join(', ')}`)
       }
     },
 

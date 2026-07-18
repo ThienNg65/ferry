@@ -36,7 +36,17 @@ export const useTransferQueueStore = defineStore('transferQueue', {
   }),
 
   getters: {
-    list: (state): TransferItemState[] => Array.from(state.items.values()).reverse()
+    list: (state): TransferItemState[] => Array.from(state.items.values()).reverse(),
+    /** Transfers currently queued or moving bytes — drives the dock tab badge. */
+    activeCount: (state): number => {
+      let count = 0
+      for (const item of state.items.values()) {
+        if (item.state === 'queued' || item.state === 'started' || item.state === 'progress') {
+          count += 1
+        }
+      }
+      return count
+    }
   },
 
   actions: {

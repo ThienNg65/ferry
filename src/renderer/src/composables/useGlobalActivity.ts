@@ -4,6 +4,7 @@ import { useTransferQueueStore } from '../stores/transferQueue.store'
 import { useRemoteFsStore } from '../stores/remoteFs.store'
 import { useLocalFsStore } from '../stores/localFs.store'
 import { useIpcActivityStore } from '../stores/ipcActivity.store'
+import { useOperationsStore } from '../stores/operations.store'
 
 const BUSY_TRANSFER_STATES = new Set(['queued', 'started', 'progress'])
 
@@ -22,6 +23,7 @@ export function useGlobalActivity() {
   const transfers = useTransferQueueStore()
   const remoteFs = useRemoteFsStore()
   const localFs = useLocalFsStore()
+  const operations = useOperationsStore()
 
   const isConnecting = computed(() => sessions.tabs.some((t) => t.connecting))
   const activeTransferCount = computed(
@@ -37,6 +39,9 @@ export function useGlobalActivity() {
     }
     if (activeTransferCount.value > 0) {
       return `${activeTransferCount.value} transfer${activeTransferCount.value > 1 ? 's' : ''} in progress`
+    }
+    if (operations.firstRunningLabel) {
+      return operations.firstRunningLabel
     }
     if (remoteFs.loading || localFs.loading) {
       return 'Loading directory…'

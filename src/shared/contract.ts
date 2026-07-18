@@ -251,6 +251,48 @@ export interface TransferEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — long-running operations (Activity dock tab)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type OperationKind =
+  | 'extract-remote'
+  | 'compress-remote'
+  | 'compress-local'
+  | 'delete-remote'
+  | 'delete-remote-batch'
+
+export type OperationState = 'started' | 'progress' | 'done' | 'error' | 'cancelled'
+
+/**
+ * Push-event payload for the `operation:event` channel — the generic
+ * long-running-operation counterpart of TransferEvent. Progress fields are
+ * optional: absent means the operation is indeterminate and the renderer shows
+ * an animated bar plus elapsed time derived from `startedAt`.
+ */
+export interface OperationEvent {
+  operationId: string
+  kind: OperationKind
+  state: OperationState
+  /** Human label, e.g. "Extracting report.zip" — sent on every event (merge-safe). */
+  label: string
+  /** Absent for purely-local operations (compress-local). */
+  sessionId?: string
+  /** Epoch ms — the renderer derives elapsed time from this; no per-second events. */
+  startedAt: number
+  cancellable: boolean
+  progressCurrent?: number
+  progressTotal?: number
+  progressUnit?: 'bytes' | 'items'
+  error?: string
+}
+
+/** Result of `fs:remote:deleteMany` — per-path outcomes so the renderer patches its listing once. */
+export interface DeleteManyResult {
+  deletedPaths: string[]
+  failures: { path: string; error: string }[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote log tail
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -402,6 +444,7 @@ export const INVOKE_CHANNELS = {
   fsRemoteMkdir: 'fs:remote:mkdir',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
+  fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',
   fsLocalReadFile: 'fs:local:readFile',
   fsRemoteReadFile: 'fs:remote:readFile',
@@ -418,6 +461,8 @@ export const INVOKE_CHANNELS = {
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
+  // long-running operations (Activity dock tab)
+  operationCancel: 'operation:cancel',
   // archive creation ("compress to zip")
   archiveCompressLocal: 'archive:compressLocal',
   archiveCompressRemote: 'archive:compressRemote',
@@ -450,6 +495,7 @@ export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   transferEvent: 'transfer:event',
+  operationEvent: 'operation:event',
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',

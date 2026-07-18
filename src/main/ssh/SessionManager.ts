@@ -9,6 +9,7 @@ import { mergeAnswers, partitionPrompts } from './keyboardInteractive'
 import { SiteStore } from '../sites/SiteStore'
 import { TailManager } from '../tail/TailManager'
 import { TerminalManager } from '../terminal/TerminalManager'
+import { OperationRegistry } from '../operations/OperationRegistry'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
@@ -415,6 +416,7 @@ export class SessionManager {
     entry.status = 'disconnected'
     TailManager.getInstance().stopAllForSession(sessionId)
     TerminalManager.getInstance().closeAllForSession(sessionId)
+    OperationRegistry.getInstance().cancelAllForSession(sessionId)
     entry.client.end()
     entry.jumpClient?.end()
     this.sessions.delete(sessionId)

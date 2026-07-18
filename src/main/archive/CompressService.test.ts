@@ -68,6 +68,39 @@ describe('compressLocal', () => {
     const stats = await fs.stat(destZip)
     expect(stats.size).toBeGreaterThan(0)
   })
+
+  it('reports progress with growing processed byte counts', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `ferry-compress-${randomUUID()}-`))
+    const sourceDir = path.join(tmpDir, 'report')
+    await fs.mkdir(sourceDir)
+    await fs.writeFile(path.join(sourceDir, 'a.txt'), 'x'.repeat(64 * 1024))
+    await fs.writeFile(path.join(sourceDir, 'b.txt'), 'y'.repeat(64 * 1024))
+    const destZip = path.join(tmpDir, 'report.zip')
+
+    const processed: number[] = []
+    await compressLocal(sourceDir, destZip, {
+      onProgress: (processedBytes) => processed.push(processedBytes)
+    })
+
+    expect(processed.length).toBeGreaterThan(0)
+    const sorted = [...processed].sort((a, b) => a - b)
+    expect(processed).toEqual(sorted)
+    expect(processed.at(-1)).toBeGreaterThan(0)
+  })
+
+  it('rejects with CANCELLED on a pre-aborted signal and leaves no partial zip', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `ferry-compress-${randomUUID()}-`))
+    const sourceFile = path.join(tmpDir, 'report.csv')
+    await fs.writeFile(sourceFile, 'a,b,c\n')
+    const destZip = path.join(tmpDir, 'report.csv.zip')
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(compressLocal(sourceFile, destZip, { signal: controller.signal })).rejects.toMatchObject({
+      code: 'CANCELLED'
+    })
+    await expect(fs.stat(destZip)).rejects.toThrow()
+  })
 })
 
 describe('buildCompressCommand', () => {

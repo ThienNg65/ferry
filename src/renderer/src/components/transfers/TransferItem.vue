@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TransferKind, TransferState } from '@shared/contract'
+import { formatBytes } from '../../utils/format'
 
 const props = defineProps<{
   kind: TransferKind
@@ -38,16 +39,6 @@ const cancellable = computed(
   () => props.state === 'queued' || props.state === 'started' || props.state === 'progress'
 )
 const retryable = computed(() => props.state === 'error' || props.state === 'cancelled')
-
-function formatBytes(n: number): string {
-  if (n < 1024) {
-    return `${n} B`
-  }
-  if (n < 1024 * 1024) {
-    return `${(n / 1024).toFixed(1)} KB`
-  }
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
-}
 
 function formatEta(ms: number): string {
   if (!ms || ms <= 0) {

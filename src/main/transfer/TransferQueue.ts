@@ -8,6 +8,7 @@ import { SessionManager } from '../ssh/SessionManager'
 import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
 import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
+import { runConcurrent } from '../util/concurrency'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
 
 interface TransferJob {
@@ -303,7 +304,7 @@ export class TransferQueue {
       const dirs = tree.filter((e) => e.isDir)
       const files = tree.filter((e) => !e.isDir)
 
-      await this.runConcurrent(dirs, TREE_ITEM_CONCURRENCY, async (dir) => {
+      await runConcurrent(dirs, TREE_ITEM_CONCURRENCY, async (dir) => {
         if (job.controller.signal.aborted) {
           throw new SshError('CANCELLED', 'Transfer cancelled')
         }
@@ -339,7 +340,7 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
       }
 
-      await this.runConcurrent(
+      await runConcurrent(
         files.map((file, index) => ({ file, index })),
         TREE_ITEM_CONCURRENCY,
         async ({ file, index }) => {
@@ -369,42 +370,6 @@ export class TransferQueue {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
       this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
-    }
-  }
-
-  /**
-   * Runs `items` through `worker` with at most `concurrency` in flight at once.
-   * If any worker throws, no new items are started and the first error is
-   * rethrown once every already-in-flight worker has settled — mirroring the
-   * previous serial loop's "stop on first failure" behavior, just bounded-parallel
-   * instead of one-at-a-time.
-   */
-  private async runConcurrent<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
-    let nextIndex = 0
-    let stopped = false
-    let firstError: unknown
-
-    const runNext = async (): Promise<void> => {
-      while (!stopped) {
-        const i = nextIndex++
-        if (i >= items.length) {
-          return
-        }
-        try {
-          await worker(items[i])
-        } catch (e) {
-          if (!stopped) {
-            stopped = true
-            firstError = e
-          }
-          return
-        }
-      }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runNext()))
-    if (stopped) {
-      throw firstError
     }
   }
 

@@ -44,7 +44,8 @@ export function buildExtractCommand(kind: ArchiveKind, archivePath: string, targ
 export async function extractRemote(
   sessionId: string,
   archivePath: string,
-  targetDir: string
+  targetDir: string,
+  signal?: AbortSignal
 ): Promise<UnzipResult> {
   const kind = archiveKind(archivePath)
   if (!kind) {
@@ -54,7 +55,7 @@ export async function extractRemote(
   const shell = SessionManager.getInstance().shell(sessionId)
   const command = buildExtractCommand(kind, archivePath, targetDir)
 
-  const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000 })
+  const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000, signal })
 
   if (result.code === 127 && result.stderr.includes(EXTRACT_TOOL_MISSING_SENTINEL)) {
     const tool = toolFor(kind)

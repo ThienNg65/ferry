@@ -10,6 +10,7 @@ import { registerTailHandlers } from './ipc/tail.ipc'
 import { registerTerminalHandlers } from './ipc/terminal.ipc'
 import { registerUnzipHandlers } from './ipc/unzip.ipc'
 import { registerArchiveHandlers } from './ipc/archive.ipc'
+import { registerOperationsHandlers } from './ipc/operations.ipc'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerWindowHandlers } from './ipc/window.ipc'
 import { registerUpdateHandlers } from './ipc/update.ipc'
@@ -110,6 +111,7 @@ function registerAllHandlers(): void {
   registerTerminalHandlers()
   registerUnzipHandlers()
   registerArchiveHandlers()
+  registerOperationsHandlers()
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)
   registerUpdateHandlers()

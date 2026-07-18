@@ -1,5 +1,5 @@
 import { createWriteStream } from 'fs'
-import { stat } from 'fs/promises'
+import { stat, unlink } from 'fs/promises'
 import * as path from 'path'
 import { ZipArchive } from 'archiver'
 import { SessionManager } from '../ssh/SessionManager'
@@ -26,34 +26,61 @@ export function splitRemotePath(remotePath: string): { dir: string; base: string
  * its full absolute path (e.g. zipping `C:\data\report` produces a zip whose
  * top-level entry is `report/`, not `C\data\report/`).
  */
-export async function compressLocal(sourcePath: string, destZipPath: string): Promise<void> {
+export async function compressLocal(
+  sourcePath: string,
+  destZipPath: string,
+  opts: { signal?: AbortSignal; onProgress?: (processedBytes: number, totalBytes: number) => void } = {}
+): Promise<void> {
   const info = await stat(sourcePath)
-  await new Promise<void>((resolve, reject) => {
-    const output = createWriteStream(destZipPath)
-    const archive = new ZipArchive({ zlib: { level: 9 } })
-    let settled = false
-    const finish = (err?: Error): void => {
-      if (settled) {
-        return
+  if (opts.signal?.aborted) {
+    throw new SshError('CANCELLED', 'Compression cancelled')
+  }
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const output = createWriteStream(destZipPath)
+      const archive = new ZipArchive({ zlib: { level: 9 } })
+      let settled = false
+      const finish = (err?: Error): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        opts.signal?.removeEventListener('abort', onAbort)
+        if (err) {
+          reject(err)
+        } else {
+          resolve()
+        }
       }
-      settled = true
-      if (err) {
-        reject(err)
+      const onAbort = (): void => {
+        archive.abort()
+        output.destroy()
+        finish(new SshError('CANCELLED', 'Compression cancelled'))
+      }
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      output.on('close', () => finish())
+      output.on('error', finish)
+      archive.on('error', finish)
+      if (opts.onProgress) {
+        // archiver's totalBytes grows as it scans the tree — callers just
+        // render whatever ratio has been discovered so far.
+        archive.on('progress', (p) => opts.onProgress?.(p.fs.processedBytes, p.fs.totalBytes))
+      }
+      archive.pipe(output)
+      if (info.isDirectory()) {
+        archive.directory(sourcePath, path.basename(sourcePath))
       } else {
-        resolve()
+        archive.file(sourcePath, { name: path.basename(sourcePath) })
       }
+      void archive.finalize()
+    })
+  } catch (e) {
+    if (e instanceof SshError && e.code === 'CANCELLED') {
+      // Best-effort removal of the partial zip a cancelled run leaves behind.
+      await unlink(destZipPath).catch(() => undefined)
     }
-    output.on('close', () => finish())
-    output.on('error', finish)
-    archive.on('error', finish)
-    archive.pipe(output)
-    if (info.isDirectory()) {
-      archive.directory(sourcePath, path.basename(sourcePath))
-    } else {
-      archive.file(sourcePath, { name: path.basename(sourcePath) })
-    }
-    void archive.finalize()
-  })
+    throw e
+  }
 }
 
 /**
@@ -82,11 +109,16 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
  * missing-tool handling. `cd`s into the source's parent first so the
  * archive's internal paths are rooted at its basename, same as the local path.
  */
-export async function compressRemote(sessionId: string, sourcePath: string, destZipPath: string): Promise<UnzipResult> {
+export async function compressRemote(
+  sessionId: string,
+  sourcePath: string,
+  destZipPath: string,
+  signal?: AbortSignal
+): Promise<UnzipResult> {
   const shell = SessionManager.getInstance().shell(sessionId)
   const command = buildCompressCommand(sourcePath, destZipPath)
 
-  const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000 })
+  const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000, signal })
 
   if (result.code === 127 && result.stderr.includes(COMPRESS_TOOL_MISSING_SENTINEL)) {
     throw new SshError(

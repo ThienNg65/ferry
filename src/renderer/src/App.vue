@@ -4,6 +4,7 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
+import { useOperationsStore } from './stores/operations.store'
 import { useUiStore } from './stores/ui.store'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
@@ -28,6 +29,9 @@ const notify = useNotify()
 
 useUiStore().initTheme()
 void sessions.restoreOpenTabs()
+// Operation events originate main-side from any invoke — subscribe up front
+// so the Activity dock badge never misses the first event.
+useOperationsStore().ensureSubscription()
 
 // Only ever fires in a packaged build — see AutoUpdater.ts's app.isPackaged guard.
 const toast = useToast()
