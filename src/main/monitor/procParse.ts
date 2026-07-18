@@ -9,7 +9,7 @@
  * "not Linux / no procfs" from a transient failure.
  */
 
-import type { MonitorSample } from '../../shared/contract'
+import type { MonitorProcessSample, MonitorSample } from '../../shared/contract'
 
 /** Marker line the tick command echoes between /proc sections. */
 export const SECTION_MARKER = '@@@'
@@ -28,16 +28,16 @@ export interface CpuTimes {
 export type MemInfo = MonitorSample['memory'] & { swap: MonitorSample['swap'] }
 
 /**
- * Splits the combined tick output into exactly 4 section strings
- * (stat, meminfo, loadavg, uptime) — missing trailing sections come back as
- * empty strings rather than being absent.
+ * Splits the combined tick output into exactly `count` section strings —
+ * missing trailing sections come back as empty strings rather than being
+ * absent.
  */
-export function splitSections(output: string, marker: string = SECTION_MARKER): string[] {
+export function splitSections(output: string, count: number, marker: string = SECTION_MARKER): string[] {
   const parts = output.split(new RegExp(`^${marker}\\s*$`, 'm')).map((s) => s.trim())
-  while (parts.length < 4) {
+  while (parts.length < count) {
     parts.push('')
   }
-  return parts.slice(0, 4)
+  return parts.slice(0, count)
 }
 
 /**
@@ -174,4 +174,168 @@ export function parseUptime(text: string): number | null {
     return null
   }
   return value
+}
+
+/** Root-filesystem usage figures parsed from `df -Pk /`. */
+export interface DiskUsage {
+  totalBytes: number
+  usedBytes: number
+  availableBytes: number
+}
+
+/**
+ * Parses `df -Pk /`'s output (POSIX format, 1024-byte blocks — stable across
+ * GNU coreutils and BusyBox). POSIX `df` wraps the device name onto its own
+ * line when it's long, pushing the numeric columns onto the next line — this
+ * is tolerated by dropping the header line, joining every remaining line
+ * with a space, and walking backward from the last token, which is always
+ * the queried mount point ("/"), regardless of how many tokens the device
+ * name itself contributed. Returns null on garbage/missing `df` — not fatal
+ * to the tick, unlike a missing /proc/stat.
+ */
+export function parseDiskUsage(text: string): DiskUsage | null {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length < 2) {
+    return null
+  }
+  const tokens = lines.slice(1).join(' ').split(/\s+/)
+  if (tokens.length < 5) {
+    return null
+  }
+  const totalKb = Number(tokens[tokens.length - 5])
+  const usedKb = Number(tokens[tokens.length - 4])
+  const availableKb = Number(tokens[tokens.length - 3])
+  if (![totalKb, usedKb, availableKb].every(Number.isFinite) || totalKb <= 0) {
+    return null
+  }
+  return {
+    totalBytes: totalKb * KB,
+    usedBytes: usedKb * KB,
+    availableBytes: availableKb * KB
+  }
+}
+
+/** Marker prefixing each per-process record, followed by the raw /proc/[pid]/stat line. */
+export const PROCESS_MARKER = '@P@'
+
+/** Raw per-process figures parsed straight from one /proc/[pid]/stat line. */
+export interface ProcessSnapshot {
+  pid: number
+  /** comm — process name, parsed via the first '(' / last ')' to tolerate spaces/parens in the name itself. */
+  comm: string
+  utime: number
+  stime: number
+  /** RSS in pages (not yet converted to bytes — see PAGE_SIZE_BYTES). */
+  rssPages: number
+}
+
+/**
+ * Assumed page size for RSS-in-pages → bytes conversion. Correct on every
+ * mainstream x86_64/aarch64 Linux distro this app targets — a documented
+ * simplification rather than a second per-pid /proc/[pid]/status read just
+ * for VmRSS.
+ */
+export const PAGE_SIZE_BYTES = 4096
+
+/**
+ * Parses the @P@-delimited process-stat dump into one entry per pid. Skips
+ * any record whose /proc/[pid]/stat line is missing, malformed, or too short
+ * (minimal busybox stat, or a pid that raced away between listing and read)
+ * rather than throwing.
+ */
+export function parseProcessSnapshot(text: string, marker: string = PROCESS_MARKER): ProcessSnapshot[] {
+  const snapshots: ProcessSnapshot[] = []
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim().startsWith(marker)) {
+      continue
+    }
+    const statLine = (lines[i + 1] ?? '').trim()
+    const open = statLine.indexOf('(')
+    const close = statLine.lastIndexOf(')')
+    if (open === -1 || close === -1 || close < open) {
+      continue
+    }
+    const pid = Number(statLine.slice(0, open).trim())
+    const comm = statLine.slice(open + 1, close)
+    // Fields after "pid (comm) " start at stat's field 3 (state) as index 0:
+    // utime is field 14 -> index 11, stime is field 15 -> index 12, rss is field 24 -> index 21.
+    const rest = statLine.slice(close + 1).trim().split(/\s+/)
+    if (!Number.isFinite(pid) || rest.length < 22) {
+      continue
+    }
+    const utime = Number(rest[11])
+    const stime = Number(rest[12])
+    const rssPages = Number(rest[21])
+    if (![utime, stime, rssPages].every(Number.isFinite)) {
+      continue
+    }
+    snapshots.push({ pid, comm, utime, stime, rssPages })
+  }
+  return snapshots
+}
+
+/** One process's resolved figures for a single Monitor tick — mirrors {@link MonitorProcessSample}. */
+export type ProcessSample = MonitorProcessSample
+
+/**
+ * Computes each process's CPU% by reusing the SAME aggregate 'cpu' row total
+ * delta that {@link cpuPercentages} already computes as the denominator:
+ * `cpuPct = ((utimeDelta + stimeDelta) / aggregateTotalDelta) * 100`. This
+ * needs no CLK_TCK/HZ constant and no wall-clock elapsed time — utime/stime
+ * and /proc/stat's aggregate row are measured in the same tick units on the
+ * same machine, so the ratio is unit-independent — and it keeps per-process
+ * % directly comparable to/summable against the aggregate % already shown
+ * (100 = all cores fully busy for the interval). Returns `cpuPct: null` for
+ * a pid with no prior sample yet (new process, or the first tick overall).
+ */
+export function processCpuPercentages(
+  prev: Map<number, ProcessSnapshot> | null,
+  curr: ProcessSnapshot[],
+  aggregateTotalDelta: number | null
+): ProcessSample[] {
+  return curr.map((snap) => {
+    const name = snap.comm
+    const rssBytes = snap.rssPages * PAGE_SIZE_BYTES
+    const prevSnap = prev?.get(snap.pid)
+    if (!prevSnap || aggregateTotalDelta === null || aggregateTotalDelta <= 0) {
+      return { pid: snap.pid, name, rssBytes, cpuPct: null }
+    }
+    const busyDelta = snap.utime + snap.stime - (prevSnap.utime + prevSnap.stime)
+    const cpuPct = Math.max(0, (busyDelta / aggregateTotalDelta) * 100)
+    return { pid: snap.pid, name, rssBytes, cpuPct: Math.round(cpuPct * 10) / 10 }
+  })
+}
+
+/** Result of capping the process list before transmission. */
+export interface CappedProcesses {
+  processes: ProcessSample[]
+  /** Full count before capping, so the UI can show "showing top N of M". */
+  totalCount: number
+}
+
+/**
+ * Bounds the transmitted process list — collection always walks every pid;
+ * this only bounds the IPC payload against pathological process counts
+ * (e.g. a fork bomb).
+ */
+export const MAX_PROCESSES = 200
+
+/**
+ * Sorts by a combined 0–100-scale score (cpuPct + rss-as-%-of-total-memory)
+ * so neither a CPU-heavy nor a memory-heavy process is systematically
+ * excluded from the transmitted top-N, then slices to `max`.
+ */
+export function capProcesses(
+  samples: ProcessSample[],
+  memTotalBytes: number,
+  max: number = MAX_PROCESSES
+): CappedProcesses {
+  const score = (s: ProcessSample): number =>
+    (s.cpuPct ?? 0) + (memTotalBytes > 0 ? (s.rssBytes / memTotalBytes) * 100 : 0)
+  const sorted = [...samples].sort((a, b) => score(b) - score(a))
+  return { processes: sorted.slice(0, max), totalCount: samples.length }
 }

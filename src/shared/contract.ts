@@ -368,8 +368,28 @@ export interface MonitorSample {
     totalBytes: number
     usedBytes: number
   }
+  /** Root filesystem ("/") usage — null if `df` failed/unavailable (not fatal, unlike a missing /proc/stat). */
+  disk: {
+    totalBytes: number
+    usedBytes: number
+    availableBytes: number
+  } | null
+  /** Top processes by combined CPU+RAM score, capped at MAX_PROCESSES — see procParse.ts's capProcesses. */
+  processes: MonitorProcessSample[]
+  /** Full process count before capping, so the UI can show "showing top N of M". */
+  processTotalCount: number
   loadAvg: [number, number, number]
   uptimeSec: number
+}
+
+/** One process's resolved figures for a single Monitor tick. */
+export interface MonitorProcessSample {
+  pid: number
+  /** comm — process name, truncated to 15 chars by the kernel like `ps`/`top` show. */
+  name: string
+  /** 0–100, on the same scale as MonitorSample.cpu.aggregatePct — null until a second consecutive sample exists for this pid. */
+  cpuPct: number | null
+  rssBytes: number
 }
 
 export type MonitorStatus = 'started' | 'stopped' | 'unsupported' | 'error'

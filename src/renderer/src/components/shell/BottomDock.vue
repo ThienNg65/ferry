@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useOperationsStore } from '../../stores/operations.store'
+import { useUiStore } from '../../stores/ui.store'
 import { useDockState } from '../../composables/useDockState'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
@@ -15,11 +16,58 @@ const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
 const transfers = useTransferQueueStore()
 const operations = useOperationsStore()
+const ui = useUiStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
 const { collapsed, tab, terminalEverShown, openDock } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
+
+const COLLAPSED_HEIGHT = 36
+
+// Drag-to-resize: liveHeight tracks the drag in real time (bound directly to
+// the container's inline style) so localStorage only gets written once, at
+// drag-end, rather than on every pointermove. ui.dockHeight is the persisted
+// value read/written outside a drag.
+const dragging = ref(false)
+const liveHeight = ref(ui.dockHeight)
+let dragStartY = 0
+let dragStartHeight = 0
+
+function onResizeStart(e: PointerEvent): void {
+  dragging.value = true
+  dragStartY = e.clientY
+  dragStartHeight = ui.dockHeight
+  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onResizeMove(e: PointerEvent): void {
+  if (!dragging.value) {
+    return
+  }
+  // Dragging the handle up should make the dock taller.
+  liveHeight.value = dragStartHeight + (dragStartY - e.clientY)
+}
+
+function onResizeEnd(e: PointerEvent): void {
+  if (!dragging.value) {
+    return
+  }
+  dragging.value = false
+  ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+  ui.setDockHeight(liveHeight.value)
+  liveHeight.value = ui.dockHeight
+}
+
+function onWindowResize(): void {
+  ui.setDockHeight(ui.dockHeight)
+  liveHeight.value = ui.dockHeight
+}
+
+onMounted(() => window.addEventListener('resize', onWindowResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
+
+const dockHeightPx = computed(() => (collapsed.value ? COLLAPSED_HEIGHT : liveHeight.value))
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -28,9 +76,18 @@ function basename(path: string): string {
 
 <template>
   <div
-    class="flex shrink-0 flex-col overflow-hidden border-t border-default transition-[height] duration-200 ease-in-out"
-    :class="collapsed ? 'h-9' : 'h-56'"
+    class="flex shrink-0 flex-col overflow-hidden border-t border-default"
+    :class="dragging ? '' : 'transition-[height] duration-200 ease-in-out'"
+    :style="{ height: `${dockHeightPx}px` }"
   >
+    <div
+      v-if="!collapsed"
+      class="h-1 shrink-0 cursor-row-resize hover:bg-primary/30"
+      :class="dragging ? 'bg-primary/40' : ''"
+      @pointerdown="onResizeStart"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeEnd"
+    />
     <div class="flex items-center justify-between bg-muted px-2 py-1">
       <div class="flex items-center gap-1">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">

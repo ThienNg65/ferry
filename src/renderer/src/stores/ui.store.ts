@@ -3,14 +3,42 @@ import { defineStore } from 'pinia'
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const THEME_KEY = 'ferry:ui:theme'
+const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
 
 export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
+
+/** The dock's pre-resize default (matches the old fixed `h-56`) — zero regression for existing users. */
+export const MIN_DOCK_HEIGHT = 224
+/** Cap the dock at a fraction of the window so it never feels like it's "taking over". */
+export const MAX_DOCK_HEIGHT_RATIO = 0.7
+/** Reserve space for title bar + site tab bar + toolbar/path bar + status bar above the dock. */
+const RESERVED_CHROME_HEIGHT = 260
+
+/**
+ * Clamps a candidate dock height to [MIN_DOCK_HEIGHT, the smaller of 70% of
+ * the window or (window − reserved chrome)] — pure so it's unit-testable and
+ * reusable from both the store's init and a window-resize re-clamp.
+ */
+export function clampDockHeight(value: number, windowInnerHeight: number): number {
+  const max = Math.max(
+    MIN_DOCK_HEIGHT,
+    Math.min(windowInnerHeight * MAX_DOCK_HEIGHT_RATIO, windowInnerHeight - RESERVED_CHROME_HEIGHT)
+  )
+  return Math.min(Math.max(value, MIN_DOCK_HEIGHT), max)
+}
+
+function loadDockHeight(): number {
+  const stored = Number(localStorage.getItem(DOCK_HEIGHT_KEY))
+  const initial = Number.isFinite(stored) && stored > 0 ? stored : MIN_DOCK_HEIGHT
+  return clampDockHeight(initial, window.innerHeight)
+}
 
 interface UiState {
   showLocalPane: boolean
   permissionsDisplay: PermissionsDisplay
   theme: Theme
+  dockHeight: number
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
@@ -36,7 +64,8 @@ export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
     showLocalPane: localStorage.getItem(STORAGE_KEY) !== 'false',
     permissionsDisplay: loadPermissionsDisplay(),
-    theme: loadTheme()
+    theme: loadTheme(),
+    dockHeight: loadDockHeight()
   }),
 
   actions: {
@@ -59,6 +88,12 @@ export const useUiStore = defineStore('ui', {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
       localStorage.setItem(THEME_KEY, this.theme)
       applyTheme(this.theme)
+    },
+
+    /** Clamps + persists a new dock height — call once at drag-end, and again on window resize to re-clamp against the new viewport. */
+    setDockHeight(px: number): void {
+      this.dockHeight = clampDockHeight(px, window.innerHeight)
+      localStorage.setItem(DOCK_HEIGHT_KEY, String(this.dockHeight))
     }
   }
 })

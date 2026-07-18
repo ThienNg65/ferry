@@ -3,12 +3,13 @@ import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useMonitorStore } from '../../stores/monitor.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { formatBytes, formatUptime } from '../../utils/format'
+import ProcessTable from './ProcessTable.vue'
 
 const monitor = useMonitorStore()
 const sessions = useSessionsStore()
 
-/** Caps the per-core bar strip — beyond this a "+N more" label stands in for the rest. */
-const MAX_CORE_BARS = 32
+/** Caps the per-core bar strip in the condensed summary — beyond this a "+N more" label stands in for the rest. */
+const MAX_CORE_BARS = 16
 
 async function switchTo(sessionId: string | null, previous: string | null): Promise<void> {
   if (previous && previous !== sessionId) {
@@ -39,6 +40,10 @@ const swapPercent = computed(() => {
   const swap = monitor.latest?.swap
   return swap && swap.totalBytes > 0 ? Math.round((swap.usedBytes / swap.totalBytes) * 100) : 0
 })
+const diskPercent = computed(() => {
+  const disk = monitor.latest?.disk
+  return disk && disk.totalBytes > 0 ? Math.round((disk.usedBytes / disk.totalBytes) * 100) : 0
+})
 
 const sparklinePoints = computed(() => {
   const samples = monitor.history.filter((s) => s.cpu !== null)
@@ -63,7 +68,7 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-y-auto">
+  <div class="flex h-full min-h-0 flex-col overflow-hidden">
     <div v-if="monitor.status === 'unsupported'" class="flex flex-1 flex-col items-center justify-center gap-1 px-3 py-6 text-center">
       <UIcon name="i-lucide-monitor-off" class="size-5 text-dimmed" />
       <p class="text-xs text-dimmed">{{ monitor.statusMessage || 'Resource monitoring is not supported on this server' }}</p>
@@ -82,50 +87,58 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
     <div v-else-if="!monitor.latest" class="flex flex-1 items-center justify-center px-3 py-6 text-center">
       <p class="text-xs text-muted">Gathering resource samples…</p>
     </div>
-    <div v-else class="grid grid-cols-[1fr_1fr_auto] gap-4 px-3 py-2 text-xs">
-      <!-- Memory -->
-      <div class="flex flex-col gap-1.5">
-        <span class="font-medium text-default">Memory</span>
-        <UProgress :model-value="memPercent" color="primary" size="sm" />
-        <span class="text-[11px] text-dimmed">
-          {{ formatBytes(monitor.latest.memory.usedBytes) }} / {{ formatBytes(monitor.latest.memory.totalBytes) }}
-        </span>
-        <template v-if="monitor.latest.swap.totalBytes > 0">
-          <UProgress :model-value="swapPercent" color="neutral" size="xs" class="mt-1" />
+    <div v-else class="flex h-full min-h-0 flex-1 flex-col">
+      <div class="grid shrink-0 grid-cols-3 gap-4 px-3 py-2 text-xs">
+        <!-- Storage -->
+        <div class="flex flex-col gap-1">
+          <span class="font-medium text-default">Storage</span>
+          <template v-if="monitor.latest.disk">
+            <UProgress :model-value="diskPercent" color="primary" size="sm" />
+            <span class="text-[11px] text-dimmed">
+              {{ formatBytes(monitor.latest.disk.usedBytes) }} / {{ formatBytes(monitor.latest.disk.totalBytes) }}
+            </span>
+          </template>
+          <span v-else class="text-[11px] text-dimmed">Unavailable</span>
+        </div>
+
+        <!-- Memory -->
+        <div class="flex flex-col gap-1">
+          <span class="font-medium text-default">Memory</span>
+          <UProgress :model-value="memPercent" color="primary" size="sm" />
           <span class="text-[11px] text-dimmed">
-            Swap {{ formatBytes(monitor.latest.swap.usedBytes) }} / {{ formatBytes(monitor.latest.swap.totalBytes) }}
+            {{ formatBytes(monitor.latest.memory.usedBytes) }} / {{ formatBytes(monitor.latest.memory.totalBytes) }}
+            <template v-if="monitor.latest.swap.totalBytes > 0">
+              · swap {{ formatBytes(monitor.latest.swap.usedBytes) }} ({{ swapPercent }}%)
+            </template>
           </span>
-        </template>
-        <span class="text-[11px] text-dimmed">
-          buffers {{ formatBytes(monitor.latest.memory.buffersBytes) }} · cached {{ formatBytes(monitor.latest.memory.cachedBytes) }}
-        </span>
-      </div>
-
-      <!-- CPU -->
-      <div class="flex flex-col gap-1.5">
-        <span class="font-medium text-default">CPU</span>
-        <div class="flex items-baseline gap-2">
-          <span class="text-lg font-semibold text-primary">
-            {{ monitor.latest.cpu ? `${monitor.latest.cpu.aggregatePct}%` : '—' }}
-          </span>
-          <svg viewBox="0 0 100 32" class="h-6 w-16 text-primary" preserveAspectRatio="none">
-            <polyline :points="sparklinePoints" fill="none" stroke="currentColor" stroke-width="2" />
-          </svg>
         </div>
-        <div class="flex flex-wrap gap-0.5">
-          <div v-for="(pct, i) in visibleCores" :key="i" class="h-6 w-1.5 overflow-hidden rounded-sm bg-elevated">
-            <div class="w-full bg-primary" :style="{ height: `${pct}%`, marginTop: `${100 - pct}%` }" />
+
+        <!-- CPU -->
+        <div class="flex flex-col gap-1">
+          <span class="font-medium text-default">CPU</span>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-primary">
+              {{ monitor.latest.cpu ? `${monitor.latest.cpu.aggregatePct}%` : '—' }}
+            </span>
+            <svg viewBox="0 0 100 32" class="h-4 w-12 text-primary" preserveAspectRatio="none">
+              <polyline :points="sparklinePoints" fill="none" stroke="currentColor" stroke-width="2" />
+            </svg>
+            <span class="text-[10px] text-dimmed">{{ monitor.latest.cpu?.coreCount ?? '—' }} cores</span>
           </div>
-          <span v-if="hiddenCoreCount > 0" class="self-end text-[10px] text-dimmed">+{{ hiddenCoreCount }} more</span>
+          <div class="flex items-center gap-2">
+            <div class="flex flex-1 flex-wrap gap-0.5">
+              <div v-for="(pct, i) in visibleCores" :key="i" class="h-3 w-1 overflow-hidden rounded-sm bg-elevated">
+                <div class="w-full bg-primary" :style="{ height: `${pct}%`, marginTop: `${100 - pct}%` }" />
+              </div>
+              <span v-if="hiddenCoreCount > 0" class="self-end text-[10px] text-dimmed">+{{ hiddenCoreCount }}</span>
+            </div>
+            <span class="shrink-0 text-[10px] text-dimmed">
+              {{ monitor.latest.loadAvg.map((n) => n.toFixed(2)).join('/') }} · {{ formatUptime(monitor.latest.uptimeSec) }}
+            </span>
+          </div>
         </div>
       </div>
-
-      <!-- Facts -->
-      <div class="flex flex-col items-end gap-1 text-right text-[11px] text-muted">
-        <span>{{ monitor.latest.loadAvg.map((n) => n.toFixed(2)).join(' / ') }}</span>
-        <span>{{ formatUptime(monitor.latest.uptimeSec) }} uptime</span>
-        <span>{{ monitor.latest.cpu?.coreCount ?? '—' }} cores</span>
-      </div>
+      <ProcessTable class="min-h-0 flex-1 border-t border-muted" />
     </div>
   </div>
 </template>

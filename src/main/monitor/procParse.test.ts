@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  capProcesses,
   cpuPercentages,
+  parseDiskUsage,
   parseLoadAvg,
   parseMeminfo,
+  parseProcessSnapshot,
   parseProcStat,
   parseUptime,
+  processCpuPercentages,
   splitSections,
-  type CpuTimes
+  type CpuTimes,
+  type ProcessSnapshot
 } from './procParse'
 
 // Realistic 4-core /proc/stat excerpt (columns: user nice system idle iowait irq softirq steal guest guest_nice).
@@ -37,13 +42,18 @@ SwapFree:              0 kB`
 
 describe('splitSections', () => {
   it('splits four @@@-separated sections', () => {
-    const out = splitSections('statpart\n@@@\nmempart\n@@@\nloadpart\n@@@\nuppart')
+    const out = splitSections('statpart\n@@@\nmempart\n@@@\nloadpart\n@@@\nuppart', 4)
     expect(out).toEqual(['statpart', 'mempart', 'loadpart', 'uppart'])
   })
 
   it('pads missing trailing sections with empty strings (BSD: no /proc at all)', () => {
-    expect(splitSections('\n@@@\n\n@@@\n\n@@@\n')).toEqual(['', '', '', ''])
-    expect(splitSections('')).toEqual(['', '', '', ''])
+    expect(splitSections('\n@@@\n\n@@@\n\n@@@\n', 4)).toEqual(['', '', '', ''])
+    expect(splitSections('', 4)).toEqual(['', '', '', ''])
+  })
+
+  it('splits six sections (adds disk usage + process dump)', () => {
+    const out = splitSections('a\n@@@\nb\n@@@\nc\n@@@\nd\n@@@\ne\n@@@\nf', 6)
+    expect(out).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
   })
 })
 
@@ -157,5 +167,115 @@ describe('parseUptime', () => {
   it('returns null on garbage', () => {
     expect(parseUptime('')).toBeNull()
     expect(parseUptime('up 3 days')).toBeNull()
+  })
+})
+
+describe('parseDiskUsage', () => {
+  it('parses a normal single-line df -Pk / output', () => {
+    const df = `Filesystem     1024-blocks     Used Available Capacity Mounted on
+/dev/sda1        104857600 20971520  78643200      22% /`
+    const disk = parseDiskUsage(df)
+    expect(disk).toEqual({
+      totalBytes: 104857600 * 1024,
+      usedBytes: 20971520 * 1024,
+      availableBytes: 78643200 * 1024
+    })
+  })
+
+  it('tolerates a wrapped long device name (numeric columns on their own line)', () => {
+    const df = `Filesystem                                                                1024-blocks     Used Available Capacity Mounted on
+/dev/mapper/very--long--volume--group-name-that-wraps-onto-the-next-line
+                                                                              104857600 20971520  78643200      22% /`
+    const disk = parseDiskUsage(df)
+    expect(disk).toEqual({
+      totalBytes: 104857600 * 1024,
+      usedBytes: 20971520 * 1024,
+      availableBytes: 78643200 * 1024
+    })
+  })
+
+  it('returns null on garbage / missing df', () => {
+    expect(parseDiskUsage('')).toBeNull()
+    expect(parseDiskUsage('nonsense')).toBeNull()
+    expect(parseDiskUsage('just a header line, no data')).toBeNull()
+  })
+})
+
+// 22 fields after "pid (comm) " — fields 3..24 (state..rss); utime=10, stime=5, rss=380 pages.
+const STAT_TAIL = 'S 1 123 123 0 -1 4194560 100 0 5 0 10 5 0 0 20 0 1 0 12345 8482816 380'
+
+describe('parseProcessSnapshot', () => {
+  it('parses a standard record', () => {
+    const text = `@P@123\n123 (bash) ${STAT_TAIL}`
+    const snaps = parseProcessSnapshot(text)
+    expect(snaps).toEqual([{ pid: 123, comm: 'bash', utime: 10, stime: 5, rssPages: 380 }])
+  })
+
+  it('parses a comm containing spaces and embedded parens via first "(" / last ")"', () => {
+    const text = `@P@456\n456 (my (weird) proc) ${STAT_TAIL}`
+    const snaps = parseProcessSnapshot(text)
+    expect(snaps).toEqual([{ pid: 456, comm: 'my (weird) proc', utime: 10, stime: 5, rssPages: 380 }])
+  })
+
+  it('parses multiple @P@ records in order', () => {
+    const text = `@P@1\n1 (init) ${STAT_TAIL}\n@P@2\n2 (sshd) ${STAT_TAIL}`
+    const snaps = parseProcessSnapshot(text)
+    expect(snaps.map((s) => s.pid)).toEqual([1, 2])
+    expect(snaps.map((s) => s.comm)).toEqual(['init', 'sshd'])
+  })
+
+  it('skips a malformed/too-short record rather than throwing', () => {
+    const text = '@P@789\n789 (short) S 1 2 3'
+    expect(parseProcessSnapshot(text)).toEqual([])
+  })
+
+  it('returns [] on empty input', () => {
+    expect(parseProcessSnapshot('')).toEqual([])
+  })
+})
+
+describe('processCpuPercentages', () => {
+  const snap = (pid: number, utime: number, stime: number, rssPages = 100): ProcessSnapshot => ({
+    pid,
+    comm: `proc${pid}`,
+    utime,
+    stime,
+    rssPages
+  })
+
+  it('computes cpuPct from the busy-time delta over the aggregate total delta', () => {
+    const prev = new Map([[1, snap(1, 10, 5)]])
+    const curr = [snap(1, 20, 10)]
+    // busyDelta = (20+10) - (10+5) = 15; aggregateTotalDelta = 100 -> 15%
+    const result = processCpuPercentages(prev, curr, 100)
+    expect(result).toEqual([{ pid: 1, name: 'proc1', rssBytes: 100 * 4096, cpuPct: 15 }])
+  })
+
+  it('reports cpuPct null for a pid absent from the previous sample (new process)', () => {
+    const result = processCpuPercentages(new Map(), [snap(2, 20, 10)], 100)
+    expect(result[0].cpuPct).toBeNull()
+  })
+
+  it('reports cpuPct null for every process on the first tick overall (no aggregate delta yet)', () => {
+    const prev = new Map([[1, snap(1, 10, 5)]])
+    const result = processCpuPercentages(prev, [snap(1, 20, 10)], null)
+    expect(result[0].cpuPct).toBeNull()
+  })
+})
+
+describe('capProcesses', () => {
+  it('sorts by a combined CPU+RAM score and truncates, without favoring only one axis', () => {
+    const memTotalBytes = 1000
+    const cpuHeavy = { pid: 1, name: 'cpu-heavy', rssBytes: 0, cpuPct: 90 }
+    const ramHeavy = { pid: 2, name: 'ram-heavy', rssBytes: 1000, cpuPct: 0 }
+    const light = { pid: 3, name: 'light', rssBytes: 50, cpuPct: 5 }
+    const { processes, totalCount } = capProcesses([cpuHeavy, ramHeavy, light], memTotalBytes, 2)
+    expect(totalCount).toBe(3)
+    expect(processes.map((p) => p.pid)).toEqual([2, 1])
+  })
+
+  it('reports the full totalCount even when not truncated', () => {
+    const { totalCount } = capProcesses([{ pid: 1, name: 'a', rssBytes: 0, cpuPct: 1 }], 1000)
+    expect(totalCount).toBe(1)
   })
 })
