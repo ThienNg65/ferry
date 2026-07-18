@@ -149,9 +149,17 @@ app.whenReady().then(() => {
     Menu.setApplicationMenu(null)
   }
 
-  // Deny every renderer permission request (camera, mic, geolocation,
-  // notifications, etc.) — a local-only SFTP client never needs any of them.
-  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  // Deny every renderer permission request EXCEPT clipboard-write: "Copy path"
+  // (FileRow.vue) and the terminal's Ctrl+C copy-selection (terminalStreams.store.ts)
+  // both call navigator.clipboard.writeText(), which Chromium gates behind the
+  // clipboard-sanitized-write permission — a blanket deny broke both silently
+  // (NotAllowedError at the call site, easy to miss without exercising them).
+  // clipboard-read is deliberately NOT allowed: the app already reads the OS
+  // clipboard through the main-process `clipboard.readText()` IPC instead (see
+  // terminalStreams.store.ts), so the renderer never needs it directly.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'clipboard-sanitized-write')
+  })
 
   registerAllHandlers()
   TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
