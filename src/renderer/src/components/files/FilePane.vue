@@ -295,8 +295,10 @@ async function onOsDrop(event: DragEvent): Promise<void> {
     if (item.kind !== 'file') {
       continue
     }
-    const file = item.getAsFile() as (File & { path?: string }) | null
-    const localPath = file?.path
+    const file = item.getAsFile()
+    // Electron 32+ removed the `File.path` DOM extension — the absolute path is
+    // resolved through the preload's webUtils bridge instead.
+    const localPath = file ? window.api.getPathForFile(file) : ''
     if (!file || !localPath) {
       continue
     }

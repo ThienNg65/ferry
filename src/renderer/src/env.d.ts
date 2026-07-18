@@ -19,6 +19,8 @@ interface ElectronAPI {
   invoke: (channel: InvokeChannel, ...args: unknown[]) => Promise<unknown>
   on: (channel: OnChannel, listener: IpcListener) => () => void
   off: (channel: OnChannel, listener: IpcListener) => void
+  /** Resolves a dropped/selected `File`'s absolute path (replaces the removed `File.path`, gone since Electron 32). */
+  getPathForFile: (file: File) => string
 }
 
 declare global {
