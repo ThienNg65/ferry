@@ -337,6 +337,51 @@ export interface TerminalExitEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — remote resource monitor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One remote resource sample (Monitor dock tab). `cpu` is null on the very
+ * first tick after a (re)start — CPU% needs two consecutive /proc/stat
+ * readings to compute a delta; memory/load/uptime are immediate.
+ */
+export interface MonitorSample {
+  sessionId: string
+  /** Epoch ms when the sample was taken (main-process clock). */
+  timestamp: number
+  cpu: {
+    /** 0–100 aggregate across all cores. */
+    aggregatePct: number
+    /** 0–100 per core, index = core number. */
+    perCorePct: number[]
+    coreCount: number
+  } | null
+  memory: {
+    totalBytes: number
+    /** total − available — the honest "used" figure, not total − free. */
+    usedBytes: number
+    availableBytes: number
+    buffersBytes: number
+    cachedBytes: number
+  }
+  swap: {
+    totalBytes: number
+    usedBytes: number
+  }
+  loadAvg: [number, number, number]
+  uptimeSec: number
+}
+
+export type MonitorStatus = 'started' | 'stopped' | 'unsupported' | 'error'
+
+/** Push-event payload for the `monitor:status` channel. */
+export interface MonitorStatusEvent {
+  sessionId: string
+  state: MonitorStatus
+  message?: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote unzip
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -463,6 +508,9 @@ export const INVOKE_CHANNELS = {
   unzipRun: 'unzip:run',
   // long-running operations (Activity dock tab)
   operationCancel: 'operation:cancel',
+  // remote resource monitor
+  monitorStart: 'monitor:start',
+  monitorStop: 'monitor:stop',
   // archive creation ("compress to zip")
   archiveCompressLocal: 'archive:compressLocal',
   archiveCompressRemote: 'archive:compressRemote',
@@ -496,6 +544,8 @@ export const EVENT_CHANNELS = {
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   transferEvent: 'transfer:event',
   operationEvent: 'operation:event',
+  monitorSample: 'monitor:sample',
+  monitorStatus: 'monitor:status',
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',

@@ -10,6 +10,7 @@ import { SiteStore } from '../sites/SiteStore'
 import { TailManager } from '../tail/TailManager'
 import { TerminalManager } from '../terminal/TerminalManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
+import { MonitorManager } from '../monitor/MonitorManager'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
@@ -417,6 +418,7 @@ export class SessionManager {
     TailManager.getInstance().stopAllForSession(sessionId)
     TerminalManager.getInstance().closeAllForSession(sessionId)
     OperationRegistry.getInstance().cancelAllForSession(sessionId)
+    MonitorManager.getInstance().stopAllForSession(sessionId)
     entry.client.end()
     entry.jumpClient?.end()
     this.sessions.delete(sessionId)

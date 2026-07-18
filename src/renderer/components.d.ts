@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    ActivityItem: typeof import('./src/components/activity/ActivityItem.vue')['default']
+    ActivityPanel: typeof import('./src/components/activity/ActivityPanel.vue')['default']
     BottomDock: typeof import('./src/components/shell/BottomDock.vue')['default']
     ChmodDialog: typeof import('./src/components/files/ChmodDialog.vue')['default']
     CommandPalette: typeof import('./src/components/shell/CommandPalette.vue')['default']
@@ -21,6 +23,7 @@ declare module 'vue' {
     FileToolbar: typeof import('./src/components/files/FileToolbar.vue')['default']
     ImportSessionsDialog: typeof import('./src/components/sessions/ImportSessionsDialog.vue')['default']
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
+    MonitorPanel: typeof import('./src/components/monitor/MonitorPanel.vue')['default']
     PathBreadcrumb: typeof import('./src/components/files/PathBreadcrumb.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

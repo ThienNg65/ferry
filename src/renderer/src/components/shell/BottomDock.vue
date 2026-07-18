@@ -12,6 +12,7 @@ import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
 import ActivityPanel from '../activity/ActivityPanel.vue'
+import MonitorPanel from '../monitor/MonitorPanel.vue'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
@@ -68,6 +69,14 @@ function basename(path: string): string {
           :disabled="sessions.status !== 'connected'"
           @click="openDock('terminal')"
         />
+        <UButton
+          label="Monitor"
+          size="xs"
+          :color="tab === 'monitor' ? 'primary' : 'neutral'"
+          :variant="tab === 'monitor' ? 'soft' : 'ghost'"
+          :disabled="sessions.status !== 'connected'"
+          @click="openDock('monitor')"
+        />
       </div>
       <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
         <UButton
@@ -82,6 +91,7 @@ function basename(path: string): string {
     <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TransferQueue v-if="tab === 'transfers'" />
       <ActivityPanel v-else-if="tab === 'activity'" />
+      <MonitorPanel v-else-if="tab === 'monitor'" />
       <template v-else-if="tab === 'tail'">
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center gap-1 border-b border-muted px-2 py-1">
           <div
