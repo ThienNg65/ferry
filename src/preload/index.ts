@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '../shared/contract'
 
 /**
@@ -45,6 +45,18 @@ export interface ElectronAPI {
    * @param listener - The exact listener reference to remove.
    */
   off: (channel: OnChannel, listener: IpcListener) => void
+
+  /**
+   * Resolves the absolute filesystem path of a dropped/selected `File`.
+   *
+   * Replaces the removed `File.path` DOM extension (dropped in Electron 32+):
+   * a sandboxed renderer cannot read the path off the `File` object itself, so
+   * the OS-drag-upload flow asks the preload to resolve it via `webUtils`.
+   *
+   * @param file - a `File` from a drop event or file input.
+   * @returns the absolute path, or `''` if it cannot be resolved.
+   */
+  getPathForFile: (file: File) => string
 }
 
 const listenerRegistry = new Map<
@@ -99,5 +111,9 @@ contextBridge.exposeInMainWorld('api', {
     }
     ipcRenderer.removeListener(channel, wrapped)
     channelMap.delete(listener)
+  },
+
+  getPathForFile(file: File): string {
+    return webUtils.getPathForFile(file)
   }
 } satisfies ElectronAPI)

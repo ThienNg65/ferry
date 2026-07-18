@@ -25,6 +25,7 @@ declare module 'vue' {
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
     MonitorPanel: typeof import('./src/components/monitor/MonitorPanel.vue')['default']
     PathBreadcrumb: typeof import('./src/components/files/PathBreadcrumb.vue')['default']
+    ProcessTable: typeof import('./src/components/monitor/ProcessTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']

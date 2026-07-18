@@ -1,13 +1,18 @@
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
 import {
+  capProcesses,
   cpuPercentages,
+  parseDiskUsage,
   parseLoadAvg,
   parseMeminfo,
+  parseProcessSnapshot,
   parseProcStat,
   parseUptime,
+  processCpuPercentages,
   splitSections,
-  type CpuTimes
+  type CpuTimes,
+  type ProcessSnapshot
 } from './procParse'
 import { EVENT_CHANNELS, type MonitorSample, type MonitorStatusEvent } from '../../shared/contract'
 
@@ -20,9 +25,14 @@ const MAX_CONSECUTIVE_FAILURES = 3
 /** Per-tick exec timeout — generous but bounded so a hung shell can't wedge the loop. */
 const TICK_TIMEOUT_MS = 10_000
 
+/** Number of @@@-delimited sections in TICK_COMMAND's output — keep in sync with splitSections() calls below. */
+const TICK_SECTION_COUNT = 6
+
 const TICK_COMMAND =
   'cat /proc/stat 2>/dev/null; echo @@@; cat /proc/meminfo 2>/dev/null; echo @@@; ' +
-  'cat /proc/loadavg 2>/dev/null; echo @@@; cat /proc/uptime 2>/dev/null'
+  'cat /proc/loadavg 2>/dev/null; echo @@@; cat /proc/uptime 2>/dev/null; echo @@@; ' +
+  'df -Pk / 2>/dev/null; echo @@@; ' +
+  'for d in /proc/[0-9]*; do p=${d#/proc/}; if IFS= read -r s < "$d/stat" 2>/dev/null; then printf "@P@%s\\n%s\\n" "$p" "$s"; fi; done'
 
 function sanitizeIntervalMs(value: number | undefined): number {
   if (value === undefined) {
@@ -39,6 +49,8 @@ interface MonitorEntry {
   sessionId: string
   intervalMs: number
   prevStat: CpuTimes[] | null
+  /** Rebuilt fully from every tick's process dump (not merged) — naturally sheds exited pids and gives any newly-hot pid a fresh baseline. */
+  prevProcesses: Map<number, ProcessSnapshot> | null
   consecutiveFailures: number
   timer: ReturnType<typeof setTimeout> | null
   stopped: boolean
@@ -74,6 +86,7 @@ export class MonitorManager {
       sessionId,
       intervalMs: sanitizeIntervalMs(intervalMs),
       prevStat: null,
+      prevProcesses: null,
       consecutiveFailures: 0,
       timer: null,
       stopped: false
@@ -117,7 +130,10 @@ export class MonitorManager {
 
     try {
       const result = await shell.exec(TICK_COMMAND, { timeoutMs: TICK_TIMEOUT_MS })
-      const [statText, memText, loadText, uptimeText] = splitSections(result.stdout)
+      const [statText, memText, loadText, uptimeText, diskText, procText] = splitSections(
+        result.stdout,
+        TICK_SECTION_COUNT
+      )
       const currStat = parseProcStat(statText)
 
       if (currStat.length === 0) {
@@ -136,6 +152,11 @@ export class MonitorManager {
       }
 
       const cpu = entry.prevStat ? cpuPercentages(entry.prevStat, currStat) : null
+      const aggregateTotalDelta = entry.prevStat ? currStat[0].total - entry.prevStat[0].total : null
+      const currProcesses = parseProcessSnapshot(procText)
+      const processSamples = processCpuPercentages(entry.prevProcesses, currProcesses, aggregateTotalDelta)
+      const { processes, totalCount } = capProcesses(processSamples, mem.totalBytes)
+
       const sample: MonitorSample = {
         sessionId: entry.sessionId,
         timestamp: Date.now(),
@@ -148,10 +169,14 @@ export class MonitorManager {
           cachedBytes: mem.cachedBytes
         },
         swap: mem.swap,
+        disk: parseDiskUsage(diskText),
+        processes,
+        processTotalCount: totalCount,
         loadAvg,
         uptimeSec
       }
       entry.prevStat = currStat
+      entry.prevProcesses = new Map(currProcesses.map((p) => [p.pid, p]))
       entry.consecutiveFailures = 0
       this.broadcastSample(sample)
     } catch (e) {

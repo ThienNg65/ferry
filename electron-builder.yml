@@ -46,3 +46,21 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Ferry
 asar: true
+# Electron Fuses — flip off the "run this Electron binary as a generic Node
+# process" escape hatches and require the app to load only from the (integrity-
+# checked) asar. electron-builder applies these to the packaged binary at build
+# time via @electron/fuses (pulled in transitively — no extra dependency).
+#   runAsNode / enableNodeOptionsEnvironmentVariable / enableNodeCliInspectArguments:
+#     false  -> the packaged app cannot be coerced into executing arbitrary JS
+#   enableCookieEncryption: true -> encrypt the cookie store at rest
+#   enableEmbeddedAsarIntegrityValidation + onlyLoadAppFromAsar: true ->
+#     tamper-detect the asar and refuse to load app code from anywhere else
+# NOTE: validated only by a packaged smoke test (`npm run package` + launch) —
+# a bad fuse config produces an app that fails to start, invisible to typecheck.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true

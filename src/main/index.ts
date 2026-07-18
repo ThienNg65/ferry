@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
@@ -68,10 +68,27 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  // Open external links in the OS browser, not in Electron.
+  // Open external links in the OS browser, not in Electron — but only for
+  // http(s). A URL rendered from remote SSH data (a log line, a filename) must
+  // never be able to invoke an arbitrary OS handler via file:/custom schemes.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    try {
+      const { protocol } = new URL(url)
+      if (protocol === 'http:' || protocol === 'https:') {
+        shell.openExternal(url)
+      }
+    } catch {
+      // Malformed URL — ignore, never open.
+    }
     return { action: 'deny' }
+  })
+
+  // Defense-in-depth: this is a single-window SPA with no vue-router, so no
+  // legitimate top-level navigation ever occurs. `will-navigate` does not fire
+  // for the initial loadURL/loadFile, so unconditionally blocking it prevents
+  // the renderer frame from ever being steered to untrusted content.
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
   })
 
   win.once('ready-to-show', () => {
@@ -131,6 +148,18 @@ app.whenReady().then(() => {
   } else {
     Menu.setApplicationMenu(null)
   }
+
+  // Deny every renderer permission request EXCEPT clipboard-write: "Copy path"
+  // (FileRow.vue) and the terminal's Ctrl+C copy-selection (terminalStreams.store.ts)
+  // both call navigator.clipboard.writeText(), which Chromium gates behind the
+  // clipboard-sanitized-write permission — a blanket deny broke both silently
+  // (NotAllowedError at the call site, easy to miss without exercising them).
+  // clipboard-read is deliberately NOT allowed: the app already reads the OS
+  // clipboard through the main-process `clipboard.readText()` IPC instead (see
+  // terminalStreams.store.ts), so the renderer never needs it directly.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'clipboard-sanitized-write')
+  })
 
   registerAllHandlers()
   TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)

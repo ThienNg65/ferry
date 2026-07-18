@@ -1,7 +1,6 @@
 import { createWriteStream } from 'fs'
 import { stat, unlink } from 'fs/promises'
 import * as path from 'path'
-import { ZipArchive } from 'archiver'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
@@ -35,6 +34,9 @@ export async function compressLocal(
   if (opts.signal?.aborted) {
     throw new SshError('CANCELLED', 'Compression cancelled')
   }
+  // Lazy-load archiver only when a local compress actually runs, keeping it off
+  // the app-startup critical path (remote compress uses the server's `zip`).
+  const { ZipArchive } = await import('archiver')
   try {
     await new Promise<void>((resolve, reject) => {
       const output = createWriteStream(destZipPath)

@@ -2,6 +2,38 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.12.0 — Monitor dashboard overhaul: storage, top processes, resizable dock
+
+Customer feedback on the 0.10.0 Monitor dock tab was that it was "useless" in practice — no way to see the connected server's total storage, and no way to see *what* was actually consuming its CPU/RAM. This round adds both, plus the dock room to show them properly. 180 unit tests passing (one pre-existing environmental integration-test failure against the local Docker SSH container, unrelated to this round).
+
+**New features:**
+- **Root filesystem storage usage** — a "used / total" bar (e.g. "98 GB / 100 GB") for the connected server's `/` filesystem, polled alongside the existing CPU/memory/load stats via the same tick.
+- **Top-processes table** — a live table of the server's processes by resource usage (Name, PID, RAM, CPU%), sortable by clicking any column header (default: CPU% descending), virtualized via `@tanstack/vue-virtual` so it scrolls smoothly through hundreds of rows without mounting one DOM node per process. View-only by design, no kill/signal actions. Per-process CPU% reuses the same aggregate `/proc/stat` delta already computed for the overall CPU figure, so it needs no extra HZ constant or wall-clock timing assumption.
+- **Resizable dock** — drag the bottom dock's top edge to make it taller, persisted across restarts, so the process table (and every other dock tab — Transfers, Activity, Terminal) gets real room instead of a fixed ~184px strip.
+
+**Under the hood:**
+- Process/disk collection extends the existing tick-based `/proc` polling model (`MonitorManager`) rather than introducing a new streaming mechanism or shelling out to `ps` (whose flag dialects differ across GNU/BSD/BusyBox) — per-process figures come from a portable `/proc`-only scan (the shell's own `read` builtin over each `/proc/[pid]/stat`, no forked `cat`/`ps`/`awk`), consistent with how CPU/memory were already gathered.
+
+## 0.11.0 — Electron security & performance hardening, Electron 43 upgrade
+
+An audit against Electron's own official security and performance checklists — fundamentals (context isolation, sandbox, no Node integration, bundled build, CSP, no default menu) were already in place, so this round closes the remaining defense-in-depth gaps, banks a few perf wins, and brings Electron off an end-of-life major version. 176 unit tests passing (one pre-existing environmental integration-test failure against the local Docker SSH container, unrelated to this round).
+
+**Security hardening:**
+- All renderer permission requests (camera, mic, geolocation, notifications) are now explicitly denied — the app never needs any of them.
+- Top-level page navigation is now blocked outright; there's no in-app router, so any navigation attempt is illegitimate.
+- External links (`shell.openExternal`) are now restricted to `http`/`https` — a maliciously crafted filename or log line from a remote server could previously have triggered an arbitrary OS scheme handler.
+- The Content-Security-Policy now explicitly scopes `img-src`/`connect-src` to the app itself.
+- Electron Fuses are now locked down in the packaged build (disables `runAsNode` and Node CLI/env-var escape hatches, enables cookie encryption and asar integrity validation) — verified against the actual packaged binary.
+
+**Performance:**
+- The SSH (`ssh2`) and zip-archive (`archiver`) libraries now load on first use instead of at app startup, shortening cold start.
+- The file list now virtualizes long directory listings (via `@tanstack/vue-virtual`, previously an unused dependency) instead of mounting one DOM row per file — large remote/local folders scroll smoothly instead of degrading.
+- Reading a private key for SSH authentication no longer blocks the main process while the file loads.
+
+**Dependency upgrade:**
+- Electron bumped from 30 (end-of-life) to 43 (current stable), with electron-builder and electron-vite brought forward to match. Verified: the app boots under the new Electron both in dev and as a Fuses-hardened packaged installer.
+- Fixed OS drag-and-drop uploads (Explorer → remote pane), which the Electron 43 upgrade would otherwise have silently broken — Electron 32 removed the DOM API this relied on to read a dropped file's path; it now goes through a small preload-exposed helper instead.
+
 ## 0.10.0 — UX & visibility pass: visual hierarchy, live operation progress, terminal keyboard fix, remote resource monitor
 
 Customer feedback on 0.9.0 raised four issues, all addressed this round: the UI was "modern, minimal, but hard to distinguish the content"; only file transfers reported progress, so remote extract/compress, local compress, and recursive deletes ran silently for up to 5 minutes behind a 6px title-bar dot; the Terminal's Ctrl+C/Ctrl+V "did nothing" (only typing + Enter worked); and there was no way to see a connected server's memory or CPU usage. 134 unit tests passing.
