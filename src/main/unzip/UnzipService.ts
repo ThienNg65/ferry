@@ -11,7 +11,7 @@ function toolFor(kind: ArchiveKind): string {
   return kind === 'zip' ? 'unzip' : 'tar'
 }
 
-function buildExtractCommand(kind: ArchiveKind, archivePath: string, targetDir: string): string {
+export function buildExtractCommand(kind: ArchiveKind, archivePath: string, targetDir: string): string {
   const archive = shellEscape(archivePath)
   const target = shellEscape(targetDir)
   const tool = toolFor(kind)
@@ -23,10 +23,16 @@ function buildExtractCommand(kind: ArchiveKind, archivePath: string, targetDir: 
         : kind === 'targz'
           ? `tar -xzf ${archive} -C ${target}`
           : `tar -xjf ${archive} -C ${target}`
-  return (
-    `sh -c "command -v ${tool} >/dev/null 2>&1 || ` +
-    `{ echo '${EXTRACT_TOOL_MISSING_SENTINEL}' >&2; exit 127; }; mkdir -p ${target} && ${cmd}"`
-  )
+  // The inner command is assembled with each path already shellEscape()'d, then the
+  // WHOLE inner command is shellEscape()'d again as a single argument to the outer
+  // `sh -c`. Wrapping it in hand-built double quotes instead (as this used to do)
+  // would be unsafe: $(...) / backticks are still live inside a double-quoted
+  // string, so a path containing one would execute before ever reaching the inner
+  // shell, regardless of its own nested single-quoting.
+  const inner =
+    `command -v ${tool} >/dev/null 2>&1 || ` +
+    `{ echo ${shellEscape(EXTRACT_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; mkdir -p ${target} && ${cmd}`
+  return `sh -c ${shellEscape(inner)}`
 }
 
 /**
