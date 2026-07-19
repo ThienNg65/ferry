@@ -1,0 +1,14 @@
+name: Setup Node & install dependencies
+description: Pinned Node.js setup with npm cache, then npm ci — single source of truth for the Node version used across all workflows
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22.14.0
+        cache: npm
+        cache-dependency-path: package-lock.json
+
+    - run: npm ci
+      shell: bash
