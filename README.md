@@ -23,6 +23,19 @@ FTP/FTPS/SCP.
 - Import existing WinSCP/PuTTY saved sessions (passwords are never imported)
 - Command palette (Ctrl/Cmd+K), light/dark theme
 
+## Screenshots
+
+| | |
+|---|---|
+| **Dual-pane file browser** — local and remote side by side, with sort, multi-select, and per-file permissions. | **Flexible connections** — password, private key, or SSH agent auth, with jump-host and proxy support. |
+| ![Dual-pane file browser](public/ferry_overview.jpg) | ![Add site dialog](public/connectivity.jpg) |
+| **One-way folder sync** — mirror a local folder to (or from) a remote one. | **Built-in resource monitor** — live CPU, memory, disk usage, and a top-processes table for the connected server. |
+| ![Sync folders dialog](public/sync-folder-function.jpg) | ![Resource monitor](public/resource-monitoring-built-in.jpg) |
+
+**Customizable** — accent color, transfer bandwidth cap, and default proxy settings.
+
+![Settings dialog](public/customization.jpg)
+
 ## Installation
 
 Download the latest Windows installer from this repository's
@@ -45,11 +58,14 @@ conventions, and development notes.
 
 ## Releasing
 
-CI (`.github/workflows/ci.yml`) runs typecheck + tests on every push/PR to `main`. Pushing a
-`v*` tag (e.g. `v0.13.0`) triggers `.github/workflows/release.yml`, which builds, packages, and
-publishes the installer to this repo's GitHub Releases via `electron-builder`. A signed build
-needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets; without them, the workflow still
-publishes an unsigned installer.
+CI (`.github/workflows/ci.yml`) runs typecheck + tests on every push/PR to `main`. On a successful
+push to `main`, it also auto-tags `vX.Y.Z` if `package.json`'s version isn't already tagged.
+Pushing that tag triggers `.github/workflows/release.yml`, which builds, packages, publishes the
+installer to this repo's GitHub Releases via `electron-builder`, and fills in the release notes
+from the commit history. So cutting a release is just: bump `package.json`'s `version` and
+`VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything after that is
+automatic. A signed build needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets; without them,
+the workflow still publishes an unsigned installer.
 
 ## License
 
