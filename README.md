@@ -43,6 +43,14 @@ npm test             # vitest run (single pass)
 See [CLAUDE.md](CLAUDE.md) and [.claude/PROJECT_MAP.md](.claude/PROJECT_MAP.md) for architecture,
 conventions, and development notes.
 
+## Releasing
+
+CI (`.github/workflows/ci.yml`) runs typecheck + tests on every push/PR to `main`. Pushing a
+`v*` tag (e.g. `v0.13.0`) triggers `.github/workflows/release.yml`, which builds, packages, and
+publishes the installer to this repo's GitHub Releases via `electron-builder`. A signed build
+needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets; without them, the workflow still
+publishes an unsigned installer.
+
 ## License
 
 [MIT](LICENSE)
