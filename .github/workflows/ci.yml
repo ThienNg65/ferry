@@ -17,6 +17,7 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm install -g npm@latest
       - run: npm cache clean --force
+      - run: rm -r node_modules package-lock.json
       - run: npm ci --registry=https://registry.npmjs.org
       - run: npm run typecheck
       - run: npm test
@@ -52,6 +53,8 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm install -g npm@latest
+      - run: npm cache clean --force
+      - run: rm -r node_modules package-lock.json
       - run: npm ci --registry=https://registry.npmjs.org
       - run: npm run package
       - name: Upload Windows installer artifact
