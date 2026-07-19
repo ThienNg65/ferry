@@ -19,3 +19,22 @@ jobs:
       - run: npm ci --registry=https://registry.npmjs.org
       - run: npm run typecheck
       - run: npm test
+
+  auto-tag:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag release if package.json version is new
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag $TAG already exists, skipping."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
