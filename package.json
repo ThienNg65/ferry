@@ -3,6 +3,12 @@
   "version": "0.12.0",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/main/index.js",
+  "license": "MIT",
+  "author": "ThienNg65",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThienNg65/ferry.git"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
