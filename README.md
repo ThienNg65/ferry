@@ -25,22 +25,32 @@ FTP/FTPS/SCP.
 
 ## Screenshots
 
-| | |
+**Dual-pane file browser** — local and remote side by side, with sort, multi-select, and per-file permissions.
+
+![Dual-pane file browser](public/ferry_overview.jpg)
+
+**One-way folder sync** — mirror a local folder to (or from) a remote one.
+
+![Sync folders dialog](public/sync-folder-function.jpg)
+
+**Built-in resource monitor** — live CPU, memory, disk usage, and a top-processes table for the connected server.
+
+![Resource monitor](public/resource-monitoring-built-in.jpg)
+
+| **Flexible connections** — password, private key, or SSH agent auth, with jump-host and proxy support. | **Customizable** — accent color, transfer bandwidth cap, and default proxy settings. |
 |---|---|
-| **Dual-pane file browser** — local and remote side by side, with sort, multi-select, and per-file permissions. | **Flexible connections** — password, private key, or SSH agent auth, with jump-host and proxy support. |
-| ![Dual-pane file browser](public/ferry_overview.jpg) | ![Add site dialog](public/connectivity.jpg) |
-| **One-way folder sync** — mirror a local folder to (or from) a remote one. | **Built-in resource monitor** — live CPU, memory, disk usage, and a top-processes table for the connected server. |
-| ![Sync folders dialog](public/sync-folder-function.jpg) | ![Resource monitor](public/resource-monitoring-built-in.jpg) |
-
-**Customizable** — accent color, transfer bandwidth cap, and default proxy settings.
-
-![Settings dialog](public/customization.jpg)
+| ![Add site dialog](public/connectivity.jpg) | ![Settings dialog](public/customization.jpg) |
 
 ## Installation
 
 Download the latest Windows installer from this repository's
 [Releases](https://github.com/ThienNg65/ferry/releases) page and run it. Ferry is currently
 Windows-only.
+
+Prefer a build straight off `main` (ahead of the next tagged release)? Every push to `main` also
+packages the app and uploads the installer as a build artifact — grab it from the `package-artifact`
+job of the latest [CI run](https://github.com/ThienNg65/ferry/actions/workflows/ci.yml) (artifact
+name `ferry-setup-windows`, kept for 30 days). It's unsigned, same as an unsigned Release build.
 
 ## Development
 
@@ -59,13 +69,15 @@ conventions, and development notes.
 ## Releasing
 
 CI (`.github/workflows/ci.yml`) runs typecheck + tests on every push/PR to `main`. On a successful
-push to `main`, it also auto-tags `vX.Y.Z` if `package.json`'s version isn't already tagged.
-Pushing that tag triggers `.github/workflows/release.yml`, which builds, packages, publishes the
-installer to this repo's GitHub Releases via `electron-builder`, and fills in the release notes
-from the commit history. So cutting a release is just: bump `package.json`'s `version` and
-`VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything after that is
-automatic. A signed build needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets; without them,
-the workflow still publishes an unsigned installer.
+push to `main`, it also auto-tags `vX.Y.Z` if `package.json`'s version isn't already tagged, and
+separately packages the app and uploads the installer as a workflow artifact (`package-artifact`
+job, unsigned, 30-day retention) so a `main`-branch build is downloadable without waiting for a
+tagged release. Pushing the auto-tag triggers `.github/workflows/release.yml`, which builds,
+packages, publishes the installer to this repo's GitHub Releases via `electron-builder`, and fills
+in the release notes from the commit history. So cutting a release is just: bump `package.json`'s
+`version` and `VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything
+after that is automatic. A signed build needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets;
+without them, the workflow still publishes an unsigned installer.
 
 ## License
 

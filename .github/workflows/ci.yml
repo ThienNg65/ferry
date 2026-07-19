@@ -38,3 +38,24 @@ jobs:
             git tag "$TAG"
             git push origin "$TAG"
           fi
+
+  package-artifact:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install -g npm@latest
+      - run: npm ci --registry=https://registry.npmjs.org
+      - run: npm run package
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferry-setup-windows
+          path: dist/*.exe
+          retention-days: 30
