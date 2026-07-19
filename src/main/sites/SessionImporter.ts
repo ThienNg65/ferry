@@ -59,46 +59,79 @@ export async function scanPuttySessions(): Promise<ImportedSessionCandidate[]> {
   return candidates
 }
 
+/** Defensive bound on WinSCP folder-group nesting depth — this walks external registry data, not a structure Ferry controls. */
+const MAX_WINSCP_DEPTH = 20
+
 /**
- * Scans WinSCP's saved sessions
- * (`HKCU\Software\Martin Prikryl\WinSCP 2\Sessions`). Deliberately does NOT
- * import the stored password: WinSCP's own scheme only reversibly obfuscates
- * it (not real encryption), but re-implementing that scheme without a way to
- * validate it against a real WinSCP install risks silently importing a wrong
- * plaintext password with no visible error — worse than just asking the user
- * to retype it. Nested folder groups (a session name containing further
- * subkeys) are skipped, not recursed into — see the roadmap for why.
+ * Recursively visits one WinSCP session-or-folder-group node. `reg query
+ * "<key>"` (no `/s`) returns both that key's own values AND its direct child
+ * subkey paths in one call, so a folder-group node (no `HostName` of its
+ * own) is detected by simply finding no host — and its children, which may
+ * be further nested groups or real sessions, are always visited regardless,
+ * since a folder-group and a real session could in principle coexist at the
+ * same level.
  */
-export async function scanWinScpSessions(): Promise<ImportedSessionCandidate[]> {
-  if (process.platform !== 'win32') {
-    return []
+async function walkWinScpNode(
+  subkey: string,
+  ancestorNames: string[],
+  candidates: ImportedSessionCandidate[],
+  depth: number,
+  queryFn: (key: string) => Promise<string | null>
+): Promise<void> {
+  if (depth > MAX_WINSCP_DEPTH) {
+    return
   }
-  const listing = await regQuery(WINSCP_ROOT)
-  if (!listing) {
-    return []
+  const detail = await queryFn(subkey)
+  if (!detail) {
+    return
   }
-  const candidates: ImportedSessionCandidate[] = []
-  for (const subkey of listRegSubkeyPaths(listing)) {
-    const rawName = subkey.slice(subkey.lastIndexOf('\\') + 1)
-    const name = decodeSessionName(rawName)
-    const detail = await regQuery(subkey)
-    if (!detail) {
-      continue
-    }
-    const values = parseRegValues(detail)
-    const host = values.get('HostName')
-    if (!host) {
-      continue
-    }
+  const rawName = subkey.slice(subkey.lastIndexOf('\\') + 1)
+  const names = [...ancestorNames, decodeSessionName(rawName)]
+  const values = parseRegValues(detail)
+  const host = values.get('HostName')
+  if (host) {
     candidates.push({
       source: 'winscp',
-      name,
+      name: names.join('/'),
       host,
       port: parseDword(values.get('PortNumber'), 22),
       username: values.get('UserName') ?? '',
       privateKeyPath: values.get('PublicKeyFile') || undefined,
       remoteInitialPath: values.get('RemoteDirectory') || undefined
     })
+  }
+  for (const child of listRegSubkeyPaths(detail)) {
+    await walkWinScpNode(child, names, candidates, depth + 1, queryFn)
+  }
+}
+
+/**
+ * Scans WinSCP's saved sessions
+ * (`HKCU\Software\Martin Prikryl\WinSCP 2\Sessions`), recursing into nested
+ * folder groups (a session name containing further subkeys) so sessions
+ * organized into folders aren't silently dropped — a nested session's
+ * `name` is its full folder path, `/`-joined (e.g. `Work/Prod/db1`).
+ * Deliberately does NOT import the stored password: WinSCP's own scheme
+ * only reversibly obfuscates it (not real encryption), but re-implementing
+ * that scheme without a way to validate it against a real WinSCP install
+ * risks silently importing a wrong plaintext password with no visible error
+ * — worse than just asking the user to retype it.
+ */
+export async function scanWinScpSessions(
+  /** Overridable only for unit tests (see SessionImporter.test.ts) — real callers never pass this, so the win32 gate below still applies to them. */
+  queryFn?: (key: string) => Promise<string | null>
+): Promise<ImportedSessionCandidate[]> {
+  if (!queryFn && process.platform !== 'win32') {
+    return []
+  }
+  const query = queryFn ?? regQuery
+  const listing = await query(WINSCP_ROOT)
+  if (!listing) {
+    return []
+  }
+  const candidates: ImportedSessionCandidate[] = []
+  for (const subkey of listRegSubkeyPaths(listing)) {
+    await walkWinScpNode(subkey, [], candidates, 0, query)
   }
   return candidates
 }

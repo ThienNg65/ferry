@@ -4,6 +4,14 @@ import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerSessionHandlers } from './ipc/session.ipc'
 import { registerDialogHandlers } from './ipc/dialog.ipc'
+import { registerKeysHandlers } from './ipc/keys.ipc'
+import { registerBookmarksHandlers } from './ipc/bookmarks.ipc'
+import { registerHistoryHandlers } from './ipc/history.ipc'
+import { initHistoryRecorder } from './history/HistoryRecorder'
+import { HistoryStore } from './history/HistoryStore'
+import { registerEditHandlers } from './ipc/edit.ipc'
+import { EditSessionManager } from './edit/EditSessionManager'
+import { registerSyncHandlers } from './ipc/sync.ipc'
 import { registerFsHandlers } from './ipc/fs.ipc'
 import { registerTransferHandlers } from './ipc/transfer.ipc'
 import { registerTailHandlers } from './ipc/tail.ipc'
@@ -123,6 +131,11 @@ function registerAllHandlers(): void {
   registerSettingsHandlers()
   registerSessionHandlers()
   registerDialogHandlers()
+  registerKeysHandlers()
+  registerBookmarksHandlers()
+  registerHistoryHandlers()
+  registerEditHandlers()
+  registerSyncHandlers()
   registerFsHandlers()
   registerTransferHandlers()
   registerTailHandlers()
@@ -162,6 +175,7 @@ app.whenReady().then(() => {
   })
 
   registerAllHandlers()
+  initHistoryRecorder()
   TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
   mainWindow = createWindow()
   initAutoUpdater()
@@ -177,4 +191,23 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// Delays actual quit by one tick to let EditSessionManager best-effort clean
+// up fully-synced temp files first — `quitting` guards against re-entering
+// this handler when the `app.quit()` call below re-fires `before-quit`.
+let quitting = false
+app.on('before-quit', (event) => {
+  if (quitting) {
+    return
+  }
+  event.preventDefault()
+  quitting = true
+  // Flush any debounced-but-not-yet-written history entries synchronously
+  // before EditSessionManager's async cleanup — HistoryStore.flush() is
+  // itself synchronous (electron-store writes are), so this can't race it.
+  HistoryStore.getInstance().flush()
+  void EditSessionManager.getInstance()
+    .disposeAll()
+    .finally(() => app.quit())
 })

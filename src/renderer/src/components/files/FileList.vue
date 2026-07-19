@@ -54,6 +54,7 @@ const emit = defineEmits<{
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
+  edit: [entry: FileEntry]
   sort: [column: SortColumn]
 }>()
 </script>
@@ -132,6 +133,7 @@ const emit = defineEmits<{
             @cancel-rename="emit('cancel-rename')"
             @start-rename="emit('start-rename', $event)"
             @chmod="emit('chmod', $event)"
+            @edit="emit('edit', $event)"
           />
         </div>
       </div>

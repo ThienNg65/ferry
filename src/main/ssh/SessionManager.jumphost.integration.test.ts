@@ -8,6 +8,11 @@
  * -> second SSH handshake over the tunneled stream) without provisioning a
  * second server — see RemoteShell.integration.test.ts's file header for the
  * docker command that starts the container this test needs.
+ *
+ * One test below extends this to a genuine 2-hop chain (multi-hop jump-host
+ * support), reusing the same one-container trick twice in a row — see that
+ * test's own comment for why hop 1 and the target coincide as the same
+ * physical endpoint here, and what that does and doesn't let it assert.
  */
 import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -76,13 +81,15 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
       username: USERNAME,
       authMethod: 'password',
       password: PASSWORD,
-      jumpHost: {
-        host: JUMP_HOST,
-        port: JUMP_PORT,
-        username: USERNAME,
-        authMethod: 'password',
-        password: PASSWORD
-      }
+      jumpHosts: [
+        {
+          host: JUMP_HOST,
+          port: JUMP_PORT,
+          username: USERNAME,
+          authMethod: 'password',
+          password: PASSWORD
+        }
+      ]
     })
     expect(result.status).toBe('connected')
 
@@ -99,6 +106,39 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
     SessionManager.getInstance().close(result.sessionId)
   })
 
+  it('tunnels through a 2-hop chain (loop mechanics for hops.length > 1)', async () => {
+    // Only one test container is available here, so this reuses it as BOTH
+    // hop 2 and the target: `forwardOut` is issued server-side by whichever
+    // hop is asked to make it, so hop 1 forwarding to 127.0.0.1:2222 lands on
+    // the container's own sshd regardless of how many tunnels deep hop 1
+    // itself was reached through — a legitimate way to exercise the N-hop
+    // loop (hop 0 direct, hop 1 via hop 0's tunnel, target via hop 1's
+    // tunnel) without provisioning a third server. Because hop 1 and the
+    // target are consequently the SAME host:port here, this test does not
+    // assert on distinct KnownHostsStore entries for them (see the 1-hop
+    // test above for that assertion, where the two hops are genuinely
+    // distinct endpoints).
+    const result = await SessionManager.getInstance().openQuickConnect({
+      name: 'ferry-test-via-2-hop-chain',
+      host: TARGET_HOST,
+      port: TARGET_PORT,
+      username: USERNAME,
+      authMethod: 'password',
+      password: PASSWORD,
+      jumpHosts: [
+        { host: JUMP_HOST, port: JUMP_PORT, username: USERNAME, authMethod: 'password', password: PASSWORD },
+        { host: TARGET_HOST, port: TARGET_PORT, username: USERNAME, authMethod: 'password', password: PASSWORD }
+      ]
+    })
+    expect(result.status).toBe('connected')
+
+    const shell = SessionManager.getInstance().shell(result.sessionId)
+    const exec = await shell.exec('echo two-hop-tunneled-ok')
+    expect(exec.stdout.trim()).toBe('two-hop-tunneled-ok')
+
+    SessionManager.getInstance().close(result.sessionId)
+  })
+
   it('rejects with a clear error when the jump host itself fails to authenticate', async () => {
     await expect(
       SessionManager.getInstance().openQuickConnect({
@@ -108,13 +148,15 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
         username: USERNAME,
         authMethod: 'password',
         password: PASSWORD,
-        jumpHost: {
-          host: JUMP_HOST,
-          port: JUMP_PORT,
-          username: USERNAME,
-          authMethod: 'password',
-          password: 'definitely-the-wrong-password'
-        }
+        jumpHosts: [
+          {
+            host: JUMP_HOST,
+            port: JUMP_PORT,
+            username: USERNAME,
+            authMethod: 'password',
+            password: 'definitely-the-wrong-password'
+          }
+        ]
       })
     ).rejects.toThrow()
   })

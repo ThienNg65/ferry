@@ -5,12 +5,16 @@ import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract
 import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
+import { useSettingsStore } from '../../stores/settings.store'
 import SiteFormDialog from './SiteFormDialog.vue'
 import ImportSessionsDialog from './ImportSessionsDialog.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
+const settings = useSettingsStore()
 const version = ref('')
+/** Only shown when an app-wide default proxy is actually configured — otherwise this control has nothing to bypass and would just be clutter. */
+const bypassDefaultProxy = ref(false)
 
 const keyboardAnswers = ref<string[]>([])
 watch(
@@ -26,6 +30,7 @@ async function submitKeyboardAnswers(): Promise<void> {
 
 onMounted(() => {
   void sites.fetchSites()
+  void settings.fetch()
   void invoke<AppVersionResult>(INVOKE_CHANNELS.systemGetAppVersion).then((result) => {
     version.value = result.version
   })
@@ -42,7 +47,7 @@ const form = reactive<QuickConnectInput>({
 
 async function onConnect(): Promise<void> {
   try {
-    await sessions.connect({ ...form })
+    await sessions.connect({ ...form, proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit' })
   } catch {
     // Surfaced via sessions.status/statusMessage in the template below.
   }
@@ -252,6 +257,11 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           <UFormField label="Password">
             <UInput v-model="form.password" type="password" class="w-full" />
           </UFormField>
+
+          <label v-if="settings.defaultProxy" class="flex items-center gap-2 text-sm text-default">
+            <input type="checkbox" v-model="bypassDefaultProxy" class="size-4" />
+            Bypass default proxy for this connection
+          </label>
 
           <UAlert
             v-if="sessions.status === 'error'"

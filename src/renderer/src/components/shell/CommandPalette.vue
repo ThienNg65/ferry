@@ -8,12 +8,14 @@ import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useSettingsDialog } from '../../composables/useSettingsDialog'
+import { useHistoryDialog } from '../../composables/useHistoryDialog'
 
 const open = ref(false)
 const sessions = useSessionsStore()
 const sites = useSitesStore()
 const ui = useUiStore()
 const settingsDialog = useSettingsDialog()
+const historyDialog = useHistoryDialog()
 
 function onKeydown(event: KeyboardEvent): void {
   // Terminal-first: while the xterm textarea is focused, Ctrl+K belongs to the
@@ -52,7 +54,8 @@ const groups = computed(() => [
         icon: 'i-lucide-panel-left',
         onSelect: () => run(() => ui.toggleLocalPane())
       },
-      { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) }
+      { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
+      { label: 'History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) }
     ]
   },
   {

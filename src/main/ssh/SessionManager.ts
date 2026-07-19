@@ -1,21 +1,27 @@
 import type { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2'
+import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
 import { readFile } from 'fs/promises'
 import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
+import { probeAgent, rewriteAgentAuthError } from './agentDiagnostics'
+import { connectViaProxy } from './ProxyConnector'
 import { evaluateHostKey, fingerprintHostKey, KnownHostsStore } from './KnownHostsStore'
 import { mergeAnswers, partitionPrompts } from './keyboardInteractive'
 import { SiteStore } from '../sites/SiteStore'
+import { AppSettingsStore } from '../app/AppSettingsStore'
 import { TailManager } from '../tail/TailManager'
 import { TerminalManager } from '../terminal/TerminalManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { MonitorManager } from '../monitor/MonitorManager'
+import { EditSessionManager } from '../edit/EditSessionManager'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
   type JumpHostConfig,
   type KeyboardInteractiveRequestEvent,
+  type ProxyConfig,
   type QuickConnectInput,
   type SessionStatus,
   type SessionStatusEvent
@@ -25,8 +31,8 @@ interface SessionEntry {
   sessionId: string
   siteId: string | null
   client: Client
-  /** The bastion hop's own client, if this session connects through a jump host — closed alongside `client`. */
-  jumpClient: Client | null
+  /** Bastion hop clients, in connect order (jumpClients[0] connected first) — closed in reverse order alongside `client`. */
+  jumpClients: Client[]
   shell: RemoteShell
   status: SessionStatus
   cwdRemote: string
@@ -42,8 +48,32 @@ interface ConnectInput {
   agentPath?: string
   password?: string
   passphrase?: string
-  /** Decrypted jump-host secrets, if this connect tunnels through a bastion. */
-  jumpHost?: JumpHostConfig
+  /** Decrypted jump-host chain, ordered hop 0 first, if this connect tunnels through one or more bastions. */
+  jumpHosts?: JumpHostConfig[]
+  /** Resolved proxy (custom or app-wide default — see `resolveEffectiveProxy`), applied to hop 0's transport only. */
+  proxy?: ProxyConfig
+}
+
+/**
+ * Resolves a site's (or quick-connect input's) effective proxy: `'none'`
+ * forces a direct connection even if an app-wide default is set; `'custom'`
+ * uses the site's own proxy; `'inherit'` (or `proxyMode` absent, for sites
+ * saved before this feature existed) falls back to the app-wide default.
+ *
+ * Exported (only) so SessionManager.proxyResolution.test.ts can exercise it
+ * directly without needing a real connection.
+ */
+export function resolveEffectiveProxy(
+  proxyMode: 'inherit' | 'none' | 'custom' | undefined,
+  customProxy: ProxyConfig | undefined
+): ProxyConfig | undefined {
+  if (proxyMode === 'none') {
+    return undefined
+  }
+  if (proxyMode === 'custom') {
+    return customProxy
+  }
+  return AppSettingsStore.getInstance().getDecryptedDefaultProxy()
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 20_000
@@ -117,6 +147,11 @@ export class SessionManager {
     this.get(sessionId).cwdRemote = path
   }
 
+  /** Best-effort saved-site id for a session (null for quick-connect, or an already-closed/unknown session) — for denormalizing history entries, not a connect-time API, so it never throws. */
+  siteIdForSession(sessionId: string): string | null {
+    return this.sessions.get(sessionId)?.siteId ?? null
+  }
+
   private get(sessionId: string): SessionEntry {
     const entry = this.sessions.get(sessionId)
     if (!entry) {
@@ -170,7 +205,7 @@ export class SessionManager {
       throw new SshError('NOT_FOUND', `Site ${siteId} not found`)
     }
     const secrets = SiteStore.getInstance().getDecryptedSecrets(siteId)
-    const jumpSecrets = SiteStore.getInstance().getDecryptedJumpHostSecrets(siteId)
+    const jumpHosts = SiteStore.getInstance().getDecryptedJumpHosts(siteId)
     return this.connect(
       siteId,
       {
@@ -186,17 +221,8 @@ export class SessionManager {
         // /password/i (see keyboardInteractive.ts's partitionPrompts).
         password: site.authMethod === 'password' ? secrets.password : undefined,
         passphrase: site.authMethod === 'privateKey' ? secrets.passphrase : undefined,
-        jumpHost: site.jumpHost
-          ? {
-              host: site.jumpHost.host,
-              port: site.jumpHost.port,
-              username: site.jumpHost.username,
-              authMethod: site.jumpHost.authMethod,
-              privateKeyPath: site.jumpHost.privateKeyPath,
-              password: site.jumpHost.authMethod === 'password' ? jumpSecrets?.password : undefined,
-              passphrase: site.jumpHost.authMethod === 'privateKey' ? jumpSecrets?.passphrase : undefined
-            }
-          : undefined
+        jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
+        proxy: resolveEffectiveProxy(site.proxyMode, SiteStore.getInstance().getDecryptedProxy(siteId))
       },
       site.remoteInitialPath ?? '.',
       trustHostKeyChange
@@ -208,7 +234,12 @@ export class SessionManager {
     input: QuickConnectInput,
     trustHostKeyChange = false
   ): Promise<{ sessionId: string; status: SessionStatus }> {
-    return this.connect(null, input, input.remoteInitialPath ?? '.', trustHostKeyChange)
+    return this.connect(
+      null,
+      { ...input, proxy: resolveEffectiveProxy(input.proxyMode, input.proxy) },
+      input.remoteInitialPath ?? '.',
+      trustHostKeyChange
+    )
   }
 
   /** Builds a `hostVerifier`-equipped `ConnectConfig` for one hop (the target host, or a jump host), keyed by its own host:port in `KnownHostsStore`. */
@@ -218,7 +249,7 @@ export class SessionManager {
     username: string,
     auth: HopAuth,
     trustHostKeyChange: boolean
-  ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder }> {
+  ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder; agentIdentityCount?: number }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
     // (TypeScript's control-flow analysis doesn't track closure reassignments) —
@@ -248,10 +279,29 @@ export class SessionManager {
       tryKeyboard: true,
       hostVerifier
     }
+    let agentIdentityCount: number | undefined
     if (auth.authMethod === 'password') {
       config.password = auth.password
     } else if (auth.authMethod === 'agent') {
-      config.agent = auth.agentPath || defaultAgentPath()
+      const agentPath = auth.agentPath || defaultAgentPath()
+      // Pre-flight: ssh2 delegates all agent-protocol failures to its own opaque
+      // internal agent classes, so without this check "agent not running" and
+      // "wrong key" both surface as the same generic handshake failure below.
+      try {
+        agentIdentityCount = (await probeAgent(agentPath)).identityCount
+      } catch (e) {
+        throw new SshError(
+          'VALIDATION',
+          `SSH agent not reachable at "${agentPath}" — is it running? (${e instanceof Error ? e.message : String(e)})`
+        )
+      }
+      if (agentIdentityCount === 0) {
+        throw new SshError(
+          'VALIDATION',
+          'SSH agent has no keys loaded — run `ssh-add`, or load a key into Pageant, then retry.'
+        )
+      }
+      config.agent = agentPath
     } else {
       if (!auth.privateKeyPath) {
         throw new SshError('VALIDATION', 'Private key path is required for private-key auth')
@@ -261,7 +311,7 @@ export class SessionManager {
         config.passphrase = auth.passphrase
       }
     }
-    return { config, hostKeyMismatch }
+    return { config, hostKeyMismatch, agentIdentityCount }
   }
 
   /** Connects one `ssh2.Client` (either the target host or a jump host), resolving on `ready`. Real keyboard-interactive prompts route through {@link promptKeyboardInteractive} under the given `sessionId`. */
@@ -309,7 +359,7 @@ export class SessionManager {
     })
   }
 
-  /** Opens a tunnel through an already-connected jump client to the real target's host:port, for use as the target connection's `sock`. */
+  /** Opens a tunnel through an already-connected jump client to the next hop's (or the final target's) host:port, for use as that connection's `sock`. */
   private forwardThroughJump(jumpClient: Client, targetHost: string, targetPort: number): Promise<ClientChannel> {
     return new Promise((resolve, reject) => {
       jumpClient.forwardOut('127.0.0.1', 0, targetHost, targetPort, (err, stream) => {
@@ -335,12 +385,13 @@ export class SessionManager {
     // type-only import.
     const { Client: SshClient } = await import('ssh2')
     const client = new SshClient()
-    const jumpClient = input.jumpHost ? new SshClient() : null
+    const hops = input.jumpHosts ?? []
+    const jumpClients: Client[] = hops.map(() => new SshClient())
     const entry: SessionEntry = {
       sessionId,
       siteId,
       client,
-      jumpClient,
+      jumpClients,
       shell: new RemoteShell(client),
       status: 'connecting',
       cwdRemote: initialCwd
@@ -348,30 +399,48 @@ export class SessionManager {
     this.sessions.set(sessionId, entry)
 
     try {
-      let sock: ClientChannel | undefined
-      if (jumpClient && input.jumpHost) {
-        const jump = input.jumpHost
-        const { config: jumpConfig, hostKeyMismatch: jumpMismatch } = await this.buildConnectConfig(
-          jump.host,
-          jump.port,
-          jump.username,
-          { authMethod: jump.authMethod, privateKeyPath: jump.privateKeyPath, password: jump.password, passphrase: jump.passphrase },
+      // `sock` carries the transport for the NEXT connection attempt — undefined
+      // for hop 0 (a plain direct TCP connect), then re-set after each hop to a
+      // fresh tunnel opened through that hop, so it's ready for hop i+1 (or, once
+      // the loop ends, for the final target connect below).
+      let sock: ClientChannel | Duplex | undefined
+      if (input.proxy) {
+        // Only ever supplies hop 0's transport — reaching hop 1+ (or the
+        // target, once the loop below ends) still goes through the SSH-level
+        // forwardOut tunnel exactly as without a proxy. This is the
+        // minimal-blast-radius integration point: the proxy only solves "how
+        // do I reach the first machine."
+        const first = hops.length > 0 ? hops[0] : input
+        sock = await connectViaProxy(input.proxy, first.host, first.port)
+      }
+      for (let i = 0; i < hops.length; i++) {
+        const hop = hops[i]
+        const hopClient = jumpClients[i]
+        const { config: hopConfig, hostKeyMismatch: hopMismatch } = await this.buildConnectConfig(
+          hop.host,
+          hop.port,
+          hop.username,
+          { authMethod: hop.authMethod, privateKeyPath: hop.privateKeyPath, password: hop.password, passphrase: hop.passphrase },
           trustHostKeyChange
         )
+        if (sock) {
+          hopConfig.sock = sock
+        }
         try {
-          await this.connectClient(sessionId, jumpClient, jumpConfig, jump.password)
+          await this.connectClient(sessionId, hopClient, hopConfig, hop.password)
         } catch (e) {
-          throw jumpMismatch.value
+          throw hopMismatch.value
             ? new SshError(
                 'HOST_KEY_MISMATCH',
-                `Jump host key for ${jump.host}:${jump.port} has changed! Expected ${jumpMismatch.value.expected} but the server presented ${jumpMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
+                `Jump host key for ${hop.host}:${hop.port} (hop ${i + 1} of ${hops.length}) has changed! Expected ${hopMismatch.value.expected} but the server presented ${hopMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
               )
             : e
         }
-        sock = await this.forwardThroughJump(jumpClient, input.host, input.port)
+        const next = i + 1 < hops.length ? hops[i + 1] : input
+        sock = await this.forwardThroughJump(hopClient, next.host, next.port)
       }
 
-      const { config: targetConfig, hostKeyMismatch } = await this.buildConnectConfig(
+      const { config: targetConfig, hostKeyMismatch, agentIdentityCount } = await this.buildConnectConfig(
         input.host,
         input.port,
         input.username,
@@ -385,19 +454,25 @@ export class SessionManager {
       try {
         await this.connectClient(sessionId, client, targetConfig, input.password)
       } catch (e) {
-        throw hostKeyMismatch.value
-          ? new SshError(
-              'HOST_KEY_MISMATCH',
-              `Host key for ${input.host}:${input.port} has changed! Expected ${hostKeyMismatch.value.expected} but the server presented ${hostKeyMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
-            )
-          : e
+        if (hostKeyMismatch.value) {
+          throw new SshError(
+            'HOST_KEY_MISMATCH',
+            `Host key for ${input.host}:${input.port} has changed! Expected ${hostKeyMismatch.value.expected} but the server presented ${hostKeyMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
+          )
+        }
+        if (agentIdentityCount !== undefined && e instanceof SshError) {
+          throw new SshError(e.code, rewriteAgentAuthError(e.message, agentIdentityCount))
+        }
+        throw e
       }
     } catch (e) {
       entry.status = 'error'
       const message = e instanceof Error ? e.message : String(e)
       this.broadcastStatus(sessionId, 'error', message)
       this.sessions.delete(sessionId)
-      jumpClient?.end()
+      for (let i = jumpClients.length - 1; i >= 0; i--) {
+        jumpClients[i].end()
+      }
       throw e
     }
 
@@ -424,8 +499,11 @@ export class SessionManager {
     TerminalManager.getInstance().closeAllForSession(sessionId)
     OperationRegistry.getInstance().cancelAllForSession(sessionId)
     MonitorManager.getInstance().stopAllForSession(sessionId)
+    EditSessionManager.getInstance().closeAllForSession(sessionId)
     entry.client.end()
-    entry.jumpClient?.end()
+    for (let i = entry.jumpClients.length - 1; i >= 0; i--) {
+      entry.jumpClients[i].end()
+    }
     this.sessions.delete(sessionId)
     this.broadcastStatus(sessionId, 'disconnected')
   }

@@ -11,7 +11,8 @@ import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/Loca
 import { runConcurrent } from '../util/concurrency'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
 
-interface TransferJob {
+/** Exported so a terminal-event listener (see `onTerminalEvent`) gets full job context, not just the wire-format `TransferEvent`. */
+export interface TransferJob {
   transferId: string
   sessionId: string
   kind: TransferKind
@@ -20,6 +21,8 @@ interface TransferJob {
   controller: AbortController
   /** True when this job moves a whole directory tree rather than a single file. */
   isTree: boolean
+  /** Epoch ms when queued — close enough to "started" for History's purposes; queueing delay is usually negligible. */
+  queuedAt: number
 }
 
 /** Joins a `/`-separated relative path onto a local root using the OS-native separator. */
@@ -102,12 +105,30 @@ export class TransferQueue {
   private readonly pending: TransferJob[] = []
   private readonly active = new Map<string, TransferJob>()
   private readonly rateLimiter = new RateLimiter()
+  /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect a transfer's own outcome (see `notifyTerminal`). */
+  private readonly terminalListeners: Array<(job: TransferJob, evt: TransferEvent) => void> = []
 
   static getInstance(): TransferQueue {
     if (TransferQueue.instance === null) {
       TransferQueue.instance = new TransferQueue()
     }
     return TransferQueue.instance
+  }
+
+  /** Subscribes to every transfer's terminal event (done/error/cancelled) — additive to the existing `webContents.send` broadcast, not a replacement for it. */
+  onTerminalEvent(listener: (job: TransferJob, evt: TransferEvent) => void): void {
+    this.terminalListeners.push(listener)
+  }
+
+  private notifyTerminal(job: TransferJob, evt: TransferEvent): void {
+    for (const listener of this.terminalListeners) {
+      try {
+        listener(job, evt)
+      } catch {
+        // A listener's own failure (e.g. HistoryStore disk write) must never
+        // surface as a transfer failure — this channel is purely additive.
+      }
+    }
   }
 
   /** Sets (or clears, with `null`) the app-wide transfer rate cap — applies to every transfer already in flight, not just new ones. */
@@ -138,7 +159,8 @@ export class TransferQueue {
       localPath,
       remotePath,
       controller: new AbortController(),
-      isTree
+      isTree,
+      queuedAt: Date.now()
     }
     this.pending.push(job)
     this.broadcast({ transferId, kind, state: 'queued' })
@@ -156,7 +178,9 @@ export class TransferQueue {
     const idx = this.pending.findIndex((j) => j.transferId === transferId)
     if (idx !== -1) {
       const [job] = this.pending.splice(idx, 1)
-      this.broadcast({ transferId: job.transferId, kind: job.kind, state: 'cancelled' })
+      const evt: TransferEvent = { transferId: job.transferId, kind: job.kind, state: 'cancelled' }
+      this.broadcast(evt)
+      this.notifyTerminal(job, evt)
     }
   }
 
@@ -211,11 +235,15 @@ export class TransferQueue {
         onProgress: emitProgress
       })
 
-      this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
+      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      this.broadcast(doneEvt)
+      this.notifyTerminal(job, doneEvt)
     } catch (e) {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
       const message = e instanceof Error ? e.message : String(e)
-      this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
+      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      this.broadcast(evt)
+      this.notifyTerminal(job, evt)
     }
   }
 
@@ -365,11 +393,15 @@ export class TransferQueue {
         }
       )
 
-      this.broadcast({ transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes })
+      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      this.broadcast(doneEvt)
+      this.notifyTerminal(job, doneEvt)
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
-      this.broadcast({ transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message })
+      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      this.broadcast(evt)
+      this.notifyTerminal(job, evt)
     }
   }
 

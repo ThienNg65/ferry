@@ -26,6 +26,22 @@ describe('listRegSubkeyPaths', () => {
   it('returns an empty array when there are no subkeys', () => {
     expect(listRegSubkeyPaths('HKCU\\Software\\SimonTatham\\PuTTY\\Sessions\r\n\r\n')).toEqual([])
   })
+
+  it('does not mistake its own echoed header for a child when queried by its full hive-qualified path (recursion case)', () => {
+    // Recursing into a folder-group queries the already-fully-qualified path
+    // returned by a previous call, so the echoed header here is ALSO a
+    // HKEY_CURRENT_USER\... string — matching by prefix alone would treat
+    // this key as its own child and recurse forever.
+    const output = [
+      'HKEY_CURRENT_USER\\Software\\Martin Prikryl\\WinSCP 2\\Sessions\\Work',
+      '',
+      'HKEY_CURRENT_USER\\Software\\Martin Prikryl\\WinSCP 2\\Sessions\\Work\\db1',
+      ''
+    ].join('\r\n')
+    expect(listRegSubkeyPaths(output)).toEqual([
+      'HKEY_CURRENT_USER\\Software\\Martin Prikryl\\WinSCP 2\\Sessions\\Work\\db1'
+    ])
+  })
 })
 
 describe('parseRegValues', () => {

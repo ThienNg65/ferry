@@ -1,6 +1,6 @@
 {
   "name": "ferry",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/main/index.js",
   "license": "MIT",
@@ -29,6 +29,7 @@
     "electron-store": "^8.1.0",
     "electron-updater": "^6.8.9",
     "pinia": "^2.1.7",
+    "socks": "^2.8.9",
     "ssh2": "^1.16.0",
     "vue": "^3.5.0"
   },

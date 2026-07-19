@@ -2,7 +2,7 @@ import Store from 'electron-store'
 import { randomUUID } from 'crypto'
 import { safeStorage } from 'electron'
 import { SshError } from '../ssh/errors'
-import type { AuthMethod, JumpHostConfig, JumpHostInfo, Site, SiteInput } from '../../shared/contract'
+import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteInput } from '../../shared/contract'
 
 /** On-disk shape of a saved jump-host hop — secrets encrypted-at-rest like the top-level site. */
 interface StoredJumpHost {
@@ -13,6 +13,15 @@ interface StoredJumpHost {
   privateKeyPath?: string
   secretPassword?: string
   secretPassphrase?: string
+}
+
+/** On-disk shape of a saved per-site proxy override — secret encrypted-at-rest like every other credential here. */
+interface StoredProxy {
+  type: 'socks5' | 'http'
+  host: string
+  port: number
+  username?: string
+  secretPassword?: string
 }
 
 /** On-disk shape of a saved site — secrets are encrypted-at-rest, never plaintext. */
@@ -31,10 +40,19 @@ interface StoredSite {
   secretPassword?: string
   /** Base64 ciphertext from `safeStorage.encryptString`. */
   secretPassphrase?: string
+  jumpHosts?: StoredJumpHost[]
+  /** Legacy single-hop field from before multi-hop chaining — only ever read (see `storedJumpHosts` below), never written by current code. */
   jumpHost?: StoredJumpHost
+  proxyMode?: 'inherit' | 'none' | 'custom'
+  proxy?: StoredProxy
   group?: string
   createdAt: string
   updatedAt: string
+}
+
+/** Reads a site's jump-host chain, tolerating an old on-disk record that still only has the legacy singular `jumpHost` field (no migration script — just a defensive read fallback, matching this store's existing tolerant style). */
+function storedJumpHosts(s: Pick<StoredSite, 'jumpHosts' | 'jumpHost'>): StoredJumpHost[] {
+  return s.jumpHosts ?? (s.jumpHost ? [s.jumpHost] : [])
 }
 
 interface StoreSchema {
@@ -98,6 +116,41 @@ function toStoredJumpHost(j: JumpHostConfig, existing?: StoredJumpHost): StoredJ
   }
 }
 
+/**
+ * Maps an incoming jump-host chain to its stored form, matching each hop to
+ * the existing hop at the same array index so an unchanged password/
+ * passphrase is preserved rather than cleared (`pickSecret`'s usual
+ * behavior). Reordering hops in the UI can momentarily attach the wrong
+ * stored secret to the wrong hop for one save round-trip — an accepted,
+ * documented risk, not a correctness bug: the user re-enters the secret if a
+ * save happens to land oddly, same as any other stale-secret edge case here.
+ */
+function toStoredJumpHosts(hops: JumpHostConfig[], existing: StoredJumpHost[]): StoredJumpHost[] {
+  return hops.map((hop, i) => toStoredJumpHost(hop, existing[i]))
+}
+
+function toPublicProxy(p: StoredProxy): ProxyInfo {
+  return {
+    type: p.type,
+    host: p.host,
+    port: p.port,
+    username: p.username,
+    hasPassword: Boolean(p.secretPassword)
+  }
+}
+
+function toStoredProxy(p: ProxyConfig, existing?: StoredProxy): StoredProxy {
+  return {
+    type: p.type,
+    host: p.host,
+    port: p.port,
+    username: p.username,
+    // A proxy always uses its password (no auth-method branch to gate on,
+    // unlike sites/jump-hosts) — `wants` is unconditionally true.
+    secretPassword: pickSecret(true, p.password, existing?.secretPassword)
+  }
+}
+
 function toPublicSite(s: StoredSite): Site {
   return {
     id: s.id,
@@ -112,7 +165,9 @@ function toPublicSite(s: StoredSite): Site {
     localInitialPath: s.localInitialPath,
     hasPassword: Boolean(s.secretPassword),
     hasPassphrase: Boolean(s.secretPassphrase),
-    jumpHost: s.jumpHost ? toPublicJumpHost(s.jumpHost) : undefined,
+    jumpHosts: storedJumpHosts(s).length > 0 ? storedJumpHosts(s).map(toPublicJumpHost) : undefined,
+    proxyMode: s.proxyMode,
+    proxy: s.proxy ? toPublicProxy(s.proxy) : undefined,
     group: s.group,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt
@@ -155,7 +210,9 @@ export class SiteStore {
       localInitialPath: input.localInitialPath,
       secretPassword: pickSecret(input.authMethod === 'password', input.password, undefined),
       secretPassphrase: pickSecret(input.authMethod === 'privateKey', input.passphrase, undefined),
-      jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost) : undefined,
+      jumpHosts: input.jumpHosts ? toStoredJumpHosts(input.jumpHosts, []) : undefined,
+      proxyMode: input.proxyMode,
+      proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy) : undefined,
       group: input.group || undefined,
       createdAt: now,
       updatedAt: now
@@ -186,7 +243,13 @@ export class SiteStore {
       localInitialPath: input.localInitialPath,
       secretPassword: pickSecret(input.authMethod === 'password', input.password, existing.secretPassword),
       secretPassphrase: pickSecret(input.authMethod === 'privateKey', input.passphrase, existing.secretPassphrase),
-      jumpHost: input.jumpHost ? toStoredJumpHost(input.jumpHost, existing.jumpHost) : undefined,
+      jumpHosts: input.jumpHosts ? toStoredJumpHosts(input.jumpHosts, storedJumpHosts(existing)) : undefined,
+      // Clear the legacy singular field once the site is saved under the new
+      // array shape, so `storedJumpHosts()`'s fallback never resurrects a
+      // stale single hop alongside (or in place of) the current chain.
+      jumpHost: undefined,
+      proxyMode: input.proxyMode,
+      proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy, existing.proxy) : undefined,
       group: input.group || undefined,
       updatedAt: new Date().toISOString()
     }
@@ -234,12 +297,47 @@ export class SiteStore {
     return { password: decrypt(site.secretPassword), passphrase: decrypt(site.secretPassphrase) }
   }
 
-  /** Decrypts a site's jump-host secrets, if it has one configured. Never returned to the renderer. */
-  getDecryptedJumpHostSecrets(id: string): { password?: string; passphrase?: string } | undefined {
+  /**
+   * A site's jump-host chain, fully hydrated with decrypted secrets and
+   * ready to hand straight to `SessionManager.connect()`. Tolerates a
+   * pre-multi-hop on-disk record that still only has the legacy singular
+   * `jumpHost` field (via `storedJumpHosts`'s fallback). Never returned to
+   * the renderer — main-process only, at connect-time.
+   */
+  getDecryptedJumpHosts(id: string): JumpHostConfig[] {
     const site = this.getRaw(id)
-    if (!site?.jumpHost) {
+    if (!site) {
+      return []
+    }
+    return storedJumpHosts(site).map((j) => ({
+      host: j.host,
+      port: j.port,
+      username: j.username,
+      authMethod: j.authMethod,
+      privateKeyPath: j.privateKeyPath,
+      password: j.authMethod === 'password' ? decrypt(j.secretPassword) : undefined,
+      passphrase: j.authMethod === 'privateKey' ? decrypt(j.secretPassphrase) : undefined
+    }))
+  }
+
+  /**
+   * A site's own custom proxy override, fully hydrated with its decrypted
+   * password — only present when `proxyMode === 'custom'`. Resolving
+   * `'inherit'` against the app-wide default is the caller's job (see
+   * `SessionManager.connect()`), not this store's. Never returned to the
+   * renderer — main-process only, at connect-time.
+   */
+  getDecryptedProxy(id: string): ProxyConfig | undefined {
+    const site = this.getRaw(id)
+    if (!site?.proxy || site.proxyMode !== 'custom') {
       return undefined
     }
-    return { password: decrypt(site.jumpHost.secretPassword), passphrase: decrypt(site.jumpHost.secretPassphrase) }
+    return {
+      type: site.proxy.type,
+      host: site.proxy.host,
+      port: site.proxy.port,
+      username: site.proxy.username,
+      password: decrypt(site.proxy.secretPassword)
+    }
   }
 }

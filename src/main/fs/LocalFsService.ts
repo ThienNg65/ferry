@@ -20,18 +20,51 @@ export async function list(dirPath?: string): Promise<FileListResult> {
   const statted = await Promise.all(
     dirents.map(async (dirent): Promise<FileEntry | null> => {
       const fullPath = path.join(resolved, dirent.name)
+      const isSymlink = dirent.isSymbolicLink()
+
+      if (!isSymlink) {
+        try {
+          const stats = await fs.stat(fullPath)
+          return {
+            name: dirent.name,
+            path: fullPath,
+            isDir: dirent.isDirectory(),
+            size: stats.size,
+            modifiedAt: stats.mtime.toISOString(),
+            isSymlink: false
+          }
+        } catch {
+          // Entry vanished mid-listing (rare race, not user-relevant) — skip it.
+          return null
+        }
+      }
+
+      // Symlink: follow it for isDir/size/modifiedAt (fs.stat follows links), but
+      // never hide a broken/circular link — show it with a broken indicator instead.
+      const symlinkTarget = await fs.readlink(fullPath).catch(() => undefined)
       try {
         const stats = await fs.stat(fullPath)
         return {
           name: dirent.name,
           path: fullPath,
-          isDir: dirent.isDirectory(),
+          isDir: stats.isDirectory(),
           size: stats.size,
-          modifiedAt: stats.mtime.toISOString()
+          modifiedAt: stats.mtime.toISOString(),
+          isSymlink: true,
+          symlinkTarget
         }
       } catch {
-        // Entry vanished or became inaccessible mid-listing (e.g. broken symlink) — skip it.
-        return null
+        const lstat = await fs.lstat(fullPath).catch(() => null)
+        return {
+          name: dirent.name,
+          path: fullPath,
+          isDir: false,
+          size: 0,
+          modifiedAt: lstat ? lstat.mtime.toISOString() : null,
+          isSymlink: true,
+          symlinkTarget,
+          symlinkBroken: true
+        }
       }
     })
   )
@@ -94,6 +127,8 @@ export interface TreeEntry {
   relPath: string
   isDir: boolean
   size: number
+  /** Epoch ms — absent for directory entries (only files need it, for sync's change-detection diff). */
+  mtimeMs?: number
 }
 
 /** Recursively walks a local directory, depth-first, parent directories before their children. */
@@ -110,7 +145,7 @@ export async function listRecursive(dirPath: string): Promise<TreeEntry[]> {
         await walk(fullPath, relPath)
       } else if (dirent.isFile()) {
         const stats = await fs.stat(fullPath)
-        results.push({ relPath, isDir: false, size: stats.size })
+        results.push({ relPath, isDir: false, size: stats.size, mtimeMs: stats.mtimeMs })
       }
     }
   }

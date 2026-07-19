@@ -1,4 +1,6 @@
 import { BrowserWindow, dialog } from 'electron'
+import * as os from 'os'
+import * as path from 'path'
 import { handle } from './envelope'
 import { INVOKE_CHANNELS } from '../../shared/contract'
 
@@ -28,5 +30,25 @@ export function registerDialogHandlers(): void {
       return null
     }
     return result.filePaths[0]
+  })
+
+  handle<string | null>(INVOKE_CHANNELS.dialogPickSaveFile, async (defaultPath) => {
+    const win = focusedWindow()
+    // A bare filename (no directory component — the common case, e.g. a
+    // suggested key name) is anchored under ~/.ssh rather than left for
+    // Electron to resolve against its own last-used/cwd default, so key
+    // generation's suggested path actually lands where a user would expect.
+    const resolved =
+      typeof defaultPath === 'string' && defaultPath.length > 0
+        ? path.isAbsolute(defaultPath) || defaultPath.includes(path.sep)
+          ? defaultPath
+          : path.join(os.homedir(), '.ssh', defaultPath)
+        : undefined
+    const options = resolved ? { defaultPath: resolved } : {}
+    const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) {
+      return null
+    }
+    return result.filePath
   })
 }

@@ -2,6 +2,34 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.13.0 — WinSCP-parity gap review: 13 features across file browsing, connections, and sync
+
+A feature/UX gap review against WinSCP (as a daily-driver user) produced an 11-item punch list, phased into four rounds and built essentially back to back: file-browser basics, connection/auth depth, then sync and polish. 222 tests passing (2 pre-existing environmental integration-test failures against the local Docker SSH container — a genuine channel-open failure on the container's own internal sshd port, unrelated to any change in this release).
+
+**New features:**
+- **Edit in external editor** — double-click (or right-click → Edit) any file, local or remote, to open it in the OS's default app; a remote file downloads in full first (unlike the existing capped preview), then re-uploads automatically on every save via a debounced file watcher. An edit session survives the SSH connection dropping (stops syncing, keeps the temp file) and survives app quit (a pending, never-uploaded edit is never silently deleted).
+- **One-way directory sync (mirror)** — push (local → remote) or pull (remote → local) a whole folder tree, diffing by size and a tolerant mtime comparison (SFTP's whole-second precision vs. local ms precision). An optional "delete extras" mode mirrors the destination exactly; a mandatory preview step (counts + bytes) is the only safety net before that destructive option runs, and the diff is recomputed fresh at run time rather than trusting the previewed plan.
+- **Multi-hop jump-host (bastion) chaining** — a saved site can now tunnel through an ordered chain of jump hosts instead of just one, with per-hop host-key verification kept correctly isolated across the chain.
+- **SSH key generation** — generate a new ed25519 keypair from the site form, preferring the system `ssh-keygen` (supports a passphrase) and falling back to a pure-JS `openssh-key-v1` encoder when it's not installed, cross-validated against a real `ssh-keygen -y`/`-l` during development.
+- **SOCKS5 / HTTP CONNECT proxy support** — a global default proxy (Settings) or a per-site override (inherit/none/custom), for connecting through a corporate proxy with no bastion host available; layers onto the jump-host chain as hop 0's transport only.
+- **Persisted transfer/operation history** — a searchable, filterable log of every completed transfer and long-running operation (previously only visible live in the Activity dock), with a debounced disk write so a large sync's burst of completions doesn't hammer the main process.
+- **Directory bookmarks** — quick-jump bookmarks per local/remote folder, independent of saved-site groups; cascade-deleted when their site is deleted.
+- **In-listing search/filter** — type-to-filter within either pane's file listing, entirely client-side.
+- **Custom accent color** — curated presets or a full color picker in Settings, replacing the fixed brand blue.
+
+**Bug fixes (found doing the gap review, not new-feature regressions):**
+- Remote symlinked directories showed up as plain files (SFTP `readdir` reports lstat-style attrs); local broken symlinks were silently dropped from the listing instead of shown with a broken indicator. Both fixed, plus a visible symlink badge/tooltip on both panes.
+- WinSCP/PuTTY session import only scanned the top level of the registry, silently dropping every session organized into a folder group. Fixed with a recursive walk — which in turn uncovered and fixed a real latent infinite-recursion bug in the registry-subkey parser (a recursive query's own echoed header line was being mistaken for a child of itself).
+- SSH-agent/Pageant authentication shipped previously without ever being verified end-to-end; it now pre-flight-checks the agent is reachable and has identities loaded, with actionable error messages instead of a generic handshake failure, plus a documented manual QA checklist for the parts that can't be scripted (a real Windows OpenSSH Agent / Pageant).
+
+**Hardening (from this release's own code review):**
+- Edit-in-editor's temp directory and downloaded file are now created with restrictive permissions (`0700`/`0600`) — previously default-permissioned, which would have been world-readable on a shared Linux/macOS machine with a world-readable `/tmp`.
+- Quick-connect can now bypass a configured app-wide default proxy — previously it had no opt-out and always inherited it, unlike saved sites' inherit/none/custom choice.
+- `ssh-keygen`'s passphrase-via-argv exposure (visible to other local processes for the tool's brief lifetime) is now a documented, deliberate limitation rather than a silent gap — there's no file/stdin-based alternative in ssh-keygen's own interface.
+
+**Not code — decisions for a maintainer:**
+- Auto-update's build/publish config was already fixed in a prior release; what's left is a real code-signing certificate and cutting an actual first `v*` release tag, neither of which this session could or should decide.
+
 ## 0.12.0 — Monitor dashboard overhaul: storage, top processes, resizable dock
 
 Customer feedback on the 0.10.0 Monitor dock tab was that it was "useless" in practice — no way to see the connected server's total storage, and no way to see *what* was actually consuming its CPU/RAM. This round adds both, plus the dock room to show them properly. 180 unit tests passing (one pre-existing environmental integration-test failure against the local Docker SSH container, unrelated to this round).

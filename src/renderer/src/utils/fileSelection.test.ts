@@ -3,7 +3,7 @@ import { selectAll, selectOnly, selectRange, toggleSelect } from './fileSelectio
 import type { FileEntry } from '@shared/contract'
 
 function entry(path: string): FileEntry {
-  return { name: path, path, isDir: false, size: 0, modifiedAt: null }
+  return { name: path, path, isDir: false, size: 0, modifiedAt: null, isSymlink: false }
 }
 
 const entries = ['a', 'b', 'c', 'd', 'e'].map(entry)

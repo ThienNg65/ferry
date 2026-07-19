@@ -6,6 +6,7 @@ import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
+import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
@@ -17,12 +18,14 @@ import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import ChmodDialog from './ChmodDialog.vue'
+import SyncDialog from './SyncDialog.vue'
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
 const localFs = useLocalFsStore()
 const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
+const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
@@ -34,6 +37,14 @@ const store = props.side === 'local' ? localFs : remoteFs
 const showNewFolder = ref(false)
 const newFolderName = ref('')
 const isDropTarget = ref(false)
+const filterText = ref('')
+const filteredEntries = computed(() => {
+  const needle = filterText.value.trim().toLowerCase()
+  if (!needle) {
+    return store.entries
+  }
+  return store.entries.filter((e) => e.name.toLowerCase().includes(needle))
+})
 const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
@@ -46,12 +57,55 @@ watch(
   () => store.currentPath,
   () => {
     renamingPath.value = null
+    filterText.value = ''
   }
 )
 
 /** Slim always-visible rail when Local is hidden — never fully unmounts (see ui.store.ts). */
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
+
+void bookmarks.ensureLoaded()
+
+/** The current pane's saved-site id — null for local, and for a remote quick-connect tab with no site to attach a bookmark to. */
+const currentSiteId = computed(() => (props.side === 'remote' ? sessions.activeTab.siteId : null))
+const canBookmark = computed(() => props.side === 'local' || currentSiteId.value !== null)
+const currentBookmarks = computed(() => {
+  if (props.side === 'local') {
+    return bookmarks.localBookmarks
+  }
+  return currentSiteId.value ? bookmarks.forSite(currentSiteId.value) : []
+})
+
+/** Last path segment, for a bookmark's default label — falls back to the whole path for a root/drive path with no separator. */
+function basename(fullPath: string): string {
+  const trimmed = fullPath.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return idx >= 0 && idx < trimmed.length - 1 ? trimmed.slice(idx + 1) : fullPath
+}
+
+async function onBookmarkFolder(): Promise<void> {
+  const path = store.currentPath
+  try {
+    await bookmarks.create({
+      scope: props.side,
+      siteId: currentSiteId.value ?? undefined,
+      path,
+      label: basename(path)
+    })
+    notify.success('Bookmarked', path)
+  } catch (e) {
+    notify.error('Could not bookmark folder', e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function onJumpBookmark(path: string): Promise<void> {
+  await store.openDir(path)
+}
+
+async function onRemoveBookmark(id: string): Promise<void> {
+  await bookmarks.remove(id)
+}
 
 if (props.side === 'local') {
   onMounted(() => {
@@ -65,6 +119,7 @@ if (props.side === 'local') {
   watch(
     () => sessions.activeSessionId,
     (id) => {
+      filterText.value = ''
       if (id && remoteFs.needsLoad(id)) {
         void remoteFs.load()
       }
@@ -92,6 +147,7 @@ const transferIcon = computed(() => {
 })
 
 const showTail = computed(() => props.side === 'remote' && sessions.status === 'connected')
+const syncDialogOpen = ref(false)
 
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
@@ -161,6 +217,22 @@ async function onTail(entry: FileEntry): Promise<void> {
     return
   }
   await tailStreams.open(sessionId, entry.path)
+}
+
+async function onEdit(entry: FileEntry): Promise<void> {
+  try {
+    if (props.side === 'local') {
+      await invoke<void>(INVOKE_CHANNELS.editOpenLocal, entry.path)
+      return
+    }
+    const sessionId = sessions.activeSessionId
+    if (!sessionId) {
+      return
+    }
+    await invoke<{ editId: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path })
+  } catch (e) {
+    notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
+  }
 }
 
 /** First name not already present in the current remote listing — `report`, `report (1)`, `report (2)`, ... */
@@ -347,6 +419,11 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     }
     return
   }
+  if (event.key === 'Escape' && filterText.value) {
+    event.preventDefault()
+    filterText.value = ''
+    return
+  }
   if (event.key !== 'Delete' && event.key !== 'Backspace') {
     return
   }
@@ -423,11 +500,19 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :loading="store.loading"
         :selected-count="store.selected.size"
         :transfer-icon="transferIcon"
+        v-model:filter-text="filterText"
+        :bookmarks="currentBookmarks"
+        :can-bookmark="canBookmark"
+        :show-sync="showTail"
         @up="store.goUp"
         @refresh="store.load()"
         @mkdir="onMkdirClick"
         @toggle-permissions="ui.togglePermissionsDisplay()"
         @transfer-selected="onTransferSelected"
+        @bookmark="onBookmarkFolder"
+        @jump-bookmark="onJumpBookmark"
+        @remove-bookmark="onRemoveBookmark"
+        @sync-folder="syncDialogOpen = true"
       />
       <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
         <UInput
@@ -443,7 +528,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
       </div>
       <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
       <FileList
-        :entries="store.entries"
+        :entries="filteredEntries"
         :selected="store.selected"
         :side="side"
         :transfer-icon="transferIcon"
@@ -464,6 +549,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @extract="onExtract"
         @compress="onCompress"
         @chmod="onOpenChmod"
+        @edit="onEdit"
       />
       <FilePreviewDialog
         v-model:open="previewOpen"
@@ -473,6 +559,13 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @download="onTransfer"
       />
       <ChmodDialog v-model:open="chmodOpen" :entry="chmodTarget" @submit="onSubmitChmod" />
+      <SyncDialog
+        v-if="side === 'remote'"
+        v-model:open="syncDialogOpen"
+        :session-id="sessions.activeSessionId"
+        :initial-local-path="localFs.currentPath"
+        :initial-remote-path="remoteFs.currentPath"
+      />
       <UModal
         :open="Boolean(extractConflict)"
         title="Folder already exists"

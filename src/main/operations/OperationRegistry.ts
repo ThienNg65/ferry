@@ -56,6 +56,24 @@ export class OperationRegistry {
   }
 
   private readonly operations = new Map<string, OperationEntry>()
+  /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect an operation's own outcome (see `notifyTerminal`). */
+  private readonly terminalListeners: Array<(evt: OperationEvent) => void> = []
+
+  /** Subscribes to every operation's terminal event (done/error/cancelled) — additive to the existing `webContents.send` broadcast, not a replacement for it. */
+  onTerminalEvent(listener: (evt: OperationEvent) => void): void {
+    this.terminalListeners.push(listener)
+  }
+
+  private notifyTerminal(evt: OperationEvent): void {
+    for (const listener of this.terminalListeners) {
+      try {
+        listener(evt)
+      } catch {
+        // A listener's own failure (e.g. HistoryStore disk write) must never
+        // surface as an operation failure — this channel is purely additive.
+      }
+    }
+  }
 
   /**
    * Wraps a whole operation: broadcasts `started`, runs `fn` with the op's
@@ -91,15 +109,14 @@ export class OperationRegistry {
 
     try {
       const result = await fn({ signal: entry.controller.signal, reportProgress })
-      this.broadcast(operationId, entry, { state: 'done' })
+      this.notifyTerminal(this.broadcast(operationId, entry, { state: 'done' }))
       return result
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || entry.controller.signal.aborted
-      if (cancelled) {
-        this.broadcast(operationId, entry, { state: 'cancelled' })
-      } else {
-        this.broadcast(operationId, entry, { state: 'error', error: e instanceof Error ? e.message : String(e) })
-      }
+      const evt = cancelled
+        ? this.broadcast(operationId, entry, { state: 'cancelled' })
+        : this.broadcast(operationId, entry, { state: 'error', error: e instanceof Error ? e.message : String(e) })
+      this.notifyTerminal(evt)
       throw e
     } finally {
       this.operations.delete(operationId)
@@ -120,7 +137,7 @@ export class OperationRegistry {
     }
   }
 
-  private broadcast(operationId: string, entry: OperationEntry, partial: Partial<OperationEvent>): void {
+  private broadcast(operationId: string, entry: OperationEntry, partial: Partial<OperationEvent>): OperationEvent {
     const evt: OperationEvent = {
       operationId,
       kind: entry.meta.kind,
@@ -136,5 +153,6 @@ export class OperationRegistry {
         win.webContents.send(EVENT_CHANNELS.operationEvent, evt)
       }
     }
+    return evt
   }
 }

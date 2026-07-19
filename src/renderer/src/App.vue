@@ -5,14 +5,17 @@ import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contra
 import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
 import { useOperationsStore } from './stores/operations.store'
+import { useEditSessionsStore } from './stores/editSessions.store'
 import { useUiStore } from './stores/ui.store'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
+import { useHistoryDialog } from './composables/useHistoryDialog'
 import { useNotify } from './composables/useNotify'
 import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 import SessionManagerView from './components/sessions/SessionManagerView.vue'
 import SettingsDialog from './components/shell/SettingsDialog.vue'
+import HistoryDialog from './components/history/HistoryDialog.vue'
 import CommandPalette from './components/shell/CommandPalette.vue'
 
 // Only ever rendered once connected — deferring these keeps their whole
@@ -25,13 +28,17 @@ const sessions = useSessionsStore()
 const isConnected = computed(() => sessions.status === 'connected')
 const { isBusy } = useGlobalActivity()
 const settingsDialog = useSettingsDialog()
+const historyDialog = useHistoryDialog()
 const notify = useNotify()
 
-useUiStore().initTheme()
+const ui = useUiStore()
+ui.initTheme()
+ui.initAccentColor()
 void sessions.restoreOpenTabs()
 // Operation events originate main-side from any invoke — subscribe up front
 // so the Activity dock badge never misses the first event.
 useOperationsStore().ensureSubscription()
+useEditSessionsStore().ensureSubscription()
 
 // Only ever fires in a packaged build — see AutoUpdater.ts's app.isPackaged guard.
 const toast = useToast()
@@ -68,6 +75,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
       </div>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
+    <HistoryDialog v-model:open="historyDialog.isOpen.value" />
     <CommandPalette />
   </UApp>
 </template>

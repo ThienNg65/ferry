@@ -9,6 +9,7 @@ function entry(overrides: Partial<FileEntry>): FileEntry {
     isDir: false,
     size: 0,
     modifiedAt: null,
+    isSymlink: false,
     ...overrides
   }
 }

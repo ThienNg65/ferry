@@ -31,6 +31,7 @@ export type IpcErrorCode =
   | 'ARCHIVE_TOOL_NOT_FOUND'
   | 'AUTH'
   | 'HOST_KEY_MISMATCH'
+  | 'PROXY_CONNECT'
 
 /** Successful response wrapper. */
 export interface IpcOk<T> {
@@ -65,11 +66,34 @@ export function err(code: IpcErrorCode, message: string): IpcErr {
 /** Supported authentication methods. `agent` delegates to a running ssh-agent/Pageant/Windows OpenSSH Agent — no secret stored by Ferry at all. */
 export type AuthMethod = 'password' | 'privateKey' | 'agent'
 
+/** Proxy protocol used to reach the first hop (or the target, if there's no jump-host chain) — distinct from jump-host tunneling, for a user behind a corporate proxy with no bastion host. */
+export type ProxyType = 'socks5' | 'http'
+
+export interface ProxyConfig {
+  type: ProxyType
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
+/** {@link ProxyConfig} as returned to the renderer — a boolean instead of a decrypted password, mirroring {@link JumpHostInfo}. */
+export interface ProxyInfo {
+  type: ProxyType
+  host: string
+  port: number
+  username?: string
+  hasPassword: boolean
+}
+
 /**
- * A saved jump-host (bastion) hop — the SSH connection tunnels through this
- * host before reaching the real target. Only password/private-key auth are
- * supported for the hop itself (not agent, not a further nested jump host) —
- * a deliberate scope limit, not an oversight.
+ * One hop in a jump-host (bastion) chain — the SSH connection tunnels
+ * through each hop in order before reaching the real target. A site's
+ * `jumpHosts` array is ordered: hop 0 is reached directly, each subsequent
+ * hop is reached by tunneling through the previous one, and the target is
+ * reached by tunneling through the last hop. Only password/private-key auth
+ * are supported for a hop itself (not agent) — a deliberate scope limit, not
+ * an oversight.
  */
 export interface JumpHostConfig {
   host: string
@@ -112,7 +136,12 @@ export interface Site {
   localInitialPath?: string
   hasPassword: boolean
   hasPassphrase: boolean
-  jumpHost?: JumpHostInfo
+  /** Ordered jump-host chain (hop 0 first) — absent/empty means a direct connection. */
+  jumpHosts?: JumpHostInfo[]
+  /** 'inherit' (default, absent means this) uses the app-wide default proxy if one is set; 'none' forces a direct connection even if a default is set; 'custom' uses this site's own `proxy`. */
+  proxyMode?: 'inherit' | 'none' | 'custom'
+  /** Present only when `proxyMode === 'custom'`. */
+  proxy?: ProxyInfo
   /** Free-text group/folder name for organizing the site list — undefined means ungrouped. */
   group?: string
   createdAt: string
@@ -132,12 +161,35 @@ export interface SiteInput {
   localInitialPath?: string
   password?: string
   passphrase?: string
-  jumpHost?: JumpHostConfig
+  /** Ordered jump-host chain (hop 0 first) — absent/empty means a direct connection. */
+  jumpHosts?: JumpHostConfig[]
+  proxyMode?: 'inherit' | 'none' | 'custom'
+  proxy?: ProxyConfig
   group?: string
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
 export interface QuickConnectInput extends SiteInput {}
+
+/** Request to generate a new ed25519 SSH keypair and write it to disk. */
+export interface KeyGenerateRequest {
+  /** Full path to write the private key to (the public key is written alongside as `<path>.pub`). */
+  keyPath: string
+  /** Left unset (or empty) for no passphrase — only honored when a system `ssh-keygen` is available, see `KeyGenerateResult.method`. */
+  passphrase?: string
+  /** Written into the public key's trailing comment field, e.g. a slugified site name. */
+  comment?: string
+}
+
+/** Result of generating a new SSH keypair. */
+export interface KeyGenerateResult {
+  privateKeyPath: string
+  publicKeyPath: string
+  /** The public key's full `authorized_keys`-ready line (e.g. `ssh-ed25519 AAAA... comment`). */
+  publicKey: string
+  /** Which code path produced the key — see KeyGenerator.ts for why this matters for passphrase support. */
+  method: 'ssh-keygen' | 'builtin'
+}
 
 /**
  * A saved session found in a third-party client's config during an import
@@ -156,6 +208,35 @@ export interface ImportedSessionCandidate {
   username: string
   privateKeyPath?: string
   remoteInitialPath?: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain models — bookmarks
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BookmarkScope = 'local' | 'remote'
+
+/**
+ * A quick-jump bookmark for a directory path — separate from saved sites'
+ * group organization, which only organizes *sites* themselves, not
+ * directories within one. Local bookmarks are global (`siteId` absent —
+ * there's exactly one local pane, not one per site); remote bookmarks belong
+ * to a specific saved site and are cascade-deleted when that site is.
+ */
+export interface Bookmark {
+  id: string
+  scope: BookmarkScope
+  siteId?: string
+  path: string
+  label: string
+  createdAt: string
+}
+
+export interface BookmarkInput {
+  scope: BookmarkScope
+  siteId?: string
+  path: string
+  label: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +283,16 @@ export interface KeyboardInteractiveRespondRequest {
 // Domain models — filesystem
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One entry in a directory listing (local or remote). */
+/**
+ * One entry in a directory listing (local or remote).
+ *
+ * Symlink semantics (deliberate): `isDir` always reflects the *resolved*
+ * target (Ferry follows symlinked directories transparently on navigate, no
+ * confirmation prompt) so existing navigation code needs no symlink-specific
+ * branch. `symlinkBroken` entries are shown, not hidden, with `isDir: false`
+ * and no `symlinkTarget` — navigating into one hits the ordinary
+ * directory-load error path rather than a dedicated dialog.
+ */
 export interface FileEntry {
   name: string
   path: string
@@ -210,6 +300,11 @@ export interface FileEntry {
   size: number
   modifiedAt: string | null
   permissions?: string
+  isSymlink: boolean
+  /** Present only when `isSymlink` and the link target resolved successfully. */
+  symlinkTarget?: string
+  /** Present only when `isSymlink` and the target could not be resolved (dangling or circular). */
+  symlinkBroken?: boolean
 }
 
 /** Result of listing a directory — includes the resolved absolute path. */
@@ -260,6 +355,9 @@ export type OperationKind =
   | 'compress-local'
   | 'delete-remote'
   | 'delete-remote-batch'
+  | 'edit-download'
+  | 'edit-reupload'
+  | 'sync'
 
 export type OperationState = 'started' | 'progress' | 'done' | 'error' | 'cancelled'
 
@@ -293,6 +391,72 @@ export interface DeleteManyResult {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — persisted history (transfers + operations)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One completed transfer or operation, persisted beyond the live Activity
+ * dock (which only shows current/recent items) for later review. Recorded
+ * automatically from TransferQueue/OperationRegistry's terminal events — see
+ * HistoryRecorder.ts.
+ */
+export interface HistoryEntry {
+  id: string
+  kind: 'transfer' | 'operation'
+  label: string
+  /** Present only for kind: 'transfer'. */
+  direction?: TransferKind
+  /** Present only for kind: 'operation'. */
+  operationKind?: OperationKind
+  sessionId?: string
+  /** Denormalized at record time — the site could be renamed/deleted later. */
+  siteName?: string
+  bytes?: number
+  startedAt: number
+  finishedAt: number
+  status: 'done' | 'error' | 'cancelled'
+  error?: string
+}
+
+export interface HistoryQuery {
+  search?: string
+  status?: HistoryEntry['status']
+  limit?: number
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain models — one-way directory sync (mirror)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SyncDirection = 'push' | 'pull'
+
+export interface SyncOptions {
+  sessionId: string
+  localPath: string
+  remotePath: string
+  direction: SyncDirection
+  /** When true, deletes destination-only top-level entries not present anywhere in the source — the destructive half of "mirror," off by default. */
+  deleteExtras: boolean
+}
+
+export interface SyncPlanEntry {
+  relPath: string
+  size: number
+}
+
+/** Preview of what a sync run would do — shown to the user before they confirm, since `deleteExtras` can remove real destination data with no undo. */
+export interface SyncPlan {
+  toTransfer: SyncPlanEntry[]
+  toDelete: string[]
+  totalBytes: number
+}
+
+export interface SyncRunResult {
+  queuedTransferIds: string[]
+  deletedCount: number
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote log tail
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -312,6 +476,36 @@ export interface TailNoticeEvent {
 export interface TailEndEvent {
   tailId: string
   /** Present when the stream ended because of an unrecoverable error. */
+  error?: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain models — edit in external editor
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EditOpenRemoteRequest {
+  sessionId: string
+  path: string
+}
+
+export interface EditOpenResult {
+  editId: string
+}
+
+/**
+ * Push-event payload for `edit:event` — one edit session's lifecycle.
+ * `opened` fires once after the initial download and `shell.openPath()`;
+ * `reuploading`/`reuploaded`/`upload-error` fire on every subsequent save
+ * (an edit session stays open across many saves, it's not one-shot);
+ * `session-closed` fires if the underlying SSH session disconnects while
+ * still being watched — the temp file survives, but further saves won't sync.
+ */
+export interface EditEvent {
+  editId: string
+  sessionId?: string
+  remotePath?: string
+  localTempPath: string
+  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'session-closed'
   error?: string
 }
 
@@ -459,6 +653,8 @@ export interface AppSettings {
   openTabSiteIds: string[]
   /** Global transfer rate cap in KB/s, or null for unlimited. */
   bandwidthLimitKBps: number | null
+  /** App-wide default proxy, used by any site whose own `proxyMode` is `'inherit'` (or absent) — null/absent means no default. */
+  defaultProxy?: ProxyInfo
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +691,7 @@ export const INVOKE_CHANNELS = {
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',
   settingsSetBandwidthLimit: 'settings:setBandwidthLimit',
+  settingsSetDefaultProxy: 'settings:setDefaultProxy',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
@@ -519,6 +716,9 @@ export const INVOKE_CHANNELS = {
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
+  // edit in external editor
+  editOpenLocal: 'edit:openLocal',
+  editOpenRemote: 'edit:openRemote',
   // terminal
   terminalOpen: 'terminal:open',
   terminalWrite: 'terminal:write',
@@ -534,9 +734,22 @@ export const INVOKE_CHANNELS = {
   // archive creation ("compress to zip")
   archiveCompressLocal: 'archive:compressLocal',
   archiveCompressRemote: 'archive:compressRemote',
+  // bookmarks
+  bookmarksList: 'bookmarks:list',
+  bookmarksCreate: 'bookmarks:create',
+  bookmarksDelete: 'bookmarks:delete',
+  // persisted transfer/operation history
+  historyList: 'history:list',
+  historyClear: 'history:clear',
+  // one-way directory sync (mirror)
+  syncPreview: 'sync:preview',
+  syncRun: 'sync:run',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',
+  dialogPickSaveFile: 'dialog:pickSaveFile',
+  // SSH key generation
+  keysGenerate: 'keys:generate',
   // system paths
   systemGetDownloadsPath: 'system:getDownloadsPath',
   systemGetAppVersion: 'system:getAppVersion',
@@ -569,6 +782,7 @@ export const EVENT_CHANNELS = {
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',
+  editEvent: 'edit:event',
   terminalData: 'terminal:data',
   terminalExit: 'terminal:exit',
   windowStateChange: 'window:state-change',

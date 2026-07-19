@@ -1,5 +1,5 @@
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type AppSettings } from '../../shared/contract'
+import { INVOKE_CHANNELS, type AppSettings, type ProxyConfig } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { TransferQueue } from '../transfer/TransferQueue'
 
@@ -17,5 +17,9 @@ export function registerSettingsHandlers(): void {
     const limit = limitKBps as number | null
     AppSettingsStore.getInstance().setBandwidthLimitKBps(limit)
     TransferQueue.getInstance().setBandwidthLimitKBps(limit)
+  })
+
+  handle<void>(INVOKE_CHANNELS.settingsSetDefaultProxy, (proxy) => {
+    AppSettingsStore.getInstance().setDefaultProxy(proxy as ProxyConfig | null)
   })
 }

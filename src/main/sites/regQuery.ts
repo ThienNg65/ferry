@@ -20,16 +20,20 @@ export function parseRegValues(output: string): Map<string, string> {
  * Extracts the full paths of a key's direct child subkeys from a plain
  * `reg query "<key>"` (no `/s`) invocation's stdout. Subkey lines are always
  * printed with the fully-qualified hive name (`HKEY_CURRENT_USER\...`)
- * regardless of which alias (`HKCU`/`HKEY_CURRENT_USER`) was used to query,
- * while the query's own echoed header line uses whatever alias was passed —
- * matching on the `HKEY_` hive prefix reliably tells them apart without
- * needing to know which alias the caller used.
+ * regardless of which alias (`HKCU`/`HKEY_CURRENT_USER`) was used to query.
+ *
+ * The query's own echoed header line (always the first line) uses whatever
+ * form was passed to `reg query` — which, when recursing with an
+ * already-fully-qualified subkey path (as WinSCP folder-group recursion
+ * does), is ITSELF a full `HKEY_CURRENT_USER\...` string. Matching by the
+ * `HKEY_` prefix alone would then mistake that echoed header for one of its
+ * own children, causing infinite self-recursion — so the header line is
+ * always skipped positionally first, and only the remaining lines are
+ * matched against the hive-prefix pattern.
  */
 export function listRegSubkeyPaths(output: string): string[] {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /^HKEY_[A-Z_]+\\/i.test(line))
+  const [, ...rest] = output.split(/\r?\n/)
+  return rest.map((line) => line.trim()).filter((line) => /^HKEY_[A-Z_]+\\/i.test(line))
 }
 
 /** Percent-decodes a registry-safe session-key name back to its original form; falls back to the raw name if it's not validly encoded. */

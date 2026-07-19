@@ -2,6 +2,7 @@ import { handle } from './envelope'
 import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
 import { SiteStore } from '../sites/SiteStore'
 import { scanImportCandidates } from '../sites/SessionImporter'
+import { BookmarkStore } from '../bookmarks/BookmarkStore'
 
 /** Registers CRUD handlers for saved connection profiles. */
 export function registerSitesHandlers(): void {
@@ -19,6 +20,7 @@ export function registerSitesHandlers(): void {
 
   handle<void>(INVOKE_CHANNELS.sitesDelete, (id) => {
     SiteStore.getInstance().delete(id as string)
+    BookmarkStore.getInstance().deleteForSite(id as string)
   })
 
   handle<Site>(INVOKE_CHANNELS.sitesDuplicate, (id) => {

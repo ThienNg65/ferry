@@ -54,6 +54,7 @@ const emit = defineEmits<{
   'cancel-rename': []
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
+  edit: [entry: FileEntry]
 }>()
 
 const notify = useNotify()
@@ -81,6 +82,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   }
   if (props.allowExtract && isArchiveFile.value) {
     items.push({ label: 'Extract here', icon: 'i-lucide-archive-restore', onSelect: () => emit('extract', props.entry) })
+  }
+  if (!props.entry.isDir) {
+    items.push({ label: 'Edit', icon: 'i-lucide-file-pen', onSelect: () => emit('edit', props.entry) })
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
@@ -147,6 +151,16 @@ const transferTooltip = computed(() => {
   return props.entry.isDir ? `${verb} folder` : `${verb} to ${props.side === 'local' ? 'remote' : 'local'}`
 })
 
+const symlinkTooltip = computed(() => {
+  if (!props.entry.isSymlink) return ''
+  if (props.entry.symlinkBroken) {
+    return props.entry.symlinkTarget
+      ? `Broken symlink → ${props.entry.symlinkTarget} (target not found)`
+      : 'Broken symlink (target not found)'
+  }
+  return props.entry.symlinkTarget ? `Symlink → ${props.entry.symlinkTarget}` : 'Symlink'
+})
+
 const showPermissions = computed(() => props.side === 'remote' && !!props.entry.permissions)
 const technicalPermissions = computed(() => (props.entry.permissions ? toTechnical(props.entry.permissions) : ''))
 const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendlyLabel(props.entry.permissions) : ''))
@@ -167,7 +181,22 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
     @dragstart="onDragStart"
     @dragend="clearDrag"
   >
+    <UTooltip v-if="entry.isSymlink" :text="symlinkTooltip">
+      <span class="relative inline-flex size-4 shrink-0">
+        <UIcon
+          :name="iconForFile(entry.name, entry.isDir)"
+          class="size-4"
+          :class="colorForFile(entry.name, entry.isDir)"
+        />
+        <UIcon
+          :name="entry.symlinkBroken ? 'i-lucide-link-2-off' : 'i-lucide-link-2'"
+          class="absolute -bottom-1 -right-1 size-2.5 rounded-full bg-default"
+          :class="entry.symlinkBroken ? 'text-error' : 'text-dimmed'"
+        />
+      </span>
+    </UTooltip>
     <UIcon
+      v-else
       :name="iconForFile(entry.name, entry.isDir)"
       class="size-4 shrink-0"
       :class="colorForFile(entry.name, entry.isDir)"

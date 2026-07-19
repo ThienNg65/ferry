@@ -37,7 +37,13 @@ const DEFAULT_TIMEOUT_MS = 30_000
 export interface SftpEntry {
   filename: string
   longname: string
+  /**
+   * Whether the raw (lstat-style) SFTP attrs report this entry as a
+   * directory. For a symlink this reflects the *link itself*, not its
+   * target — callers must resolve symlinked entries separately via `stat`.
+   */
   isDirectory: boolean
+  isSymlink: boolean
   size: number
   /** Modified time in epoch milliseconds. */
   mtimeMs: number
@@ -298,6 +304,7 @@ export class RemoteShell {
             filename: item.filename,
             longname: item.longname,
             isDirectory: (item.attrs.mode & 0o170000) === 0o040000,
+            isSymlink: (item.attrs.mode & 0o170000) === 0o120000,
             size: item.attrs.size ?? 0,
             mtimeMs: (item.attrs.mtime ?? 0) * 1000,
             permissions: (item.attrs.mode & 0o7777).toString(8).padStart(4, '0')
@@ -317,6 +324,20 @@ export class RemoteShell {
           return
         }
         resolve(absPath)
+      })
+    })
+  }
+
+  /** Resolves a symlink's immediate target (not canonicalized — unlike `realpath`, does not follow chains). */
+  async readlink(remotePath: string): Promise<string> {
+    const sftp = await this.sftp()
+    return new Promise<string>((resolve, reject) => {
+      sftp.readlink(remotePath, (linkErr, target) => {
+        if (linkErr) {
+          reject(new SshError('SFTP', `Failed to read link "${remotePath}": ${linkErr.message}`))
+          return
+        }
+        resolve(target)
       })
     })
   }
@@ -436,8 +457,10 @@ export class RemoteShell {
   }
 
   /** Recursively walks a remote directory over SFTP, depth-first, parent directories before their children. */
-  async readdirRecursive(remotePath: string): Promise<{ relPath: string; isDir: boolean; size: number }[]> {
-    const results: { relPath: string; isDir: boolean; size: number }[] = []
+  async readdirRecursive(
+    remotePath: string
+  ): Promise<{ relPath: string; isDir: boolean; size: number; mtimeMs?: number }[]> {
+    const results: { relPath: string; isDir: boolean; size: number; mtimeMs?: number }[] = []
 
     const walk = async (currentPath: string, relBase: string): Promise<void> => {
       const entries = await this.readdir(currentPath)
@@ -451,7 +474,7 @@ export class RemoteShell {
           results.push({ relPath, isDir: true, size: 0 })
           await walk(childPath, relPath)
         } else {
-          results.push({ relPath, isDir: false, size: entry.size })
+          results.push({ relPath, isDir: false, size: entry.size, mtimeMs: entry.mtimeMs })
         }
       }
     }
