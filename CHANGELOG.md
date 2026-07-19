@@ -2,6 +2,8 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.14.0 — Release first version
+
 ## 0.13.0 — WinSCP-parity gap review: 13 features across file browsing, connections, and sync
 
 A feature/UX gap review against WinSCP (as a daily-driver user) produced an 11-item punch list, phased into four rounds and built essentially back to back: file-browser basics, connection/auth depth, then sync and polish. 222 tests passing (2 pre-existing environmental integration-test failures against the local Docker SSH container — a genuine channel-open failure on the container's own internal sshd port, unrelated to any change in this release).
