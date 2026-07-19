@@ -13,6 +13,9 @@ publish:
   provider: github
   owner: ThienNg65
   repo: ferry
+  # electron-builder defaults to draft releases (hidden from the Releases page
+  # until manually published) unless told otherwise.
+  releaseType: release
 # Code signing is NOT configured here — electron-builder picks up a certificate
 # automatically from the standard CSC_LINK (path or base64 .pfx) + CSC_KEY_PASSWORD
 # env vars at package time, with no config needed for the common case. Neither
