@@ -24,7 +24,7 @@ export default defineConfig({
     root: resolve(__dirname, 'src/renderer'),
     plugins: [
       vue(),
-      ui({ ui: { colors: { primary: 'brand', neutral: 'zinc' } } })
+      ui({ router: false, ui: { colors: { primary: 'brand', neutral: 'zinc' } } })
     ],
     resolve: {
       alias: {
