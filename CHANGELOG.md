@@ -2,6 +2,10 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.14.1
+### change
+- Bug fix CI.
+
 ## 0.14.0 — Release first version
 
 ## 0.13.0 — WinSCP-parity gap review: 13 features across file browsing, connections, and sync
