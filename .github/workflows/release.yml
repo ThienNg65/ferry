@@ -58,15 +58,6 @@ jobs:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
-      - name: Fill in release notes from the changelog
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version=$(node -p "require('./package.json').version")
-          release_id=$(gh api "repos/${{ github.repository }}/releases/tags/v${version}" --jq .id)
-          gh api --method PATCH "repos/${{ github.repository }}/releases/$release_id" -f generate_release_notes=true
-
       - name: Bump version to next patch and push back to main
         shell: bash
         run: |
