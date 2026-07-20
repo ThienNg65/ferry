@@ -2,6 +2,15 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.14.3 - 2026-07-20
+### Added
+- Add bulk select and delete for saved sites.
+
+### Fixed
+- Fail fast on permanent errors instead of retrying.
+- Stop WinSCP import self-recursion producing duplicated names.
+- Batch import into one refetch and avoid duplicate re-creates.
+
 ## 0.14.2 - 2026-07-20
 ### Fixed
 - FilePane.vue: scope keydown shortcuts away from text inputs (fixes data-loss on Delete/Ctrl+A while typing), fix Ctrl+A vs active filter, stuck rename state, and multi-select-aware row delete.
