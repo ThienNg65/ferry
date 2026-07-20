@@ -16,24 +16,49 @@ export function parseRegValues(output: string): Map<string, string> {
   return values
 }
 
+/** Short hive aliases `reg query` accepts, mapped to the fully-qualified form its OWN output always uses for subkey paths. */
+const HIVE_ALIASES: Record<string, string> = {
+  HKCU: 'HKEY_CURRENT_USER',
+  HKLM: 'HKEY_LOCAL_MACHINE',
+  HKCR: 'HKEY_CLASSES_ROOT',
+  HKU: 'HKEY_USERS',
+  HKCC: 'HKEY_CURRENT_CONFIG'
+}
+
+/** Rewrites a key's leading hive alias (if any) to its fully-qualified form, so it can be compared against `reg query`'s always-fully-qualified subkey lines. */
+function toFullyQualified(key: string): string {
+  const [first, ...rest] = key.split('\\')
+  return [HIVE_ALIASES[first.toUpperCase()] ?? first, ...rest].join('\\')
+}
+
 /**
  * Extracts the full paths of a key's direct child subkeys from a plain
  * `reg query "<key>"` (no `/s`) invocation's stdout. Subkey lines are always
  * printed with the fully-qualified hive name (`HKEY_CURRENT_USER\...`)
  * regardless of which alias (`HKCU`/`HKEY_CURRENT_USER`) was used to query.
  *
- * The query's own echoed header line (always the first line) uses whatever
- * form was passed to `reg query` — which, when recursing with an
- * already-fully-qualified subkey path (as WinSCP folder-group recursion
- * does), is ITSELF a full `HKEY_CURRENT_USER\...` string. Matching by the
- * `HKEY_` prefix alone would then mistake that echoed header for one of its
- * own children, causing infinite self-recursion — so the header line is
- * always skipped positionally first, and only the remaining lines are
- * matched against the hive-prefix pattern.
+ * `reg.exe`'s real output does NOT reliably put the queried key's own echoed
+ * header at a fixed line position — confirmed empirically (`execFile('reg',
+ * ['query', key])`) to start with a BLANK line, with the header (if the key
+ * has any values of its own) only appearing on the line after that, and
+ * omitted entirely when the key has no values. A positional "skip the first
+ * line" (as this function used to do) therefore skips the wrong line on real
+ * output, leaving the actual header — which, when recursing with an
+ * already-fully-qualified subkey path, is itself a full
+ * `HKEY_CURRENT_USER\...` string — to match its own `HKEY_` prefix filter
+ * and get misidentified as a child of itself, causing self-recursion (each
+ * level appending its own name again). So instead of relying on position at
+ * all, this takes the exact key that was queried and explicitly excludes any
+ * candidate line that IS that key (normalized to its fully-qualified form),
+ * leaving only genuine children.
  */
-export function listRegSubkeyPaths(output: string): string[] {
-  const [, ...rest] = output.split(/\r?\n/)
-  return rest.map((line) => line.trim()).filter((line) => /^HKEY_[A-Z_]+\\/i.test(line))
+export function listRegSubkeyPaths(output: string, queriedKey: string): string[] {
+  const queriedFullyQualified = toFullyQualified(queriedKey).toLowerCase()
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^HKEY_[A-Z_]+\\/i.test(line))
+    .filter((line) => line.toLowerCase() !== queriedFullyQualified)
 }
 
 /** Percent-decodes a registry-safe session-key name back to its original form; falls back to the raw name if it's not validly encoded. */

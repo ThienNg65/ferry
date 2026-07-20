@@ -32,7 +32,7 @@ export async function scanPuttySessions(): Promise<ImportedSessionCandidate[]> {
     return []
   }
   const candidates: ImportedSessionCandidate[] = []
-  for (const subkey of listRegSubkeyPaths(listing)) {
+  for (const subkey of listRegSubkeyPaths(listing, PUTTY_ROOT)) {
     const rawName = subkey.slice(subkey.lastIndexOf('\\') + 1)
     const name = decodeSessionName(rawName)
     if (name === 'Default Settings') {
@@ -86,7 +86,12 @@ async function walkWinScpNode(
     return
   }
   const rawName = subkey.slice(subkey.lastIndexOf('\\') + 1)
-  const names = [...ancestorNames, decodeSessionName(rawName)]
+  const decoded = decodeSessionName(rawName)
+  // Some WinSCP installs name a nested child key with its full path from the
+  // Sessions root (not just the segment relative to its immediate parent) —
+  // take only the last segment so it isn't doubled onto `ancestorNames`.
+  const leafSegment = decoded.slice(decoded.lastIndexOf('/') + 1)
+  const names = [...ancestorNames, leafSegment]
   const values = parseRegValues(detail)
   const host = values.get('HostName')
   if (host) {
@@ -100,9 +105,9 @@ async function walkWinScpNode(
       remoteInitialPath: values.get('RemoteDirectory') || undefined
     })
   }
-  for (const child of listRegSubkeyPaths(detail)) {
-    await walkWinScpNode(child, names, candidates, depth + 1, queryFn)
-  }
+  await Promise.all(
+    listRegSubkeyPaths(detail, subkey).map((child) => walkWinScpNode(child, names, candidates, depth + 1, queryFn))
+  )
 }
 
 /**
@@ -130,9 +135,9 @@ export async function scanWinScpSessions(
     return []
   }
   const candidates: ImportedSessionCandidate[] = []
-  for (const subkey of listRegSubkeyPaths(listing)) {
-    await walkWinScpNode(subkey, [], candidates, 0, query)
-  }
+  await Promise.all(
+    listRegSubkeyPaths(listing, WINSCP_ROOT).map((subkey) => walkWinScpNode(subkey, [], candidates, 0, query))
+  )
   return candidates
 }
 

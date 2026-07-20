@@ -85,4 +85,23 @@ describe('scanWinScpSessions', () => {
     const candidates = await scanWinScpSessions(async () => null)
     expect(candidates).toEqual([])
   })
+
+  it('does not double the ancestor path when a nested child key already encodes its full path', async () => {
+    // On some real WinSCP installs, a nested child key's own registry name
+    // already carries its full path from the Sessions root (e.g. `Work%2Fdb1`
+    // under the `Work` folder-group), not just the segment relative to its
+    // immediate parent — this reproduces that shape.
+    const tree = new Map<string, string>()
+    tree.set(QUERY_ROOT, fakeRegOutput(QUERY_ROOT, {}, ['Work'], FULL_ROOT))
+    tree.set(`${FULL_ROOT}\\Work`, fakeRegOutput(`${FULL_ROOT}\\Work`, {}, ['Work%2Fdb1']))
+    tree.set(
+      `${FULL_ROOT}\\Work\\Work%2Fdb1`,
+      fakeRegOutput(`${FULL_ROOT}\\Work\\Work%2Fdb1`, { HostName: 'db1.example.com', UserName: 'alice' }, [])
+    )
+    const queryFn = async (key: string): Promise<string | null> => tree.get(key) ?? null
+
+    const candidates = await scanWinScpSessions(queryFn)
+
+    expect(candidates.map((c) => c.name)).toEqual(['Work/db1'])
+  })
 })
