@@ -12,17 +12,21 @@ export class SshError extends Error {
   public readonly code: IpcErrorCode
   /** True when the failure is likely temporary (network blip, channel reset). */
   public readonly transient: boolean
+  /** Set only for `HOST_KEY_MISMATCH` — the specific hop/target host:port that mismatched. */
+  public readonly hostKey?: { host: string; port: number }
 
   /**
    * @param code      - stable error code
    * @param message   - human-readable description
    * @param transient - whether a retry might succeed
+   * @param hostKey   - for `HOST_KEY_MISMATCH`, the specific host:port that mismatched
    */
-  constructor(code: IpcErrorCode, message: string, transient = false) {
+  constructor(code: IpcErrorCode, message: string, transient = false, hostKey?: { host: string; port: number }) {
     super(message)
     this.name = 'SshError'
     this.code = code
     this.transient = transient
+    this.hostKey = hostKey
   }
 }
 

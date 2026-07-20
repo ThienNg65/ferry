@@ -190,6 +190,41 @@ export class EditSessionManager {
   }
 
   /**
+   * Explicitly closes one edit: stops its watcher/timer, removes it from the registry, and
+   * deletes its temp file/directory — unless it has unsynced changes (mtime newer than the last
+   * successful upload), in which case the temp file is kept so the edit isn't silently lost.
+   * Without this, an edit's map entry/temp directory/watcher previously lived until app quit.
+   */
+  async closeEdit(editId: string): Promise<void> {
+    const entry = this.edits.get(editId)
+    if (!entry) {
+      return
+    }
+    entry.watcher?.close()
+    entry.watcher = null
+    if (entry.debounceTimer) {
+      clearTimeout(entry.debounceTimer)
+      entry.debounceTimer = null
+    }
+    this.edits.delete(editId)
+    try {
+      const stats = await fs.stat(entry.localTempPath)
+      if (stats.mtimeMs <= entry.lastSyncedMtimeMs) {
+        await fs.rm(path.dirname(entry.localTempPath), { recursive: true, force: true })
+      }
+    } catch {
+      // Best-effort — a missing file or locked directory (editor still open) is fine to skip.
+    }
+    this.broadcast({
+      editId: entry.editId,
+      sessionId: entry.sessionId,
+      remotePath: entry.remotePath,
+      localTempPath: entry.localTempPath,
+      state: 'closed'
+    })
+  }
+
+  /**
    * Called on app quit — best-effort cleanup of temp files, but SKIPS
    * deleting any file whose on-disk mtime is newer than the last time it was
    * successfully uploaded (a pending or failed re-upload). Silently deleting

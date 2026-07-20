@@ -45,6 +45,12 @@ async function fitAndResize(sessionId: string): Promise<void> {
   terminalStreams.resize(sessionId, inst.term.cols, inst.term.rows)
 }
 
+/** True once the active session/tab-visibility has changed since `sessionId` was captured — an
+ * overlapping call for a session the user has since switched away from must not touch it. */
+function isStale(sessionId: string): boolean {
+  return sessionId !== sessions.activeSessionId || !props.active
+}
+
 /** Opens (once) and fits the terminal for whichever session is active, but only while this tab is actually visible. */
 async function syncActiveTerminal(): Promise<void> {
   if (!props.active) {
@@ -55,14 +61,20 @@ async function syncActiveTerminal(): Promise<void> {
     return
   }
   await terminalStreams.ensureTerminal(sessionId)
+  if (isStale(sessionId)) {
+    return
+  }
   // A freshly-created terminal's v-for container hasn't rendered yet at this
   // point (ensureTerminal only just pushed to knownSessionIds) — wait a tick so
   // attachContainer's term.open() has run before fitting.
   await nextTick()
+  if (isStale(sessionId)) {
+    return
+  }
   await fitAndResize(sessionId)
   // Focus so keystrokes land in the shell immediately — without this the user
   // has to click inside the terminal before any key (incl. Ctrl+C) works.
-  if (props.active) {
+  if (!isStale(sessionId)) {
     terminalStreams.focus(sessionId)
   }
 }

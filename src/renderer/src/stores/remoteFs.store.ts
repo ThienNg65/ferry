@@ -238,10 +238,10 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       bucket.selectAnchor = result.anchor
     },
 
-    /** Ctrl/Cmd+A — selects every entry in the current listing. */
-    selectAll(): void {
+    /** Ctrl/Cmd+A — selects every entry in `entries` (defaults to the full unfiltered listing). */
+    selectAll(entries?: FileEntry[]): void {
       const bucket = this.ensureBucket(this.activeSessionId())
-      const result = selectAll(bucket.entries)
+      const result = selectAll(entries ?? bucket.entries)
       bucket.selected = result.selected
       bucket.selectAnchor = result.anchor
     },

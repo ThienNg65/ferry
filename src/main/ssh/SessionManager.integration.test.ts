@@ -99,12 +99,19 @@ describe.skipIf(!serverAvailable)('SessionManager host-key verification against 
     })
   })
 
-  it('trustHostKeyChange=true overwrites a stale fingerprint and connects anyway', async () => {
+  it('a trustedHostKey scoped to this host:port overwrites a stale fingerprint and connects anyway', async () => {
     KnownHostsStore.getInstance().trust(HOST, PORT, 'SHA256:this-is-definitely-not-the-real-key')
-    const result = await SessionManager.getInstance().openQuickConnect(quickConnectInput(), true)
+    const result = await SessionManager.getInstance().openQuickConnect(quickConnectInput(), { host: HOST, port: PORT })
     expect(result.status).toBe('connected')
     const stored = KnownHostsStore.getInstance().get(HOST, PORT)
     expect(stored).not.toBe('SHA256:this-is-definitely-not-the-real-key')
     SessionManager.getInstance().close(result.sessionId)
+  })
+
+  it('a trustedHostKey scoped to a different host:port does not force-trust this mismatch', async () => {
+    KnownHostsStore.getInstance().trust(HOST, PORT, 'SHA256:this-is-definitely-not-the-real-key')
+    await expect(
+      SessionManager.getInstance().openQuickConnect(quickConnectInput(), { host: 'unrelated-host', port: 9999 })
+    ).rejects.toMatchObject({ code: 'HOST_KEY_MISMATCH' })
   })
 })

@@ -12,4 +12,8 @@ export function registerEditHandlers(): void {
     const { sessionId, path } = req as EditOpenRemoteRequest
     return EditSessionManager.getInstance().openRemote(sessionId, path)
   })
+
+  handle<void>(INVOKE_CHANNELS.editClose, async (editId) => {
+    await EditSessionManager.getInstance().closeEdit(editId as string)
+  })
 }

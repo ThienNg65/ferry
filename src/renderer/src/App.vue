@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
@@ -26,6 +26,20 @@ const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomD
 
 const sessions = useSessionsStore()
 const isConnected = computed(() => sessions.status === 'connected')
+// Gates the connected subtree's FIRST mount only, so FilePane/BottomDock stay off the
+// cold-start bundle-eval path until the user actually connects — v-show (not this flag) handles
+// every subsequent disconnect/reconnect, so the subtree (and TerminalView's xterm.js instances)
+// is never unmounted again once created. See the template comment for why remounting is unsafe.
+const hasConnectedOnce = ref(false)
+watch(
+  isConnected,
+  (connected) => {
+    if (connected) {
+      hasConnectedOnce.value = true
+    }
+  },
+  { immediate: true }
+)
 const { isBusy } = useGlobalActivity()
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
@@ -62,16 +76,24 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
       <TitleBar />
       <SiteTabBar />
       <div class="relative min-h-0 flex-1">
+        <!--
+          The connected view is hoisted out of the Transition/v-if instead of toggling with
+          v-if/v-else — BottomDock renders TerminalView, which owns long-lived xterm.js
+          `Terminal` instances (see terminalStreams.store.ts); unmounting and remounting it on
+          every disconnect/reconnect cycle would call `term.open()` a second time on the same
+          instance, which xterm.js does not support (see PROJECT_MAP.md Gotcha #9). v-show only
+          toggles CSS display, so the subtree — and its terminal containers — never unmounts.
+        -->
         <Transition name="fade" mode="out-in">
           <SessionManagerView v-if="!isConnected" key="picker" />
-          <div v-else key="connected" class="flex h-full flex-col">
-            <div class="flex min-h-0 flex-1">
-              <FilePane side="local" />
-              <FilePane side="remote" />
-            </div>
-            <BottomDock />
-          </div>
         </Transition>
+        <div v-if="hasConnectedOnce" v-show="isConnected" class="flex h-full flex-col">
+          <div class="flex min-h-0 flex-1">
+            <FilePane side="local" />
+            <FilePane side="remote" />
+          </div>
+          <BottomDock />
+        </div>
       </div>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />

@@ -61,6 +61,14 @@ watch(
   }
 )
 
+/** Filtering out the row currently being renamed unmounts its input without firing blur/escape —
+ * clear renamingPath so it doesn't get stuck (which would also block every pane shortcut, see onKeydown). */
+watch(filteredEntries, (entries) => {
+  if (renamingPath.value !== null && !entries.some((e) => e.path === renamingPath.value)) {
+    renamingPath.value = null
+  }
+})
+
 /** Slim always-visible rail when Local is hidden — never fully unmounts (see ui.store.ts). */
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
@@ -396,6 +404,11 @@ async function onDrop(event: DragEvent): Promise<void> {
 }
 
 async function onKeydown(event: KeyboardEvent): Promise<void> {
+  // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
+  // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+    return
+  }
   // While a row is mid-rename, its own input owns keyboard input (it stops keydown propagation) —
   // this guard is a second line of defense so a stray bubble never triggers delete/refresh.
   if (renamingPath.value !== null) {
@@ -408,7 +421,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
     event.preventDefault()
-    store.selectAll()
+    store.selectAll(filteredEntries.value)
     return
   }
   if (event.key === 'F2') {
@@ -458,6 +471,21 @@ function onCancelRename(): void {
 function onStartRename(entry: FileEntry): void {
   store.selectOnly(entry.path)
   renamingPath.value = entry.path
+}
+
+/** Context-menu/hover-icon delete on a row that's part of a larger multi-selection removes the whole
+ * selection (matching the keyboard Delete path); otherwise it removes just that one row. */
+async function onRemoveEntry(entry: FileEntry): Promise<void> {
+  if (store.selected.size > 1 && store.selected.has(entry.path)) {
+    const targets = store.entries.filter((e) => store.selected.has(e.path))
+    try {
+      await store.removeMany(targets)
+    } catch (e) {
+      notify.error('Delete failed', e instanceof Error ? e.message : String(e))
+    }
+    return
+  }
+  await store.remove(entry)
 }
 
 function onOpenChmod(entry: FileEntry): void {
@@ -539,7 +567,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :sort-direction="store.sortDirection"
         @select="onSelect"
         @open="onOpen"
-        @remove="(entry: FileEntry) => store.remove(entry)"
+        @remove="onRemoveEntry"
         @transfer="onTransfer"
         @tail="onTail"
         @rename="onRename"

@@ -13,6 +13,7 @@ import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
+import { useTailStreamsStore } from './tailStreams.store'
 import { useSitesStore } from './sites.store'
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
@@ -30,6 +31,9 @@ export interface SessionTab {
   status: SessionStatus | null
   statusMessage: string | null
   connecting: boolean
+  /** The in-flight `openSession` call while `connecting` is true — lets `closeTab` wait for it
+   * to settle instead of detaching the tab from a session that's still being opened underneath it. */
+  connectPromise: Promise<void> | null
   /** Set when the last connect attempt failed because the server's host key changed — surfaced as a warning dialog, not a plain toast, since accepting it needs an explicit user decision. */
   pendingHostKeyMismatch: PendingHostKeyMismatch | null
 }
@@ -42,6 +46,8 @@ interface PendingHostKeyMismatch {
   label: string
   hostLabel: string
   siteId: string | null
+  /** The specific hop/target host:port that mismatched — retry only force-trusts this one. */
+  hostKey?: { host: string; port: number }
 }
 
 interface SessionsState {
@@ -63,6 +69,7 @@ function freshTab(): SessionTab {
     status: null,
     statusMessage: null,
     connecting: false,
+    connectPromise: null,
     pendingHostKeyMismatch: null
   }
 }
@@ -208,7 +215,7 @@ export const useSessionsStore = defineStore('sessions', {
       label: string,
       hostLabel: string,
       siteId: string | null,
-      trustHostKeyChange = false
+      trustedHostKey?: { host: string; port: number }
     ): Promise<void> {
       this.ensureStatusSubscription()
       this.ensureKeyboardInteractiveSubscription()
@@ -220,11 +227,28 @@ export const useSessionsStore = defineStore('sessions', {
       tab.hostLabel = hostLabel
       tab.siteId = siteId
       void this.persistOpenTabs()
+      // Tracked on the tab itself so closeTab() can await this exact attempt instead of
+      // detaching the tab while a session is still being opened underneath it (which would
+      // otherwise orphan a real SSH connection with no UI path left to close it).
+      const attempt = this.performOpenSession(tab, request, label, hostLabel, siteId, trustedHostKey)
+      tab.connectPromise = attempt
+      return attempt
+    },
+
+    /** The actual connect body, split out from {@link openSession} so its own promise can be assigned to `tab.connectPromise` before this starts running, instead of self-referencing a variable being initialized. */
+    async performOpenSession(
+      tab: SessionTab,
+      request: ConnectRequest,
+      label: string,
+      hostLabel: string,
+      siteId: string | null,
+      trustedHostKey?: { host: string; port: number }
+    ): Promise<void> {
       const notify = useNotify()
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
           ...request,
-          trustHostKeyChange
+          trustedHostKey
         })
         tab.sessionId = result.sessionId
         // Preload the initial listing before flipping `status` — App.vue's
@@ -244,13 +268,14 @@ export const useSessionsStore = defineStore('sessions', {
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
-          tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId }
+          tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId, hostKey: e.hostKey }
         } else {
           notify.error('Connection failed', tab.statusMessage)
         }
         throw e
       } finally {
         tab.connecting = false
+        tab.connectPromise = null
       }
     },
 
@@ -272,7 +297,7 @@ export const useSessionsStore = defineStore('sessions', {
       }
       tab.pendingHostKeyMismatch = null
       this.setActiveTab(tabId)
-      await this.openSession(pending.request, pending.label, pending.hostLabel, pending.siteId, true)
+      await this.openSession(pending.request, pending.label, pending.hostLabel, pending.siteId, pending.hostKey)
     },
 
     /** User declined a changed host key — just clears the warning, leaving the tab in its error state. */
@@ -307,10 +332,21 @@ export const useSessionsStore = defineStore('sessions', {
       if (!tab) {
         return
       }
+      if (tab.connecting && tab.connectPromise) {
+        // Wait out the in-flight connect instead of detaching the tab now — otherwise
+        // openSession's eventual result sets fields on an orphaned tab and, worse, a real SSH
+        // session finishes connecting with no tab left to close it from.
+        try {
+          await tab.connectPromise
+        } catch {
+          // Already recorded on the tab (status/statusMessage) by openSession's own catch.
+        }
+      }
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
         useRemoteFsStore().clearSession(tab.sessionId)
-        useTerminalStreamsStore().disposeForSession(tab.sessionId)
+        await useTailStreamsStore().closeForSession(tab.sessionId)
+        await useTerminalStreamsStore().disposeForSession(tab.sessionId)
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)

@@ -44,6 +44,10 @@ export interface IpcErr {
   ok: false
   code: IpcErrorCode
   message: string
+  /** Set only for `HOST_KEY_MISMATCH` — identifies exactly which hop/target mismatched, so a
+   * user-confirmed retry can scope its trust override to that host:port alone instead of every
+   * hop in the connection. */
+  hostKey?: { host: string; port: number }
 }
 
 /** Discriminated union returned by every `invoke` channel. */
@@ -55,8 +59,8 @@ export function ok<T>(data: T): IpcOk<T> {
 }
 
 /** Convenience constructor for an error envelope. */
-export function err(code: IpcErrorCode, message: string): IpcErr {
-  return { ok: false, code, message }
+export function err(code: IpcErrorCode, message: string, hostKey?: { host: string; port: number }): IpcErr {
+  return { ok: false, code, message, hostKey }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,7 +509,7 @@ export interface EditEvent {
   sessionId?: string
   remotePath?: string
   localTempPath: string
-  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'session-closed'
+  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'session-closed' | 'closed'
   error?: string
 }
 
@@ -719,6 +723,7 @@ export const INVOKE_CHANNELS = {
   // edit in external editor
   editOpenLocal: 'edit:openLocal',
   editOpenRemote: 'edit:openRemote',
+  editClose: 'edit:close',
   // terminal
   terminalOpen: 'terminal:open',
   terminalWrite: 'terminal:write',

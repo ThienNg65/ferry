@@ -73,7 +73,16 @@ function decrypt(ciphertext: string | undefined): string | undefined {
   if (!ciphertext) {
     return undefined
   }
-  return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
+  }
+  try {
+    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  } catch (e) {
+    // Most likely this secret was encrypted under a different OS user/DPAPI key (e.g. the
+    // profile was copied to another machine/user) — a raw native error here is unreadable.
+    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 /**

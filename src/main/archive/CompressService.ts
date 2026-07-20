@@ -101,7 +101,10 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
   const dest = shellEscape(destZipPath)
   const inner =
     `command -v zip >/dev/null 2>&1 || ` +
-    `{ echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; cd ${cwd} && zip -rq ${dest} ${source}`
+    // `--` stops `zip` from parsing `source` as an option even if the shellEscape'd basename
+    // starts with `-` (e.g. a file literally named "-T") — shellEscape only guards the shell,
+    // not zip's own argv parsing.
+    `{ echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; cd ${cwd} && zip -rq ${dest} -- ${source}`
   return `sh -c ${shellEscape(inner)}`
 }
 

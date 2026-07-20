@@ -135,9 +135,9 @@ export const useLocalFsStore = defineStore('localFs', {
       this.selectAnchor = result.anchor
     },
 
-    /** Ctrl/Cmd+A — selects every entry in the current listing. */
-    selectAll(): void {
-      const result = selectAll(this.entries)
+    /** Ctrl/Cmd+A — selects every entry in `entries` (defaults to the full unfiltered listing). */
+    selectAll(entries?: FileEntry[]): void {
+      const result = selectAll(entries ?? this.entries)
       this.selected = result.selected
       this.selectAnchor = result.anchor
     }

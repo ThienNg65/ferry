@@ -71,7 +71,21 @@ export function computePlan(sourceTree: TreeItem[], destTree: TreeItem[], delete
   return { toTransfer, toDelete, totalBytes }
 }
 
+/**
+ * Defense in depth against a malicious/compromised remote server supplying a `relPath` that
+ * resolves outside `root` — most severe for the delete-extras path, which turns a `toDelete`
+ * entry straight into a local `removeLocal` call. The primary guard is
+ * `RemoteShell.readdirRecursive`, which already rejects unsafe entry names.
+ */
 function joinLocal(root: string, relPath: string): string {
+  const resolvedRoot = path.resolve(root)
+  const joined = path.resolve(root, ...relPath.split('/'))
+  // `path.resolve` of a drive/filesystem root (e.g. "C:\" or "/") already ends in a separator —
+  // appending another would make the prefix check below reject every legitimate path under it.
+  const boundary = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep
+  if (joined !== resolvedRoot && !joined.startsWith(boundary)) {
+    throw new SshError('SFTP', `Refusing to resolve unsafe relative path "${relPath}" outside "${root}"`)
+  }
   return path.join(root, ...relPath.split('/'))
 }
 

@@ -32,7 +32,14 @@ function decrypt(ciphertext: string | undefined): string | undefined {
   if (!ciphertext) {
     return undefined
   }
-  return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
+  }
+  try {
+    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
+  } catch (e) {
+    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 /**

@@ -100,6 +100,9 @@ export class RemoteShell {
     return new Promise<ExecResult>((resolve, reject) => {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | null = null
+      // Set once the channel opens — lets onAbort destroy it exactly like the timeout path
+      // does, instead of leaving it open server-side until the remote command exits on its own.
+      let activeStream: ClientChannel | null = null
 
       const cleanup = (): void => {
         if (timer) {
@@ -113,6 +116,7 @@ export class RemoteShell {
         }
         settled = true
         cleanup()
+        activeStream?.destroy()
         reject(e)
       }
       const onAbort = (): void => fail(new SshError('CANCELLED', 'Command cancelled'))
@@ -128,6 +132,12 @@ export class RemoteShell {
           fail(new SshError('SSH_EXEC', execErr.message, true))
           return
         }
+        if (settled) {
+          // Aborted (or timed out) in the window between the exec call and this callback.
+          stream.destroy()
+          return
+        }
+        activeStream = stream
 
         timer = setTimeout(() => {
           stream.destroy()
@@ -172,6 +182,9 @@ export class RemoteShell {
     return new Promise<number | null>((resolve, reject) => {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | null = null
+      // Set once the channel opens — lets onAbort destroy it exactly like the timeout path
+      // does, instead of leaving it open server-side until the remote command exits on its own.
+      let activeStream: ClientChannel | null = null
 
       const cleanup = (): void => {
         if (timer) {
@@ -185,6 +198,7 @@ export class RemoteShell {
         }
         settled = true
         cleanup()
+        activeStream?.destroy()
         reject(e)
       }
       const onAbort = (): void => fail(new SshError('CANCELLED', 'Stream cancelled'))
@@ -200,6 +214,12 @@ export class RemoteShell {
           fail(new SshError('SSH_EXEC', execErr.message, true))
           return
         }
+        if (settled) {
+          // Aborted (or timed out) in the window between the exec call and this callback.
+          stream.destroy()
+          return
+        }
+        activeStream = stream
 
         const arm = (): void => {
           if (timer) {
@@ -467,6 +487,15 @@ export class RemoteShell {
       for (const entry of entries) {
         if (entry.filename === '.' || entry.filename === '..') {
           continue
+        }
+        // The server controls `filename` — a malicious/compromised server could name an entry
+        // `../../evil` or embed a path separator to escape the destination root once this relPath
+        // is joined against a local/remote base elsewhere (TransferQueue, SyncService).
+        if (!entry.filename || entry.filename.includes('/') || entry.filename.includes('\\')) {
+          throw new SshError(
+            'SFTP',
+            `Refusing to process unsafe remote entry name "${entry.filename}" under "${currentPath}"`
+          )
         }
         const relPath = relBase ? `${relBase}/${entry.filename}` : entry.filename
         const childPath = `${currentPath.replace(/\/$/, '')}/${entry.filename}`

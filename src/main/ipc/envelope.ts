@@ -21,7 +21,7 @@ export function handle<T>(
       return ok(await fn(...args))
     } catch (e) {
       if (e instanceof SshError) {
-        return err(e.code, e.message)
+        return err(e.code, e.message, e.hostKey)
       }
       const code: IpcErrorCode = 'UNKNOWN'
       return err(code, e instanceof Error ? e.message : String(e))
@@ -44,7 +44,7 @@ export function handleWithEvent<T>(
       return ok(await fn(event, ...args))
     } catch (e) {
       if (e instanceof SshError) {
-        return err(e.code, e.message)
+        return err(e.code, e.message, e.hostKey)
       }
       const code: IpcErrorCode = 'UNKNOWN'
       return err(code, e instanceof Error ? e.message : String(e))

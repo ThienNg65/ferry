@@ -128,4 +128,9 @@ describe('buildCompressCommand', () => {
   it.runIf(hasShell())('is safe against a destination path containing a double quote and a payload', () => {
     assertPayloadNotExecuted(buildCompressCommand('/tmp/source', '/tmp/"$(echo INJECTED)"file'))
   })
+
+  it('separates the source argument from zip flags with `--` so a leading-dash basename cannot be parsed as an option', () => {
+    const command = buildCompressCommand('/tmp/-Tinject', '/tmp/out.zip')
+    expect(command).toMatch(/zip -rq \S+ -- \S+/)
+  })
 })

@@ -89,7 +89,13 @@ interface HopAuth {
 
 /** Mutable holder for a hop's host-key mismatch, if its `hostVerifier` rejects — see the comment at its construction site for why this isn't a plain `let`. */
 interface HostKeyMismatchHolder {
-  value: { expected: string; presented: string } | null
+  value: { expected: string; presented: string; host: string; port: number } | null
+}
+
+/** Identifies one specific hop or the target — the only host:port a user-confirmed retry force-trusts, so an unrelated concurrent mismatch elsewhere in the same connection still surfaces its own warning instead of being silently trusted. */
+export interface TrustedHostKey {
+  host: string
+  port: number
 }
 
 /** Resolves the platform-default ssh-agent socket/pipe when a site doesn't override it. */
@@ -192,13 +198,14 @@ export class SessionManager {
   /**
    * Opens a session from a saved site, decrypting its secrets for this connect only.
    *
-   * @param trustHostKeyChange - when true, silently overwrite a previously-trusted host
-   *   key that no longer matches instead of rejecting with `HOST_KEY_MISMATCH` — only
-   *   set this on a user-confirmed retry after they've seen the mismatch warning.
+   * @param trustedHostKey - set only on a user-confirmed retry after they've seen a mismatch
+   *   warning for this exact host:port — silently overwrites that hop/target's previously-trusted
+   *   key instead of rejecting with `HOST_KEY_MISMATCH`. Every other hop/target in the same
+   *   connect attempt still verifies normally, even on retry.
    */
   async openFromSite(
     siteId: string,
-    trustHostKeyChange = false
+    trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     const site = SiteStore.getInstance().getRaw(siteId)
     if (!site) {
@@ -225,20 +232,20 @@ export class SessionManager {
         proxy: resolveEffectiveProxy(site.proxyMode, SiteStore.getInstance().getDecryptedProxy(siteId))
       },
       site.remoteInitialPath ?? '.',
-      trustHostKeyChange
+      trustedHostKey
     )
   }
 
-  /** Opens an ad-hoc session that isn't saved as a site. See {@link openFromSite} for `trustHostKeyChange`. */
+  /** Opens an ad-hoc session that isn't saved as a site. See {@link openFromSite} for `trustedHostKey`. */
   async openQuickConnect(
     input: QuickConnectInput,
-    trustHostKeyChange = false
+    trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     return this.connect(
       null,
       { ...input, proxy: resolveEffectiveProxy(input.proxyMode, input.proxy) },
       input.remoteInitialPath ?? '.',
-      trustHostKeyChange
+      trustedHostKey
     )
   }
 
@@ -248,17 +255,20 @@ export class SessionManager {
     port: number,
     username: string,
     auth: HopAuth,
-    trustHostKeyChange: boolean
+    trustedHostKey: TrustedHostKey | undefined
   ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder; agentIdentityCount?: number }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
     // (TypeScript's control-flow analysis doesn't track closure reassignments) —
     // a mutable holder object sidesteps that.
     const hostKeyMismatch: HostKeyMismatchHolder = { value: null }
+    // Only force-trust a mismatch for the exact host:port the user was warned about and
+    // confirmed — every other hop/target in this same connect attempt still verifies normally.
+    const forceTrustThisHop = trustedHostKey?.host === host && trustedHostKey?.port === port
     const hostVerifier: HostVerifier = (key, verify) => {
       const presented = fingerprintHostKey(key)
       const known = KnownHostsStore.getInstance().get(host, port)
-      const decision = evaluateHostKey(known, presented, trustHostKeyChange)
+      const decision = evaluateHostKey(known, presented, forceTrustThisHop)
       if (decision === 'trust-new') {
         KnownHostsStore.getInstance().trust(host, port, presented)
         verify(true)
@@ -268,7 +278,7 @@ export class SessionManager {
         verify(true)
         return
       }
-      hostKeyMismatch.value = { expected: known as string, presented }
+      hostKeyMismatch.value = { expected: known as string, presented, host, port }
       verify(false)
     }
     const config: ConnectConfig = {
@@ -376,7 +386,7 @@ export class SessionManager {
     siteId: string | null,
     input: ConnectInput,
     initialCwd: string,
-    trustHostKeyChange = false
+    trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     const sessionId = randomUUID()
     // Lazy-load ssh2 (a heavy module with a native optional dep) only when the
@@ -398,12 +408,15 @@ export class SessionManager {
     }
     this.sessions.set(sessionId, entry)
 
+    // `sock` carries the transport for the NEXT connection attempt — undefined for hop 0 (a
+    // plain direct TCP connect), then re-set after each hop to a fresh tunnel opened through
+    // that hop, so it's ready for hop i+1 (or, once the loop ends, for the final target connect
+    // below). Hoisted above the try so the catch block can destroy whatever transport was last
+    // established if a later step throws — otherwise a proxy socket (or an intermediate jump
+    // tunnel) that connected successfully just before a subsequent auth/host-key failure would
+    // never be closed.
+    let sock: ClientChannel | Duplex | undefined
     try {
-      // `sock` carries the transport for the NEXT connection attempt — undefined
-      // for hop 0 (a plain direct TCP connect), then re-set after each hop to a
-      // fresh tunnel opened through that hop, so it's ready for hop i+1 (or, once
-      // the loop ends, for the final target connect below).
-      let sock: ClientChannel | Duplex | undefined
       if (input.proxy) {
         // Only ever supplies hop 0's transport — reaching hop 1+ (or the
         // target, once the loop below ends) still goes through the SSH-level
@@ -421,7 +434,7 @@ export class SessionManager {
           hop.port,
           hop.username,
           { authMethod: hop.authMethod, privateKeyPath: hop.privateKeyPath, password: hop.password, passphrase: hop.passphrase },
-          trustHostKeyChange
+          trustedHostKey
         )
         if (sock) {
           hopConfig.sock = sock
@@ -432,7 +445,9 @@ export class SessionManager {
           throw hopMismatch.value
             ? new SshError(
                 'HOST_KEY_MISMATCH',
-                `Jump host key for ${hop.host}:${hop.port} (hop ${i + 1} of ${hops.length}) has changed! Expected ${hopMismatch.value.expected} but the server presented ${hopMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
+                `Jump host key for ${hop.host}:${hop.port} (hop ${i + 1} of ${hops.length}) has changed! Expected ${hopMismatch.value.expected} but the server presented ${hopMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`,
+                false,
+                { host: hopMismatch.value.host, port: hopMismatch.value.port }
               )
             : e
         }
@@ -445,7 +460,7 @@ export class SessionManager {
         input.port,
         input.username,
         { authMethod: input.authMethod, privateKeyPath: input.privateKeyPath, agentPath: input.agentPath, password: input.password, passphrase: input.passphrase },
-        trustHostKeyChange
+        trustedHostKey
       )
       if (sock) {
         targetConfig.sock = sock
@@ -457,7 +472,9 @@ export class SessionManager {
         if (hostKeyMismatch.value) {
           throw new SshError(
             'HOST_KEY_MISMATCH',
-            `Host key for ${input.host}:${input.port} has changed! Expected ${hostKeyMismatch.value.expected} but the server presented ${hostKeyMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`
+            `Host key for ${input.host}:${input.port} has changed! Expected ${hostKeyMismatch.value.expected} but the server presented ${hostKeyMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`,
+            false,
+            { host: hostKeyMismatch.value.host, port: hostKeyMismatch.value.port }
           )
         }
         if (agentIdentityCount !== undefined && e instanceof SshError) {
@@ -473,6 +490,7 @@ export class SessionManager {
       for (let i = jumpClients.length - 1; i >= 0; i--) {
         jumpClients[i].end()
       }
+      sock?.destroy()
       throw e
     }
 

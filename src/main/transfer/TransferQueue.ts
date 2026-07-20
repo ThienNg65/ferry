@@ -25,8 +25,21 @@ export interface TransferJob {
   queuedAt: number
 }
 
-/** Joins a `/`-separated relative path onto a local root using the OS-native separator. */
+/**
+ * Joins a `/`-separated relative path onto a local root using the OS-native separator.
+ * Defense in depth against a malicious/compromised server supplying a `relPath` that resolves
+ * outside `root` (the primary guard lives in `RemoteShell.readdirRecursive`, which already
+ * rejects unsafe entry names before a `relPath` like this is ever built).
+ */
 function joinLocal(root: string, relPath: string): string {
+  const resolvedRoot = path.resolve(root)
+  const joined = path.resolve(root, ...relPath.split('/'))
+  // `path.resolve` of a drive/filesystem root (e.g. "C:\" or "/") already ends in a separator —
+  // appending another would make the prefix check below reject every legitimate path under it.
+  const boundary = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep
+  if (joined !== resolvedRoot && !joined.startsWith(boundary)) {
+    throw new SshError('SFTP', `Refusing to resolve unsafe relative path "${relPath}" outside "${root}"`)
+  }
   return path.join(root, ...relPath.split('/'))
 }
 

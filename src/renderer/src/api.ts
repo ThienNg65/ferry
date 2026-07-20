@@ -4,10 +4,13 @@ import { useIpcActivityStore } from './stores/ipcActivity.store'
 /** Thrown by {@link invoke} on `{ ok: false }` — carries the stable {@link IpcErrorCode} alongside the message, so callers can branch on failure kind instead of parsing text. */
 export class IpcError extends Error {
   readonly code: IpcErrorCode
-  constructor(code: IpcErrorCode, message: string) {
+  /** Set only for `HOST_KEY_MISMATCH` — the specific hop/target host:port that mismatched. */
+  readonly hostKey?: { host: string; port: number }
+  constructor(code: IpcErrorCode, message: string, hostKey?: { host: string; port: number }) {
     super(message)
     this.name = 'IpcError'
     this.code = code
+    this.hostKey = hostKey
   }
 }
 
@@ -54,7 +57,7 @@ export async function invoke<T>(channel: string, ...args: unknown[]): Promise<T>
   try {
     const res = (await window.api.invoke(channel, ...args.map(toCloneable))) as IpcResult<T>
     if (!res.ok) {
-      throw new IpcError(res.code, res.message)
+      throw new IpcError(res.code, res.message, res.hostKey)
     }
     return res.data
   } finally {
