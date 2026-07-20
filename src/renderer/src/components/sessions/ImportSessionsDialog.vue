@@ -72,11 +72,9 @@ function close(): void {
 async function importSelected(): Promise<void> {
   importing.value = true
   error.value = null
+  const targets = rows.value.filter((r) => selected.has(r.index))
   try {
-    for (const { candidate, index } of rows.value) {
-      if (!selected.has(index)) {
-        continue
-      }
+    for (const { candidate, index } of targets) {
       const input: SiteInput = {
         name: candidate.name,
         host: candidate.host,
@@ -87,12 +85,16 @@ async function importSelected(): Promise<void> {
         remoteInitialPath: candidate.remoteInitialPath,
         group: candidate.source === 'winscp' ? 'Imported from WinSCP' : 'Imported from PuTTY'
       }
-      await sites.createSite(input)
+      await sites.createSiteWithoutRefetch(input)
+      // Prune as each import succeeds, so retrying after a later failure
+      // doesn't re-create the ones that already went through.
+      selected.delete(index)
     }
     close()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
+    await sites.fetchSites()
     importing.value = false
   }
 }

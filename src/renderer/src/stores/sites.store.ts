@@ -48,6 +48,11 @@ export const useSitesStore = defineStore('sites', {
       await this.fetchSites()
     },
 
+    /** Same as {@link createSite} but skips the refetch — for batch imports that refetch once at the end. */
+    async createSiteWithoutRefetch(input: SiteInput): Promise<void> {
+      await invoke<Site>(INVOKE_CHANNELS.sitesCreate, withNameFallback(input))
+    },
+
     async updateSite(id: string, input: SiteInput): Promise<void> {
       await invoke<Site>(INVOKE_CHANNELS.sitesUpdate, id, withNameFallback(input))
       await this.fetchSites()
