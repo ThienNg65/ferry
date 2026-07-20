@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
+import { isTransient } from '../ssh/errors'
 import { EVENT_CHANNELS, type TailEndEvent, type TailLineEvent, type TailNoticeEvent } from '../../shared/contract'
 
 interface TailEntry {
@@ -155,6 +156,12 @@ export class TailManager {
     } catch (e) {
       if (entry.controller.signal.aborted) {
         this.broadcastEnd(tailId)
+        return
+      }
+      if (!isTransient(e)) {
+        const msg = e instanceof Error ? e.message : String(e)
+        this.broadcastEnd(tailId, msg)
+        this.tails.delete(tailId)
         return
       }
       await this.reconnect(tailId, historyLines, attempt, e)
