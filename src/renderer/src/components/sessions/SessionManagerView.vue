@@ -8,6 +8,9 @@ import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import SiteFormDialog from './SiteFormDialog.vue'
 import ImportSessionsDialog from './ImportSessionsDialog.vue'
+// Not yet in the auto-generated global components.d.ts — deep-import instead
+// of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
+import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
@@ -103,6 +106,58 @@ async function onDuplicate(site: Site): Promise<void> {
   }
 }
 
+/** Bulk-select-and-delete mode — mainly for cleaning up a batch of accidentally-duplicated imports at once. */
+const selectMode = ref(false)
+const selectedIds = reactive(new Set<string>())
+
+function toggleSelectMode(): void {
+  selectMode.value = !selectMode.value
+  selectedIds.clear()
+}
+
+function toggleSelected(id: string, checked: boolean | 'indeterminate'): void {
+  if (checked === true) {
+    selectedIds.add(id)
+  } else {
+    selectedIds.delete(id)
+  }
+}
+
+const bulkDeleteOpen = ref(false)
+const bulkDeleting = ref(false)
+const bulkDeleteError = ref<string | null>(null)
+
+const selectedSites = computed(() => sites.sites.filter((s) => selectedIds.has(s.id)))
+
+function openBulkDeleteConfirm(): void {
+  bulkDeleteError.value = null
+  bulkDeleteOpen.value = true
+}
+
+async function confirmBulkDelete(): Promise<void> {
+  bulkDeleting.value = true
+  bulkDeleteError.value = null
+  try {
+    await sites.deleteSites(Array.from(selectedIds))
+    selectedIds.clear()
+    selectMode.value = false
+    bulkDeleteOpen.value = false
+  } catch (e) {
+    // Some deletes in the batch may have already succeeded server-side even
+    // though this rejected — resync from the store's own list (below) rather
+    // than trust `selectedIds`, so a retry doesn't re-attempt ones already gone.
+    bulkDeleteError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    await sites.fetchSites()
+    for (const id of Array.from(selectedIds)) {
+      if (!sites.sites.some((s) => s.id === id)) {
+        selectedIds.delete(id)
+      }
+    }
+    bulkDeleting.value = false
+  }
+}
+
 const searchQuery = ref('')
 
 const filteredSites = computed(() => {
@@ -158,6 +213,13 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           <div class="flex items-center justify-between">
             <h1 class="text-base font-medium text-highlighted">Sites</h1>
             <div class="flex items-center gap-1.5">
+              <UButton
+                :label="selectMode ? 'Cancel' : 'Select'"
+                size="xs"
+                variant="ghost"
+                color="neutral"
+                @click="toggleSelectMode"
+              />
               <UTooltip text="Import from WinSCP/PuTTY">
                 <UButton
                   icon="i-lucide-import"
@@ -187,6 +249,21 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
             No sites match "{{ searchQuery }}".
           </p>
+          <div
+            v-if="selectMode"
+            class="mb-2 flex items-center justify-between rounded-md bg-muted px-2 py-1.5 text-xs text-default"
+          >
+            <span>{{ selectedIds.size }} selected</span>
+            <UButton
+              label="Delete selected"
+              icon="i-lucide-trash-2"
+              size="xs"
+              color="error"
+              variant="soft"
+              :disabled="selectedIds.size === 0"
+              @click="openBulkDeleteConfirm"
+            />
+          </div>
           <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
             <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
               {{ section.name }}
@@ -197,42 +274,52 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 :key="site.id"
                 class="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
               >
-                <UIcon name="i-lucide-server" class="size-4 shrink-0 text-muted" />
-                <button class="min-w-0 flex-1 text-left" @click="onConnectSite(site)">
+                <UCheckbox
+                  v-if="selectMode"
+                  :model-value="selectedIds.has(site.id)"
+                  @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
+                />
+                <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
+                <button
+                  class="min-w-0 flex-1 text-left"
+                  @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
+                >
                   <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
                   <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
                 </button>
-                <UTooltip text="Duplicate site">
-                  <UButton
-                    icon="i-lucide-copy"
-                    color="neutral"
-                    variant="ghost"
-                    size="xs"
-                    :loading="duplicatingId === site.id"
-                    class="opacity-0 group-hover:opacity-100"
-                    @click="onDuplicate(site)"
-                  />
-                </UTooltip>
-                <UTooltip text="Edit site">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    color="neutral"
-                    variant="ghost"
-                    size="xs"
-                    class="opacity-0 group-hover:opacity-100"
-                    @click="openEditDialog(site)"
-                  />
-                </UTooltip>
-                <UTooltip text="Delete site">
-                  <UButton
-                    icon="i-lucide-trash-2"
-                    color="neutral"
-                    variant="ghost"
-                    size="xs"
-                    class="opacity-0 group-hover:opacity-100"
-                    @click="deleteTarget = site"
-                  />
-                </UTooltip>
+                <template v-if="!selectMode">
+                  <UTooltip text="Duplicate site">
+                    <UButton
+                      icon="i-lucide-copy"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      :loading="duplicatingId === site.id"
+                      class="opacity-0 group-hover:opacity-100"
+                      @click="onDuplicate(site)"
+                    />
+                  </UTooltip>
+                  <UTooltip text="Edit site">
+                    <UButton
+                      icon="i-lucide-pencil"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      class="opacity-0 group-hover:opacity-100"
+                      @click="openEditDialog(site)"
+                    />
+                  </UTooltip>
+                  <UTooltip text="Delete site">
+                    <UButton
+                      icon="i-lucide-trash-2"
+                      color="neutral"
+                      variant="ghost"
+                      size="xs"
+                      class="opacity-0 group-hover:opacity-100"
+                      @click="deleteTarget = site"
+                    />
+                  </UTooltip>
+                </template>
               </li>
             </ul>
           </div>
@@ -296,6 +383,33 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       <template #footer>
         <UButton color="neutral" variant="outline" @click="deleteTarget = null">Cancel</UButton>
         <UButton color="error" :loading="deleting" @click="confirmDelete">Delete</UButton>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="bulkDeleteOpen"
+      title="Delete selected sites"
+      :ui="{ footer: 'justify-end', content: 'max-w-lg' }"
+      @update:open="(v: boolean) => { if (!v) bulkDeleteOpen = false }"
+    >
+      <template #body>
+        <div class="flex flex-col gap-3">
+          <p class="text-sm text-default">
+            Delete these {{ selectedSites.length }} sites? This cannot be undone.
+          </p>
+          <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
+            <li v-for="site in selectedSites" :key="site.id" class="truncate text-xs text-default">
+              {{ site.name }} — {{ site.username }}@{{ site.host }}:{{ site.port }}
+            </li>
+          </ul>
+          <UAlert v-if="bulkDeleteError" color="error" variant="soft" :title="bulkDeleteError" />
+        </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="bulkDeleteOpen = false">Cancel</UButton>
+        <UButton color="error" :loading="bulkDeleting" @click="confirmBulkDelete">
+          Delete {{ selectedSites.length }}
+        </UButton>
       </template>
     </UModal>
 

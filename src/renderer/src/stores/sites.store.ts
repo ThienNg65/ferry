@@ -63,6 +63,13 @@ export const useSitesStore = defineStore('sites', {
       this.sites = this.sites.filter((s) => s.id !== id)
     },
 
+    /** Deletes multiple sites (e.g. cleaning up duplicate imports) in parallel — independent deletes, no shared state between them. */
+    async deleteSites(ids: string[]): Promise<void> {
+      await Promise.all(ids.map((id) => invoke<void>(INVOKE_CHANNELS.sitesDelete, id)))
+      const removed = new Set(ids)
+      this.sites = this.sites.filter((s) => !removed.has(s.id))
+    },
+
     async duplicateSite(id: string): Promise<void> {
       await invoke<Site>(INVOKE_CHANNELS.sitesDuplicate, id)
       await this.fetchSites()
