@@ -2,9 +2,17 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
-## 0.14.1
-### change
-- Bug fix CI.
+## 0.14.2 - 2026-07-20
+### Fixed
+- FilePane.vue: scope keydown shortcuts away from text inputs (fixes data-loss on Delete/Ctrl+A while typing), fix Ctrl+A vs active filter, stuck rename state, and multi-select-aware row delete.
+- RemoteShell: reject unsafe SFTP entry names (path traversal) and destroy the exec/execLines stream on abort instead of leaking it.
+- TransferQueue/SyncService: defense-in-depth root-boundary check on joinLocal.
+- SessionManager: scope host-key-mismatch trust to the exact hop/target that was confirmed, instead of force-trusting every hop on retry; fix proxy socket leak on failed connect.
+- EditSessionManager: add closeEdit() + edit:close IPC channel.
+- tailStreams/sessions store: dedup tails per-session, close them on tab close, and await an in-flight connect before detaching a closing tab.
+- CompressService: guard remote zip source arg against option injection.
+- SiteStore/AppSettingsStore: guard decrypt() against unavailable/failed OS encryption.
+- TerminalView/App.vue: fix stale-session reattach races and avoid double term.open() by keeping the connected view mounted via v-show.
 
 ## 0.14.0 — Release first version
 
