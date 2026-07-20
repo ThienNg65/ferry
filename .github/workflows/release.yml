@@ -37,7 +37,17 @@ jobs:
           git tag "v${version}"
           git push origin "v${version}"
 
-      - run: npx electron-builder --publish always
+      - name: Package and publish
+        uses: nick-fields/retry@v3
+        with:
+          # electron-builder's GitHub publisher has no built-in retry for
+          # transient GitHub API errors (e.g. 503s during a GitHub incident) -
+          # retry the whole step. Repackaging is cheap since `out/` is already
+          # built; a retry just re-runs electron-builder against it.
+          max_attempts: 3
+          timeout_minutes: 20
+          retry_wait_seconds: 60
+          command: npx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
