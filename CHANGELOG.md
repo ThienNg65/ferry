@@ -2,6 +2,10 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.14.5 - 2026-07-21
+### Changed
+- Shrink the packaged installer by ~21% (118MB -> 93.5MB) by no longer bundling renderer-only packages' (and their build-tool dependency trees) raw source into the app, and by dropping unused Chromium locale files.
+
 ## 0.14.4 - 2026-07-20
 ### Added
 - Confirm before deleting a folder (hover trash button, context menu, or the keyboard Delete/Backspace shortcut); file deletes via the trash button or context menu now confirm too, while the keyboard shortcut still deletes files instantly.
