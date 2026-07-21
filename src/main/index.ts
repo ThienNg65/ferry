@@ -26,6 +26,7 @@ import { registerUpdateHandlers } from './ipc/update.ipc'
 import { initAutoUpdater } from './update/AutoUpdater'
 import { AppSettingsStore } from './app/AppSettingsStore'
 import { TransferQueue } from './transfer/TransferQueue'
+import { KnownHostsStore } from './ssh/KnownHostsStore'
 import { EVENT_CHANNELS, type WindowStateEvent } from '../shared/contract'
 
 /** Development mode flag — set by electron-vite. */
@@ -104,6 +105,19 @@ function createWindow(): BrowserWindow {
     if (IS_DEV) {
       win.webContents.openDevTools({ mode: 'detach' })
     }
+    // Warm up heavy first-use-only work (ssh2's module compile + native crypto
+    // addon load, and KnownHostsStore's electron-store construction) after the
+    // window has painted, so the real cost lands here instead of blocking the
+    // UI thread during the user's first connect attempt.
+    setTimeout(() => {
+      void import('ssh2').catch(() => {})
+      try {
+        KnownHostsStore.getInstance()
+      } catch {
+        // A corrupted known_hosts.json must not crash the app at startup —
+        // it'll surface (and can be dealt with) when the user next connects.
+      }
+    }, 0)
   })
 
   const broadcastWindowState = (): void => {
