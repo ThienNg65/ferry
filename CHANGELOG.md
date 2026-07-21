@@ -2,6 +2,10 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 0.14.4 - 2026-07-20
+### Added
+- Confirm before deleting a folder (hover trash button, context menu, or the keyboard Delete/Backspace shortcut); file deletes via the trash button or context menu now confirm too, while the keyboard shortcut still deletes files instantly.
+
 ## 0.14.3 - 2026-07-20
 ### Added
 - Add bulk select and delete for saved sites.

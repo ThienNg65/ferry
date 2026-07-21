@@ -51,6 +51,8 @@ const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName:
 const renamingPath = ref<string | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
+const pendingDelete = ref<FileEntry[] | null>(null)
+const deleting = ref(false)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -445,6 +447,12 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   event.preventDefault()
   const targets = store.entries.filter((e) => store.selected.has(e.path))
+  // Folders always confirm before deleting — the keyboard shortcut only skips the
+  // dialog when every selected entry is a plain file.
+  if (targets.some((e) => e.isDir)) {
+    pendingDelete.value = targets
+    return
+  }
   try {
     await store.removeMany(targets)
   } catch (e) {
@@ -474,18 +482,33 @@ function onStartRename(entry: FileEntry): void {
 }
 
 /** Context-menu/hover-icon delete on a row that's part of a larger multi-selection removes the whole
- * selection (matching the keyboard Delete path); otherwise it removes just that one row. */
-async function onRemoveEntry(entry: FileEntry): Promise<void> {
+ * selection (matching the keyboard Delete path); otherwise it removes just that one row. Unlike the
+ * keyboard shortcut, this path always confirms first — it's a deliberate click, not a fast-path key. */
+function onRemoveEntry(entry: FileEntry): void {
   if (store.selected.size > 1 && store.selected.has(entry.path)) {
-    const targets = store.entries.filter((e) => store.selected.has(e.path))
-    try {
-      await store.removeMany(targets)
-    } catch (e) {
-      notify.error('Delete failed', e instanceof Error ? e.message : String(e))
-    }
+    pendingDelete.value = store.entries.filter((e) => store.selected.has(e.path))
     return
   }
-  await store.remove(entry)
+  pendingDelete.value = [entry]
+}
+
+async function confirmPendingDelete(): Promise<void> {
+  if (!pendingDelete.value) {
+    return
+  }
+  deleting.value = true
+  try {
+    if (pendingDelete.value.length > 1) {
+      await store.removeMany(pendingDelete.value)
+    } else {
+      await store.remove(pendingDelete.value[0])
+    }
+    pendingDelete.value = null
+  } catch (e) {
+    notify.error('Delete failed', e instanceof Error ? e.message : String(e))
+  } finally {
+    deleting.value = false
+  }
 }
 
 function onOpenChmod(entry: FileEntry): void {
@@ -613,6 +636,29 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
             Use "{{ extractConflict?.suggestedName }}"
           </UButton>
           <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
+        </template>
+      </UModal>
+      <UModal
+        :open="Boolean(pendingDelete)"
+        title="Delete"
+        :ui="{ footer: 'justify-end' }"
+        @update:open="(v: boolean) => { if (!v) pendingDelete = null }"
+      >
+        <template #body>
+          <p v-if="pendingDelete && pendingDelete.length === 1" class="text-sm text-default">
+            Delete <span class="font-medium">{{ pendingDelete[0].name }}</span
+            >{{ pendingDelete[0].isDir ? ' and everything inside it' : '' }}? This cannot be undone.
+          </p>
+          <div v-else-if="pendingDelete" class="flex flex-col gap-3">
+            <p class="text-sm text-default">Delete these {{ pendingDelete.length }} items? This cannot be undone.</p>
+            <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
+              <li v-for="e in pendingDelete" :key="e.path" class="truncate text-xs text-default">{{ e.name }}</li>
+            </ul>
+          </div>
+        </template>
+        <template #footer>
+          <UButton color="neutral" variant="outline" @click="pendingDelete = null">Cancel</UButton>
+          <UButton color="error" :loading="deleting" @click="confirmPendingDelete">Delete</UButton>
         </template>
       </UModal>
     </template>
