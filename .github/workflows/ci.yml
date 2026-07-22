@@ -1,14 +1,18 @@
 name: CI
 
 on:
-  pull_request:
+  push:
+    branches:
+      - main
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: write
 
 jobs:
-  test:
+  ci:
+    # Prevent infinite recursion from commits made by this workflow
+    if: github.actor != 'github-actions[bot]'
+
     runs-on: windows-latest
 
     steps:
