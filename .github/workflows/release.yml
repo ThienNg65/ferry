@@ -46,7 +46,7 @@ jobs:
       #####################################
 
       - name: Prepare release
-        run: node scripts/prepare-release.js
+        run: node .github/scripts/prepare-release.js
 
       - name: Commit release changelog
         run: |
@@ -90,7 +90,7 @@ jobs:
           node -e "const fs=require('fs');const p=require('./package.json');fs.writeFileSync('VERSION',p.version)"
 
       - name: Prepare next changelog
-        run: node scripts/prepare-next-version.js
+        run: node .github/scripts/prepare-next-version.js
 
       #####################################
       # Commit next development cycle
