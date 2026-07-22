@@ -2,104 +2,39 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  publish:
 
     runs-on: windows-latest
 
     steps:
-
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+      - uses: ./.github/actions/setup-node-deps
 
-      - run: npm ci
+      - name: Build
+        run: npm run build
 
-      - run: npm test
+      - name: Publish with Electron Builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run publish
 
-      - run: npm run build
+      - name: Generate release notes
+        run: node scripts/extract-release-notes.js
 
-      #####################################
-      # Current Version
-      #####################################
-
-      - name: Read version
-        id: version
+      - name: Update GitHub Release body
         shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      #####################################
-      # Finalize changelog
-      #####################################
-
-      - name: Prepare release
-        run: node .github/scripts/prepare-release.js
-
-      - name: Commit release changelog
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-
-          git add CHANGELOG.md
-          git commit -m "docs(changelog): release v${{ steps.version.outputs.version }}" || exit 0
-
-          git push
-
-      #####################################
-      # Tag
-      #####################################
-
-      - name: Create tag
-        run: |
-          git tag v${{ steps.version.outputs.version }}
-          git push origin v${{ steps.version.outputs.version }}
-
-      #####################################
-      # Release
-      #####################################
-
-      - name: Publish Electron
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run publish
+          VERSION=$(node -p "require('./package.json').version")
 
-      #####################################
-      # Next version
-      #####################################
-
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
-
-      - name: Update VERSION
-        shell: bash
-        run: |
-          node -e "const fs=require('fs');const p=require('./package.json');fs.writeFileSync('VERSION',p.version)"
-
-      - name: Prepare next changelog
-        run: node .github/scripts/prepare-next-version.js
-
-      #####################################
-      # Commit next development cycle
-      #####################################
-
-      - name: Commit next version
-        run: |
-          git add .
-
-          git commit -m "chore: start next development cycle"
-
-          git push
+          gh release edit "v${VERSION}" \
+            --notes-file RELEASE_NOTES.md
