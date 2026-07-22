@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
-## Unreleased
+## 0.14.5 - 2026-07-22
 
 ## 0.14.5 - 2026-07-21
 ### Changed
