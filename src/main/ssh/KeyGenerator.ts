@@ -133,6 +133,15 @@ export async function generateBuiltin(req: KeyGenerateRequest): Promise<KeyGener
   await fs.writeFile(req.keyPath, pem, { mode: 0o600 })
   await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644 })
 
+  if (process.platform === 'win32' && process.env.USERNAME) {
+    try {
+      const { execFileSync } = await import('child_process')
+      execFileSync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:F`], { windowsHide: true })
+    } catch {
+      // ignore icacls errors if unsupported or restricted
+    }
+  }
+
   return {
     privateKeyPath: req.keyPath,
     publicKeyPath: `${req.keyPath}.pub`,

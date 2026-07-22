@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   release:
-
     runs-on: windows-latest
 
     steps:
-
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/setup-node@v4
         with:
@@ -28,7 +28,7 @@ jobs:
 
       - run: npm test
 
-      - run: npm run build
+      - run: npm run build:vite
 
       #####################################
       # Current Version
@@ -68,14 +68,19 @@ jobs:
           git push origin v${{ steps.version.outputs.version }}
 
       #####################################
-      # Release
+      # Tauri Build & Release
       #####################################
 
-      - name: Publish Electron
+      - name: Build & Publish Tauri Release
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          npm run publish
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: 'Ferry v${{ steps.version.outputs.version }}'
+          releaseBody: 'See CHANGELOG.md for details.'
+          releaseDraft: false
+          prerelease: false
 
       #####################################
       # Next version
@@ -99,7 +104,5 @@ jobs:
       - name: Commit next version
         run: |
           git add .
-
           git commit -m "chore: start next development cycle"
-
           git push

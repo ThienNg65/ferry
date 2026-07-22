@@ -2,6 +2,17 @@
 
 All notable changes to Ferry are documented in this file, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style. `package.json`'s `version` and the standalone `VERSION` file must always be bumped together.
 
+## 1.0.0 - 2026-07-22
+### Added
+- Complete migration from Electron to Tauri 2.x framework for lightweight application footprint.
+- Native Rust backend crate in `src-tauri/` handling SSH connections, SFTP sessions, host-key TOFU persistence, site profile storage, and WinSCP/PuTTY Windows Registry session imports via `winreg`.
+- Unified IPC bridge adapter in `src/renderer/src/api.ts` with `isTauri()` runtime detection for `@tauri-apps/api/core` and `@tauri-apps/api/event`.
+- Standardized Vite 5 ESM bundler setup (`vite.config.ts`), replacing `electron-vite`.
+- Updated GitHub Actions CI/CD workflows for automated Tauri build and release publishing.
+
+### Fixed
+- Fixed Windows OpenSSH keygen private key file ACL permissions in temporary directories via `icacls`.
+
 ## 0.14.5 - 2026-07-21
 ### Changed
 - Shrink the packaged installer by ~21% (118MB -> 93.5MB) by no longer bundling renderer-only packages' (and their build-tool dependency trees) raw source into the app, and by dropping unused Chromium locale files.

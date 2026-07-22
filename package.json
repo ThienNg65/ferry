@@ -1,8 +1,9 @@
 {
   "name": "ferry",
-  "version": "0.14.5",
+  "version": "1.0.0",
+  "type": "module",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
-  "main": "out/main/index.js",
+  "main": "out/renderer/index.html",
   "license": "MIT",
   "author": "ThienNg65",
   "repository": {
@@ -10,19 +11,21 @@
     "url": "https://github.com/ThienNg65/ferry.git"
   },
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "package": "npm run build && electron-builder",
-    "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
+    "dev": "tauri dev",
+    "build": "vite build && tauri build",
+    "build:vite": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --build --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "publish": "electron-builder --publish always"
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-shell": "^2.2.0",
+    "@tauri-apps/plugin-store": "^2.2.0",
     "archiver": "^8.0.0",
-    "electron-store": "^8.1.0",
-    "electron-updater": "^6.8.9",
     "socks": "^2.8.9",
     "ssh2": "^1.16.0"
   },
@@ -31,6 +34,7 @@
     "@iconify/vue": "^5.0.1",
     "@nuxt/ui": "^4.9.0",
     "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2.2.0",
     "@tanstack/vue-virtual": "^3.10.0",
     "@types/archiver": "^8.0.0",
     "@types/node": "^22.0.0",
@@ -38,9 +42,6 @@
     "@vitejs/plugin-vue": "^5.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.0.0",
-    "electron-vite": "^5.0.0",
     "pinia": "^2.1.7",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.4.0",

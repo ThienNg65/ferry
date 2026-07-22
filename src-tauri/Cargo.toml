@@ -1,0 +1,34 @@
+[package]
+name = "ferry"
+version = "1.0.0"
+description = "Ferry — a lightweight SFTP client with live remote log tailing"
+authors = ["ThienNg65"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+russh = "0.45"
+russh-sftp = "0.2"
+keyring = "3"
+notify = "6"
+zip = "2"
+flate2 = "1"
+tar = "0.4"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

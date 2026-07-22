@@ -14,8 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: ./.github/actions/setup-node-deps
 
       - run: npm run typecheck
 
       - run: npm test
+
+      - run: cargo check --manifest-path src-tauri/Cargo.toml
