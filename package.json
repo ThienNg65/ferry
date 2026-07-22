@@ -1,6 +1,6 @@
 {
   "name": "ferry",
-  "version": "0.14.6",
+  "version": "0.14.5",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/main/index.js",
   "license": "MIT",
@@ -16,7 +16,8 @@
     "package": "npm run build && electron-builder",
     "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "publish": "electron-builder --publish always"
   },
   "dependencies": {
     "archiver": "^8.0.0",

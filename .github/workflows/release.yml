@@ -2,77 +2,104 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+permissions:
+  contents: write
 
 jobs:
   release:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
 
     runs-on: windows-latest
 
-    permissions:
-      contents: write
-
     steps:
+
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - uses: ./.github/actions/setup-node-deps
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
-      - run: npm run typecheck
+      - run: npm ci
 
       - run: npm test
 
       - run: npm run build
 
-      - name: Tag release
+      #####################################
+      # Current Version
+      #####################################
+
+      - name: Read version
+        id: version
         shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      #####################################
+      # Finalize changelog
+      #####################################
+
+      - name: Prepare release
+        run: node scripts/prepare-release.js
+
+      - name: Commit release changelog
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+          git add CHANGELOG.md
+          git commit -m "docs(changelog): release v${{ steps.version.outputs.version }}" || exit 0
+
+          git push
+
+      #####################################
+      # Tag
+      #####################################
+
+      - name: Create tag
+        run: |
+          git tag v${{ steps.version.outputs.version }}
+          git push origin v${{ steps.version.outputs.version }}
+
+      #####################################
+      # Release
+      #####################################
+
+      - name: Publish Electron
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version=$(node -p "require('./package.json').version")
-          # Check if tag already exists
-          if git rev-parse "v${version}" >/dev/null 2>&1; then
-            echo "Tag v${version} already exists. Skipping tag creation."
-          else
-            git tag "v${version}"
-            git push origin "v${version}"
-          fi
+          npm run publish
 
-      - name: Package and publish
-        uses: nick-fields/retry@v3
-        with:
-          # electron-builder's GitHub publisher has no built-in retry for
-          # transient GitHub API errors (e.g. 503s during a GitHub incident) -
-          # retry the whole step. Repackaging is cheap since `out/` is already
-          # built; a retry just re-runs electron-builder against it.
-          max_attempts: 3
-          timeout_minutes: 20
-          retry_wait_seconds: 60
-          command: npx electron-builder --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      #####################################
+      # Next version
+      #####################################
 
-      - name: Bump version to next patch and push back to main
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
+
+      - name: Update VERSION
         shell: bash
         run: |
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
+          node -e "const fs=require('fs');const p=require('./package.json');fs.writeFileSync('VERSION',p.version)"
 
-          npm version patch --no-git-tag-version
+      - name: Prepare next changelog
+        run: node scripts/prepare-next-version.js
 
-          new_version=$(node -p "require('./package.json').version")
-          node -e "require('fs').writeFileSync('VERSION', require('./package.json').version + '\n')"
+      #####################################
+      # Commit next development cycle
+      #####################################
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Commit next version
+        run: |
+          git add .
 
-          git add package.json package-lock.json VERSION
-          git commit -m "chore(release): bump version to ${new_version} [skip ci]"
-          git push origin HEAD:main
+          git commit -m "chore: start next development cycle"
+
+          git push
