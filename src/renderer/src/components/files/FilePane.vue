@@ -378,9 +378,9 @@ async function onOsDrop(event: DragEvent): Promise<void> {
       continue
     }
     const file = item.getAsFile()
-    // Electron 32+ removed the `File.path` DOM extension — the absolute path is
-    // resolved through the preload's webUtils bridge instead.
-    const localPath = file ? window.api.getPathForFile(file) : ''
+    // Tauri does not expose absolute paths for dropped files via HTML5 Drag and Drop API.
+    // TODO: implement Tauri-native file drop handling (e.g. plugin:drop-files or @tauri-apps/plugin-dialog).
+    const localPath = ''
     if (!file || !localPath) {
       continue
     }

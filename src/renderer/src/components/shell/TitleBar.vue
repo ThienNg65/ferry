@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { WindowIsMaximizedResult, WindowStateEvent } from '@shared/contract'
-import { invoke, isTauri, onEvent } from '../../api'
+import { invoke, onEvent } from '../../api'
 import { useGlobalActivity } from '../../composables/useGlobalActivity'
 import { useUiStore } from '../../stores/ui.store'
 import { useSessionsStore } from '../../stores/sessions.store'
@@ -37,28 +37,16 @@ onUnmounted(() => {
 })
 
 async function minimize(): Promise<void> {
-  if (isTauri()) {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().minimize()
-  } else {
-    void invoke(INVOKE_CHANNELS.windowMinimize)
-  }
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().minimize()
 }
 async function toggleMaximize(): Promise<void> {
-  if (isTauri()) {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().toggleMaximize()
-  } else {
-    void invoke(INVOKE_CHANNELS.windowMaximizeToggle)
-  }
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().toggleMaximize()
 }
 async function close(): Promise<void> {
-  if (isTauri()) {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().close()
-  } else {
-    void invoke(INVOKE_CHANNELS.windowClose)
-  }
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().close()
 }
 </script>
 

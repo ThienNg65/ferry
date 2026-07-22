@@ -1,17 +1,17 @@
 /**
  * Shared IPC contract — the single source of truth for every channel name,
  * request/response envelope, and push-event payload exchanged between the
- * Electron main process and the renderer.
+ * Tauri backend and the renderer.
  *
- * Both `src/preload/index.ts` (whitelist) and the main-process IPC handlers
+ * Both the Tauri command handlers and the renderer's `api.ts` helper
  * import the channel lists from here, so the two can never silently drift:
  * adding a channel in one place without the other becomes a type error.
  *
  * Design rules:
  *  - Every `invoke` resolves to an {@link IpcResult} envelope, never a raw value.
  *  - Push events (main → renderer) carry typed payloads keyed by channel.
- *  - No runtime dependencies on Electron or Node here — this module is imported
- *    by the sandboxed renderer too.
+ *  - No runtime dependencies on Tauri or Node here — this module is imported
+ *    by the frontend renderer too.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -681,7 +681,7 @@ export interface WindowIsMaximizedResult {
 
 /**
  * The complete invoke-channel namespace. The renderer calls
- * `window.api.invoke(channel, …)` and always receives an {@link IpcResult}.
+ * `invoke(channel, …)` and always receives an {@link IpcResult}.
  */
 export const INVOKE_CHANNELS = {
   // saved sites
@@ -776,7 +776,7 @@ export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNEL
 // Channels — push events (main → renderer)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Channels the main process pushes to the renderer via `webContents.send`. */
+/** Channels the backend pushes to the renderer via Tauri events. */
 export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
