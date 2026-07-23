@@ -104,7 +104,7 @@ jobs:
           
           # Try to push everything. If it fails due to a race condition (non-fast-forward),
           # fail the workflow. Since we haven't touched GitHub Releases yet, no rollback is needed!
-          if ! git push origin HEAD:main --follow-tags; then
+          if ! git push origin HEAD:main "v${{ steps.version.outputs.version }}"; then
             echo "::error::Push failed! Another commit was merged to main during the build."
             exit 1
           fi
