@@ -21,6 +21,15 @@ import FilePreviewDialog from './FilePreviewDialog.vue'
 import ChmodDialog from './ChmodDialog.vue'
 import SyncDialog from './SyncDialog.vue'
 
+interface TransferIntent {
+  sessionId: string
+  direction: 'upload' | 'download'
+  localPath: string
+  remotePath: string
+  isDir: boolean
+  targetName: string
+}
+
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
 const localFs = useLocalFsStore()
@@ -50,6 +59,7 @@ const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
+const transferConflict = ref<{ intents: TransferIntent[]; conflicts: string[] } | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const pendingDelete = ref<FileEntry[] | null>(null)
@@ -193,21 +203,55 @@ async function submitMkdir(): Promise<void> {
   }
 }
 
-/** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
-async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): Promise<void> {
-  const sessionId = sessions.activeSessionId
-  if (!sessionId) {
-    return
+function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean }, sessionId: string): TransferIntent | null {
+  if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
+    notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
+    return null
   }
   if (sourceSide === 'local') {
     const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
-    await transfers.enqueue(sessionId, 'upload', entry.path, remoteTarget, entry.isDir)
+    return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name }
   } else {
     const localDir = localFs.currentPath.replace(/[/\\]$/, '')
     const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
     const localTarget = `${localDir}${sep}${entry.name}`
-    await transfers.enqueue(sessionId, 'download', localTarget, entry.path, entry.isDir)
+    return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name }
   }
+}
+
+async function checkAndQueueTransfers(intents: TransferIntent[], targetStore: typeof localFs | typeof remoteFs): Promise<void> {
+  const conflicts: string[] = []
+  for (const intent of intents) {
+    if (targetStore.entries.some((e) => e.name === intent.targetName)) {
+      conflicts.push(intent.targetName)
+    }
+  }
+  if (conflicts.length > 0) {
+    transferConflict.value = { intents, conflicts }
+    return
+  }
+  for (const intent of intents) {
+    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
+  }
+}
+
+async function resolveTransferConflict(): Promise<void> {
+  const conflict = transferConflict.value
+  if (!conflict) return
+  transferConflict.value = null
+  for (const intent of conflict.intents) {
+    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
+  }
+}
+
+/** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
+async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): Promise<void> {
+  const sessionId = sessions.activeSessionId
+  if (!sessionId) return
+  const intent = buildTransferIntent(sourceSide, entry, sessionId)
+  if (!intent) return
+  const targetStore = sourceSide === 'local' ? remoteFs : localFs
+  await checkAndQueueTransfers([intent], targetStore)
 }
 
 async function onTransfer(entry: FileEntry): Promise<void> {
@@ -216,10 +260,17 @@ async function onTransfer(entry: FileEntry): Promise<void> {
 
 /** Toolbar "Upload/Download N selected" — enqueues every selected row (files and folders alike). */
 async function onTransferSelected(): Promise<void> {
+  const sessionId = sessions.activeSessionId
+  if (!sessionId) return
   const targets = store.entries.filter((e) => store.selected.has(e.path))
+  const intents: TransferIntent[] = []
   for (const entry of targets) {
-    await transferEntry(props.side, entry)
+    const intent = buildTransferIntent(props.side, entry, sessionId)
+    if (intent) intents.push(intent)
   }
+  if (intents.length === 0) return
+  const targetStore = props.side === 'local' ? remoteFs : localFs
+  await checkAndQueueTransfers(intents, targetStore)
 }
 
 async function onTail(entry: FileEntry): Promise<void> {
@@ -373,23 +424,19 @@ function onDragLeave(): void {
 /** Uploads every file/folder dropped from the OS straight into the remote pane's current directory. */
 async function onOsDrop(event: DragEvent): Promise<void> {
   const sessionId = sessions.activeSessionId
-  if (!sessionId || !event.dataTransfer) {
-    return
-  }
+  if (!sessionId || !event.dataTransfer) return
+  const intents: TransferIntent[] = []
   for (const item of event.dataTransfer.items) {
-    if (item.kind !== 'file') {
-      continue
-    }
+    if (item.kind !== 'file') continue
     const file = item.getAsFile()
-    // Electron 32+ removed the `File.path` DOM extension — the absolute path is
-    // resolved through the preload's webUtils bridge instead.
     const localPath = file ? window.api.getPathForFile(file) : ''
-    if (!file || !localPath) {
-      continue
-    }
+    if (!file || !localPath) continue
     const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
-    const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${file.name}`
-    await transfers.enqueue(sessionId, 'upload', localPath, remoteTarget, isDir)
+    const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir }, sessionId)
+    if (intent) intents.push(intent)
+  }
+  if (intents.length > 0) {
+    await checkAndQueueTransfers(intents, remoteFs)
   }
 }
 
@@ -639,6 +686,25 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
             Use "{{ extractConflict?.suggestedName }}"
           </UButton>
           <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
+        </template>
+      </UModal>
+      <UModal
+        :open="Boolean(transferConflict)"
+        title="File Conflict"
+        :ui="{ footer: 'justify-end' }"
+        @update:open="(v: boolean) => { if (!v) transferConflict = null }"
+      >
+        <template #body>
+          <p class="text-sm text-default mb-2">
+            The following items already exist in the target directory and will be overwritten:
+          </p>
+          <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2 text-xs text-default">
+            <li v-for="name in transferConflict?.conflicts" :key="name" class="truncate">{{ name }}</li>
+          </ul>
+        </template>
+        <template #footer>
+          <UButton color="neutral" variant="outline" @click="transferConflict = null">Cancel</UButton>
+          <UButton color="primary" @click="resolveTransferConflict">Overwrite</UButton>
         </template>
       </UModal>
       <UModal

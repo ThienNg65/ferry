@@ -8,10 +8,12 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 
 ### Changed
 - Shrink the packaged installer by ~21% (118MB -> 93.5MB) by no longer bundling renderer-only packages' (and their build-tool dependency trees) raw source into the app, and by dropping unused Chromium locale files.
+- File transfers from remote to local now intuitively target the active local directory rather than the OS Downloads folder, complete with a new conflict resolution modal to prevent silent overwriting.
 
 ### Fixed
 - Prevent app crash on unhandled ssh client error events
 - Live Tail log panel navigation and immediate output: Clicking "Live Tail" now immediately navigates to the log panel, and the log state is managed globally so initial history is never missed.
+- Prevent remote-to-local path traversal vulnerabilities by enforcing strict filename sanitization prior to enqueuing transfers.
 
 ## 0.14.4 - 2026-07-20
 ### Added
