@@ -10,6 +10,7 @@ import { SshError } from '../ssh/errors'
 
 /** Request payload for `session:open` — connect from a saved site, or ad hoc. */
 export interface SessionOpenRequest {
+  sessionId: string
   siteId?: string
   quickConnect?: QuickConnectInput
   /** Set only on a user-confirmed retry after a host-key-mismatch warning, scoped to the exact
@@ -22,10 +23,10 @@ export function registerSessionHandlers(): void {
   handle<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, async (req) => {
     const request = req as SessionOpenRequest
     if (request.siteId) {
-      return SessionManager.getInstance().openFromSite(request.siteId, request.trustedHostKey)
+      return SessionManager.getInstance().openFromSite(request.siteId, request.sessionId, request.trustedHostKey)
     }
     if (request.quickConnect) {
-      return SessionManager.getInstance().openQuickConnect(request.quickConnect, request.trustedHostKey)
+      return SessionManager.getInstance().openQuickConnect(request.quickConnect, request.sessionId, request.trustedHostKey)
     }
     throw new SshError('VALIDATION', 'session:open requires siteId or quickConnect')
   })

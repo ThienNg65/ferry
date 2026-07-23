@@ -203,9 +203,9 @@ async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): 
     const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
     await transfers.enqueue(sessionId, 'upload', entry.path, remoteTarget, entry.isDir)
   } else {
-    const { path: downloadsDir } = await invoke<DownloadsPathResult>(INVOKE_CHANNELS.systemGetDownloadsPath)
-    const sep = downloadsDir.includes('\\') ? '\\' : '/'
-    const localTarget = `${downloadsDir}${sep}${entry.name}`
+    const localDir = localFs.currentPath.replace(/[/\\]$/, '')
+    const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
+    const localTarget = `${localDir}${sep}${entry.name}`
     await transfers.enqueue(sessionId, 'download', localTarget, entry.path, entry.isDir)
   }
 }

@@ -256,6 +256,11 @@ export interface SessionOpenResult {
   status: SessionStatus
 }
 
+export interface SessionProgressEvent {
+  sessionId: string
+  message: string
+}
+
 /** One challenge within a keyboard-interactive auth round (e.g. an OTP/2FA code prompt). */
 export interface KeyboardInteractivePrompt {
   prompt: string
@@ -779,6 +784,7 @@ export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNEL
 /** Channels the main process pushes to the renderer via `webContents.send`. */
 export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
+  sessionProgress: 'session:progress',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   transferEvent: 'transfer:event',
   operationEvent: 'operation:event',

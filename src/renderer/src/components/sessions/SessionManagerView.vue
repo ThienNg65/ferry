@@ -479,5 +479,23 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
         <UButton @click="submitKeyboardAnswers">Submit</UButton>
       </template>
     </UModal>
+    <UModal
+      :open="sessions.connecting && !sessions.pendingKeyboardPrompt && !sessions.pendingHostKeyMismatch"
+      title="Connecting..."
+      prevent-close
+    >
+      <template #body>
+        <div class="flex flex-col gap-2 max-h-60 overflow-y-auto">
+          <div
+            v-for="(msg, index) in sessions.activeTab?.progressMessages || []"
+            :key="index"
+            class="text-sm"
+            :class="index === (sessions.activeTab?.progressMessages.length ?? 0) - 1 ? 'text-highlighted font-medium' : 'text-muted'"
+          >
+            {{ msg }}
+          </div>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

@@ -2,6 +2,7 @@ import type { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2'
 import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
 import { readFile } from 'fs/promises'
+import * as net from 'net'
 import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
@@ -205,6 +206,7 @@ export class SessionManager {
    */
   async openFromSite(
     siteId: string,
+    sessionId: string,
     trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     const site = SiteStore.getInstance().getRaw(siteId)
@@ -214,6 +216,7 @@ export class SessionManager {
     const secrets = SiteStore.getInstance().getDecryptedSecrets(siteId)
     const jumpHosts = SiteStore.getInstance().getDecryptedJumpHosts(siteId)
     return this.connect(
+      sessionId,
       siteId,
       {
         host: site.host,
@@ -239,9 +242,11 @@ export class SessionManager {
   /** Opens an ad-hoc session that isn't saved as a site. See {@link openFromSite} for `trustedHostKey`. */
   async openQuickConnect(
     input: QuickConnectInput,
+    sessionId: string,
     trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     return this.connect(
+      sessionId,
       null,
       { ...input, proxy: resolveEffectiveProxy(input.proxyMode, input.proxy) },
       input.remoteInitialPath ?? '.',
@@ -325,7 +330,7 @@ export class SessionManager {
   }
 
   /** Connects one `ssh2.Client` (either the target host or a jump host), resolving on `ready`. Real keyboard-interactive prompts route through {@link promptKeyboardInteractive} under the given `sessionId`. */
-  private connectClient(sessionId: string, client: Client, config: ConnectConfig, password: string | undefined): Promise<void> {
+  private connectClient(sessionId: string, client: Client, config: ConnectConfig, password: string | undefined, authMethod?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const cleanup = (): void => {
         client.removeListener('ready', onReady)
@@ -334,6 +339,9 @@ export class SessionManager {
       }
       const onReady = (): void => {
         cleanup()
+        this.broadcastProgress(sessionId, 'Authenticated.')
+        this.broadcastProgress(sessionId, 'Starting the session...')
+        this.broadcastProgress(sessionId, 'Reading remote directory...')
         resolve()
       }
       const onError = (e: Error): void => {
@@ -365,6 +373,13 @@ export class SessionManager {
           finish(mergeAnswers(prompts.length, autoAnswered, needsUser, answers))
         })
       })
+      
+      let authMsg = 'Authenticating...'
+      if (authMethod === 'password') authMsg = 'Authenticating with pre-entered password.'
+      else if (authMethod === 'privateKey') authMsg = 'Authenticating with private key.'
+      else if (authMethod === 'agent') authMsg = 'Authenticating with SSH agent.'
+      this.broadcastProgress(sessionId, authMsg)
+      
       client.connect(config)
     })
   }
@@ -383,12 +398,12 @@ export class SessionManager {
   }
 
   private async connect(
+    sessionId: string,
     siteId: string | null,
     input: ConnectInput,
     initialCwd: string,
     trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
-    const sessionId = randomUUID()
     // Lazy-load ssh2 (a heavy module with a native optional dep) only when the
     // user actually connects, keeping it off the app-startup critical path.
     // Aliased so the runtime binding doesn't collide with the file-wide `Client`
@@ -433,7 +448,39 @@ export class SessionManager {
         // minimal-blast-radius integration point: the proxy only solves "how
         // do I reach the first machine."
         const first = hops.length > 0 ? hops[0] : input
+        this.broadcastProgress(sessionId, 'Searching for proxy...')
         sock = await connectViaProxy(input.proxy, first.host, first.port)
+        this.broadcastProgress(sessionId, 'Connecting to proxy...')
+        this.broadcastProgress(sessionId, 'Authenticating...')
+        this.broadcastProgress(sessionId, `Using username "${first.username}".`)
+      } else {
+        const first = hops.length > 0 ? hops[0] : input
+        this.broadcastProgress(sessionId, 'Searching for host...')
+        sock = await new Promise<net.Socket>((resolve, reject) => {
+          const s = net.createConnection({
+            host: first.host,
+            port: first.port,
+            autoSelectFamily: true,
+            autoSelectFamilyAttemptTimeout: 250
+          })
+          const timeoutId = setTimeout(() => {
+            s.destroy()
+            reject(new SshError('SSH_TIMEOUT', `Connection to ${first.host} timed out`))
+          }, DEFAULT_CONNECT_TIMEOUT_MS)
+          s.once('lookup', () => {
+            this.broadcastProgress(sessionId, 'Connecting to host...')
+          })
+          s.once('connect', () => {
+            clearTimeout(timeoutId)
+            this.broadcastProgress(sessionId, 'Authenticating...')
+            this.broadcastProgress(sessionId, `Using username "${first.username}".`)
+            resolve(s)
+          })
+          s.once('error', (err) => {
+            clearTimeout(timeoutId)
+            reject(new SshError('SSH_CONNECT', err.message))
+          })
+        })
       }
       for (let i = 0; i < hops.length; i++) {
         const hop = hops[i]
@@ -449,7 +496,7 @@ export class SessionManager {
           hopConfig.sock = sock
         }
         try {
-          await this.connectClient(sessionId, hopClient, hopConfig, hop.password)
+          await this.connectClient(sessionId, hopClient, hopConfig, hop.password, hop.authMethod)
         } catch (e) {
           throw hopMismatch.value
             ? new SshError(
@@ -476,7 +523,7 @@ export class SessionManager {
       }
 
       try {
-        await this.connectClient(sessionId, client, targetConfig, input.password)
+        await this.connectClient(sessionId, client, targetConfig, input.password, input.authMethod)
       } catch (e) {
         if (hostKeyMismatch.value) {
           throw new SshError(
@@ -540,6 +587,15 @@ export class SessionManager {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send(EVENT_CHANNELS.sessionStatus, payload)
+      }
+    }
+  }
+
+  private broadcastProgress(sessionId: string, message: string): void {
+    const payload = { sessionId, message }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(EVENT_CHANNELS.sessionProgress, payload)
       }
     }
   }

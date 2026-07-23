@@ -7,7 +7,8 @@ import type {
   Site,
   SessionOpenResult,
   SessionStatus,
-  SessionStatusEvent
+  SessionStatusEvent,
+  SessionProgressEvent
 } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
@@ -31,6 +32,7 @@ export interface SessionTab {
   status: SessionStatus | null
   statusMessage: string | null
   connecting: boolean
+  progressMessages: string[]
   /** The in-flight `openSession` call while `connecting` is true — lets `closeTab` wait for it
    * to settle instead of detaching the tab from a session that's still being opened underneath it. */
   connectPromise: Promise<void> | null
@@ -54,6 +56,7 @@ interface SessionsState {
   tabs: SessionTab[]
   activeTabId: string
   unsubscribeStatus: (() => void) | null
+  unsubscribeProgress: (() => void) | null
   unsubscribeKeyboardInteractive: (() => void) | null
   /** A live keyboard-interactive challenge (2FA/OTP) awaiting the user's answer — global, not per-tab, since only one connect attempt is normally in flight at a time. */
   pendingKeyboardPrompt: KeyboardInteractiveRequestEvent | null
@@ -69,6 +72,7 @@ function freshTab(): SessionTab {
     status: null,
     statusMessage: null,
     connecting: false,
+    progressMessages: [],
     connectPromise: null,
     pendingHostKeyMismatch: null
   }
@@ -81,6 +85,7 @@ export const useSessionsStore = defineStore('sessions', {
       tabs: [initial],
       activeTabId: initial.tabId,
       unsubscribeStatus: null,
+      unsubscribeProgress: null,
       unsubscribeKeyboardInteractive: null,
       pendingKeyboardPrompt: null
     }
@@ -160,6 +165,11 @@ export const useSessionsStore = defineStore('sessions', {
           notify.error('Connection lost', tab.label ? `${tab.label}: ${evt.message ?? ''}` : evt.message)
         }
       })
+      this.unsubscribeProgress = onEvent<SessionProgressEvent>(EVENT_CHANNELS.sessionProgress, (evt) => {
+        const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
+        if (!tab) return
+        tab.progressMessages.push(evt.message)
+      })
     },
 
     /** Opens a new picker tab (site not chosen yet) and activates it. */
@@ -221,6 +231,8 @@ export const useSessionsStore = defineStore('sessions', {
       this.ensureKeyboardInteractiveSubscription()
       const tab = this.activeTab
       tab.connecting = true
+      tab.sessionId = crypto.randomUUID()
+      tab.progressMessages = []
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
       tab.label = label
@@ -248,9 +260,10 @@ export const useSessionsStore = defineStore('sessions', {
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
           ...request,
+          sessionId: tab.sessionId,
           trustedHostKey
         })
-        tab.sessionId = result.sessionId
+        // tab.sessionId is already set during openSession prep
         // Preload the initial listing before flipping `status` — App.vue's
         // picker→file-browser swap is gated on `status`, so this keeps the
         // connecting/spinner UI up through the SFTP readdir too, instead of

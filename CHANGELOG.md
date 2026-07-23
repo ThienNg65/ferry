@@ -2,16 +2,16 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## [Unreleased]
-### Fixed
-- Live Tail log panel navigation and immediate output: Clicking "Live Tail" now immediately navigates to the log panel, and the log state is managed globally so initial history is never missed.
+## 0.14.5 - 2026-07-23
+### Added
+- Detailed connection progress dialog matching WinSCP UX and "Happy Eyeballs" socket implementation for faster connection speeds.
 
-## 0.14.5 - 2026-07-21
 ### Changed
 - Shrink the packaged installer by ~21% (118MB -> 93.5MB) by no longer bundling renderer-only packages' (and their build-tool dependency trees) raw source into the app, and by dropping unused Chromium locale files.
 
 ### Fixed
 - Prevent app crash on unhandled ssh client error events
+- Live Tail log panel navigation and immediate output: Clicking "Live Tail" now immediately navigates to the log panel, and the log state is managed globally so initial history is never missed.
 
 ## 0.14.4 - 2026-07-20
 ### Added
