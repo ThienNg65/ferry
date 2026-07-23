@@ -4,17 +4,36 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
-  ci:
+  verify:
     # Prevent infinite recursion from commits made by this workflow
     if: github.actor != 'github-actions[bot]'
-
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  auto-release:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,12 +41,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/setup-node-deps
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build
-        run: npm run build
 
       - name: Read version
         id: version
@@ -50,14 +63,31 @@ jobs:
             echo "No changelog changes."
           else
             git commit -m "docs: finalize v${{ steps.version.outputs.version }} changelog"
-            git push origin HEAD:main
           fi
 
       - name: Create tag
         shell: bash
+        # Create tag locally. We will push it at the end with --follow-tags
+        run: git tag "v${{ steps.version.outputs.version }}"
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish with Electron Builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run publish
+
+      - name: Generate release notes
+        run: node ./.github/scripts/extract-release-notes.js
+
+      - name: Update GitHub Release body
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          gh release edit "v${{ steps.version.outputs.version }}" \
+            --notes-file RELEASE_NOTES.md
 
       - name: Bump next version
         run: npm version patch --no-git-tag-version
@@ -70,14 +100,24 @@ jobs:
       - name: Prepare next changelog
         run: node ./.github/scripts/prepare-next-version.js
 
-      - name: Commit next development cycle
+      - name: Commit next development cycle and push
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git add package.json package-lock.json VERSION CHANGELOG.md
 
           if git diff --cached --quiet; then
-            echo "Nothing to commit."
+            echo "Nothing to commit for next cycle."
           else
             git commit -m "chore: start next development cycle"
-            git push origin HEAD:main
+          fi
+          
+          # Try to push everything. If it fails due to a race condition (non-fast-forward),
+          # rollback the release and tag from GitHub so the next CI run can try again cleanly.
+          if ! git push origin HEAD:main --follow-tags; then
+            echo "::error::Push failed! Another commit was merged to main during the build."
+            echo "Rolling back the release and tag from GitHub..."
+            gh release delete "v${{ steps.version.outputs.version }}" -y --cleanup-tag
+            exit 1
           fi
