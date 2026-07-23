@@ -9,6 +9,7 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ### Changed
 
 ### Fixed
+- Prevent app crash on unhandled ssh client error events
 
 ## 0.14.6 - 2026-07-22
 
