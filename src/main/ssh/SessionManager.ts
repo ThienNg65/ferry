@@ -397,6 +397,15 @@ export class SessionManager {
     const client = new SshClient()
     const hops = input.jumpHosts ?? []
     const jumpClients: Client[] = hops.map(() => new SshClient())
+    
+    // Prevent unhandled exception crashes if a socket drops unexpectedly
+    // and emits an 'error' event after the connection-time listeners are removed.
+    // The subsequent 'close' event handles the actual cleanup/status broadcast.
+    client.on('error', () => {})
+    for (const jc of jumpClients) {
+      jc.on('error', () => {})
+    }
+
     const entry: SessionEntry = {
       sessionId,
       siteId,
