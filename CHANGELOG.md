@@ -2,28 +2,16 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
-
-### Added
-
-### Changed
-
+## [Unreleased]
 ### Fixed
-- Prevent app crash on unhandled ssh client error events
-
-## 0.14.6 - 2026-07-22
-
-### Added
-
-### Changed
-
-### Fixed
-
-## 0.14.5 - 2026-07-22
+- Live Tail log panel navigation and immediate output: Clicking "Live Tail" now immediately navigates to the log panel, and the log state is managed globally so initial history is never missed.
 
 ## 0.14.5 - 2026-07-21
 ### Changed
 - Shrink the packaged installer by ~21% (118MB -> 93.5MB) by no longer bundling renderer-only packages' (and their build-tool dependency trees) raw source into the app, and by dropping unused Chromium locale files.
+
+### Fixed
+- Prevent app crash on unhandled ssh client error events
 
 ## 0.14.4 - 2026-07-20
 ### Added

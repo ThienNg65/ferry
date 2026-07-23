@@ -12,6 +12,7 @@ import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
+import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName } from '../../utils/fileTypes'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
@@ -226,6 +227,8 @@ async function onTail(entry: FileEntry): Promise<void> {
   if (!sessionId) {
     return
   }
+  const dock = useDockState()
+  dock.openDock('tail')
   await tailStreams.open(sessionId, entry.path)
 }
 

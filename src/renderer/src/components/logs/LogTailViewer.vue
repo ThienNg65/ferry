@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
-import { useLogTail } from '../../composables/useLogTail'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useTailStreamsStore } from '../../stores/tailStreams.store'
 
 const props = defineProps<{ tailId: string }>()
 
-const { lines, ended, error } = useLogTail(props.tailId)
+const tailStreams = useTailStreamsStore()
+
+const lines = computed(() => tailStreams.linesMap[props.tailId] || [])
+const ended = computed(() => tailStreams.endedMap[props.tailId] || false)
+const error = computed(() => tailStreams.errorMap[props.tailId])
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const autoScroll = ref(true)
