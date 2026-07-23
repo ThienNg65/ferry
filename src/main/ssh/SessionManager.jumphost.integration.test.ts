@@ -90,7 +90,7 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
           password: PASSWORD
         }
       ]
-    })
+    }, 'test-session-1')
     expect(result.status).toBe('connected')
 
     // Prove the resulting session is genuinely live — not just "connected"
@@ -129,7 +129,7 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
         { host: JUMP_HOST, port: JUMP_PORT, username: USERNAME, authMethod: 'password', password: PASSWORD },
         { host: TARGET_HOST, port: TARGET_PORT, username: USERNAME, authMethod: 'password', password: PASSWORD }
       ]
-    })
+    }, 'test-session-2')
     expect(result.status).toBe('connected')
 
     const shell = SessionManager.getInstance().shell(result.sessionId)
@@ -157,7 +157,7 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
             password: 'definitely-the-wrong-password'
           }
         ]
-      })
+      }, 'test-session-3')
     ).rejects.toThrow()
   })
 })

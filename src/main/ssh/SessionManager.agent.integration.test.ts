@@ -154,7 +154,7 @@ describe.skipIf(!canRun)('SessionManager agent authentication against a real SSH
       username: USERNAME,
       authMethod: 'agent',
       agentPath: agentSockPath
-    })
+    }, 'test-session-1')
     expect(result.status).toBe('connected')
 
     const shell = SessionManager.getInstance().shell(result.sessionId)
@@ -173,7 +173,7 @@ describe.skipIf(!canRun)('SessionManager agent authentication against a real SSH
         username: USERNAME,
         authMethod: 'agent',
         agentPath: '/tmp/definitely-not-a-real-agent-socket'
-      })
+      }, 'test-session-2')
     ).rejects.toThrow(/not reachable/i)
   })
 })

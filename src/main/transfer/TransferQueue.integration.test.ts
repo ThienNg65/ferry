@@ -72,7 +72,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
       username: USERNAME,
       authMethod: 'password',
       password: PASSWORD
-    })
+    }, 'test-session')
     sessionId = result.sessionId
   }, 15_000)
 
