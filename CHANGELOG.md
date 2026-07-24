@@ -7,6 +7,7 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ### Added
 
 ### Changed
+- Massively improved app startup time (to <500ms) by lazy-loading stores, adding DevTools extension guards, enabling V8 bytecode caching, and implementing renderer bundle splitting.
 
 ### Fixed
 
