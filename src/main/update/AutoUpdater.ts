@@ -1,5 +1,4 @@
 import { app, BrowserWindow } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import {
   EVENT_CHANNELS,
   type UpdateAvailableEvent,
@@ -26,11 +25,12 @@ function broadcast(channel: string, payload: unknown): void {
  * A no-op in dev (`app.isPackaged` is false, matching electron-updater's own
  * recommendation not to run update checks against a local/unpackaged build).
  */
-export function initAutoUpdater(): void {
+export async function initAutoUpdater(): Promise<void> {
   if (!app.isPackaged) {
     return
   }
 
+  const { autoUpdater } = await import('electron-updater')
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
@@ -50,6 +50,7 @@ export function initAutoUpdater(): void {
 }
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
-export function installUpdateNow(): void {
+export async function installUpdateNow(): Promise<void> {
+  const { autoUpdater } = await import('electron-updater')
   autoUpdater.quitAndInstall()
 }

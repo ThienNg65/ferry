@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
-import SiteFormDialog from './SiteFormDialog.vue'
-import ImportSessionsDialog from './ImportSessionsDialog.vue'
+const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
+const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'

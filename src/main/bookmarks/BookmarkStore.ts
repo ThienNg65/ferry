@@ -9,7 +9,14 @@ interface StoreSchema {
 /** Persists directory bookmarks to `bookmarks.json` under the OS userData directory — no secrets involved, so unlike SiteStore there's nothing to encrypt. */
 export class BookmarkStore {
   private static instance: BookmarkStore | null = null
-  private readonly store = new Store<StoreSchema>({ name: 'bookmarks', defaults: { bookmarks: [] } })
+  private _store: Store<StoreSchema> | null = null
+
+  private get store(): Store<StoreSchema> {
+    if (!this._store) {
+      this._store = new Store<StoreSchema>({ name: 'bookmarks', defaults: { bookmarks: [] } })
+    }
+    return this._store
+  }
 
   static getInstance(): BookmarkStore {
     if (BookmarkStore.instance === null) {

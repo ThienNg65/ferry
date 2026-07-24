@@ -191,7 +191,14 @@ function toPublicSite(s: StoredSite): Site {
  */
 export class SiteStore {
   private static instance: SiteStore | null = null
-  private readonly store = new Store<StoreSchema>({ name: 'sites', defaults: { sites: [] } })
+  private _store: Store<StoreSchema> | null = null
+
+  private get store(): Store<StoreSchema> {
+    if (!this._store) {
+      this._store = new Store<StoreSchema>({ name: 'sites', defaults: { sites: [] } })
+    }
+    return this._store
+  }
 
   static getInstance(): SiteStore {
     if (SiteStore.instance === null) {

@@ -46,7 +46,14 @@ export function evaluateHostKey(
  */
 export class KnownHostsStore {
   private static instance: KnownHostsStore | null = null
-  private readonly store = new Store<StoreSchema>({ name: 'known_hosts', defaults: { hosts: {} } })
+  private _store: Store<StoreSchema> | null = null
+
+  private get store(): Store<StoreSchema> {
+    if (!this._store) {
+      this._store = new Store<StoreSchema>({ name: 'known_hosts', defaults: { hosts: {} } })
+    }
+    return this._store
+  }
 
   static getInstance(): KnownHostsStore {
     if (KnownHostsStore.instance === null) {

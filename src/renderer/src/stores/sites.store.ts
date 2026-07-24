@@ -12,12 +12,14 @@ function withNameFallback(input: SiteInput): SiteInput {
 interface SitesState {
   sites: Site[]
   loading: boolean
+  inFlightFetch: Promise<void> | null
 }
 
 export const useSitesStore = defineStore('sites', {
   state: (): SitesState => ({
     sites: [],
-    loading: false
+    loading: false,
+    inFlightFetch: null
   }),
 
   getters: {
@@ -35,12 +37,19 @@ export const useSitesStore = defineStore('sites', {
 
   actions: {
     async fetchSites(): Promise<void> {
-      this.loading = true
-      try {
-        this.sites = await invoke<Site[]>(INVOKE_CHANNELS.sitesList)
-      } finally {
-        this.loading = false
+      if (this.inFlightFetch) {
+        return this.inFlightFetch
       }
+      this.loading = true
+      this.inFlightFetch = (async () => {
+        try {
+          this.sites = await invoke<Site[]>(INVOKE_CHANNELS.sitesList)
+        } finally {
+          this.loading = false
+          this.inFlightFetch = null
+        }
+      })()
+      return this.inFlightFetch
     },
 
     async createSite(input: SiteInput): Promise<void> {

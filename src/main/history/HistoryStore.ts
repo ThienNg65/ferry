@@ -30,10 +30,28 @@ interface StoreSchema {
  */
 export class HistoryStore {
   private static instance: HistoryStore | null = null
-  private readonly store = new Store<StoreSchema>({ name: 'history', defaults: { entries: [] } })
+  private _store: Store<StoreSchema> | null = null
   /** In-memory mirror — record()/list()/clear() all read/write this directly so they never observe a stale pre-flush disk state; only the disk write itself is debounced. */
-  private entries: HistoryEntry[] = this.store.get('entries')
+  private _entries: HistoryEntry[] | null = null
   private flushTimer: ReturnType<typeof setTimeout> | null = null
+
+  private get store(): Store<StoreSchema> {
+    if (!this._store) {
+      this._store = new Store<StoreSchema>({ name: 'history', defaults: { entries: [] } })
+    }
+    return this._store
+  }
+
+  private get entries(): HistoryEntry[] {
+    if (!this._entries) {
+      this._entries = this.store.get('entries')
+    }
+    return this._entries
+  }
+
+  private set entries(val: HistoryEntry[]) {
+    this._entries = val
+  }
 
   static getInstance(): HistoryStore {
     if (HistoryStore.instance === null) {
@@ -79,7 +97,9 @@ export class HistoryStore {
     }
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
-      this.store.set('entries', this.entries)
+      if (this._entries !== null) {
+        this.store.set('entries', this._entries)
+      }
     }, FLUSH_DEBOUNCE_MS)
   }
 
@@ -89,6 +109,8 @@ export class HistoryStore {
       clearTimeout(this.flushTimer)
       this.flushTimer = null
     }
-    this.store.set('entries', this.entries)
+    if (this._entries !== null) {
+      this.store.set('entries', this._entries)
+    }
   }
 }

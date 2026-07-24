@@ -21,7 +21,10 @@ interface ElectronAPI {
   off: (channel: OnChannel, listener: IpcListener) => void
   /** Resolves a dropped/selected `File`'s absolute path (replaces the removed `File.path`, gone since Electron 32). */
   getPathForFile: (file: File) => string
+  /** Returns preload execution timing mark. */
+  getPreloadTime: () => { start: number; timeOrigin: number }
 }
+
 
 declare global {
   interface Window {

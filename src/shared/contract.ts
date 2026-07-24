@@ -771,7 +771,9 @@ export const INVOKE_CHANNELS = {
   windowClose: 'window:close',
   windowIsMaximized: 'window:isMaximized',
   // auto-update
-  updateInstallNow: 'update:installNow'
+  updateInstallNow: 'update:installNow',
+  // profiling
+  profileReport: 'profile:report'
 } as const
 
 /** Union of every valid invoke channel string. */
@@ -810,3 +812,15 @@ export interface SessionStatusEvent {
   status: SessionStatus
   message?: string
 }
+
+/** Payload for the `profile:report` channel. */
+export interface ProfileReportPayload {
+  preloadStart: number
+  preloadTimeOrigin: number
+  rendererStart: number
+  rendererTimeOrigin: number
+  rendererMount: number
+  firstPaint: number
+  rendererMountTimeOrigin: number
+}
+

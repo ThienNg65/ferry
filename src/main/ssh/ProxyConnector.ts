@@ -1,6 +1,5 @@
 import { connect as netConnect, type Socket } from 'net'
 import type { Duplex } from 'stream'
-import { SocksClient } from 'socks'
 import { SshError } from './errors'
 import type { ProxyConfig } from '../../shared/contract'
 
@@ -17,6 +16,7 @@ async function connectSocks5(
   timeoutMs: number
 ): Promise<Duplex> {
   try {
+    const { SocksClient } = await import('socks')
     const { socket } = await SocksClient.createConnection({
       command: 'connect',
       destination: { host: targetHost, port: targetPort },

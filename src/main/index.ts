@@ -1,4 +1,15 @@
-import { app, BrowserWindow, Menu, session, shell } from 'electron'
+const mainStartTime = performance.now()
+const mainTimeOrigin = performance.timeOrigin
+const isProfiling =
+  process.argv.includes('--profile-startup') ||
+  process.argv.includes('--profiling') ||
+  process.env['FERRY_PROFILE'] === '1' ||
+  process.env['IS_PROFILING'] === 'true'
+
+let appReadyTime = 0
+let readyToShowTime = 0
+
+import { app, BrowserWindow, ipcMain, Menu, session, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
@@ -27,7 +38,7 @@ import { initAutoUpdater } from './update/AutoUpdater'
 import { AppSettingsStore } from './app/AppSettingsStore'
 import { TransferQueue } from './transfer/TransferQueue'
 import { KnownHostsStore } from './ssh/KnownHostsStore'
-import { EVENT_CHANNELS, type WindowStateEvent } from '../shared/contract'
+import { EVENT_CHANNELS, INVOKE_CHANNELS, ok, type WindowStateEvent, type ProfileReportPayload } from '../shared/contract'
 
 /** Development mode flag — set by electron-vite. */
 const IS_DEV = !app.isPackaged
@@ -73,7 +84,8 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      experimentalFeatures: false
+      experimentalFeatures: false,
+      v8CacheOptions: 'bypassHeatCheck'
     }
   })
 
@@ -101,15 +113,25 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => {
-    win.show()
-    if (IS_DEV) {
+    if (!readyToShowTime) {
+      readyToShowTime = performance.now()
+    }
+    if (!win.isVisible()) {
+      win.show()
+    }
+    if (IS_DEV && !isProfiling) {
       win.webContents.openDevTools({ mode: 'detach' })
     }
-    // Warm up heavy first-use-only work (ssh2's module compile + native crypto
-    // addon load, and KnownHostsStore's electron-store construction) after the
-    // window has painted, so the real cost lands here instead of blocking the
-    // UI thread during the user's first connect attempt.
+    // Defer non-critical store reads, history recorder, auto-updater, bandwidth limit,
+    // and heavy modules until post-ready-to-show frame
     setTimeout(() => {
+      try {
+        initHistoryRecorder()
+        TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
+        void initAutoUpdater()
+      } catch (err) {
+        console.error('Post ready-to-show setup failed:', err)
+      }
       void import('ssh2').catch(() => {})
       try {
         KnownHostsStore.getInstance()
@@ -135,9 +157,58 @@ function createWindow(): BrowserWindow {
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+  readyToShowTime = performance.now()
+  win.show()
 
   return win
 }
+
+function registerProfileHandler(): void {
+  ipcMain.handle(INVOKE_CHANNELS.profileReport, (_event, payload: ProfileReportPayload) => {
+    if (isProfiling) {
+      const mainAbsT0 = mainTimeOrigin + mainStartTime
+      const appReadyMs = Math.max(0, appReadyTime - mainStartTime)
+
+      const actualReadyToShowTime = readyToShowTime > 0 ? readyToShowTime : performance.now()
+      const readyToShowMs = Math.max(0, actualReadyToShowTime - mainStartTime)
+
+      const preloadStartAbs = payload.preloadTimeOrigin + payload.preloadStart
+      const preloadStartMs = Math.max(0, preloadStartAbs - mainAbsT0)
+
+      const rendererStartAbs = payload.rendererTimeOrigin + payload.rendererStart
+      const rendererStartMs = Math.max(0, rendererStartAbs - mainAbsT0)
+
+      const rendererMountAbs = payload.rendererMountTimeOrigin + payload.rendererMount
+      const rendererMountMs = Math.max(0, rendererMountAbs - mainAbsT0)
+
+      const firstPaintAbs = payload.rendererMountTimeOrigin + payload.firstPaint
+      const firstPaintMs = Math.max(0, firstPaintAbs - mainAbsT0)
+
+      const result = {
+        mainStart: 0,
+        appReady: Math.round(appReadyMs * 100) / 100,
+        readyToShow: Math.round(readyToShowMs * 100) / 100,
+        preloadStart: Math.round(preloadStartMs * 100) / 100,
+        rendererStart: Math.round(rendererStartMs * 100) / 100,
+        rendererMount: Math.round(rendererMountMs * 100) / 100,
+        firstPaint: Math.round(firstPaintMs * 100) / 100,
+        totalStartupMs: Math.round(firstPaintMs * 100) / 100,
+        phases: {
+          mainToAppReadyMs: Math.round(appReadyMs * 100) / 100,
+          appReadyToReadyToShowMs: Math.round(Math.max(0, readyToShowMs - appReadyMs) * 100) / 100,
+          readyToShowToRendererMountMs: Math.round(Math.max(0, rendererMountMs - readyToShowMs) * 100) / 100,
+          rendererMountToFirstPaintMs: Math.round(Math.max(0, firstPaintMs - rendererMountMs) * 100) / 100
+        }
+      }
+      process.stdout.write(`[FERRY_PROFILE_RESULT] ${JSON.stringify(result)}\n`)
+      setTimeout(() => {
+        app.quit()
+      }, 50)
+    }
+    return ok(null)
+  })
+}
+
 
 /** Registers all IPC channel handlers for the lifetime of the application. */
 function registerAllHandlers(): void {
@@ -161,12 +232,29 @@ function registerAllHandlers(): void {
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)
   registerUpdateHandlers()
+  registerProfileHandler()
 }
+
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
+app.commandLine.appendSwitch('proxy-server', 'direct://')
+app.commandLine.appendSwitch('no-proxy-server')
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+app.commandLine.appendSwitch('disable-http-cache')
+app.commandLine.appendSwitch('disable-component-update')
+app.commandLine.appendSwitch('disable-background-networking')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+app.commandLine.appendSwitch('disable-extensions')
+app.commandLine.appendSwitch('disable-default-apps')
+app.commandLine.appendSwitch('process-per-site')
+
 app.whenReady().then(() => {
+  appReadyTime = performance.now()
   // No default menu bar on Windows/Linux — replaced by the in-app command
+
   // palette; Chromium dispatches native edit commands (copy/paste in inputs)
   // without a menu there. macOS is different: Cmd+C/V only work via menu-role
   // accelerators, so keep a minimal app+edit menu on darwin.
@@ -189,10 +277,7 @@ app.whenReady().then(() => {
   })
 
   registerAllHandlers()
-  initHistoryRecorder()
-  TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
   mainWindow = createWindow()
-  initAutoUpdater()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

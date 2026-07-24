@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
@@ -13,10 +13,11 @@ import { useHistoryDialog } from './composables/useHistoryDialog'
 import { useNotify } from './composables/useNotify'
 import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
-import SessionManagerView from './components/sessions/SessionManagerView.vue'
-import SettingsDialog from './components/shell/SettingsDialog.vue'
-import HistoryDialog from './components/history/HistoryDialog.vue'
-import CommandPalette from './components/shell/CommandPalette.vue'
+
+const SessionManagerView = defineAsyncComponent(() => import('./components/sessions/SessionManagerView.vue'))
+const SettingsDialog = defineAsyncComponent(() => import('./components/shell/SettingsDialog.vue'))
+const HistoryDialog = defineAsyncComponent(() => import('./components/history/HistoryDialog.vue'))
+const CommandPalette = defineAsyncComponent(() => import('./components/shell/CommandPalette.vue'))
 
 // Only ever rendered once connected — deferring these keeps their whole
 // subtree (FileList/FileRow/FilePreviewDialog/TransferQueue/TerminalView/...)
@@ -48,11 +49,43 @@ const notify = useNotify()
 const ui = useUiStore()
 ui.initTheme()
 ui.initAccentColor()
-void sessions.restoreOpenTabs()
-// Operation events originate main-side from any invoke — subscribe up front
-// so the Activity dock badge never misses the first event.
-useOperationsStore().ensureSubscription()
-useEditSessionsStore().ensureSubscription()
+
+// Defer non-essential tab restoration and IPC subscriptions until after initial paint frame
+if (typeof requestAnimationFrame === 'function') {
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      void sessions.restoreOpenTabs()
+      useOperationsStore().ensureSubscription()
+      useEditSessionsStore().ensureSubscription()
+    }, 0)
+  })
+} else {
+  setTimeout(() => {
+    void sessions.restoreOpenTabs()
+    useOperationsStore().ensureSubscription()
+    useEditSessionsStore().ensureSubscription()
+  }, 0)
+}
+
+onMounted(() => {
+  const mountTime = performance.now()
+  const mountTimeOrigin = performance.timeOrigin
+  requestAnimationFrame(() => {
+    const firstPaintTime = performance.now()
+    const preloadInfo = window.api?.getPreloadTime ? window.api.getPreloadTime() : { start: 0, timeOrigin: mountTimeOrigin }
+    const rendererInfo = (window as unknown as { __FERRY_RENDERER_TIME__?: { start: number; timeOrigin: number } }).__FERRY_RENDERER_TIME__ || { start: 0, timeOrigin: mountTimeOrigin }
+
+    void invoke(INVOKE_CHANNELS.profileReport, {
+      preloadStart: preloadInfo.start,
+      preloadTimeOrigin: preloadInfo.timeOrigin,
+      rendererStart: rendererInfo.start,
+      rendererTimeOrigin: rendererInfo.timeOrigin,
+      rendererMount: mountTime,
+      firstPaint: firstPaintTime,
+      rendererMountTimeOrigin: mountTimeOrigin
+    })
+  })
+})
 
 // Only ever fires in a packaged build — see AutoUpdater.ts's app.isPackaged guard.
 const toast = useToast()

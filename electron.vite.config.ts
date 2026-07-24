@@ -7,6 +7,7 @@ export default defineConfig({
   main: {
     entry: resolve(__dirname, 'src/main/index.ts'),
     build: {
+      minify: 'esbuild',
       rollupOptions: {
         external: ['ssh2', 'archiver', 'electron-store']
       }

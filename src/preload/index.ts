@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '../shared/contract'
 
+const preloadStartTime = performance.now()
+const preloadTimeOrigin = performance.timeOrigin
+
 /**
  * The complete IPC whitelist, derived directly from the shared contract — the
  * single source of truth. Any channel not in the contract is rejected by the
@@ -57,6 +60,9 @@ export interface ElectronAPI {
    * @returns the absolute path, or `''` if it cannot be resolved.
    */
   getPathForFile: (file: File) => string
+
+  /** Returns preload execution timing mark. */
+  getPreloadTime: () => { start: number; timeOrigin: number }
 }
 
 const listenerRegistry = new Map<
@@ -115,5 +121,10 @@ contextBridge.exposeInMainWorld('api', {
 
   getPathForFile(file: File): string {
     return webUtils.getPathForFile(file)
+  },
+
+  getPreloadTime(): { start: number; timeOrigin: number } {
+    return { start: preloadStartTime, timeOrigin: preloadTimeOrigin }
   }
 } satisfies ElectronAPI)
+

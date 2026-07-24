@@ -51,10 +51,17 @@ function decrypt(ciphertext: string | undefined): string | undefined {
  */
 export class AppSettingsStore {
   private static instance: AppSettingsStore | null = null
-  private readonly store = new Store<StoreSchema>({
-    name: 'app-settings',
-    defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null }
-  })
+  private _store: Store<StoreSchema> | null = null
+
+  private get store(): Store<StoreSchema> {
+    if (!this._store) {
+      this._store = new Store<StoreSchema>({
+        name: 'app-settings',
+        defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null }
+      })
+    }
+    return this._store
+  }
 
   static getInstance(): AppSettingsStore {
     if (AppSettingsStore.instance === null) {

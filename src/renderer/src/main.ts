@@ -1,9 +1,24 @@
+const rendererStartTime = performance.now()
+const rendererTimeOrigin = performance.timeOrigin
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __FERRY_RENDERER_TIME__?: { start: number; timeOrigin: number } }).__FERRY_RENDERER_TIME__ = {
+    start: rendererStartTime,
+    timeOrigin: rendererTimeOrigin
+  }
+}
+
 import './assets/main.css'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { addCollection, setCustomIconLoader } from '@iconify/vue'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
+import { startupIcons } from './startupIcons'
+
+// Pre-register essential startup icons to prevent setCustomIconLoader from
+// intercepting and triggering heavy icons.json import during initial Vue mount.
+addCollection(startupIcons)
+
 
 // Full Lucide set (554KB/6135 icons) is registered AFTER first paint via a
 // dynamic import, not a static one — a static `import ... from '...json'`

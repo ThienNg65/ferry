@@ -1,9 +1,12 @@
-import { spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { generateKeyPairSync, randomBytes } from 'crypto'
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import { promisify } from 'util'
 import { SshError } from './errors'
 import type { KeyGenerateRequest, KeyGenerateResult } from '../../shared/contract'
+
+const execFileAsync = promisify(execFile)
 
 function isCommandNotFound(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'ENOENT'
@@ -131,6 +134,9 @@ export async function generateBuiltin(req: KeyGenerateRequest): Promise<KeyGener
   const publicLine = `${`ssh-ed25519 ${edPublicKeyBlob(pubKeyBytes).toString('base64')}${comment ? ` ${comment}` : ''}`}\n`
 
   await fs.writeFile(req.keyPath, pem, { mode: 0o600 })
+  if (process.platform === 'win32') {
+    await execFileAsync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:F`], { windowsHide: true })
+  }
   await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644 })
 
   return {
