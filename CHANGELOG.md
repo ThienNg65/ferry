@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
+## 0.14.8 - 2026-07-30
 
 ### Added
 - Adjustable split-pane layout: freely drag the vertical divider between the Local and Remote file lists to customize your view.
