@@ -98,7 +98,8 @@ export async function downloadForEdit(
   sessionId: string,
   remotePath: string,
   localPath: string,
-  onProgress?: (bytesTransferred: number) => void
+  onProgress?: (bytesTransferred: number) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
   const sftp = await shell.sftp()
@@ -109,13 +110,36 @@ export async function downloadForEdit(
     // and the default createWriteStream mode is world-readable on a typical
     // shared-/tmp Linux/macOS setup.
     const writeStream = createWriteStream(localPath, { mode: 0o600 })
+    
+    const cleanup = (): void => {
+      readStream.destroy()
+      writeStream.destroy()
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        cleanup()
+        return reject(new Error('Operation cancelled'))
+      }
+      signal.addEventListener('abort', () => {
+        cleanup()
+        reject(new Error('Operation cancelled'))
+      })
+    }
+
     let bytesTransferred = 0
     readStream.on('data', (chunk: Buffer) => {
       bytesTransferred += chunk.length
       onProgress?.(bytesTransferred)
     })
-    readStream.on('error', (e: Error) => reject(new SshError('SFTP', `Failed to download "${remotePath}": ${e.message}`)))
-    writeStream.on('error', (e: Error) => reject(new SshError('UNKNOWN', `Failed to write "${localPath}": ${e.message}`)))
+    readStream.on('error', (e: Error) => {
+      cleanup()
+      reject(new SshError('SFTP', `Failed to download "${remotePath}": ${e.message}`))
+    })
+    writeStream.on('error', (e: Error) => {
+      cleanup()
+      reject(new SshError('UNKNOWN', `Failed to write "${localPath}": ${e.message}`))
+    })
     writeStream.on('close', () => resolve())
     readStream.pipe(writeStream)
   })

@@ -31,6 +31,10 @@ export function registerFsHandlers(): void {
     LocalFs.remove(targetPath as string, Boolean(isDir))
   )
   handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
+  handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
+    const request = req as { path: string; content: string }
+    return LocalFs.writeFileText(request.path, request.content)
+  })
 
   handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath) =>
     RemoteFs.listRemote(sessionId as string, dirPath as string | undefined)

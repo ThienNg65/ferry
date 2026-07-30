@@ -5,29 +5,23 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- Adjustable split-pane layout: freely drag the vertical divider between the Local and Remote file lists to customize your view.
+- Large file editor warnings: prompts for confirmation before attempting to download and open excessively large files or archives in the built-in text editor.
+- Fallback editor logic: the built-in editor will automatically fall back to launching the system's external default editor if a file read was truncated.
 
 ### Changed
+- Unified drag handle styling: refined the horizontal and vertical pane resizers for better visibility and a consistent dragging experience.
+- Adjusted default pane ratio to 1/3 Local and 2/3 Remote.
 
 ### Fixed
+- Terminal resizing: the integrated terminal grid now correctly scales and updates its layout when the bottom dock is resized.
+- Built-in text editor UX: resolved missing scrollbars, theming glitches, and added robust `Cmd/Ctrl+S` manual save support.
+- Edit cancellation: aborted long-running file downloads (e.g. clicking Edit then cancelling) now correctly sever the underlying SSH/SFTP streams immediately.
 
 ## 0.14.7 - 2026-07-24
 
-### Added
-
 ### Changed
 - Massively improved app startup time (to <500ms) by lazy-loading stores, adding DevTools extension guards, enabling V8 bytecode caching, and implementing renderer bundle splitting.
-
-### Fixed
-
-## 0.14.6 - 2026-07-23
-
-### Added
-
-### Changed
-
-### Fixed
-
-## 0.14.5 - 2026-07-23
 
 ## 0.14.5 - 2026-07-23
 ### Added

@@ -16,6 +16,7 @@ declare module 'vue' {
     BottomDock: typeof import('./src/components/shell/BottomDock.vue')['default']
     ChmodDialog: typeof import('./src/components/files/ChmodDialog.vue')['default']
     CommandPalette: typeof import('./src/components/shell/CommandPalette.vue')['default']
+    EditorDialog: typeof import('./src/components/files/EditorDialog.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']

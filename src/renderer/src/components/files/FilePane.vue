@@ -13,11 +13,12 @@ import { useUiStore } from '../../stores/ui.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useDockState } from '../../composables/useDockState'
-import { archiveBaseName } from '../../utils/fileTypes'
+import { archiveBaseName, isArchive } from '../../utils/fileTypes'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
+import EditorDialog from './EditorDialog.vue'
 import ChmodDialog from './ChmodDialog.vue'
 import SyncDialog from './SyncDialog.vue'
 
@@ -62,6 +63,9 @@ const renamingPath = ref<string | null>(null)
 const transferConflict = ref<{ intents: TransferIntent[]; conflicts: string[] } | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
+const editConfirmTarget = ref<FileEntry | null>(null)
+const editorOpen = ref(false)
+const editorState = ref<{ editId: string, localTempPath: string, remotePath: string } | null>(null)
 const pendingDelete = ref<FileEntry[] | null>(null)
 const deleting = ref(false)
 
@@ -284,6 +288,16 @@ async function onTail(entry: FileEntry): Promise<void> {
 }
 
 async function onEdit(entry: FileEntry): Promise<void> {
+  const isLarge = entry.size > 5 * 1024 * 1024 // 5MB
+  if (isArchive(entry.name) || isLarge) {
+    editConfirmTarget.value = entry
+    return
+  }
+  await performEdit(entry)
+}
+
+async function performEdit(entry: FileEntry): Promise<void> {
+  editConfirmTarget.value = null
   try {
     if (props.side === 'local') {
       await invoke<void>(INVOKE_CHANNELS.editOpenLocal, entry.path)
@@ -293,7 +307,9 @@ async function onEdit(entry: FileEntry): Promise<void> {
     if (!sessionId) {
       return
     }
-    await invoke<{ editId: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path })
+    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path, builtin: true })
+    editorState.value = { editId: res.editId, localTempPath: res.localTempPath, remotePath: entry.path }
+    editorOpen.value = true
   } catch (e) {
     notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
   }
@@ -579,7 +595,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
   <div
     class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
     :class="[
-      collapsedRail ? 'w-10 shrink-0' : side === 'local' ? 'min-w-0 w-1/2' : 'min-w-0 flex-1',
+      collapsedRail ? 'w-10 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
@@ -658,6 +674,14 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :side="side"
         @tail="onTail"
         @download="onTransfer"
+        @edit="onEdit"
+      />
+      <EditorDialog
+        v-if="side === 'remote'"
+        v-model:open="editorOpen"
+        :edit-id="editorState?.editId ?? null"
+        :local-temp-path="editorState?.localTempPath ?? null"
+        :remote-path="editorState?.remotePath ?? null"
       />
       <ChmodDialog v-model:open="chmodOpen" :entry="chmodTarget" @submit="onSubmitChmod" />
       <SyncDialog
@@ -728,6 +752,24 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         <template #footer>
           <UButton color="neutral" variant="outline" @click="pendingDelete = null">Cancel</UButton>
           <UButton color="error" :loading="deleting" @click="confirmPendingDelete">Delete</UButton>
+        </template>
+      </UModal>
+      <UModal
+        :open="Boolean(editConfirmTarget)"
+        title="Warning: Large or Binary File"
+        :ui="{ footer: 'justify-end' }"
+        @update:open="(v: boolean) => { if (!v) editConfirmTarget = null }"
+      >
+        <template #body>
+          <p class="text-sm text-default">
+            The file <span class="font-medium">{{ editConfirmTarget?.name }}</span> is an archive or very large. 
+            Editing it will download the entire file in the background, which may take a long time, and editing binary files in a text editor could corrupt them.
+            Are you sure you want to edit it?
+          </p>
+        </template>
+        <template #footer>
+          <UButton color="neutral" variant="outline" @click="editConfirmTarget = null">Cancel</UButton>
+          <UButton color="primary" @click="editConfirmTarget && performEdit(editConfirmTarget)">Proceed</UButton>
         </template>
       </UModal>
     </template>

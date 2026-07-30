@@ -26,7 +26,9 @@ const FilePane = defineAsyncComponent(() => import('./components/files/FilePane.
 const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomDock.vue'))
 
 const sessions = useSessionsStore()
+const ui = useUiStore()
 const isConnected = computed(() => sessions.status === 'connected')
+const isResizingPane = ref(false)
 // Gates the connected subtree's FIRST mount only, so FilePane/BottomDock stay off the
 // cold-start bundle-eval path until the user actually connects — v-show (not this flag) handles
 // every subsequent disconnect/reconnect, so the subtree (and TerminalView's xterm.js instances)
@@ -46,7 +48,6 @@ const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const notify = useNotify()
 
-const ui = useUiStore()
 ui.initTheme()
 ui.initAccentColor()
 
@@ -65,6 +66,28 @@ if (typeof requestAnimationFrame === 'function') {
     useOperationsStore().ensureSubscription()
     useEditSessionsStore().ensureSubscription()
   }, 0)
+}
+
+function onPaneResizerMouseDown() {
+  isResizingPane.value = true
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', onPaneResizerMouseMove)
+  window.addEventListener('mouseup', onPaneResizerMouseUp)
+}
+
+function onPaneResizerMouseMove(e: MouseEvent) {
+  if (!isResizingPane.value) return
+  const newWidth = (e.clientX / window.innerWidth) * 100
+  ui.setLocalPaneWidth(newWidth)
+}
+
+function onPaneResizerMouseUp() {
+  isResizingPane.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('mousemove', onPaneResizerMouseMove)
+  window.removeEventListener('mouseup', onPaneResizerMouseUp)
 }
 
 onMounted(() => {
@@ -121,9 +144,28 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           <SessionManagerView v-if="!isConnected" key="picker" />
         </Transition>
         <div v-if="hasConnectedOnce" v-show="isConnected" class="flex h-full flex-col">
-          <div class="flex min-h-0 flex-1">
-            <FilePane side="local" />
-            <FilePane side="remote" />
+          <div class="flex min-h-0 flex-1 relative">
+            <FilePane 
+              side="local" 
+              :style="ui.showLocalPane ? { width: `${ui.localPaneWidth}%` } : undefined"
+              :class="isResizingPane ? '!transition-none' : ''"
+            />
+            
+            <div 
+              v-if="ui.showLocalPane"
+              class="relative w-0 z-50 shrink-0"
+            >
+              <div 
+                class="absolute top-0 bottom-0 -ml-1 w-2 cursor-col-resize hover:bg-primary/50 transition-colors"
+                :class="isResizingPane ? 'bg-primary' : ''"
+                @mousedown.prevent="onPaneResizerMouseDown"
+              />
+            </div>
+            
+            <FilePane 
+              side="remote"
+              class="flex-1"
+            />
           </div>
           <BottomDock />
         </div>

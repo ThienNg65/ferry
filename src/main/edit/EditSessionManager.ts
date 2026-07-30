@@ -60,15 +60,17 @@ export class EditSessionManager {
     }
   }
 
-  /** Opens a REMOTE file: downloads it in full to a temp path, opens it in the OS default app, then watches it and re-uploads on every save. */
-  async openRemote(sessionId: string, remotePath: string): Promise<{ editId: string }> {
+  /** Opens a REMOTE file: downloads it in full to a temp path, opens it in the OS default app (unless builtin is true), then watches it and re-uploads on every save. */
+  async openRemote(sessionId: string, remotePath: string, builtin: boolean = false): Promise<{ editId: string; localTempPath: string }> {
     const existing = [...this.edits.values()].find((e) => e.sessionId === sessionId && e.remotePath === remotePath)
     if (existing) {
-      const result = await shell.openPath(existing.localTempPath)
-      if (result) {
-        throw new SshError('UNKNOWN', `Could not open "${existing.localTempPath}": ${result}`)
+      if (!builtin) {
+        const result = await shell.openPath(existing.localTempPath)
+        if (result) {
+          throw new SshError('UNKNOWN', `Could not open "${existing.localTempPath}": ${result}`)
+        }
       }
-      return { editId: existing.editId }
+      return { editId: existing.editId, localTempPath: existing.localTempPath }
     }
 
     const editId = randomUUID()
@@ -84,15 +86,23 @@ export class EditSessionManager {
     await OperationRegistry.getInstance().run(
       { kind: 'edit-download', sessionId, label: `Opening ${basename} for editing`, cancellable: true },
       async (ctx) => {
-        await downloadForEdit(sessionId, remotePath, localTempPath, (bytesTransferred) => {
-          ctx.reportProgress(bytesTransferred, undefined, 'bytes')
-        })
+        await downloadForEdit(
+          sessionId, 
+          remotePath, 
+          localTempPath, 
+          (bytesTransferred) => {
+            ctx.reportProgress(bytesTransferred, undefined, 'bytes')
+          }, 
+          ctx.signal
+        )
       }
     )
 
-    const result = await shell.openPath(localTempPath)
-    if (result) {
-      throw new SshError('UNKNOWN', `Could not open "${localTempPath}": ${result}`)
+    if (!builtin) {
+      const result = await shell.openPath(localTempPath)
+      if (result) {
+        throw new SshError('UNKNOWN', `Could not open "${localTempPath}": ${result}`)
+      }
     }
 
     const stats = await fs.stat(localTempPath)
@@ -110,7 +120,19 @@ export class EditSessionManager {
     this.watch(entry)
 
     this.broadcast({ editId, sessionId, remotePath, localTempPath, state: 'opened' })
-    return { editId }
+    return { editId, localTempPath }
+  }
+
+  /** Opens an existing edit session's temp file in the OS default app. */
+  async openExternal(editId: string): Promise<void> {
+    const entry = this.edits.get(editId)
+    if (!entry) {
+      throw new SshError('NOT_FOUND', `Edit session ${editId} not found`)
+    }
+    const result = await shell.openPath(entry.localTempPath)
+    if (result) {
+      throw new SshError('UNKNOWN', `Could not open "${entry.localTempPath}": ${result}`)
+    }
   }
 
   private watch(entry: EditEntry): void {

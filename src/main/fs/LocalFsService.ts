@@ -109,6 +109,15 @@ export async function readFileText(filePath: string): Promise<FileReadResult> {
   }
 }
 
+/** Writes full text content to a local file, replacing it entirely. */
+export async function writeFileText(filePath: string, content: string): Promise<void> {
+  try {
+    await fs.writeFile(filePath, content, 'utf-8')
+  } catch (e) {
+    throw new SshError('UNKNOWN', `Cannot write to "${filePath}": ${(e as Error).message}`)
+  }
+}
+
 /** Deletes a local file or directory (recursively for directories). */
 export async function remove(targetPath: string, isDir: boolean): Promise<void> {
   try {

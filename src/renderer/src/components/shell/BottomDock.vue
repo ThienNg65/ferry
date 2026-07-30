@@ -82,8 +82,8 @@ function basename(path: string): string {
   >
     <div
       v-if="!collapsed"
-      class="h-1 shrink-0 cursor-row-resize hover:bg-primary/30"
-      :class="dragging ? 'bg-primary/40' : ''"
+      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 transition-colors"
+      :class="dragging ? 'bg-primary' : ''"
       @pointerdown="onResizeStart"
       @pointermove="onResizeMove"
       @pointerup="onResizeEnd"

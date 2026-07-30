@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@xterm/xterm/css/xterm.css'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
@@ -89,8 +89,25 @@ function onWindowResize(): void {
     void fitAndResize(sessionId)
   }
 }
-window.addEventListener('resize', onWindowResize)
-onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
+
+const containerRef = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  window.addEventListener('resize', onWindowResize)
+  
+  resizeObserver = new ResizeObserver(() => {
+    onWindowResize()
+  })
+  if (containerRef.value) {
+    resizeObserver.observe(containerRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
+  resizeObserver?.disconnect()
+})
 </script>
 
 <template>
@@ -101,7 +118,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
     >
       {{ sessions.activeTab.hostLabel }}
     </div>
-    <div class="relative min-h-0 flex-1">
+    <div ref="containerRef" class="relative min-h-0 flex-1">
       <p v-if="!sessions.activeSessionId" class="px-3 py-6 text-center text-xs text-muted">
         No active site connection
       </p>

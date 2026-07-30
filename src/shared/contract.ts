@@ -330,6 +330,11 @@ export interface FileReadResult {
   size: number
 }
 
+export interface FsLocalWriteFileRequest {
+  path: string
+  content: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,10 +500,16 @@ export interface TailEndEvent {
 export interface EditOpenRemoteRequest {
   sessionId: string
   path: string
+  builtin?: boolean
+}
+
+export interface EditOpenExternalRequest {
+  editId: string
 }
 
 export interface EditOpenResult {
   editId: string
+  localTempPath: string
 }
 
 /**
@@ -718,6 +729,7 @@ export const INVOKE_CHANNELS = {
   fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',
   fsLocalReadFile: 'fs:local:readFile',
+  fsLocalWriteFile: 'fs:local:writeFile',
   fsRemoteReadFile: 'fs:remote:readFile',
   // transfers
   transferEnqueue: 'transfer:enqueue',
@@ -728,6 +740,7 @@ export const INVOKE_CHANNELS = {
   // edit in external editor
   editOpenLocal: 'edit:openLocal',
   editOpenRemote: 'edit:openRemote',
+  editOpenExternal: 'edit:openExternal',
   editClose: 'edit:close',
   // terminal
   terminalOpen: 'terminal:open',

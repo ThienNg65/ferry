@@ -6,8 +6,10 @@ const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
 const ACCENT_KEY = 'ferry:ui:accentColor'
+const LOCAL_PANE_WIDTH_KEY = 'ferry:ui:localPaneWidth'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
 export const DEFAULT_ACCENT_COLOR = '#0a84ff'
+export const DEFAULT_LOCAL_PANE_WIDTH = 33.33
 
 export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
@@ -44,6 +46,7 @@ interface UiState {
   theme: Theme
   dockHeight: number
   accentColor: string
+  localPaneWidth: number
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
@@ -79,6 +82,11 @@ function applyAccentColor(hex: string): void {
   }
 }
 
+function loadLocalPaneWidth(): number {
+  const stored = Number(localStorage.getItem(LOCAL_PANE_WIDTH_KEY))
+  return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : DEFAULT_LOCAL_PANE_WIDTH
+}
+
 /** UI-layout preferences that persist across restarts (not session/domain state). */
 export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
@@ -86,7 +94,8 @@ export const useUiStore = defineStore('ui', {
     permissionsDisplay: loadPermissionsDisplay(),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
-    accentColor: loadAccentColor()
+    accentColor: loadAccentColor(),
+    localPaneWidth: loadLocalPaneWidth()
   }),
 
   actions: {
@@ -126,6 +135,11 @@ export const useUiStore = defineStore('ui', {
     setDockHeight(px: number): void {
       this.dockHeight = clampDockHeight(px, window.innerHeight)
       localStorage.setItem(DOCK_HEIGHT_KEY, String(this.dockHeight))
+    },
+
+    setLocalPaneWidth(percent: number): void {
+      this.localPaneWidth = Math.max(10, Math.min(percent, 90))
+      localStorage.setItem(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
     }
   }
 })

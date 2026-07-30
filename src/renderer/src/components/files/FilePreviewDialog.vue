@@ -16,6 +16,7 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
   tail: [entry: FileEntry]
   download: [entry: FileEntry]
+  edit: [entry: FileEntry]
 }>()
 
 const sessions = useSessionsStore()
@@ -73,6 +74,13 @@ function onDownload(): void {
     emit('download', props.entry)
   }
 }
+
+function onEdit(): void {
+  if (props.entry) {
+    emit('edit', props.entry)
+    emit('update:open', false)
+  }
+}
 </script>
 
 <template>
@@ -115,6 +123,14 @@ function onDownload(): void {
     </template>
 
     <template #footer="{ close }">
+      <UButton
+        v-if="previewable"
+        color="primary"
+        icon="i-lucide-file-pen"
+        @click="onEdit"
+      >
+        Edit
+      </UButton>
       <UButton
         v-if="previewable && canDownload"
         color="neutral"
