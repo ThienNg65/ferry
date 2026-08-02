@@ -5,9 +5,11 @@ import type { AuthMethod, JumpHostConfig, KeyGenerateResult, ProxyConfig, ProxyT
 import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
 // Not yet used elsewhere in the app, so not in the auto-generated global
-// components.d.ts yet — deep-import instead of relying on <USwitch> (see
-// FileRow.vue's ContextMenu for the same pattern).
+// components.d.ts yet — deep-import instead of relying on <USwitch>/<UCollapsible>
+// (see FileRow.vue's ContextMenu for the same pattern).
 import USwitch from '@nuxt/ui/components/Switch.vue'
+import UCollapsible from '@nuxt/ui/components/Collapsible.vue'
+import { shouldExpandAdvanced } from '../../utils/advancedSiteOptions'
 import JumpHostHopEditor, { type JumpHopForm } from './JumpHostHopEditor.vue'
 import GenerateKeyDialog from './GenerateKeyDialog.vue'
 
@@ -45,6 +47,7 @@ function emptyHop(): JumpHopForm {
 
 const useJumpHost = ref(false)
 const jumpHops = ref<JumpHopForm[]>([])
+const advancedOpen = ref(false)
 
 function addHop(): void {
   jumpHops.value.push(emptyHop())
@@ -118,6 +121,7 @@ function resetForm(site?: Site | null): void {
   proxyPort.value = site?.proxy?.port ?? 1080
   proxyUsername.value = site?.proxy?.username ?? ''
   proxyPassword.value = ''
+  advancedOpen.value = shouldExpandAdvanced(site)
   error.value = null
 }
 
@@ -142,6 +146,13 @@ const canSave = computed(
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
     (!useJumpHost.value || jumpHops.value.every((hop) => hop.host.trim().length > 0 && hop.username.trim().length > 0))
+)
+
+/** True while an incomplete jump host is the reason Save is disabled — used to force the Advanced section open so the offending fields are never hidden. */
+const jumpHostIncomplete = computed(
+  () =>
+    useJumpHost.value &&
+    jumpHops.value.some((hop) => hop.host.trim().length === 0 || hop.username.trim().length === 0)
 )
 
 const authOptions: { label: string; value: AuthMethod }[] = [
@@ -310,54 +321,74 @@ async function save(): Promise<void> {
           </UFormField>
         </div>
 
-        <div class="flex items-center justify-between rounded-md border border-default px-3 py-2">
-          <div>
-            <div class="text-sm font-medium text-highlighted">Connect through a jump host</div>
-            <div class="text-xs text-muted">Tunnels the connection through one or more bastion hosts first.</div>
-          </div>
-          <USwitch v-model="useJumpHost" />
-        </div>
-        <template v-if="useJumpHost">
-          <JumpHostHopEditor
-            v-for="(hop, index) in jumpHops"
-            :key="index"
-            :model-value="hop"
-            :index="index"
-            :total="jumpHops.length"
-            :has-password="savedHopAt(index)?.hasPassword"
-            :has-passphrase="savedHopAt(index)?.hasPassphrase"
-            @update:model-value="(v) => (jumpHops[index] = v)"
-            @remove="removeHop(index)"
-            @move-up="moveHop(index, -1)"
-            @move-down="moveHop(index, 1)"
-          />
-          <UButton color="neutral" variant="outline" icon="i-lucide-plus" class="self-start" @click="addHop">
-            Add hop
-          </UButton>
-        </template>
+        <UCollapsible :open="advancedOpen || jumpHostIncomplete" @update:open="(value) => (advancedOpen = value)">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between rounded-md border border-default px-3 py-2 text-left"
+          >
+            <div>
+              <div class="text-sm font-medium text-highlighted">Advanced connection options</div>
+              <div class="text-xs text-muted">Jump host and proxy settings</div>
+            </div>
+            <UIcon
+              name="i-lucide-chevron-down"
+              class="size-4 shrink-0 transition-transform"
+              :class="advancedOpen || jumpHostIncomplete ? 'rotate-180' : ''"
+            />
+          </button>
+          <template #content>
+            <div class="flex flex-col gap-3 pt-3">
+              <div class="flex items-center justify-between rounded-md border border-default px-3 py-2">
+                <div>
+                  <div class="text-sm font-medium text-highlighted">Connect through a jump host</div>
+                  <div class="text-xs text-muted">Tunnels the connection through one or more bastion hosts first.</div>
+                </div>
+                <USwitch v-model="useJumpHost" />
+              </div>
+              <template v-if="useJumpHost">
+                <JumpHostHopEditor
+                  v-for="(hop, index) in jumpHops"
+                  :key="index"
+                  :model-value="hop"
+                  :index="index"
+                  :total="jumpHops.length"
+                  :has-password="savedHopAt(index)?.hasPassword"
+                  :has-passphrase="savedHopAt(index)?.hasPassphrase"
+                  @update:model-value="(v) => (jumpHops[index] = v)"
+                  @remove="removeHop(index)"
+                  @move-up="moveHop(index, -1)"
+                  @move-down="moveHop(index, 1)"
+                />
+                <UButton color="neutral" variant="outline" icon="i-lucide-plus" class="self-start" @click="addHop">
+                  Add hop
+                </UButton>
+              </template>
 
-        <UFormField label="Proxy">
-          <URadioGroup v-model="proxyMode" :items="proxyModeOptions" orientation="horizontal" />
-        </UFormField>
-        <template v-if="proxyMode === 'custom'">
-          <URadioGroup v-model="proxyType" :items="proxyTypeOptions" orientation="horizontal" />
-          <div class="flex gap-3">
-            <UFormField label="Proxy host" class="flex-1">
-              <UInput v-model="proxyHost" placeholder="proxy.example.com" class="w-full" />
-            </UFormField>
-            <UFormField label="Port" class="w-24">
-              <UInput v-model.number="proxyPort" type="number" class="w-full" />
-            </UFormField>
-          </div>
-          <div class="flex gap-3">
-            <UFormField label="Username" hint="Optional" class="flex-1">
-              <UInput v-model="proxyUsername" class="w-full" />
-            </UFormField>
-            <UFormField label="Password" hint="Optional" class="flex-1">
-              <UInput v-model="proxyPassword" type="password" :placeholder="proxyPasswordPlaceholder" class="w-full" />
-            </UFormField>
-          </div>
-        </template>
+              <UFormField label="Proxy">
+                <URadioGroup v-model="proxyMode" :items="proxyModeOptions" orientation="horizontal" />
+              </UFormField>
+              <template v-if="proxyMode === 'custom'">
+                <URadioGroup v-model="proxyType" :items="proxyTypeOptions" orientation="horizontal" />
+                <div class="flex gap-3">
+                  <UFormField label="Proxy host" class="flex-1">
+                    <UInput v-model="proxyHost" placeholder="proxy.example.com" class="w-full" />
+                  </UFormField>
+                  <UFormField label="Port" class="w-24">
+                    <UInput v-model.number="proxyPort" type="number" class="w-full" />
+                  </UFormField>
+                </div>
+                <div class="flex gap-3">
+                  <UFormField label="Username" hint="Optional" class="flex-1">
+                    <UInput v-model="proxyUsername" class="w-full" />
+                  </UFormField>
+                  <UFormField label="Password" hint="Optional" class="flex-1">
+                    <UInput v-model="proxyPassword" type="password" :placeholder="proxyPasswordPlaceholder" class="w-full" />
+                  </UFormField>
+                </div>
+              </template>
+            </div>
+          </template>
+        </UCollapsible>
 
         <UAlert v-if="error" color="error" variant="soft" :title="error" />
       </div>

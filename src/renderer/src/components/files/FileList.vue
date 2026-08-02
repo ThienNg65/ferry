@@ -118,6 +118,7 @@ const emit = defineEmits<{
             :entry="entries[virtualRow.index]"
             :selected="selected.has(entries[virtualRow.index].path)"
             :side="side"
+            :index="virtualRow.index"
             :transfer-icon="transferIcon"
             :show-tail="showTail"
             :allow-extract="allowExtract"
