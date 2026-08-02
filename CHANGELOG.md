@@ -5,6 +5,15 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+
+### Changed
+
+### Fixed
+- Auto-update: the release pipeline was silently failing to publish the update-feed metadata file, so installed builds could never detect a newer release was available — fixed.
+
+## 0.14.8 - 2026-07-30
+
+### Added
 - Adjustable split-pane layout: freely drag the vertical divider between the Local and Remote file lists to customize your view.
 - Large file editor warnings: prompts for confirmation before attempting to download and open excessively large files or archives in the built-in text editor.
 - Fallback editor logic: the built-in editor will automatically fall back to launching the system's external default editor if a file read was truncated.
