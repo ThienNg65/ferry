@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useMonitorStore } from '../../stores/monitor.store'
 import { formatBytes } from '../../utils/format'
+import { zebraRowClass } from '../../utils/rowStyle'
 
 type SortKey = 'name' | 'cpuPct' | 'rssBytes'
 
@@ -103,6 +104,7 @@ function sortIcon(key: SortKey): string {
           v-for="virtualRow in virtualRows"
           :key="virtualRow.key as string | number"
           class="absolute left-0 top-0 flex w-full items-center gap-2 px-2 text-[11px] text-default"
+          :class="zebraRowClass(virtualRow.index)"
           :style="{ height: '28px', transform: `translateY(${virtualRow.start}px)` }"
         >
           <span class="flex-1 truncate" :title="sortedProcesses[virtualRow.index].name">
