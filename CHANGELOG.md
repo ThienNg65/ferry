@@ -7,6 +7,8 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ### Added
 
 ### Changed
+- File browser and process monitor rows now alternate with a subtle background tint for easier scanning of long lists, and directory names render bolder than file names.
+- Add Site dialog's jump host and proxy fields are now tucked behind a collapsible "Advanced connection options" section, expanded automatically when editing a site that already has one of them configured.
 
 ### Fixed
 
