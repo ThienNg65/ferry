@@ -9,7 +9,7 @@ describe('zebraRowClass', () => {
   })
 
   it('returns the zebra class for odd indexes', () => {
-    expect(zebraRowClass(1)).toBe('bg-muted/40')
-    expect(zebraRowClass(3)).toBe('bg-muted/40')
+    expect(zebraRowClass(1)).toBe('bg-elevated/40')
+    expect(zebraRowClass(3)).toBe('bg-elevated/40')
   })
 })

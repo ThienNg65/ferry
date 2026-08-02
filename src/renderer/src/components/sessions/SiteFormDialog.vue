@@ -5,8 +5,8 @@ import type { AuthMethod, JumpHostConfig, KeyGenerateResult, ProxyConfig, ProxyT
 import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
 // Not yet used elsewhere in the app, so not in the auto-generated global
-// components.d.ts yet — deep-import instead of relying on <USwitch> (see
-// FileRow.vue's ContextMenu for the same pattern).
+// components.d.ts yet — deep-import instead of relying on <USwitch>/<UCollapsible>
+// (see FileRow.vue's ContextMenu for the same pattern).
 import USwitch from '@nuxt/ui/components/Switch.vue'
 import UCollapsible from '@nuxt/ui/components/Collapsible.vue'
 import { shouldExpandAdvanced } from '../../utils/advancedSiteOptions'
@@ -146,6 +146,13 @@ const canSave = computed(
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
     (!useJumpHost.value || jumpHops.value.every((hop) => hop.host.trim().length > 0 && hop.username.trim().length > 0))
+)
+
+/** True while an incomplete jump host is the reason Save is disabled — used to force the Advanced section open so the offending fields are never hidden. */
+const jumpHostIncomplete = computed(
+  () =>
+    useJumpHost.value &&
+    jumpHops.value.some((hop) => hop.host.trim().length === 0 || hop.username.trim().length === 0)
 )
 
 const authOptions: { label: string; value: AuthMethod }[] = [
@@ -314,7 +321,7 @@ async function save(): Promise<void> {
           </UFormField>
         </div>
 
-        <UCollapsible v-model:open="advancedOpen">
+        <UCollapsible :open="advancedOpen || jumpHostIncomplete" @update:open="(value) => (advancedOpen = value)">
           <button
             type="button"
             class="flex w-full items-center justify-between rounded-md border border-default px-3 py-2 text-left"
@@ -326,7 +333,7 @@ async function save(): Promise<void> {
             <UIcon
               name="i-lucide-chevron-down"
               class="size-4 shrink-0 transition-transform"
-              :class="advancedOpen ? 'rotate-180' : ''"
+              :class="advancedOpen || jumpHostIncomplete ? 'rotate-180' : ''"
             />
           </button>
           <template #content>
