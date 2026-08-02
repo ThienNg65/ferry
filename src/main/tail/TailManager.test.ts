@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS } from '../../shared/contract'
 import type { ExecLinesOptions, ExecResult } from '../ssh/RemoteShell'
+import { sanitizeHistoryLines } from './TailManager'
 
 // TailManager broadcasts via BrowserWindow.getAllWindows() — vitest runs
 // outside a real Electron process, so mock only that (same pattern as
@@ -50,6 +51,28 @@ function noticeEvents(): unknown[] {
 function endEvents(): unknown[] {
   return sent.filter((s) => s.channel === EVENT_CHANNELS.tailEnd).map((s) => s.evt)
 }
+
+describe('sanitizeHistoryLines', () => {
+  it('passes a normal valid value through unchanged', () => {
+    expect(sanitizeHistoryLines(500)).toBe(500)
+  })
+
+  it('clamps a negative value to the default', () => {
+    expect(sanitizeHistoryLines(-1)).toBe(200)
+  })
+
+  it('passes zero through unchanged (a valid non-negative value)', () => {
+    expect(sanitizeHistoryLines(0)).toBe(0)
+  })
+
+  it('clamps a non-integer/NaN value to the default', () => {
+    expect(sanitizeHistoryLines(NaN)).toBe(200)
+  })
+
+  it('clamps an excessively huge value to the upper bound', () => {
+    expect(sanitizeHistoryLines(10_000_000)).toBe(100_000)
+  })
+})
 
 describe('TailManager', () => {
   let TailManager: typeof import('./TailManager').TailManager

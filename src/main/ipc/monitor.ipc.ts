@@ -1,12 +1,6 @@
 import { handle } from './envelope'
-import { INVOKE_CHANNELS } from '../../shared/contract'
+import { INVOKE_CHANNELS, type MonitorStartRequest } from '../../shared/contract'
 import { MonitorManager } from '../monitor/MonitorManager'
-
-/** Request payload for `monitor:start`. */
-interface MonitorStartRequest {
-  sessionId: string
-  intervalMs?: number
-}
 
 /** Registers the remote resource monitor's start/stop handlers. */
 export function registerMonitorHandlers(): void {

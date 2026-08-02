@@ -5,18 +5,22 @@ import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useOperationsStore } from '../../stores/operations.store'
 import { useUiStore } from '../../stores/ui.store'
+import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useDockState } from '../../composables/useDockState'
+import { clampDockHeight } from '../../stores/ui.store'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
 import ActivityPanel from '../activity/ActivityPanel.vue'
 import MonitorPanel from '../monitor/MonitorPanel.vue'
+import OpenEditsPanel from '../edits/OpenEditsPanel.vue'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
 const transfers = useTransferQueueStore()
 const operations = useOperationsStore()
 const ui = useUiStore()
+const editSessions = useEditSessionsStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
@@ -46,7 +50,7 @@ function onResizeMove(e: PointerEvent): void {
     return
   }
   // Dragging the handle up should make the dock taller.
-  liveHeight.value = dragStartHeight + (dragStartY - e.clientY)
+  liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - e.clientY), window.innerHeight)
 }
 
 function onResizeEnd(e: PointerEvent): void {
@@ -131,6 +135,15 @@ function basename(path: string): string {
           :disabled="sessions.status !== 'connected'"
           @click="openDock('monitor')"
         />
+        <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
+          <UButton
+            label="Edits"
+            size="xs"
+            :color="tab === 'edits' ? 'primary' : 'neutral'"
+            :variant="tab === 'edits' ? 'soft' : 'ghost'"
+            @click="openDock('edits')"
+          />
+        </UChip>
       </div>
       <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
         <UButton
@@ -146,6 +159,7 @@ function basename(path: string): string {
       <TransferQueue v-if="tab === 'transfers'" />
       <ActivityPanel v-else-if="tab === 'activity'" />
       <MonitorPanel v-else-if="tab === 'monitor'" />
+      <OpenEditsPanel v-else-if="tab === 'edits'" />
       <template v-else-if="tab === 'tail'">
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center gap-1 border-b border-muted px-2 py-1">
           <div

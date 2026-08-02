@@ -71,8 +71,21 @@ function formatWhen(epochMs: number): string {
 
 const entries = computed(() => history.entries)
 
-async function clearHistory(): Promise<void> {
-  await history.clear()
+const clearConfirmOpen = ref(false)
+const clearing = ref(false)
+
+function openClearConfirm(): void {
+  clearConfirmOpen.value = true
+}
+
+async function confirmClearHistory(): Promise<void> {
+  clearing.value = true
+  try {
+    await history.clear()
+    clearConfirmOpen.value = false
+  } finally {
+    clearing.value = false
+  }
 }
 
 function close(): void {
@@ -93,7 +106,7 @@ function close(): void {
         <div class="flex items-center gap-2">
           <UInput v-model="search" icon="i-lucide-search" placeholder="Filter…" class="flex-1" />
           <URadioGroup v-model="statusFilter" :items="statusOptions" orientation="horizontal" />
-          <UButton color="error" variant="ghost" size="xs" icon="i-lucide-trash-2" @click="clearHistory">
+          <UButton color="error" variant="ghost" size="xs" icon="i-lucide-trash-2" @click="openClearConfirm">
             Clear
           </UButton>
         </div>
@@ -118,6 +131,21 @@ function close(): void {
           </div>
         </div>
       </div>
+    </template>
+  </UModal>
+
+  <UModal
+    :open="clearConfirmOpen"
+    title="Clear history"
+    :ui="{ footer: 'justify-end' }"
+    @update:open="(v: boolean) => { if (!v) clearConfirmOpen = false }"
+  >
+    <template #body>
+      <p class="text-sm text-default">Clear all history? This cannot be undone.</p>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="outline" @click="clearConfirmOpen = false">Cancel</UButton>
+      <UButton color="error" :loading="clearing" @click="confirmClearHistory">Clear</UButton>
     </template>
   </UModal>
 </template>

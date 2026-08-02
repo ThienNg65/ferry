@@ -1,15 +1,8 @@
 import * as path from 'path'
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type UnzipResult } from '../../shared/contract'
+import { INVOKE_CHANNELS, type UnzipResult, type UnzipRunRequest } from '../../shared/contract'
 import * as UnzipService from '../unzip/UnzipService'
 import { OperationRegistry } from '../operations/OperationRegistry'
-
-/** Request payload for `unzip:run`. */
-interface UnzipRunRequest {
-  sessionId: string
-  archivePath: string
-  targetDir: string
-}
 
 /** Registers the remote-unzip ("Extract Here") handler. */
 export function registerUnzipHandlers(): void {

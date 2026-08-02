@@ -5,6 +5,7 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- Open Edits dock tab: shows every file you currently have open for editing, across all sessions, with a live sync-status dot (synced / unsaved changes / session closed) and a one-click close button — previously there was no way to see or release an open edit without quitting the app.
 
 ### Changed
 - File browser and process monitor rows now alternate with a subtle background tint for easier scanning of long lists, and directory names render bolder than file names.
@@ -12,6 +13,21 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 
 ### Fixed
 - Auto-update: the release pipeline was silently failing to publish the update-feed metadata file, so installed builds could never detect a newer release was available — fixed.
+- File browser: pressing Escape to cancel a rename could still silently rename the file to the discarded text, because the input's cancel handler didn't reset the pending edit before the field lost focus.
+- File browser: the path breadcrumb now correctly highlights folder segments on Windows local paths (previously only remote, forward-slash paths rendered with dimmed/bold segments), and pressing Escape while editing a path now cancels the edit.
+- Command palette: opening it with Ctrl+K no longer yanks focus away from whatever text field you were typing in (e.g. inside Settings or the site form).
+- Process monitor: switching sessions in quick succession no longer risks leaving a background poller running for a session you've already left.
+- Site editor: saving a site with a custom proxy now correctly requires a proxy host to be filled in.
+- History: "Clear" now asks for confirmation before permanently wiping saved history, matching the same safeguard already used elsewhere in the app.
+- Two-factor/multi-prompt logins: pressing Enter after the first prompt (e.g. password) no longer submits the whole login early with later prompts (e.g. the one-time code) left blank — Enter now advances to the next field, and only submits from the last one.
+- Bottom dock: dragging the resize handle no longer lets the dock visually balloon or collapse mid-drag.
+- SSH connections: closing a session tab while it was still connecting could leave the underlying connection open in the background and later have it misreport itself as "connected" after being closed — fixed.
+- Permission changes (chmod) and remote file preview reads now validate their inputs and no longer risk silently coercing invalid values.
+- Live log tail: reopening the same tail while a dropped connection was retrying in the background could start a second, duplicate stream against the same remote file — fixed.
+- In-place file editing: saving a file from certain editors (which save via write-then-rename) could stop being detected after the first save, silently missing subsequent re-uploads — fixed by watching the file's containing folder instead of the file itself.
+- File transfers, and remote sync/compress/extract operations, no longer leak file handles or leave partial archive files behind on mid-operation errors.
+- Sync: a transient failure while listing the remote side during a push could previously be silently treated as "remote is empty," queuing every file for re-upload — it now fails loudly and safely instead.
+- Fixed a handful of background races where a stale response (from a slow session connect, transfer, folder listing, or history search) could overwrite more recent, correct state on screen.
 
 ## 0.14.8 - 2026-07-30
 

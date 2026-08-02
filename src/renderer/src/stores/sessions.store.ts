@@ -16,6 +16,7 @@ import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useSitesStore } from './sites.store'
+import { useMonitorStore } from './monitor.store'
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
 export interface SessionTab {
@@ -272,8 +273,14 @@ export const useSessionsStore = defineStore('sessions', {
         // longer be `activeTab` by the time this resolves if the user
         // switched tabs mid-connect.
         await useRemoteFsStore().loadForSession(result.sessionId)
-        tab.status = result.status
-        notify.success(`Connected to ${label}`)
+        // An intervening `sessionStatus` event (e.g. the connection dropping
+        // mid-load) may already have moved this tab to a terminal state —
+        // don't fight that with a stale success overwrite/toast.
+        const alreadyTerminal = tab.status === 'error' || tab.status === 'disconnected'
+        if (!alreadyTerminal) {
+          tab.status = result.status
+          notify.success(`Connected to ${label}`)
+        }
         // Pre-open the interactive shell in the background so it's already
         // connected by the time the user clicks the Terminal dock tab.
         void useTerminalStreamsStore().ensureTerminal(result.sessionId)
@@ -358,8 +365,12 @@ export const useSessionsStore = defineStore('sessions', {
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
         useRemoteFsStore().clearSession(tab.sessionId)
+        useMonitorStore().clearSession(tab.sessionId)
         await useTailStreamsStore().closeForSession(tab.sessionId)
-        await useTerminalStreamsStore().disposeForSession(tab.sessionId)
+        // Fire-and-forget: documented as no-op-safe today, but caught so a
+        // future failure can't become an unhandled rejection — deliberately
+        // not awaited so a slow teardown doesn't block closeTab.
+        void useTerminalStreamsStore().disposeForSession(tab.sessionId).catch(() => {})
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)

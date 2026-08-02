@@ -1,16 +1,6 @@
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type TransferEnqueueResult, type TransferKind } from '../../shared/contract'
+import { INVOKE_CHANNELS, type TransferEnqueueRequest, type TransferEnqueueResult } from '../../shared/contract'
 import { TransferQueue } from '../transfer/TransferQueue'
-
-/** Request payload for `transfer:enqueue`. */
-interface TransferEnqueueRequest {
-  sessionId: string
-  kind: TransferKind
-  localPath: string
-  remotePath: string
-  /** True to recursively transfer a whole directory tree instead of a single file. */
-  isDir?: boolean
-}
 
 /** Registers handlers for enqueueing and cancelling transfers. */
 export function registerTransferHandlers(): void {

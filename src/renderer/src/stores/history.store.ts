@@ -6,21 +6,31 @@ import { invoke } from '../api'
 interface HistoryState {
   entries: HistoryEntry[]
   loading: boolean
+  /** Request-sequencing token — bumped on every `list()` call so a slower, superseded response (e.g. from rapid search-box typing) can detect it's stale and skip applying its result. */
+  requestSeq: number
 }
 
 export const useHistoryStore = defineStore('history', {
   state: (): HistoryState => ({
     entries: [],
-    loading: false
+    loading: false,
+    requestSeq: 0
   }),
 
   actions: {
     async list(query?: HistoryQuery): Promise<void> {
+      const seq = ++this.requestSeq
       this.loading = true
       try {
-        this.entries = await invoke<HistoryEntry[]>(INVOKE_CHANNELS.historyList, query)
+        const result = await invoke<HistoryEntry[]>(INVOKE_CHANNELS.historyList, query)
+        if (seq !== this.requestSeq) {
+          return
+        }
+        this.entries = result
       } finally {
-        this.loading = false
+        if (seq === this.requestSeq) {
+          this.loading = false
+        }
       }
     },
 

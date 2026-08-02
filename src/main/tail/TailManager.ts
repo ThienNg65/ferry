@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
 import { isTransient } from '../ssh/errors'
+import { shellEscape } from '../ssh/shellEscape'
 import { EVENT_CHANNELS, type TailEndEvent, type TailLineEvent, type TailNoticeEvent } from '../../shared/contract'
 
 interface TailEntry {
@@ -20,11 +21,6 @@ const IDLE_TTL_MS = 30 * 60 * 1000
 /** Reconnect attempts before giving up and ending the stream. */
 const MAX_RECONNECT_ATTEMPTS = 5
 
-/** Single-quotes a value for safe interpolation into a remote shell command. */
-function shellEscape(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
 /**
  * Clamps `historyLines` to a safe non-negative integer. This value is
  * interpolated directly (unquoted) into a remote shell command as `tail -n
@@ -32,7 +28,7 @@ function shellEscape(value: string): string {
  * its TypeScript type without runtime validation — so a compromised or buggy
  * renderer could otherwise smuggle arbitrary shell syntax through this field.
  */
-function sanitizeHistoryLines(value: number): number {
+export function sanitizeHistoryLines(value: number): number {
   const n = Math.trunc(Number(value))
   if (!Number.isFinite(n) || n < 0) {
     return 200
@@ -185,13 +181,33 @@ export class TailManager {
       return
     }
     const backoff = Math.min(2000 * Math.pow(2, attempt), 15_000)
+    // Capture the entry reference (not just the tailId string) so the timer can detect
+    // if it's stale by the time it fires. If `start(tailId, ...)` is called again on this
+    // same tailId before the timer runs (e.g. the user closes and reopens the same tail
+    // panel during a transient-drop retry), `start()` calls `stop(tailId)` then installs a
+    // brand-new entry under the same key — without this check, `follow()` would re-fetch
+    // the NEW entry (whose controller isn't aborted), pass the abort-check guard, and start
+    // a second concurrent remote tail that `stop()` never learns about.
     setTimeout(() => {
+      if (this.tails.get(tailId) !== entry) {
+        return
+      }
       // Re-tail with 0 history lines so we don't replay the whole buffer.
       void this.follow(tailId, 0, attempt + 1)
     }, backoff)
   }
 
-  /** Stops a stream, kills its remote `tail`, and notifies the renderer. */
+  /**
+   * Stops a stream, kills its remote `tail`, and notifies the renderer.
+   *
+   * `entry.remotePid` may still be `null` here if `stop()` races ahead of the first
+   * `PID_MARKER` output line (see {@link follow}) — in that case `killRemoteTail` is a
+   * no-op. This is acceptable: `entry.controller.abort()` above triggers `execLines`'s
+   * abort handling in RemoteShell, which destroys the underlying SSH exec channel/stream
+   * immediately. Closing that channel ends the remote shell session sshd allocated for the
+   * command, which sends SIGHUP to (and normally kills) the `tail` process descending from
+   * it — so the remote process does not get orphaned even without an explicit `kill by PID`.
+   */
   stop(tailId: string): void {
     const entry = this.tails.get(tailId)
     if (!entry) {

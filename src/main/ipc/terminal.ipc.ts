@@ -1,15 +1,8 @@
 import { randomUUID } from 'crypto'
 import { handle } from './envelope'
 import { INVOKE_CHANNELS } from '../../shared/contract'
-import type { TerminalOpenResult } from '../../shared/contract'
+import type { TerminalOpenRequest, TerminalOpenResult } from '../../shared/contract'
 import { TerminalManager } from '../terminal/TerminalManager'
-
-/** Request payload for `terminal:open`. */
-interface TerminalOpenRequest {
-  sessionId: string
-  cols: number
-  rows: number
-}
 
 /** Request payload for `terminal:write`. */
 interface TerminalWriteRequest {

@@ -256,6 +256,16 @@ export interface SessionOpenResult {
   status: SessionStatus
 }
 
+/** Request payload for `session:open` — connect from a saved site, or ad hoc. */
+export interface SessionOpenRequest {
+  sessionId: string
+  siteId?: string
+  quickConnect?: QuickConnectInput
+  /** Set only on a user-confirmed retry after a host-key-mismatch warning, scoped to the exact
+   * host:port that mismatched — see `SessionManager.openFromSite`. */
+  trustedHostKey?: { host: string; port: number }
+}
+
 export interface SessionProgressEvent {
   sessionId: string
   message: string
@@ -330,17 +340,22 @@ export interface FileReadResult {
   size: number
 }
 
-export interface FsLocalWriteFileRequest {
-  path: string
-  content: string
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TransferKind = 'upload' | 'download'
 export type TransferState = 'queued' | 'started' | 'progress' | 'done' | 'error' | 'cancelled'
+
+/** Request payload for `transfer:enqueue`. */
+export interface TransferEnqueueRequest {
+  sessionId: string
+  kind: TransferKind
+  localPath: string
+  remotePath: string
+  /** True to recursively transfer a whole directory tree instead of a single file. */
+  isDir?: boolean
+}
 
 /** Result of enqueueing a transfer. */
 export interface TransferEnqueueResult {
@@ -396,6 +411,12 @@ export interface OperationEvent {
   progressTotal?: number
   progressUnit?: 'bytes' | 'items'
   error?: string
+}
+
+/** Request payload for `fs:remote:deleteMany`. */
+export interface DeleteManyRequest {
+  sessionId: string
+  paths: string[]
 }
 
 /** Result of `fs:remote:deleteMany` — per-path outcomes so the renderer patches its listing once. */
@@ -474,6 +495,13 @@ export interface SyncRunResult {
 // Domain models — remote log tail
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Request payload for `tail:start`. */
+export interface TailStartRequest {
+  sessionId: string
+  remotePath: string
+  historyLines?: number
+}
+
 /** Payload for the `tail:line` channel. */
 export interface TailLineEvent {
   tailId: string
@@ -512,6 +540,18 @@ export interface EditOpenResult {
   localTempPath: string
 }
 
+/** One open edit session, as returned by `edit:list` — a public-safe snapshot of main-process state, used to hydrate the renderer's Open Edits dock tab on load (the `edit:event` stream alone only covers edits opened after that point). */
+export interface OpenEditSnapshot {
+  editId: string
+  sessionId: string
+  remotePath: string
+  localTempPath: string
+  /** True if the local temp file has unsaved-to-server changes (mtime newer than the last successful upload). */
+  dirty: boolean
+  /** True if the underlying SSH session has closed — further changes won't be uploaded. */
+  sessionClosed: boolean
+}
+
 /**
  * Push-event payload for `edit:event` — one edit session's lifecycle.
  * `opened` fires once after the initial download and `shell.openPath()`;
@@ -533,6 +573,13 @@ export interface EditEvent {
 // Domain models — terminal
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Request payload for `terminal:open`. */
+export interface TerminalOpenRequest {
+  sessionId: string
+  cols: number
+  rows: number
+}
+
 /** Result of opening an interactive SSH shell (PTY) for a session. */
 export interface TerminalOpenResult {
   terminalId: string
@@ -553,6 +600,12 @@ export interface TerminalExitEvent {
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote resource monitor
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Request payload for `monitor:start`. */
+export interface MonitorStartRequest {
+  sessionId: string
+  intervalMs?: number
+}
 
 /**
  * One remote resource sample (Monitor dock tab). `cpu` is null on the very
@@ -616,8 +669,32 @@ export interface MonitorStatusEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Domain models — archive creation ("compress to zip")
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Request payload for `archive:compressLocal`. */
+export interface CompressLocalRequest {
+  sourcePath: string
+  destPath: string
+}
+
+/** Request payload for `archive:compressRemote`. */
+export interface CompressRemoteRequest {
+  sessionId: string
+  sourcePath: string
+  destPath: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Domain models — remote unzip
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Request payload for `unzip:run`. */
+export interface UnzipRunRequest {
+  sessionId: string
+  archivePath: string
+  targetDir: string
+}
 
 /** Result of running `unzip` on the remote server. */
 export interface UnzipResult {
@@ -742,6 +819,7 @@ export const INVOKE_CHANNELS = {
   editOpenRemote: 'edit:openRemote',
   editOpenExternal: 'edit:openExternal',
   editClose: 'edit:close',
+  editList: 'edit:list',
   // terminal
   terminalOpen: 'terminal:open',
   terminalWrite: 'terminal:write',

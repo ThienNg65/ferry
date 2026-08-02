@@ -11,12 +11,25 @@ const sessions = useSessionsStore()
 /** Caps the per-core bar strip in the condensed summary — beyond this a "+N more" label stands in for the rest. */
 const MAX_CORE_BARS = 16
 
+// Guards against overlapping switches: two rapid session changes could otherwise both be
+// in-flight at once and leave a poller running server-side for an already-abandoned session.
+// Each call claims the token; if a newer call has claimed it by the time an await resolves,
+// this call's remaining effects are skipped (the newer call is responsible for its own start/stop).
+let switchToken = 0
+
 async function switchTo(sessionId: string | null, previous: string | null): Promise<void> {
+  const token = ++switchToken
   if (previous && previous !== sessionId) {
     await monitor.stop(previous)
+    if (token !== switchToken) {
+      return
+    }
   }
   if (sessionId && sessions.status === 'connected') {
     await monitor.start(sessionId)
+    if (token !== switchToken) {
+      return
+    }
   }
 }
 

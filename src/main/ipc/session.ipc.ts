@@ -2,21 +2,11 @@ import { handle } from './envelope'
 import {
   INVOKE_CHANNELS,
   type KeyboardInteractiveRespondRequest,
-  type QuickConnectInput,
+  type SessionOpenRequest,
   type SessionOpenResult
 } from '../../shared/contract'
-import { SessionManager, type TrustedHostKey } from '../ssh/SessionManager'
+import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
-
-/** Request payload for `session:open` — connect from a saved site, or ad hoc. */
-export interface SessionOpenRequest {
-  sessionId: string
-  siteId?: string
-  quickConnect?: QuickConnectInput
-  /** Set only on a user-confirmed retry after a host-key-mismatch warning, scoped to the exact
-   * host:port that mismatched — see {@link SessionManager.openFromSite}. */
-  trustedHostKey?: TrustedHostKey
-}
 
 /** Registers handlers for opening/closing SSH sessions. */
 export function registerSessionHandlers(): void {
@@ -37,6 +27,9 @@ export function registerSessionHandlers(): void {
 
   handle<void>(INVOKE_CHANNELS.sessionKeyboardInteractiveRespond, (req) => {
     const { requestId, responses } = req as KeyboardInteractiveRespondRequest
+    if (!Array.isArray(responses)) {
+      throw new SshError('VALIDATION', 'session:keyboardInteractiveRespond requires responses to be an array')
+    }
     SessionManager.getInstance().respondKeyboardInteractive(requestId, responses)
   })
 }

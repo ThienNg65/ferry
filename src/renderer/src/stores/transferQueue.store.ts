@@ -95,19 +95,29 @@ export const useTransferQueueStore = defineStore('transferQueue', {
         remotePath,
         isDir
       })
-      this.items.set(result.transferId, {
-        transferId: result.transferId,
-        sessionId,
-        kind,
-        state: 'queued',
-        localPath,
-        remotePath,
-        isDir,
-        bytesTransferred: 0,
-        totalBytes: 0,
-        bytesPerSec: 0,
-        etaMs: 0
-      })
+      // Main-side push()/run() can broadcast 'queued'/'started' transfer
+      // events synchronously before this invoke() resolves. Only seed the
+      // initial snapshot if nothing has arrived yet, or if it hasn't
+      // progressed past 'queued' — never clobber state that's already moved
+      // on (started/progress/done/error), which for a fast/small transfer
+      // could otherwise permanently erase a terminal state no further event
+      // will ever correct.
+      const existing = this.items.get(result.transferId)
+      if (!existing || existing.state === 'queued') {
+        this.items.set(result.transferId, {
+          transferId: result.transferId,
+          sessionId,
+          kind,
+          state: 'queued',
+          localPath,
+          remotePath,
+          isDir,
+          bytesTransferred: 0,
+          totalBytes: 0,
+          bytesPerSec: 0,
+          etaMs: 0
+        })
+      }
     },
 
     async cancel(transferId: string): Promise<void> {

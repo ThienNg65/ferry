@@ -114,6 +114,11 @@ watch(
   }
 )
 
+function cancelRename(): void {
+  draftName.value = props.entry.name
+  emit('cancel-rename')
+}
+
 function submitRename(): void {
   const name = draftName.value.trim()
   if (name && name !== props.entry.name) {
@@ -213,7 +218,7 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
       @dblclick.stop
       @keydown.stop
       @keyup.enter="submitRename"
-      @keyup.esc="emit('cancel-rename')"
+      @keyup.esc="cancelRename"
       @blur="submitRename"
     />
     <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>

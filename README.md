@@ -69,16 +69,24 @@ conventions, and development notes.
 
 ## Releasing
 
-CI (`.github/workflows/ci.yml`) runs typecheck + tests on every push/PR to `main`. On a successful
-push to `main`, it also auto-tags `vX.Y.Z` if `package.json`'s version isn't already tagged, and
-separately packages the app and uploads the installer as a workflow artifact (`package-artifact`
-job, unsigned, 30-day retention) so a `main`-branch build is downloadable without waiting for a
-tagged release. Pushing the auto-tag triggers `.github/workflows/release.yml`, which builds,
-packages, publishes the installer to this repo's GitHub Releases via `electron-builder`, and fills
-in the release notes from the commit history. So cutting a release is just: bump `package.json`'s
-`version` and `VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything
-after that is automatic. A signed build needs `CSC_LINK`/`CSC_KEY_PASSWORD` set as repo secrets;
-without them, the workflow still publishes an unsigned installer.
+CI is a single workflow, `.github/workflows/ci.yml`. Every push/PR to `main` runs the `verify` job
+(typecheck + tests + build). On a successful push to `main`, the `auto-release` job also runs the
+whole release pipeline in one linear job: finalize `CHANGELOG.md`'s `## Unreleased` heading, tag
+`vX.Y.Z` locally, build and package the app with `electron-builder` (unsigned), generate release
+notes from `CHANGELOG.md` (via `.github/scripts/extract-release-notes.js`, not the commit history),
+bump `package.json`/`VERSION` to the next patch version and commit that as the start of the next
+development cycle, push the commits and the tag together, then create the GitHub Release and upload
+the installer/blockmap/`latest.yml`. So cutting a release is just: bump `package.json`'s `version`
+and `VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything after that is
+automatic.
+
+Signing goes through a currently-dormant SignPath stage rather than `electron-builder`'s native
+`CSC_LINK`/`CSC_KEY_PASSWORD` pickup: every step in that stage is gated on the
+`SIGNPATH_ORGANIZATION_ID` repo variable, which isn't set yet, so today it's a no-op and every
+release ships unsigned. Once a SignPath OSS account is approved and that variable (plus its
+matching secrets) are added, the workflow uploads the built installer as an artifact, submits it to
+SignPath for Authenticode signing, and regenerates `latest.yml`'s hash/size before publishing —
+without touching anything else in this flow.
 
 ## License
 

@@ -2,6 +2,7 @@ import * as path from 'path'
 import { handle } from './envelope'
 import {
   INVOKE_CHANNELS,
+  type DeleteManyRequest,
   type DeleteManyResult,
   type FileListResult,
   type FileReadResult
@@ -11,17 +12,18 @@ import * as RemoteFs from '../fs/RemoteFsService'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { runConcurrent } from '../util/concurrency'
 
-/** Request payload for `fs:remote:deleteMany`. */
-interface DeleteManyRequest {
-  sessionId: string
-  paths: string[]
-}
-
 /** Deletes running at once within one batch-delete operation. */
 const DELETE_CONCURRENCY = 4
 
 /** Registers local and remote (SFTP) filesystem IPC handlers. */
 export function registerFsHandlers(): void {
+  // NOTE: the fsLocal* handlers below accept any renderer-supplied path with no
+  // scoping/sandboxing to a root directory. This is deliberate, not an oversight —
+  // Ferry's local pane is a general-purpose file browser (like the OS file picker),
+  // so it must be able to reach anywhere on disk the user's own account can. There
+  // is no v-html/XSS sink in the renderer that could smuggle in a hostile path, so
+  // this isn't currently exploitable. Do not "fix" this into a restricted sandbox —
+  // that would break normal file-browsing.
   handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) => LocalFs.list(dirPath as string | undefined))
   handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath) =>

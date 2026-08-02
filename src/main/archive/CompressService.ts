@@ -37,6 +37,9 @@ export async function compressLocal(
   // Lazy-load archiver only when a local compress actually runs, keeping it off
   // the app-startup critical path (remote compress uses the server's `zip`).
   const { ZipArchive } = await import('archiver')
+  if (opts.signal?.aborted) {
+    throw new SshError('CANCELLED', 'Compression cancelled')
+  }
   try {
     await new Promise<void>((resolve, reject) => {
       const output = createWriteStream(destZipPath)
@@ -77,10 +80,10 @@ export async function compressLocal(
       void archive.finalize()
     })
   } catch (e) {
-    if (e instanceof SshError && e.code === 'CANCELLED') {
-      // Best-effort removal of the partial zip a cancelled run leaves behind.
-      await unlink(destZipPath).catch(() => undefined)
-    }
+    // Best-effort removal of the partial/corrupt zip any failed run leaves
+    // behind — a cancellation, a disk-full error, or a permission error from
+    // archiver/fs can all leave a dangling partial file at destZipPath.
+    await unlink(destZipPath).catch(() => undefined)
     throw e
   }
 }

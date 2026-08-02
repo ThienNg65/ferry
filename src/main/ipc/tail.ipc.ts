@@ -1,14 +1,7 @@
 import { randomUUID } from 'crypto'
 import { handle } from './envelope'
-import { INVOKE_CHANNELS } from '../../shared/contract'
+import { INVOKE_CHANNELS, type TailStartRequest } from '../../shared/contract'
 import { TailManager } from '../tail/TailManager'
-
-/** Request payload for `tail:start`. */
-interface TailStartRequest {
-  sessionId: string
-  remotePath: string
-  historyLines?: number
-}
 
 /** Result of starting a tail — the caller uses `tailId` to route events and to stop. */
 interface TailStartResult {

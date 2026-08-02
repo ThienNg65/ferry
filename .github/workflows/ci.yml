@@ -113,6 +113,25 @@ jobs:
             exit 1
           fi
 
+          # KNOWN GAP: everything from this point on (SignPath signing, then `gh release
+          # create` below) can still fail *after* this push has already succeeded. If that
+          # happens, main is left already bumped to the *next* patch version and tagged for
+          # the version that just failed to release — but that version has no tag pushed
+          # failure-side and no GitHub Release. A naive rerun of this workflow would then
+          # build/tag/release the WRONG (next) version, silently skipping the one that
+          # actually failed.
+          #
+          # There is currently no automatic rollback for this window (deliberately — see the
+          # SignPath-stage comment below for why release-affecting steps are pushed as late as
+          # possible instead). If a run fails after this step:
+          #   1. Check whether the tag "v${{ steps.version.outputs.version }}" exists on the
+          #      remote and whether a matching GitHub Release was created.
+          #   2. If the tag/release is missing, manually re-tag that commit (or re-run the
+          #      build/package/SignPath/release steps by hand) for the version that failed —
+          #      do NOT just re-run this workflow as-is, since main has already moved on.
+          #   3. Only after confirming the failed version is properly released should you
+          #      trust a subsequent normal push to main to release the next version.
+
       # --- Dormant SignPath signing stage --------------------------------
       # Every step below is gated on SIGNPATH_ORGANIZATION_ID being set, so
       # this whole block is a true no-op until real SignPath credentials

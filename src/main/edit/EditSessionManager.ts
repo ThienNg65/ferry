@@ -7,7 +7,7 @@ import { SessionManager } from '../ssh/SessionManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { downloadForEdit, uploadForEdit } from '../fs/RemoteFsService'
 import { SshError } from '../ssh/errors'
-import { EVENT_CHANNELS, type EditEvent } from '../../shared/contract'
+import { EVENT_CHANNELS, type EditEvent, type OpenEditSnapshot } from '../../shared/contract'
 
 /** Debounce window after the last file-change before re-uploading — many editors write-then-rename on save, firing several raw fs events per save. */
 const REUPLOAD_DEBOUNCE_MS = 450
@@ -123,6 +123,29 @@ export class EditSessionManager {
     return { editId, localTempPath }
   }
 
+  /** Public-safe snapshot of every currently open edit, for hydrating the renderer's Open Edits list on load — the `edit:event` stream alone only covers edits opened after that point. */
+  async listEdits(): Promise<OpenEditSnapshot[]> {
+    const result: OpenEditSnapshot[] = []
+    for (const entry of this.edits.values()) {
+      let dirty = false
+      try {
+        const stats = await fs.stat(entry.localTempPath)
+        dirty = stats.mtimeMs > entry.lastSyncedMtimeMs
+      } catch {
+        // Missing/inaccessible temp file — nothing to sync, treat as not dirty.
+      }
+      result.push({
+        editId: entry.editId,
+        sessionId: entry.sessionId,
+        remotePath: entry.remotePath,
+        localTempPath: entry.localTempPath,
+        dirty,
+        sessionClosed: entry.sessionClosed
+      })
+    }
+    return result
+  }
+
   /** Opens an existing edit session's temp file in the OS default app. */
   async openExternal(editId: string): Promise<void> {
     const entry = this.edits.get(editId)
@@ -135,8 +158,21 @@ export class EditSessionManager {
     }
   }
 
+  // Watches the containing directory rather than the temp file path itself. Editors that
+  // save via write-temp-then-rename-over replace the inode at `localTempPath`, which can
+  // cause a watch bound directly to that path to go silent after the first save on some
+  // platforms/editors — meaning only the first save would ever re-upload. Each edit gets
+  // its own isolated temp directory (see `openRemote`'s `tempDir`, unique per editId), so
+  // any event observed in that directory is safe to treat as relevant to this file.
   private watch(entry: EditEntry): void {
-    entry.watcher = watch(entry.localTempPath, { persistent: false }, () => {
+    const watchDir = path.dirname(entry.localTempPath)
+    const basename = path.basename(entry.localTempPath)
+    entry.watcher = watch(watchDir, { persistent: false }, (_eventType, filename) => {
+      // `filename` can be null on some platforms — since this directory only ever
+      // contains this one temp file, treat any event in it as relevant in that case.
+      if (filename !== null && filename !== basename) {
+        return
+      }
       if (entry.debounceTimer) {
         clearTimeout(entry.debounceTimer)
       }

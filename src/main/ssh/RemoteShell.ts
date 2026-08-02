@@ -382,7 +382,7 @@ export class RemoteShell {
     const stats = await this.stat(remotePath)
     const length = Math.min(stats.size ?? 0, maxBytes)
     if (length === 0) {
-      return { content: '', truncated: false, size: stats.size ?? 0 }
+      return { content: '', truncated: (stats.size ?? 0) > length, size: stats.size ?? 0 }
     }
     return new Promise((resolve, reject) => {
       const stream = sftp.createReadStream(remotePath, { start: 0, end: length - 1 })
@@ -417,6 +417,9 @@ export class RemoteShell {
 
   /** Sets a remote path's permissions. `mode` is an octal string (e.g. "0755" or "755"). */
   async chmod(remotePath: string, mode: string): Promise<void> {
+    if (!/^[0-7]{3,4}$/.test(mode)) {
+      throw new SshError('VALIDATION', `Invalid permission mode "${mode}" — expected an octal string like "755" or "0755"`)
+    }
     const sftp = await this.sftp()
     return new Promise<void>((resolve, reject) => {
       sftp.chmod(remotePath, parseInt(mode, 8), (chmodErr) => {

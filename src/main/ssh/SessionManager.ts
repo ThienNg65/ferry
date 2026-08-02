@@ -296,6 +296,9 @@ export class SessionManager {
     }
     let agentIdentityCount: number | undefined
     if (auth.authMethod === 'password') {
+      if (!auth.password) {
+        throw new SshError('VALIDATION', 'Password is required for password authentication')
+      }
       config.password = auth.password
     } else if (auth.authMethod === 'agent') {
       const agentPath = auth.agentPath || defaultAgentPath()
@@ -539,6 +542,19 @@ export class SessionManager {
         throw e
       }
     } catch (e) {
+      // If this session was superseded/closed while the connect was in flight, `close()`
+      // already removed the entry from the map and ended the client — do not touch
+      // `this.sessions` or broadcast anything for a session the renderer no longer knows about.
+      if (this.sessions.get(sessionId) !== entry) {
+        client.end()
+        client.destroy()
+        for (let i = jumpClients.length - 1; i >= 0; i--) {
+          jumpClients[i].end()
+          jumpClients[i].destroy()
+        }
+        sock?.destroy()
+        throw e
+      }
       entry.status = 'error'
       const message = e instanceof Error ? e.message : String(e)
       this.broadcastStatus(sessionId, 'error', message)
@@ -548,6 +564,18 @@ export class SessionManager {
       }
       sock?.destroy()
       throw e
+    }
+
+    // Same supersession check on the success path: `close()` may have run and torn down
+    // the client while the handshake above was still completing.
+    if (this.sessions.get(sessionId) !== entry) {
+      client.end()
+      client.destroy()
+      for (let i = jumpClients.length - 1; i >= 0; i--) {
+        jumpClients[i].end()
+        jumpClients[i].destroy()
+      }
+      throw new SshError('SSH_CONNECT', 'Session was closed before the connection completed')
     }
 
     entry.status = 'connected'

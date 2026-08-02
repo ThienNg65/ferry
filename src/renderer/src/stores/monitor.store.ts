@@ -96,6 +96,11 @@ export const useMonitorStore = defineStore('monitor', {
 
     async stop(sessionId: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.monitorStop, sessionId)
+    },
+
+    /** Drops a session's bucket entirely — called when its tab closes/disconnects. */
+    clearSession(sessionId: string): void {
+      delete this.bySession[sessionId]
     }
   }
 })

@@ -31,6 +31,15 @@ const instances = new Map<string, TerminalInstance>()
  */
 const pending = new Map<string, Promise<string>>()
 
+/**
+ * In-flight `disposeForSession()` calls, keyed by sessionId. `disposeForSession`
+ * deletes `instances`' entry synchronously before its own `await invoke(...)` —
+ * without this reservation, a same-tick `ensureTerminal(sessionId)` call would
+ * pass the `instances.get(sessionId)` check as undefined and race it, opening
+ * a brand-new PTY for a session whose close is still in-flight main-side.
+ */
+const disposing = new Map<string, Promise<void>>()
+
 /** Copies the terminal's current selection to the OS clipboard, then clears it. */
 function copySelection(term: Terminal): void {
   if (term.hasSelection()) {
@@ -99,6 +108,24 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       const inFlight = pending.get(sessionId)
       if (inFlight) {
         return inFlight
+      }
+      // Wait out an in-flight dispose instead of racing it — otherwise a new
+      // PTY could be opened for a session whose old one hasn't finished
+      // closing main-side yet. Re-check `pending`/`instances` afterwards: if
+      // another concurrent `ensureTerminal` call was also waiting on the same
+      // dispose, it may have already reserved (or finished) the open in the
+      // interim.
+      const inFlightDispose = disposing.get(sessionId)
+      if (inFlightDispose) {
+        await inFlightDispose
+        const existingAfterDispose = instances.get(sessionId)
+        if (existingAfterDispose) {
+          return existingAfterDispose.terminalId
+        }
+        const pendingAfterDispose = pending.get(sessionId)
+        if (pendingAfterDispose) {
+          return pendingAfterDispose
+        }
       }
       ensureSubscriptions()
       const openPromise = (async (): Promise<string> => {
@@ -178,16 +205,28 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
 
     /** Tears down a session's terminal entirely — called when its tab closes/disconnects. */
     async disposeForSession(sessionId: string): Promise<void> {
+      const inFlight = disposing.get(sessionId)
+      if (inFlight) {
+        return inFlight
+      }
       const inst = instances.get(sessionId)
       if (!inst) {
         return
       }
       instances.delete(sessionId)
       this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
+      const disposePromise = (async (): Promise<void> => {
+        try {
+          await invoke<void>(INVOKE_CHANNELS.terminalClose, inst.terminalId)
+        } finally {
+          inst.term.dispose()
+        }
+      })()
+      disposing.set(sessionId, disposePromise)
       try {
-        await invoke<void>(INVOKE_CHANNELS.terminalClose, inst.terminalId)
+        await disposePromise
       } finally {
-        inst.term.dispose()
+        disposing.delete(sessionId)
       }
     }
   }

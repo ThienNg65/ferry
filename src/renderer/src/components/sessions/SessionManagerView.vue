@@ -27,6 +27,19 @@ watch(
   }
 )
 
+/** Template refs for each prompt's <UInput>, keyed by prompt index — lets Enter on a non-last
+ * prompt (e.g. password before an OTP prompt) move focus forward instead of submitting early. */
+const keyboardPromptInputs = ref<({ inputRef?: HTMLInputElement } | null)[]>([])
+
+function onKeyboardPromptEnter(index: number): void {
+  const promptCount = sessions.pendingKeyboardPrompt?.prompts.length ?? 0
+  if (index >= promptCount - 1) {
+    void submitKeyboardAnswers()
+    return
+  }
+  keyboardPromptInputs.value[index + 1]?.inputRef?.focus()
+}
+
 async function submitKeyboardAnswers(): Promise<void> {
   await sessions.respondKeyboardInteractive([...keyboardAnswers.value])
 }
@@ -465,11 +478,12 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             :label="prompt.prompt"
           >
             <UInput
+              :ref="(el: any) => { keyboardPromptInputs[i] = el }"
               v-model="keyboardAnswers[i]"
               :type="prompt.echo ? 'text' : 'password'"
               class="w-full"
               autofocus
-              @keyup.enter="submitKeyboardAnswers"
+              @keyup.enter="onKeyboardPromptEnter(i)"
             />
           </UFormField>
         </div>

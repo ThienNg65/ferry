@@ -36,6 +36,8 @@ const EMPTY_DEFAULT: PerSessionFs = Object.freeze(freshFsState())
 
 interface RemoteFsState {
   bySession: Record<string, PerSessionFs>
+  /** Per-session request-sequencing token — bumped on every `loadForSession` call so a slower, superseded response can detect it's stale and skip applying its result. */
+  requestSeq: Record<string, number>
 }
 
 /**
@@ -45,7 +47,7 @@ interface RemoteFsState {
  * before so `FilePane.vue` needs no template changes.
  */
 export const useRemoteFsStore = defineStore('remoteFs', {
-  state: (): RemoteFsState => ({ bySession: {} }),
+  state: (): RemoteFsState => ({ bySession: {}, requestSeq: {} }),
 
   getters: {
     current(state): PerSessionFs {
@@ -110,18 +112,32 @@ export const useRemoteFsStore = defineStore('remoteFs', {
      */
     async loadForSession(sessionId: string, dirPath?: string): Promise<void> {
       const entry = this.ensureBucket(sessionId)
+      const seq = (this.requestSeq[sessionId] ?? 0) + 1
+      this.requestSeq[sessionId] = seq
       entry.loading = true
       entry.error = null
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath)
+        // A newer loadForSession call for this session started since this one
+        // fired, or the session's bucket was cleared (tab closed) while this
+        // was in flight — either way, applying this result now would be
+        // stale or would silently resurrect a bucket for a closed session.
+        if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
+          return
+        }
         entry.currentPath = result.path
         entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
         entry.selectAnchor = null
       } catch (e) {
+        if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
+          return
+        }
         entry.error = e instanceof Error ? e.message : String(e)
       } finally {
-        entry.loading = false
+        if (this.requestSeq[sessionId] === seq && this.bySession[sessionId]) {
+          entry.loading = false
+        }
       }
     },
 
@@ -256,6 +272,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     /** Drops a session's bucket entirely — called when its tab closes/disconnects. */
     clearSession(sessionId: string): void {
       delete this.bySession[sessionId]
+      delete this.requestSeq[sessionId]
     }
   }
 })

@@ -9,7 +9,7 @@ const isProfiling =
 let appReadyTime = 0
 let readyToShowTime = 0
 
-import { app, BrowserWindow, ipcMain, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, Menu, session, shell } from 'electron'
 import path from 'path'
 import { registerSitesHandlers } from './ipc/sites.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
@@ -38,7 +38,8 @@ import { initAutoUpdater } from './update/AutoUpdater'
 import { AppSettingsStore } from './app/AppSettingsStore'
 import { TransferQueue } from './transfer/TransferQueue'
 import { KnownHostsStore } from './ssh/KnownHostsStore'
-import { EVENT_CHANNELS, INVOKE_CHANNELS, ok, type WindowStateEvent, type ProfileReportPayload } from '../shared/contract'
+import { EVENT_CHANNELS, INVOKE_CHANNELS, type WindowStateEvent, type ProfileReportPayload } from '../shared/contract'
+import { handle } from './ipc/envelope'
 
 /** Development mode flag — set by electron-vite. */
 const IS_DEV = !app.isPackaged
@@ -164,7 +165,8 @@ function createWindow(): BrowserWindow {
 }
 
 function registerProfileHandler(): void {
-  ipcMain.handle(INVOKE_CHANNELS.profileReport, (_event, payload: ProfileReportPayload) => {
+  handle<null>(INVOKE_CHANNELS.profileReport, (rawPayload) => {
+    const payload = rawPayload as ProfileReportPayload
     if (isProfiling) {
       const mainAbsT0 = mainTimeOrigin + mainStartTime
       const appReadyMs = Math.max(0, appReadyTime - mainStartTime)
@@ -205,7 +207,7 @@ function registerProfileHandler(): void {
         app.quit()
       }, 50)
     }
-    return ok(null)
+    return null
   })
 }
 

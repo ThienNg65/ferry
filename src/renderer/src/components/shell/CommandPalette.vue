@@ -24,6 +24,15 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.target instanceof HTMLElement && event.target.closest('.xterm')) {
     return
   }
+  // Typing in a dialog's text field must never be interrupted by the global shortcut
+  // (mirrors the guard in FilePane.vue's onKeydown).
+  if (
+    event.target instanceof HTMLInputElement ||
+    event.target instanceof HTMLTextAreaElement ||
+    (event.target instanceof HTMLElement && event.target.isContentEditable)
+  ) {
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     open.value = !open.value

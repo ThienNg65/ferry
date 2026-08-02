@@ -19,19 +19,28 @@ function submit(): void {
   }
 }
 
+function cancelEdit(): void {
+  draft.value = props.path
+  editing.value = false
+}
+
 // Emphasize the current directory's own name over the path leading to it.
+// Split on both `/` and `\` so Windows local-pane paths get the same dimmed/bold treatment as remote paths.
+function lastSepIndex(s: string): number {
+  return Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+}
 const parentPart = computed(() => {
   const p = props.path || '/'
-  const idx = p.replace(/\/+$/, '').lastIndexOf('/')
-  return idx > 0 ? p.slice(0, idx + 1) : idx === 0 ? '/' : ''
+  const idx = lastSepIndex(p.replace(/[/\\]+$/, ''))
+  return idx > 0 ? p.slice(0, idx + 1) : idx === 0 ? p[0] : ''
 })
 const lastSegment = computed(() => {
   const p = props.path || '/'
-  const trimmed = p.replace(/\/+$/, '')
+  const trimmed = p.replace(/[/\\]+$/, '')
   if (trimmed === '') {
     return '/'
   }
-  const idx = trimmed.lastIndexOf('/')
+  const idx = lastSepIndex(trimmed)
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
 })
 </script>
@@ -45,6 +54,7 @@ const lastSegment = computed(() => {
       class="w-full"
       autofocus
       @keyup.enter="submit"
+      @keyup.esc="cancelEdit"
       @blur="submit"
     />
     <button v-else class="w-full truncate text-left text-xs" @click="startEdit">

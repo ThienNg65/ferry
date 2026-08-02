@@ -17,8 +17,10 @@ config) and are added as the `SIGNPATH_ORGANIZATION_ID` repo variable + matching
 ## Context
 
 Users who download and run Ferry's installer (`Ferry-Setup-<version>.exe`, built via
-`electron-builder` and published through [.github/workflows/release.yml](../../.github/workflows/release.yml))
-see Windows SmartScreen's "Windows protected your PC" warning on first run. This is not a bug in
+`electron-builder` and published through the `auto-release` job in
+[.github/workflows/ci.yml](../../.github/workflows/ci.yml) — the release pipeline was later
+consolidated into this single workflow; there is no separate `release.yml`) see Windows
+SmartScreen's "Windows protected your PC" warning on first run. This is not a bug in
 Ferry's code — it happens because the installer is **unsigned**. `electron-builder.yml` already
 documents this explicitly (lines 19–25): signing only activates if `CSC_LINK` / `CSC_KEY_PASSWORD`
 are set, and `forceCodeSigning: false` lets local/CI builds succeed unsigned when they aren't.
@@ -52,9 +54,9 @@ describe the concrete changes to make once they're in hand.
 
 ### 2. Change the release workflow to build unsigned, then sign via SignPath, then publish
 
-Currently [.github/workflows/release.yml](../../.github/workflows/release.yml)'s "Package and
-publish" step (lines 45–59) does build+sign+publish in one `electron-builder --publish always`
-call, with signing gated on `CSC_LINK`/`CSC_KEY_PASSWORD`. That has to split into three stages,
+Currently `.github/workflows/ci.yml`'s "Build and Package with Electron Builder" step in the
+`auto-release` job does build+sign+publish in one `electron-builder --publish always`-style call,
+with signing gated on `CSC_LINK`/`CSC_KEY_PASSWORD`. That has to split into three stages,
 because SignPath signs an already-built artifact rather than plugging into electron-builder's
 build step:
 
@@ -87,8 +89,9 @@ electron-builder's native `CSC_LINK` pickup (`forceCodeSigning: false` still sta
 
 ### 4. Update docs
 
-- [README.md](../../README.md) lines 77–80 currently describe the `CSC_LINK`/`CSC_KEY_PASSWORD`
-  signed-vs-unsigned behavior — update to describe the SignPath-based flow instead.
+- [README.md](../../README.md)'s "Releasing" section currently describes the `CSC_LINK`/
+  `CSC_KEY_PASSWORD` signed-vs-unsigned behavior — update to describe the SignPath-based flow
+  instead.
 - [.claude/PROJECT_MAP.md](../PROJECT_MAP.md) lines 105–110 — same update, this is the
   actively-maintained doc other sessions rely on.
 - [CHANGELOG.md](../../CHANGELOG.md) — note the switch from "no code-signing certificate" to

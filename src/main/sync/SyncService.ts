@@ -107,8 +107,11 @@ async function listLocalTreeOrEmpty(dirPath: string): Promise<TreeItem[]> {
 async function listRemoteTreeOrEmpty(sessionId: string, dirPath: string): Promise<TreeItem[]> {
   try {
     return await SessionManager.getInstance().shell(sessionId).readdirRecursive(dirPath)
-  } catch {
-    return []
+  } catch (e) {
+    if (e instanceof SshError && e.code === 'NOT_FOUND') {
+      return []
+    }
+    throw e
   }
 }
 

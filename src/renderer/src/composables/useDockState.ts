@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor'
+export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor' | 'edits'
 
 // Module-scoped singletons (the useSettingsDialog.ts pattern) — deliberately
 // NOT ui.store.ts, which persists to localStorage; which dock tab is open is

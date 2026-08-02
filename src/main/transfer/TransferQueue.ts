@@ -295,10 +295,19 @@ export class TransferQueue {
           resolve()
         }
       }
+      const destroyAll = (): void => {
+        if (!readStream.destroyed) {
+          readStream.destroy()
+        }
+        if (!throttle.destroyed) {
+          throttle.destroy()
+        }
+        if (!writeStream.destroyed) {
+          writeStream.destroy()
+        }
+      }
       const onAbort = (): void => {
-        readStream.destroy()
-        throttle.destroy()
-        writeStream.destroy()
+        destroyAll()
         finish(new SshError('CANCELLED', 'Transfer cancelled'))
       }
       if (opts.signal.aborted) {
@@ -312,9 +321,18 @@ export class TransferQueue {
         bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
         opts.onProgress(bytesMoved)
       })
-      readStream.on('error', (e: Error) => finish(e))
-      throttle.on('error', (e: Error) => finish(e))
-      writeStream.on('error', (e: Error) => finish(e))
+      readStream.on('error', (e: Error) => {
+        destroyAll()
+        finish(e)
+      })
+      throttle.on('error', (e: Error) => {
+        destroyAll()
+        finish(e)
+      })
+      writeStream.on('error', (e: Error) => {
+        destroyAll()
+        finish(e)
+      })
       writeStream.on('close', () => finish())
       readStream.pipe(throttle).pipe(writeStream)
     })

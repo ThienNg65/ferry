@@ -34,7 +34,7 @@ const TICK_COMMAND =
   'df -Pk / 2>/dev/null; echo @@@; ' +
   'for d in /proc/[0-9]*; do p=${d#/proc/}; if IFS= read -r s < "$d/stat" 2>/dev/null; then printf "@P@%s\\n%s\\n" "$p" "$s"; fi; done'
 
-function sanitizeIntervalMs(value: number | undefined): number {
+export function sanitizeIntervalMs(value: number | undefined): number {
   if (value === undefined) {
     return DEFAULT_INTERVAL_MS
   }
@@ -130,6 +130,11 @@ export class MonitorManager {
 
     try {
       const result = await shell.exec(TICK_COMMAND, { timeoutMs: TICK_TIMEOUT_MS })
+      if (entry.stopped) {
+        // stop()/stopAllForSession() fired while the exec was in flight — don't
+        // broadcast a sample or status for a monitor that's already stopped.
+        return
+      }
       const [statText, memText, loadText, uptimeText, diskText, procText] = splitSections(
         result.stdout,
         TICK_SECTION_COUNT

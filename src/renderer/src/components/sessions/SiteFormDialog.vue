@@ -145,7 +145,8 @@ const canSave = computed(
   () =>
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    (!useJumpHost.value || jumpHops.value.every((hop) => hop.host.trim().length > 0 && hop.username.trim().length > 0))
+    (!useJumpHost.value || jumpHops.value.every((hop) => hop.host.trim().length > 0 && hop.username.trim().length > 0)) &&
+    (proxyMode.value !== 'custom' || proxyHost.value.trim().length > 0)
 )
 
 /** True while an incomplete jump host is the reason Save is disabled — used to force the Advanced section open so the offending fields are never hidden. */
