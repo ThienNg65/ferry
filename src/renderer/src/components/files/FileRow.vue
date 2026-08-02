@@ -9,11 +9,13 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
+import { zebraRowClass } from '../../utils/rowStyle'
 
 const props = defineProps<{
   entry: FileEntry
   selected: boolean
   side: 'local' | 'remote'
+  index: number
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
@@ -173,7 +175,7 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
     :class="
       selected
         ? 'bg-primary/10 text-highlighted'
-        : 'text-default hover:bg-muted'
+        : ['text-default hover:bg-muted', zebraRowClass(index)]
     "
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"
@@ -214,7 +216,7 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
       @keyup.esc="emit('cancel-rename')"
       @blur="submitRename"
     />
-    <span v-else class="flex-1 truncate">{{ entry.name }}</span>
+    <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>
     <span class="w-20 shrink-0 text-right text-xs text-dimmed">{{ formatSize(entry.size, entry.isDir) }}</span>
     <span class="w-40 shrink-0 text-right text-xs text-dimmed">{{ formatDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end">
