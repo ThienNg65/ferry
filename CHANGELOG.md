@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
+## 0.14.9 - 2026-08-02
 
 ### Added
 - Open Edits dock tab: shows every file you currently have open for editing, across all sessions, with a live sync-status dot (synced / unsaved changes / session closed) and a one-click close button — previously there was no way to see or release an open edit without quitting the app.
