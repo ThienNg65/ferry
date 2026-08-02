@@ -10,6 +10,10 @@ on:
 
 permissions:
   contents: write
+  # Needed by actions/upload-artifact + SignPath's signing-request action (Part 2
+  # of the dormant signing stage below) — harmless while SIGNPATH_ORGANIZATION_ID
+  # is unset, since those steps are skipped entirely.
+  actions: read
 
 jobs:
   verify:
@@ -109,14 +113,58 @@ jobs:
             exit 1
           fi
 
+      # --- Dormant SignPath signing stage --------------------------------
+      # Every step below is gated on SIGNPATH_ORGANIZATION_ID being set, so
+      # this whole block is a true no-op until real SignPath credentials
+      # exist (see .claude/plan/ferry-smartscreen-signing-plan.md) — nothing
+      # to configure here beyond adding the repo variable/secrets once the
+      # SignPath OSS application is approved.
+      #
+      # Placed here (after the push above), not right after the build step,
+      # so a lost push race (see the comment on the previous step) never
+      # burns a real SignPath signing request on a run that's about to fail
+      # anyway — mirrors why commit b6efbcc deferred all GitHub-Release API
+      # calls until after push.
+      - name: Upload unsigned installer for signing
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/Ferry-Setup-*.exe
+
+      - name: Submit signing request to SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ferry
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Regenerate update metadata for signed binary
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        run: node ./.github/scripts/regenerate-update-yml.js
+      # --- End dormant SignPath signing stage ----------------------------
+
       - name: Create GitHub Release and Upload Assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Since the tag is now pushed to GitHub, we can safely create the release
+          # nullglob so a signed release's deleted (stale) blockmap doesn't pass
+          # through as a literal, non-existent filename (see regenerate-update-yml.js).
+          shopt -s nullglob
+          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
+
+          # Since the tag is now pushed to GitHub, we can safely create the release.
+          # latest.yml is required by electron-updater's checkForUpdates() to learn
+          # a newer version exists at all — omitting it (as this step used to)
+          # silently breaks auto-update for every installed client.
           gh release create "v${{ steps.version.outputs.version }}" \
-            dist/Ferry-Setup-*.exe \
-            dist/*.blockmap \
+            "${assets[@]}" \
             --title "v${{ steps.version.outputs.version }}" \
             --notes-file RELEASE_NOTES.md

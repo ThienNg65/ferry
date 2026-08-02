@@ -16,13 +16,16 @@ publish:
   # electron-builder defaults to draft releases (hidden from the Releases page
   # until manually published) unless told otherwise.
   releaseType: release
-# Code signing is NOT configured here — electron-builder picks up a certificate
-# automatically from the standard CSC_LINK (path or base64 .pfx) + CSC_KEY_PASSWORD
-# env vars at package time, with no config needed for the common case. Neither
-# variable is set in this dev environment, so packaged builds here are
+# Code signing is NOT configured here via the CSC_LINK/CSC_KEY_PASSWORD path —
+# there's no purchased certificate. Instead, `.github/workflows/ci.yml`'s
+# auto-release job has a dormant post-build SignPath signing stage (every
+# step gated on the SIGNPATH_ORGANIZATION_ID repo variable being set — see
+# .claude/plan/ferry-smartscreen-signing-plan.md), which signs the already-
+# built unsigned installer out-of-band rather than through electron-builder's
+# own CSC_LINK pickup. Until that repo variable/its secrets are added (post
+# SignPath OSS-program approval, an external step), packaged builds stay
 # unsigned; `forceCodeSigning: false` (the default) keeps `npm run package`
-# working locally instead of hard-failing without a cert. Set both env vars in
-# CI/release builds to produce a signed installer.
+# working locally instead of hard-failing without a cert.
 forceCodeSigning: false
 # ssh2's optional native deps (cpu-features) cannot run from inside an asar
 # archive — unpack them alongside the app. safeStorage needs no such

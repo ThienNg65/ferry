@@ -16,12 +16,16 @@ function broadcast(channel: string, payload: unknown): void {
 /**
  * Wires electron-updater's GitHub-Releases-based update check.
  *
- * This is genuinely greenfield scaffolding, not a fully proven feature: it
- * needs `electron-builder.yml`'s `publish.owner`/`publish.repo` pointing at a
- * real repo with a real published release, and a code-signing certificate
- * (see `electron-builder.yml`'s own comment on `CSC_LINK`/`CSC_KEY_PASSWORD`)
- * for the installed update to be trusted on Windows — neither exists in this
- * dev environment, so this has never been exercised against a real release.
+ * `electron-builder.yml`'s `publish.owner`/`publish.repo` point at the real
+ * repo, and `.github/workflows/ci.yml`'s `auto-release` job publishes a real
+ * GitHub Release (including `latest.yml`) on every push to `main` — so the
+ * feed itself is real and live. Two things remain genuinely unproven: the
+ * installer isn't code-signed yet (see `electron-builder.yml`'s own comment
+ * on `CSC_LINK`/`CSC_KEY_PASSWORD`, and `.claude/plan/ferry-smartscreen-signing-plan.md`
+ * for the SignPath-based plan to fix that), and this has not yet been
+ * exercised end-to-end against a real install (an older packaged build
+ * actually detecting/downloading/installing a newer release) — flag both if
+ * either is ever reported broken.
  * A no-op in dev (`app.isPackaged` is false, matching electron-updater's own
  * recommendation not to run update checks against a local/unpackaged build).
  */
@@ -40,13 +44,18 @@ export async function initAutoUpdater(): Promise<void> {
   autoUpdater.on('update-downloaded', (info) => {
     broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
   })
-  // Swallowed deliberately: until electron-builder.yml's publish placeholders
-  // are replaced with a real repo, every check fails the same way (no feed to
-  // query) — there's nothing actionable for a user to do about it, so this
-  // must never surface as an error toast.
-  autoUpdater.on('error', () => {})
+  // Never surfaced as a user-facing error toast (there's nothing actionable a
+  // user can do about a feed/network hiccup), but logged rather than fully
+  // swallowed — a silent blanket swallow here previously hid a real, ongoing
+  // failure (the feed's latest.yml was never being published) for an unknown
+  // number of releases with nothing in any log to point at it.
+  autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdater]', err)
+  })
 
-  autoUpdater.checkForUpdates().catch(() => {})
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[AutoUpdater] checkForUpdates failed', err)
+  })
 }
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */

@@ -1,5 +1,19 @@
 # Fix Windows SmartScreen warning on Ferry's packaged .exe
 
+## Status (2026-08-02)
+
+The repo-side scaffolding this plan describes (steps 2–4, minus the parts that need real
+credentials) is **done** — see `.github/workflows/ci.yml`'s dormant signing block (gated on the
+`SIGNPATH_ORGANIZATION_ID` repo variable), `.github/scripts/regenerate-update-yml.js`, and the
+updated comments in `electron-builder.yml`/`README.md`/`.claude/PROJECT_MAP.md`. This was built
+against SignPath's actual current docs (confirmed action name/inputs:
+`signpath/github-action-submit-signing-request@v2`, `api-token`/`organization-id`/`project-slug`/
+`signing-policy-slug`/`github-artifact-id`/optional `artifact-configuration-slug`/
+`output-artifact-directory`), not guessed. **Still outstanding, and still the user's own step:**
+step 1 (applying to SignPath's open-source program) — nothing past that point can be tested for
+real until real credentials exist (org ID, project slug, signing policy slug, API token or OIDC
+config) and are added as the `SIGNPATH_ORGANIZATION_ID` repo variable + matching secrets.
+
 ## Context
 
 Users who download and run Ferry's installer (`Ferry-Setup-<version>.exe`, built via
@@ -87,9 +101,9 @@ electron-builder's native `CSC_LINK` pickup (`forceCodeSigning: false` still sta
 
 - CI-side (steps 2–3) can't be fully verified until real SignPath credentials exist — this is
   vetting-gated, not something to fake with placeholder secrets.
-- Once credentials exist: push a version bump to `main`, watch the `release.yml` run in GitHub
-  Actions, confirm the "Package and publish" stage completes all three sub-steps and a signed
-  `.exe` lands in the GitHub Release.
+- Once credentials exist: push to `main`, watch `ci.yml`'s `auto-release` job run in GitHub Actions,
+  confirm the dormant signing block (now active) completes all its steps and a signed `.exe` lands
+  in the GitHub Release.
 - Download the signed installer on a real Windows machine and confirm SmartScreen no longer shows
   "Windows protected your PC" (may take a short reputation-building window even for a
   SignPath-signed binary, but should be dramatically faster than an unsigned one).
@@ -106,3 +120,34 @@ electron-builder's native `CSC_LINK` pickup (`forceCodeSigning: false` still sta
   schema, and secret names above are described from current public knowledge and must be
   double-checked against SignPath's live documentation once the account exists, since CI/CD
   integration details can drift.
+
+## Appendix: draft application content (for the user to submit at signpath.org/apply)
+
+The live application form is a client-rendered widget behind a cookie-consent gate and a reCAPTCHA
+— its exact field labels couldn't be scraped, so this is written to cover what this kind of
+OSS-signing application typically asks for, not a literal field-by-field transcription. Adapt to
+whatever fields actually appear.
+
+- **Project name:** Ferry
+- **Repository URL:** https://github.com/ThienNg65/ferry
+- **License:** MIT (`LICENSE`)
+- **One-line description:** A lightweight, WinSCP-alternative Electron + Vue 3 desktop SFTP client
+  for Windows.
+- **Longer description:** Ferry is a dual-pane SFTP/SSH file-transfer client aimed at replacing
+  WinSCP for daily use — recursive folder transfers, an embedded SSH terminal, live remote log
+  tailing, one-way directory sync, remote archive extraction, and a live resource monitor, built on
+  Electron/Vue 3/TypeScript. It has automated releases (every push to `main` publishes a new
+  GitHub Release via CI) and an automated test suite (typecheck + ~200 unit tests + real-server
+  integration tests against a Docker SFTP container).
+- **What you need signing for / why:** Windows SmartScreen blocks/warns on the unsigned installer
+  on first run, which is the standard trust-building hurdle for any small, free, unsigned Windows
+  app — there's no budget for a commercial OV/EV certificate, and SignPath's open-source program is
+  the intended path to a trusted, Authenticode-signed release build.
+- **Release/build process summary:** GitHub Actions (`.github/workflows/ci.yml`) builds an NSIS
+  installer via `electron-builder` on every push to `main`; the signing request would submit that
+  already-built, unsigned `.exe` as a build artifact via the `signpath/github-action-submit-signing-request`
+  GitHub Action.
+- **Maintainer identity / contact:** the user's own — not filled in here, theirs to provide.
+
+Do not submit this on the user's behalf — this is content for them to review, adjust, and paste in
+under their own identity.
