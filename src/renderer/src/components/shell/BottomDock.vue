@@ -112,13 +112,15 @@ function basename(path: string): string {
             @click="openDock('activity')"
           />
         </UChip>
-        <UButton
-          label="Log Tail"
-          size="xs"
-          :color="tab === 'tail' ? 'primary' : 'neutral'"
-          :variant="tab === 'tail' ? 'soft' : 'ghost'"
-          @click="openDock('tail')"
-        />
+        <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
+          <UButton
+            label="Log Tail"
+            size="xs"
+            :color="tab === 'tail' ? 'primary' : 'neutral'"
+            :variant="tab === 'tail' ? 'soft' : 'ghost'"
+            @click="openDock('tail')"
+          />
+        </UChip>
         <UButton
           label="Terminal"
           size="xs"
@@ -161,40 +163,84 @@ function basename(path: string): string {
       <MonitorPanel v-else-if="tab === 'monitor'" />
       <OpenEditsPanel v-else-if="tab === 'edits'" />
       <template v-else-if="tab === 'tail'">
-        <div v-if="tailStreams.tabs.length > 0" class="flex items-center gap-1 border-b border-muted px-2 py-1">
-          <div
-            v-for="openTail in tailStreams.tabs"
-            :key="openTail.tailId"
-            class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs"
-            :class="
-              tailStreams.activeTailId === openTail.tailId
-                ? 'bg-primary/10 font-medium text-primary'
-                : 'text-muted hover:bg-muted'
-            "
-          >
-            <button class="truncate" @click="tailStreams.activeTailId = openTail.tailId">
-              {{ basename(openTail.remotePath) }}
-            </button>
-            <UTooltip text="Close tail">
+        <!-- Tail Tabs Header Bar -->
+        <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/20 px-2 py-1">
+          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
+            <div
+              v-for="openTail in tailStreams.tabs"
+              :key="openTail.tailId"
+              class="group flex items-center gap-1.5 rounded-md px-2 py-1 text-xs cursor-pointer border transition-all"
+              :class="
+                tailStreams.activeTailId === openTail.tailId
+                  ? 'bg-primary/10 border-primary/30 font-medium text-primary shadow-2xs'
+                  : 'border-transparent text-muted hover:bg-muted hover:text-default'
+              "
+              :title="openTail.remotePath"
+              @click="tailStreams.activeTailId = openTail.tailId"
+              @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
+            >
+              <!-- Live status indicator dot -->
+              <span
+                v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
+                class="size-1.5 rounded-full bg-emerald-500"
+              />
+              <span
+                v-else-if="tailStreams.errorMap[openTail.tailId]"
+                class="size-1.5 rounded-full bg-rose-500"
+              />
+              <span
+                v-else
+                class="size-1.5 rounded-full bg-neutral-400"
+              />
+
+              <span class="max-w-[140px] truncate select-none">
+                {{ basename(openTail.remotePath) }}
+              </span>
+
+              <!-- Unread badge if inactive tab has incoming lines -->
+              <span
+                v-if="tailStreams.unreadMap[openTail.tailId] && tailStreams.activeTailId !== openTail.tailId"
+                class="rounded-full bg-primary/20 px-1 py-0.2 text-[9px] font-mono font-bold text-primary"
+              >
+                +{{ tailStreams.unreadMap[openTail.tailId] }}
+              </span>
+
+              <UTooltip text="Close (Middle-click)">
+                <button
+                  class="rounded p-0.5 text-muted opacity-60 hover:opacity-100 hover:bg-muted-foreground/10 transition-opacity"
+                  @click.stop="tailStreams.close(openTail.tailId)"
+                >
+                  <UIcon name="i-lucide-x" class="size-3" />
+                </button>
+              </UTooltip>
+            </div>
+          </div>
+
+          <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2">
+            <UTooltip text="Close all tail tabs">
               <UButton
-                icon="i-lucide-x"
+                icon="i-lucide-x-circle"
                 color="neutral"
                 variant="ghost"
                 size="xs"
-                @click="tailStreams.close(openTail.tailId)"
+                @click="tailStreams.closeAll()"
               />
             </UTooltip>
           </div>
         </div>
+
         <div class="min-h-0 flex-1">
           <LogTailViewer
             v-if="tailStreams.activeTailId"
             :key="tailStreams.activeTailId"
             :tail-id="tailStreams.activeTailId"
           />
-          <div v-else class="flex h-full flex-col items-center justify-center gap-1 px-3 py-6 text-center">
-            <UIcon name="i-lucide-scroll-text" class="size-5 text-dimmed" />
-            <p class="text-xs text-dimmed">Click the tail icon on a remote file to follow it live</p>
+          <div v-else class="flex h-full flex-col items-center justify-center gap-1.5 px-3 py-6 text-center select-none">
+            <UIcon name="i-lucide-scroll-text" class="size-7 text-dimmed/80" />
+            <p class="text-xs font-medium text-default">No active log tails</p>
+            <p class="text-[11px] text-dimmed max-w-xs">
+              Right-click any log or text file in the Remote file pane and select "Tail this file live" to stream output.
+            </p>
           </div>
         </div>
       </template>

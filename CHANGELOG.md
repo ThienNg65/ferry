@@ -5,6 +5,12 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- Live log tail feature overhaul:
+  - **Virtual Scrolling & 60fps Performance**: Replaced unbounded DOM rendering with `@tanstack/vue-virtual`, allowing seamless 60fps scrolling and instant responsiveness even on high-throughput 5,000+ line streams.
+  - **Syntax & Log Level Highlighting**: Automatic classification and color coding of log entries (`ERROR`, `WARN`, `INFO`, `DEBUG`, stack traces, and internal notices) with left-border indicators, text tints, and badges.
+  - **In-Log Find (`Ctrl+F`)**: Integrated interactive search bar supporting match counting (`X of Y`), next/previous navigation (`Enter` / `Shift+Enter`), match case (`Aa`), regular expressions (`.*`), in-line `<mark>` highlights with active match emphasis, and automatic virtual scrolling to matching lines.
+  - **Enhanced UI/UX**: Top toolbar with pulsating live status indicator dot, line count badge, log level filters (`All`, `Errors`, `Warnings+`, `Info+`, `Debug`), wrap/nowrap toggle, clear view, copy button, and floating "Jump to latest (+N)" button with smooth entrance animation.
+  - **Dock Tabs Enhancements**: Per-tab live status indicators, unread line count badges (`+N`) on background tabs, middle-click to close, "Close all" button, and active tail count chip on the dock's "Log Tail" button.
 
 ### Changed
 
@@ -13,6 +19,14 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## 0.14.9 - 2026-08-02
 
 ### Added
+=======
+- Live log tail feature overhaul:
+  - **Virtual Scrolling & 60fps Performance**: Replaced unbounded DOM rendering with `@tanstack/vue-virtual`, allowing seamless 60fps scrolling and instant responsiveness even on high-throughput 5,000+ line streams.
+  - **Syntax & Log Level Highlighting**: Automatic classification and color coding of log entries (`ERROR`, `WARN`, `INFO`, `DEBUG`, stack traces, and internal notices) with left-border indicators, text tints, and badges.
+  - **In-Log Find (`Ctrl+F`)**: Integrated interactive search bar supporting match counting (`X of Y`), next/previous navigation (`Enter` / `Shift+Enter`), match case (`Aa`), regular expressions (`.*`), in-line `<mark>` highlights with active match emphasis, and automatic virtual scrolling to matching lines.
+  - **Enhanced UI/UX**: Top toolbar with pulsating live status indicator dot, line count badge, log level filters (`All`, `Errors`, `Warnings+`, `Info+`, `Debug`), wrap/nowrap toggle, clear view, copy button, and floating "Jump to latest (+N)" button with smooth entrance animation.
+  - **Dock Tabs Enhancements**: Per-tab live status indicators, unread line count badges (`+N`) on background tabs, middle-click to close, "Close all" button, and active tail count chip on the dock's "Log Tail" button.
+>>>>>>> Stashed changes
 - Open Edits dock tab: shows every file you currently have open for editing, across all sessions, with a live sync-status dot (synced / unsaved changes / session closed) and a one-click close button — previously there was no way to see or release an open edit without quitting the app.
 
 ### Changed

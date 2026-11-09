@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, shallowRef } from 'vue'
+import { ref, shallowRef, watch } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { TailEndEvent, TailLineEvent, TailNoticeEvent } from '@shared/contract'
 import { invoke, onEvent } from '../api'
@@ -23,6 +23,14 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
   const linesMap = shallowRef<Record<string, string[]>>({})
   const endedMap = ref<Record<string, boolean>>({})
   const errorMap = ref<Record<string, string | undefined>>({})
+  const unreadMap = ref<Record<string, number>>({})
+
+  // Reset unread count whenever active tab changes
+  watch(activeTailId, (newId) => {
+    if (newId && unreadMap.value[newId]) {
+      unreadMap.value = { ...unreadMap.value, [newId]: 0 }
+    }
+  })
 
   // Buffers for batching
   const buffers = new Map<string, string[]>()
@@ -39,13 +47,21 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
       if (!buffer || buffer.length === 0) {
         return
       }
+      const addedCount = buffer.length
       const current = linesMap.value[tailId] || []
       const next = current.concat(buffer)
       buffers.set(tailId, [])
-      
+
       linesMap.value = {
         ...linesMap.value,
         [tailId]: next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
+      }
+
+      if (activeTailId.value !== tailId) {
+        unreadMap.value = {
+          ...unreadMap.value,
+          [tailId]: (unreadMap.value[tailId] || 0) + addedCount
+        }
       }
     })
     rafHandles.set(tailId, handle)
@@ -83,17 +99,25 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     const existing = tabs.value.find((t) => t.sessionId === sessionId && t.remotePath === remotePath)
     if (existing) {
       activeTailId.value = existing.tailId
+      unreadMap.value = { ...unreadMap.value, [existing.tailId]: 0 }
       return
     }
     const result = await invoke<TailStartResult>(INVOKE_CHANNELS.tailStart, { sessionId, remotePath })
-    
+
     linesMap.value = { ...linesMap.value, [result.tailId]: [] }
     endedMap.value[result.tailId] = false
     errorMap.value[result.tailId] = undefined
+    unreadMap.value = { ...unreadMap.value, [result.tailId]: 0 }
     buffers.set(result.tailId, [])
-    
+
     tabs.value.push({ tailId: result.tailId, sessionId, remotePath })
     activeTailId.value = result.tailId
+  }
+
+  function clear(tailId: string): void {
+    linesMap.value = { ...linesMap.value, [tailId]: [] }
+    buffers.set(tailId, [])
+    unreadMap.value = { ...unreadMap.value, [tailId]: 0 }
   }
 
   async function close(tailId: string): Promise<void> {
@@ -102,18 +126,30 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     if (activeTailId.value === tailId) {
       activeTailId.value = tabs.value[0]?.tailId ?? null
     }
-    
+
     const newLinesMap = { ...linesMap.value }
     delete newLinesMap[tailId]
     linesMap.value = newLinesMap
-    
+
     delete endedMap.value[tailId]
     delete errorMap.value[tailId]
+
+    const newUnreadMap = { ...unreadMap.value }
+    delete newUnreadMap[tailId]
+    unreadMap.value = newUnreadMap
+
     buffers.delete(tailId)
     const handle = rafHandles.get(tailId)
     if (handle !== undefined) {
       cancelAnimationFrame(handle)
       rafHandles.delete(tailId)
+    }
+  }
+
+  async function closeAll(): Promise<void> {
+    const all = [...tabs.value]
+    for (const t of all) {
+      await close(t.tailId)
     }
   }
 
@@ -132,8 +168,11 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     linesMap,
     endedMap,
     errorMap,
+    unreadMap,
     open,
+    clear,
     close,
+    closeAll,
     closeForSession
   }
 })
