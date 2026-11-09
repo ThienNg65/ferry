@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
   # Needed by actions/upload-artifact + SignPath's signing-request action (Part 2
   # of the dormant signing stage below) — harmless while SIGNPATH_ORGANIZATION_ID
   # is unset, since those steps are skipped entirely.
@@ -52,7 +53,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/setup-node-deps
 
@@ -91,8 +92,8 @@ jobs:
 
       - name: Create tag
         shell: bash
-        # Create tag locally. We will push it at the end with --follow-tags
-        run: git tag "v${{ steps.version.outputs.version }}"
+        # Create tag locally. Force flag allows safe retries if previously fetched
+        run: git tag -f "v${{ steps.version.outputs.version }}"
 
       - name: Build and Package with Electron Builder
         shell: bash
@@ -128,7 +129,7 @@ jobs:
       - name: Commit next development cycle and push
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           git add package.json package-lock.json VERSION CHANGELOG.md
 
@@ -137,32 +138,23 @@ jobs:
           else
             git commit -m "chore: start next development cycle"
           fi
-          
-          # Try to push everything. If it fails due to a race condition (non-fast-forward),
-          # fail the workflow. Since we haven't touched GitHub Releases yet, no rollback is needed!
-          if ! git push origin HEAD:main "v${{ steps.version.outputs.version }}"; then
-            echo "::error::Push failed! Another commit was merged to main during the build."
-            exit 1
-          fi
 
-          # KNOWN GAP: everything from this point on (SignPath signing, then `gh release
-          # create` below) can still fail *after* this push has already succeeded. If that
-          # happens, main is left already bumped to the *next* patch version and tagged for
-          # the version that just failed to release — but that version has no tag pushed
-          # failure-side and no GitHub Release. A naive rerun of this workflow would then
-          # build/tag/release the WRONG (next) version, silently skipping the one that
-          # actually failed.
-          #
-          # There is currently no automatic rollback for this window (deliberately — see the
-          # SignPath-stage comment below for why release-affecting steps are pushed as late as
-          # possible instead). If a run fails after this step:
-          #   1. Check whether the tag "v${{ steps.version.outputs.version }}" exists on the
-          #      remote and whether a matching GitHub Release was created.
-          #   2. If the tag/release is missing, manually re-tag that commit (or re-run the
-          #      build/package/SignPath/release steps by hand) for the version that failed —
-          #      do NOT just re-run this workflow as-is, since main has already moved on.
-          #   3. Only after confirming the failed version is properly released should you
-          #      trust a subsequent normal push to main to release the next version.
+          # Push the release tag first
+          git push origin "v${{ steps.version.outputs.version }}" --force
+
+          # Push the next development cycle to main. If branch protection requires PRs (GH006),
+          # fall back to creating a pull request so the release is not aborted.
+          if ! git push origin HEAD:main; then
+            echo "Direct push to main was declined by branch protection rule. Creating a pull request instead..."
+            pr_branch="chore/bump-to-next-cycle-v${{ steps.version.outputs.version }}"
+            git checkout -b "$pr_branch"
+            git push origin "$pr_branch" --force
+            gh pr create \
+              --title "chore: start next development cycle after v${{ steps.version.outputs.version }}" \
+              --body "Automated version bump following release of v${{ steps.version.outputs.version }}." \
+              --base main \
+              --head "$pr_branch" || echo "Warning: PR creation could not be completed automatically."
+          fi
 
       # --- Dormant SignPath signing stage --------------------------------
       # Every step below is gated on SIGNPATH_ORGANIZATION_ID being set, so
@@ -204,7 +196,7 @@ jobs:
       - name: Create GitHub Release and Upload Assets
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           # nullglob so a signed release's deleted (stale) blockmap doesn't pass
           # through as a literal, non-existent filename (see regenerate-update-yml.js).
@@ -218,4 +210,4 @@ jobs:
           gh release create "v${{ steps.version.outputs.version }}" \
             "${assets[@]}" \
             --title "v${{ steps.version.outputs.version }}" \
-            --notes-file RELEASE_NOTES.md
+            --notes-file RELEASE_NOTES.md || gh release upload "v${{ steps.version.outputs.version }}" "${assets[@]}" --clobber
