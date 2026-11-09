@@ -14,6 +14,26 @@ export interface LineMatchChunk {
   isActiveMatch: boolean
 }
 
+const TIMESTAMP_REGEX =
+  /^(\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{2}\/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\/\d{4}:\d{2}:\d{2}:\d{2}(?:\s+[+-]\d{4})?|\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]?)\s*/i
+
+/**
+ * Extracts a leading timestamp from a log line if present.
+ */
+export function parseTimestampPrefix(line: string): { timestamp: string | null; rest: string } {
+  const match = TIMESTAMP_REGEX.exec(line)
+  if (match) {
+    return {
+      timestamp: match[1],
+      rest: line.slice(match[0].length)
+    }
+  }
+  return {
+    timestamp: null,
+    rest: line
+  }
+}
+
 const ERROR_REGEX =
   /(?:^|\s|\[)(?:FATAL|CRITICAL|CRIT|EMERG|EMERGENCY|ERROR|ERR|SEVERE|EXCEPTION|FAILED|FAIL)(?:\b|\]|:)/i
 const ERROR_STRUCTURED_REGEX = /(?:^|\s)level=["']?(?:fatal|error|err|critical)["']?/i
@@ -74,23 +94,24 @@ export function parseLogLevel(line: string): LogLevel {
 
 /**
  * Returns Tailwind CSS styling classes associated with a LogLevel.
+ * All colors tuned for WCAG 2.2 AA (>= 4.5:1) contrast against light & dark backgrounds.
  */
 export function getLogLevelStyles(level: LogLevel): LogLevelStyles {
   switch (level) {
     case 'error':
       return {
-        borderClass: 'border-l-2 border-rose-500',
-        bgClass: 'bg-rose-500/10 dark:bg-rose-500/10',
-        textClass: 'text-rose-600 dark:text-rose-400',
-        badgeClass: 'bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold',
+        borderClass: 'border-l-2 border-rose-500 dark:border-rose-400',
+        bgClass: 'bg-rose-500/10 dark:bg-rose-500/15',
+        textClass: 'text-rose-700 dark:text-rose-300 font-medium',
+        badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500/25 font-bold',
         badgeText: 'ERR'
       }
     case 'warn':
       return {
-        borderClass: 'border-l-2 border-amber-500',
-        bgClass: 'bg-amber-500/10 dark:bg-amber-500/10',
-        textClass: 'text-amber-600 dark:text-amber-400',
-        badgeClass: 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold',
+        borderClass: 'border-l-2 border-amber-500 dark:border-amber-400',
+        bgClass: 'bg-amber-500/10 dark:bg-amber-500/15',
+        textClass: 'text-amber-800 dark:text-amber-300',
+        badgeClass: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 ring-1 ring-amber-500/25 font-bold',
         badgeText: 'WRN'
       }
     case 'info':
@@ -98,15 +119,15 @@ export function getLogLevelStyles(level: LogLevel): LogLevelStyles {
         borderClass: 'border-l-2 border-transparent',
         bgClass: '',
         textClass: 'text-default',
-        badgeClass: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 font-medium',
+        badgeClass: 'bg-sky-500/15 text-sky-700 dark:text-sky-300 ring-1 ring-sky-500/25 font-medium',
         badgeText: 'INF'
       }
     case 'debug':
       return {
         borderClass: 'border-l-2 border-transparent',
         bgClass: '',
-        textClass: 'text-dimmed opacity-75',
-        badgeClass: 'bg-neutral-500/15 text-dimmed font-medium',
+        textClass: 'text-neutral-500 dark:text-neutral-400 font-normal',
+        badgeClass: 'bg-neutral-500/15 text-neutral-600 dark:text-neutral-400 ring-1 ring-neutral-500/25 font-medium',
         badgeText: 'DBG'
       }
     default:

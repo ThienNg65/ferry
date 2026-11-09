@@ -24,7 +24,7 @@ const editSessions = useEditSessionsStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
-const { collapsed, tab, terminalEverShown, openDock } = useDockState()
+const { collapsed, tab, terminalEverShown, isMaximized, openDock } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
 
 /** Clicking an already-open dock tab collapses the dock; clicking any tab while collapsed expands to it. */
@@ -48,6 +48,7 @@ let dragStartY = 0
 let dragStartHeight = 0
 
 function onResizeStart(e: PointerEvent): void {
+  isMaximized.value = false
   dragging.value = true
   dragStartY = e.clientY
   dragStartHeight = ui.dockHeight
@@ -80,7 +81,11 @@ function onWindowResize(): void {
 onMounted(() => window.addEventListener('resize', onWindowResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
 
-const dockHeightPx = computed(() => (collapsed.value ? COLLAPSED_HEIGHT : liveHeight.value))
+const dockHeightPx = computed(() => {
+  if (collapsed.value) return COLLAPSED_HEIGHT
+  if (isMaximized.value) return Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - 80)
+  return liveHeight.value
+})
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -177,38 +182,41 @@ function basename(path: string): string {
       <OpenEditsPanel v-else-if="tab === 'edits'" />
       <template v-else-if="tab === 'tail'">
         <!-- Tail Tabs Header Bar -->
-        <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/20 px-2 py-1">
+        <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
           <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
             <div
               v-for="openTail in tailStreams.tabs"
               :key="openTail.tailId"
-              class="group flex items-center gap-1.5 rounded-md px-2 py-1 text-xs cursor-pointer border transition-all"
+              class="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs cursor-pointer border transition-all"
               :class="
                 tailStreams.activeTailId === openTail.tailId
-                  ? 'bg-primary/10 border-primary/30 font-medium text-primary shadow-2xs'
-                  : 'border-transparent text-muted hover:bg-muted hover:text-default'
+                  ? 'bg-default border-default text-default font-medium shadow-xs ring-1 ring-primary/20'
+                  : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
               "
-              :title="openTail.remotePath"
               @click="tailStreams.activeTailId = openTail.tailId"
               @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
             >
               <!-- Live status indicator dot -->
               <span
                 v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-emerald-500"
+                class="size-1.5 rounded-full bg-emerald-500 shrink-0"
               />
               <span
                 v-else-if="tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-rose-500"
+                class="size-1.5 rounded-full bg-rose-500 shrink-0"
               />
               <span
                 v-else
-                class="size-1.5 rounded-full bg-neutral-400"
+                class="size-1.5 rounded-full bg-neutral-400 shrink-0"
               />
 
-              <span class="max-w-[140px] truncate select-none">
-                {{ basename(openTail.remotePath) }}
-              </span>
+              <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
+
+              <UTooltip :text="`${openTail.remotePath} (${(tailStreams.linesMap[openTail.tailId]?.length || 0).toLocaleString()} lines)`">
+                <span class="max-w-[150px] truncate select-none">
+                  {{ basename(openTail.remotePath) }}
+                </span>
+              </UTooltip>
 
               <!-- Unread badge if inactive tab has incoming lines -->
               <span
@@ -218,9 +226,10 @@ function basename(path: string): string {
                 +{{ tailStreams.unreadMap[openTail.tailId] }}
               </span>
 
-              <UTooltip text="Close (Middle-click)">
+              <UTooltip text="Close tab (Middle-click)">
                 <button
-                  class="rounded p-0.5 text-muted opacity-60 hover:opacity-100 hover:bg-muted-foreground/10 transition-opacity"
+                  type="button"
+                  class="rounded p-0.5 text-muted opacity-60 hover:opacity-100 hover:bg-muted transition-opacity cursor-pointer"
                   @click.stop="tailStreams.close(openTail.tailId)"
                 >
                   <UIcon name="i-lucide-x" class="size-3" />
@@ -229,7 +238,16 @@ function basename(path: string): string {
             </div>
           </div>
 
-          <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2">
+          <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2 flex items-center gap-1">
+            <UTooltip text="Close other tabs">
+              <UButton
+                icon="i-lucide-list-x"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                @click="tailStreams.activeTailId && tailStreams.closeOthers(tailStreams.activeTailId)"
+              />
+            </UTooltip>
             <UTooltip text="Close all tail tabs">
               <UButton
                 icon="i-lucide-x-circle"
@@ -248,11 +266,13 @@ function basename(path: string): string {
             :key="tailStreams.activeTailId"
             :tail-id="tailStreams.activeTailId"
           />
-          <div v-else class="flex h-full flex-col items-center justify-center gap-1.5 px-3 py-6 text-center select-none">
-            <UIcon name="i-lucide-scroll-text" class="size-7 text-dimmed/80" />
-            <p class="text-xs font-medium text-default">No active log tails</p>
-            <p class="text-[11px] text-dimmed max-w-xs">
-              Right-click any log or text file in the Remote file pane and select "Tail this file live" to stream output.
+          <div v-else class="flex h-full flex-col items-center justify-center gap-2 px-3 py-6 text-center select-none">
+            <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/20">
+              <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
+            </div>
+            <p class="text-xs font-semibold text-default">No active log streams</p>
+            <p class="text-[11px] text-muted max-w-sm">
+              Right-click any log or text file in the Remote file pane and select <span class="font-medium text-default">"Tail this file live"</span> to stream real-time output.
             </p>
           </div>
         </div>

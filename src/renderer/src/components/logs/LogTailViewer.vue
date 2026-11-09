@@ -3,13 +3,21 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentP
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useNotify } from '../../composables/useNotify'
-import { getLogLevelStyles, parseLogLevel, splitLineMatches, type LogLevel } from '../../utils/logParser'
+import { useDockState } from '../../composables/useDockState'
+import {
+  getLogLevelStyles,
+  parseLogLevel,
+  parseTimestampPrefix,
+  splitLineMatches,
+  type LogLevel
+} from '../../utils/logParser'
 import LogSearchBar from './LogSearchBar.vue'
 
 const props = defineProps<{ tailId: string }>()
 
 const tailStreams = useTailStreamsStore()
 const notify = useNotify()
+const { isMaximized, toggleMaximize } = useDockState()
 
 const lines = computed(() => tailStreams.linesMap[props.tailId] || [])
 const ended = computed(() => tailStreams.endedMap[props.tailId] || false)
@@ -20,14 +28,54 @@ const scrollEl = ref<HTMLDivElement | null>(null)
 const searchBarRef = ref<InstanceType<typeof LogSearchBar> | null>(null)
 const autoScroll = ref(true)
 const newLinesCount = ref(0)
-const wrapLines = ref(false)
 const levelFilter = ref<'all' | 'error' | 'warn' | 'info' | 'debug'>('all')
+
+// Font size & line wrap preferences stored in localStorage
+const FONT_SIZE_KEY = 'ferry:tail:fontSize'
+const WRAP_LINES_KEY = 'ferry:tail:wrapLines'
+type TailFontSize = 'sm' | 'md' | 'lg'
+const fontSize = ref<TailFontSize>((localStorage.getItem(FONT_SIZE_KEY) as TailFontSize) || 'md')
+const wrapLines = ref(localStorage.getItem(WRAP_LINES_KEY) === 'true')
+
+function cycleFontSize(): void {
+  const next: Record<TailFontSize, TailFontSize> = { sm: 'md', md: 'lg', lg: 'sm' }
+  fontSize.value = next[fontSize.value]
+  localStorage.setItem(FONT_SIZE_KEY, fontSize.value)
+}
+
+function toggleWrap(): void {
+  wrapLines.value = !wrapLines.value
+  localStorage.setItem(WRAP_LINES_KEY, String(wrapLines.value))
+}
+
+const fontSizeClass = computed(() => {
+  switch (fontSize.value) {
+    case 'sm':
+      return 'text-[10px]'
+    case 'lg':
+      return 'text-[13px]'
+    default:
+      return 'text-[11px]'
+  }
+})
+
+const rowEstimateSize = computed(() => {
+  switch (fontSize.value) {
+    case 'sm':
+      return 19
+    case 'lg':
+      return 25
+    default:
+      return 22
+  }
+})
 
 // Search State
 const searchOpen = ref(false)
 const searchQuery = ref('')
 const caseSensitive = ref(false)
 const isRegex = ref(false)
+const filterOnly = ref(false)
 const regexError = ref<string | null>(null)
 const activeMatchIndex = ref(0)
 
@@ -62,32 +110,6 @@ const levelCounts = computed(() => {
   return { errors, warns, infos, debugs }
 })
 
-// Filtered Lines according to selected level filter
-const filteredLines = computed<ParsedItem[]>(() => {
-  const all = parsedLines.value
-  switch (levelFilter.value) {
-    case 'error':
-      return all.filter((l) => l.level === 'error')
-    case 'warn':
-      return all.filter((l) => l.level === 'error' || l.level === 'warn')
-    case 'info':
-      return all.filter((l) => l.level !== 'debug')
-    case 'debug':
-      return all.filter((l) => l.level === 'debug')
-    default:
-      return all
-  }
-})
-
-// Filter pills configuration
-const filterOptions = computed(() => [
-  { id: 'all' as const, label: 'All', count: parsedLines.value.length },
-  { id: 'error' as const, label: 'Errors', count: levelCounts.value.errors },
-  { id: 'warn' as const, label: 'Warnings+', count: levelCounts.value.errors + levelCounts.value.warns },
-  { id: 'info' as const, label: 'Info+', count: levelCounts.value.infos },
-  { id: 'debug' as const, label: 'Debug', count: levelCounts.value.debugs }
-])
-
 // Search Regex Builder
 const searchRegex = computed<RegExp | null>(() => {
   if (!searchQuery.value) {
@@ -105,6 +127,44 @@ const searchRegex = computed<RegExp | null>(() => {
     return null
   }
 })
+
+// Filtered Lines according to selected level filter and search filter mode
+const filteredLines = computed<ParsedItem[]>(() => {
+  let all = parsedLines.value
+  switch (levelFilter.value) {
+    case 'error':
+      all = all.filter((l) => l.level === 'error')
+      break
+    case 'warn':
+      all = all.filter((l) => l.level === 'error' || l.level === 'warn')
+      break
+    case 'info':
+      all = all.filter((l) => l.level !== 'debug')
+      break
+    case 'debug':
+      all = all.filter((l) => l.level === 'debug')
+      break
+  }
+
+  if (filterOnly.value && searchRegex.value) {
+    const re = searchRegex.value
+    all = all.filter((l) => {
+      re.lastIndex = 0
+      return re.test(l.text)
+    })
+  }
+
+  return all
+})
+
+// Filter pills configuration
+const filterOptions = computed(() => [
+  { id: 'all' as const, label: 'All', count: parsedLines.value.length },
+  { id: 'error' as const, label: 'Errors', count: levelCounts.value.errors },
+  { id: 'warn' as const, label: 'Warnings+', count: levelCounts.value.errors + levelCounts.value.warns },
+  { id: 'info' as const, label: 'Info+', count: levelCounts.value.infos },
+  { id: 'debug' as const, label: 'Debug', count: levelCounts.value.debugs }
+])
 
 // Search Matches Index across filtered lines
 interface SearchIndex {
@@ -206,8 +266,8 @@ const rowVirtualizer = useVirtualizer(
   computed(() => ({
     count: filteredLines.value.length,
     getScrollElement: () => scrollEl.value,
-    estimateSize: () => 22,
-    overscan: 20,
+    estimateSize: () => rowEstimateSize.value,
+    overscan: 25,
     getItemKey: (index: number) => filteredLines.value[index]?.originalIndex ?? index
   }))
 )
@@ -272,10 +332,32 @@ async function onCopy(): Promise<void> {
   }
   try {
     await navigator.clipboard.writeText(text)
-    notify.success('Copied to clipboard', `${filteredLines.value.length} lines copied`)
+    notify.success('Copied to clipboard', `${filteredLines.value.length.toLocaleString()} lines copied`)
   } catch (e) {
     notify.error('Copy failed', e instanceof Error ? e.message : String(e))
   }
+}
+
+// Export log buffer to a downloaded file
+function onExport(): void {
+  const text = filteredLines.value.map((l) => l.text).join('\n')
+  if (!text) {
+    notify.error('Nothing to export', 'Log view is empty')
+    return
+  }
+  const tabInfo = tailStreams.tabs.find((t) => t.tailId === props.tailId)
+  const filename = tabInfo ? tabInfo.remotePath.split(/[\\/]/).pop() || 'log' : 'tail'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${filename}-${timestamp}.log`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  notify.success('Log exported', `${filteredLines.value.length.toLocaleString()} lines saved`)
 }
 
 // Keyboard shortcut listener for Ctrl+F
@@ -317,36 +399,54 @@ onUnmounted(() => {
     >
       <!-- Left: Status Indicator, Line Count, and Filter Pills -->
       <div class="flex items-center gap-2 overflow-x-auto scrollbar-none py-1">
-        <!-- Live status indicator -->
-        <div class="flex items-center gap-1.5 px-1 font-mono text-[11px]">
-          <span v-if="!ended && !error" class="relative flex size-2">
+        <!-- Interactive Live / Paused status indicator -->
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[11px] transition-all cursor-pointer border select-none"
+          :class="
+            !ended && !error
+              ? autoScroll
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300 font-semibold hover:bg-amber-500/20'
+              : error
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400 font-semibold'
+                : 'bg-muted border-default text-muted'
+          "
+          :title="!ended && !error && !autoScroll ? 'Click to resume live following' : undefined"
+          @click="!ended && !error && !autoScroll ? scrollToBottom() : undefined"
+        >
+          <!-- Pulsing dot when live following -->
+          <span v-if="!ended && !error && autoScroll" class="relative flex size-2">
             <span
               class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
             />
             <span class="relative inline-flex rounded-full size-2 bg-emerald-500" />
           </span>
+          <!-- Paused dot -->
+          <span v-else-if="!ended && !error && !autoScroll" class="inline-flex rounded-full size-2 bg-amber-500" />
           <span v-else-if="error" class="inline-flex rounded-full size-2 bg-rose-500" />
           <span v-else class="inline-flex rounded-full size-2 bg-neutral-400" />
 
-          <span
-            class="font-semibold uppercase tracking-wider text-[10px]"
-            :class="
+          <span class="uppercase tracking-wider text-[10px]">
+            {{
               !ended && !error
-                ? 'text-emerald-500'
+                ? autoScroll
+                  ? 'Live'
+                  : newLinesCount > 0
+                    ? `Paused (+${newLinesCount})`
+                    : 'Paused'
                 : error
-                  ? 'text-rose-500'
-                  : 'text-muted'
-            "
-          >
-            {{ !ended && !error ? 'Live' : error ? 'Error' : 'Ended' }}
+                  ? 'Error'
+                  : 'Ended'
+            }}
           </span>
-        </div>
+        </button>
 
         <div class="h-3.5 w-px bg-muted" />
 
-        <!-- Line Count -->
+        <!-- Line Count Summary -->
         <span class="font-mono text-[11px] text-muted whitespace-nowrap">
-          {{ filteredLines.length.toLocaleString() }}
+          <span class="font-semibold text-default">{{ filteredLines.length.toLocaleString() }}</span>
           <span v-if="filteredLines.length !== lines.length" class="text-dimmed">
             / {{ lines.length.toLocaleString() }}
           </span>
@@ -360,18 +460,26 @@ onUnmounted(() => {
           <button
             v-for="opt in filterOptions"
             :key="opt.id"
-            class="rounded px-1.5 py-0.5 text-[11px] font-mono transition-colors"
+            type="button"
+            class="rounded px-2 py-0.5 text-[11px] font-mono transition-colors flex items-center gap-1 cursor-pointer"
             :class="
               levelFilter === opt.id
-                ? 'bg-default font-medium text-default shadow-xs'
-                : 'text-muted hover:text-default'
+                ? 'bg-default font-semibold text-default shadow-xs border border-default/30'
+                : 'text-muted hover:text-default hover:bg-muted/40'
             "
             @click="levelFilter = opt.id"
           >
-            {{ opt.label }}
+            <span>{{ opt.label }}</span>
             <span
               v-if="opt.count > 0 && opt.id !== 'all'"
-              class="ml-0.5 text-[10px] opacity-75"
+              class="rounded-full px-1 text-[9px] font-bold leading-tight"
+              :class="
+                opt.id === 'error'
+                  ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300'
+                  : opt.id === 'warn'
+                    ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
+                    : 'bg-muted text-dimmed'
+              "
             >
               {{ opt.count }}
             </span>
@@ -381,13 +489,24 @@ onUnmounted(() => {
 
       <!-- Right: Action Buttons -->
       <div class="flex items-center gap-1 shrink-0 ml-2">
+        <UTooltip :text="`Font size: ${fontSize.toUpperCase()} (Click to cycle)`">
+          <UButton
+            icon="i-lucide-type"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            class="font-mono text-[11px]"
+            @click="cycleFontSize"
+          />
+        </UTooltip>
+
         <UTooltip :text="wrapLines ? 'Disable line wrap' : 'Wrap long lines'">
           <UButton
             icon="i-lucide-wrap-text"
             size="xs"
             :color="wrapLines ? 'primary' : 'neutral'"
             :variant="wrapLines ? 'soft' : 'ghost'"
-            @click="wrapLines = !wrapLines"
+            @click="toggleWrap"
           />
         </UTooltip>
 
@@ -398,6 +517,16 @@ onUnmounted(() => {
             :color="autoScroll ? 'primary' : 'neutral'"
             :variant="autoScroll ? 'soft' : 'ghost'"
             @click="scrollToBottom"
+          />
+        </UTooltip>
+
+        <UTooltip text="Export log to file">
+          <UButton
+            icon="i-lucide-download"
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            @click="onExport"
           />
         </UTooltip>
 
@@ -421,7 +550,7 @@ onUnmounted(() => {
           />
         </UTooltip>
 
-        <UTooltip text="Find in log (Ctrl+F)">
+        <UTooltip text="Find & Filter in log (Ctrl+F)">
           <UButton
             icon="i-lucide-search"
             size="xs"
@@ -430,10 +559,22 @@ onUnmounted(() => {
             @click="toggleSearch"
           />
         </UTooltip>
+
+        <div class="h-3.5 w-px bg-muted mx-0.5" />
+
+        <UTooltip :text="isMaximized ? 'Restore dock height' : 'Maximize log viewer'">
+          <UButton
+            :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
+            size="xs"
+            :color="isMaximized ? 'primary' : 'neutral'"
+            :variant="isMaximized ? 'soft' : 'ghost'"
+            @click="toggleMaximize"
+          />
+        </UTooltip>
       </div>
     </div>
 
-    <!-- Collapsible Search Bar -->
+    <!-- Collapsible Search & Filter Bar -->
     <Transition name="fade">
       <LogSearchBar
         v-if="searchOpen"
@@ -441,6 +582,7 @@ onUnmounted(() => {
         v-model="searchQuery"
         v-model:case-sensitive="caseSensitive"
         v-model:is-regex="isRegex"
+        v-model:filter-only="filterOnly"
         :match-count="searchIndex.matchCount"
         :current-match="searchIndex.matchCount > 0 ? activeMatchIndex + 1 : 0"
         :regex-error="regexError"
@@ -454,7 +596,8 @@ onUnmounted(() => {
     <div
       ref="scrollEl"
       tabindex="0"
-      class="min-h-0 flex-1 overflow-auto bg-default font-mono text-[11px] leading-relaxed outline-none"
+      class="min-h-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none"
+      :class="fontSizeClass"
       @scroll="onScroll"
     >
       <div
@@ -478,59 +621,69 @@ onUnmounted(() => {
             minWidth: '100%',
             transform: `translateY(${virtualRow.start}px)`
           }"
-          class="flex items-start hover:bg-muted/30 transition-colors"
+          class="flex items-start hover:bg-muted/40 transition-colors"
           :class="getLogLevelStyles(filteredLines[virtualRow.index].level).bgClass"
         >
-          <!-- Left border color accent -->
+          <!-- Left border color accent bar -->
           <div
             class="self-stretch w-1 shrink-0"
             :class="getLogLevelStyles(filteredLines[virtualRow.index].level).borderClass"
           />
 
-          <!-- Line number gutter -->
+          <!-- Line number gutter with vertical divider -->
           <div
-            class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-[10px] text-muted/60"
+            class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-[10px] tabular-nums text-neutral-400 dark:text-neutral-500 border-r border-default/20"
           >
             {{ filteredLines[virtualRow.index].originalIndex + 1 }}
           </div>
 
-          <!-- Log Level Tag / Badge if not default -->
-          <div class="w-10 shrink-0 select-none text-center">
-            <span
-              v-if="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText"
-              class="inline-block rounded px-1 text-[9px] font-bold leading-tight"
-              :class="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeClass"
-            >
-              {{ getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText }}
-            </span>
-          </div>
-
-          <!-- Log line text with search highlights -->
+          <!-- Log line content area: compact badge (no blank space) + formatted text -->
           <div
-            class="flex-1 px-1.5"
+            class="flex-1 min-w-0 pl-2 pr-2"
             :class="[
               wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre',
               getLogLevelStyles(filteredLines[virtualRow.index].level).textClass
             ]"
           >
-            <template
-              v-for="(chunk, cIdx) in splitLineMatches(
-                filteredLines[virtualRow.index].text,
-                searchIndex.lineMatchStarts[virtualRow.index] >= 0 ? searchRegex : null,
-                searchIndex.lineMatchStarts[virtualRow.index],
-                activeMatchIndex
-              )"
-              :key="cIdx"
+            <!-- Log Level Tag / Badge if not default -->
+            <span
+              v-if="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText"
+              class="inline-block rounded px-1 py-0.2 mr-1.5 text-[9px] font-bold leading-none align-middle select-none"
+              :class="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeClass"
             >
-              <mark
-                v-if="chunk.isMatch"
-                :class="
-                  chunk.isActiveMatch
-                    ? 'bg-amber-500 text-neutral-950 font-bold rounded-xs px-0.5 shadow-sm ring-1 ring-amber-300'
-                    : 'bg-amber-400/35 text-amber-900 dark:text-amber-100 rounded-xs px-0.5'
-                "
-              >{{ chunk.text }}</mark>
-              <span v-else>{{ chunk.text }}</span>
+              {{ getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText }}
+            </span>
+
+            <!-- Search Highlight rendering -->
+            <template v-if="searchRegex">
+              <template
+                v-for="(chunk, cIdx) in splitLineMatches(
+                  filteredLines[virtualRow.index].text,
+                  searchIndex.lineMatchStarts[virtualRow.index] >= 0 ? searchRegex : null,
+                  searchIndex.lineMatchStarts[virtualRow.index],
+                  activeMatchIndex
+                )"
+                :key="cIdx"
+              >
+                <mark
+                  v-if="chunk.isMatch"
+                  :class="
+                    chunk.isActiveMatch
+                      ? 'bg-amber-400 text-neutral-950 font-bold rounded-xs px-0.5 shadow-sm ring-2 ring-primary'
+                      : 'bg-amber-300/80 dark:bg-amber-500/40 text-neutral-950 dark:text-neutral-100 rounded-xs px-0.5 ring-1 ring-amber-400/40'
+                  "
+                >{{ chunk.text }}</mark>
+                <span v-else>{{ chunk.text }}</span>
+              </template>
+            </template>
+
+            <!-- Normal rendering: subtle timestamp styling for easy message scanning -->
+            <template v-else>
+              <span
+                v-if="parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp"
+                class="text-neutral-400 dark:text-neutral-500 text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block"
+              >{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp }}</span>
+              <span>{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).rest }}</span>
             </template>
           </div>
         </div>
@@ -567,16 +720,15 @@ onUnmounted(() => {
 
     <!-- Floating Jump to Latest Button -->
     <Transition name="fade">
-      <UButton
+      <button
         v-if="!autoScroll && lines.length > 0"
-        :label="newLinesCount > 0 ? `Jump to latest (+${newLinesCount})` : 'Jump to latest'"
-        icon="i-lucide-arrow-down"
-        size="xs"
-        color="primary"
-        variant="solid"
-        class="absolute bottom-3 right-4 shadow-md transition-transform active:scale-95"
+        type="button"
+        class="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md ring-1 ring-primary/40 bg-primary text-primary-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
         @click="scrollToBottom"
-      />
+      >
+        <UIcon name="i-lucide-arrow-down" class="size-3.5 animate-bounce" />
+        <span>{{ newLinesCount > 0 ? `Jump to latest (+${newLinesCount})` : 'Jump to latest' }}</span>
+      </button>
     </Transition>
   </div>
 </template>

@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { getLogLevelStyles, parseLogLevel, splitLineMatches } from './logParser'
+import { getLogLevelStyles, parseLogLevel, parseTimestampPrefix, splitLineMatches } from './logParser'
+
+describe('parseTimestampPrefix', () => {
+  it('extracts ISO 8601 timestamps', () => {
+    const res = parseTimestampPrefix('2026-11-09 18:38:49.123 [INFO] worker started')
+    expect(res.timestamp).toBe('2026-11-09 18:38:49.123')
+    expect(res.rest).toBe('[INFO] worker started')
+  })
+
+  it('extracts bracketed ISO timestamps', () => {
+    const res = parseTimestampPrefix('[2026-11-09T18:38:49Z] error occurred')
+    expect(res.timestamp).toBe('[2026-11-09T18:38:49Z]')
+    expect(res.rest).toBe('error occurred')
+  })
+
+  it('extracts syslog-style timestamps', () => {
+    const res = parseTimestampPrefix('Nov  9 18:38:49 myserver kernel: eth0 up')
+    expect(res.timestamp).toBe('Nov  9 18:38:49')
+    expect(res.rest).toBe('myserver kernel: eth0 up')
+  })
+
+  it('extracts time-only prefixes', () => {
+    const res = parseTimestampPrefix('18:38:49.102 task done')
+    expect(res.timestamp).toBe('18:38:49.102')
+    expect(res.rest).toBe('task done')
+  })
+
+  it('returns null timestamp when no timestamp prefix exists', () => {
+    const res = parseTimestampPrefix('hello world without time')
+    expect(res.timestamp).toBeNull()
+    expect(res.rest).toBe('hello world without time')
+  })
+})
 
 describe('parseLogLevel', () => {
   it('detects standard bracketed log levels', () => {

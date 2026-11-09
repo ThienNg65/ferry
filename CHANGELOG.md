@@ -5,6 +5,12 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- Tail Log UI/UX, format, contrast, and productivity overhaul:
+  - **Grep Filter Mode**: Added a filter toggle (`Alt+F` / filter icon in search bar) to isolate matching lines in real time alongside standard match navigation.
+  - **Stream Status & Control**: Added an interactive `● LIVE` / `⏸ PAUSED (+N)` status pill with click-to-resume auto-scrolling, a sleek floating jump-to-latest button, and a one-click "Export log to file" download action.
+  - **Font Size & Wrap Preferences**: Added a font-size cycler (`sm` 10px, `md` 11px, `lg` 13px) and persistent line-wrapping stored across sessions.
+  - **Dock Maximize**: Added a one-click dock maximize toggle (`i-lucide-maximize-2` / `i-lucide-minimize-2`) to expand the bottom dock to 85% window height for inspecting long stack traces.
+  - **Tail Tabs Polish**: Redesigned tail tabs with file icons, path tooltips, high-contrast active state, and a "Close other tabs" action.
 - Comprehensive UI/UX enhancements across Session Manager, Shell Chrome, File Browser, and Bottom Dock:
   - **Session Manager & Connection UX**: Upgraded Session Manager to a responsive two-column layout with a scrollable saved-sites list alongside Quick Connect, a prominent reconnect/connect top banner for disconnected site tabs, Enter-to-submit form ergonomics, and side-by-side Host/Port fields.
   - **Title Bar & Command Palette Discoverability**: Added a clickable `Search / Commands (Ctrl+K)` trigger pill and a `History` icon button in the title bar, plus dock-switching commands (`Terminal`, `Log Tail`, `Resource Monitor`, `Transfers`) in the Command Palette.
@@ -15,8 +21,11 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ### Changed
 - Remapped `Backspace` in the file browser to navigate up to the parent directory (`goUp()`) instead of deleting selected files; destructive file deletion remains on `Delete`.
 - Clicking the already-active tab in the bottom dock (or double-clicking the dock header) now collapses the dock; site tabs now support middle-click to close and show live connection status dots.
+- Elevated log tail color contrast across error, warning, debug, line-number gutter, and search highlights to meet WCAG 2.2 AA standards in both light and dark themes.
+- Formatted leading timestamps in log lines with a subtle dimmed monospace tone for effortless visual message scanning.
 
 ### Fixed
+- Removed the 40px blank indentation gap on unclassified log lines so lines align cleanly adjacent to the line-number gutter.
 - Added keyboard `:focus-visible` outlines and focus-within visibility across custom chrome buttons, tabs, and file-row action controls.
 - Distinguished loading, filtered-empty (with a one-click "Clear filter" button), and genuinely empty directory states in the file list.
 

@@ -7,6 +7,7 @@ export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor'
 // ephemeral per-launch layout state, not a preference.
 const collapsed = ref(false)
 const tab = ref<DockTab>('transfers')
+const isMaximized = ref(false)
 /**
  * Once true, TerminalView stays mounted forever (it renders in a v-show
  * sibling in BottomDock.vue) so its xterm instances and scrollback never get
@@ -28,5 +29,12 @@ export function useDockState() {
     }
   }
 
-  return { collapsed, tab, terminalEverShown, openDock }
+  function toggleMaximize(): void {
+    if (collapsed.value) {
+      collapsed.value = false
+    }
+    isMaximized.value = !isMaximized.value
+  }
+
+  return { collapsed, tab, terminalEverShown, isMaximized, openDock, toggleMaximize }
 }

@@ -153,6 +153,13 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     }
   }
 
+  async function closeOthers(keepTailId: string): Promise<void> {
+    const targets = tabs.value.filter((t) => t.tailId !== keepTailId)
+    for (const t of targets) {
+      await close(t.tailId)
+    }
+  }
+
   /** Closes every tail tab belonging to a session — called when that session's tab closes, so a
    * stale entry can never be matched against a later, unrelated session (see `open`'s dedup). */
   async function closeForSession(sessionId: string): Promise<void> {
@@ -173,6 +180,7 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     clear,
     close,
     closeAll,
+    closeOthers,
     closeForSession
   }
 })
