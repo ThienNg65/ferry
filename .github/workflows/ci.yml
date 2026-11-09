@@ -25,6 +25,16 @@ jobs:
 
       - uses: ./.github/actions/setup-node-deps
 
+      - name: Cache electron and electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-builder-win-${{ runner.os }}-${{ hashFiles('package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            electron-builder-win-${{ runner.os }}-
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -45,6 +55,16 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/setup-node-deps
+
+      - name: Cache electron and electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-builder-win-${{ runner.os }}-${{ hashFiles('package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            electron-builder-win-${{ runner.os }}-
 
       - name: Read version
         id: version
@@ -75,9 +95,21 @@ jobs:
         run: git tag "v${{ steps.version.outputs.version }}"
 
       - name: Build and Package with Electron Builder
+        shell: bash
         run: |
           npm run build
-          npx electron-builder --publish never
+          # Retry packaging in case of transient CDN/gateway timeouts (e.g. HTTP 504 on toolset downloads)
+          max_attempts=3
+          attempt=1
+          until npx electron-builder --publish never; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::electron-builder packaging failed after $max_attempts attempts."
+              exit 1
+            fi
+            echo "Packaging failed on attempt $attempt. Retrying in 15 seconds..."
+            attempt=$((attempt + 1))
+            sleep 15
+          done
 
       - name: Generate release notes
         run: node ./.github/scripts/extract-release-notes.js
