@@ -2,6 +2,14 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
+## Unreleased
+
+### Added
+
+### Changed
+
+### Fixed
+
 ## 0.14.11 - 2026-11-09
 
 ### Added
