@@ -58,6 +58,12 @@ const diskPercent = computed(() => {
   return disk && disk.totalBytes > 0 ? Math.round((disk.usedBytes / disk.totalBytes) * 100) : 0
 })
 
+function usageColor(pct: number): 'primary' | 'warning' | 'error' {
+  if (pct >= 90) return 'error'
+  if (pct >= 75) return 'warning'
+  return 'primary'
+}
+
 const sparklinePoints = computed(() => {
   const samples = monitor.history.filter((s) => s.cpu !== null)
   if (samples.length < 2) {
@@ -104,9 +110,12 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
       <div class="grid shrink-0 grid-cols-3 gap-4 px-3 py-2 text-xs">
         <!-- Storage -->
         <div class="flex flex-col gap-1">
-          <span class="font-medium text-default">Storage</span>
+          <div class="flex items-center justify-between">
+            <span class="font-medium text-default">Storage</span>
+            <span v-if="monitor.latest.disk" class="font-mono text-[11px] text-muted">{{ diskPercent }}%</span>
+          </div>
           <template v-if="monitor.latest.disk">
-            <UProgress :model-value="diskPercent" color="primary" size="sm" />
+            <UProgress :model-value="diskPercent" :color="usageColor(diskPercent)" size="sm" />
             <span class="text-[11px] text-dimmed">
               {{ formatBytes(monitor.latest.disk.usedBytes) }} / {{ formatBytes(monitor.latest.disk.totalBytes) }}
             </span>
@@ -116,8 +125,11 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
 
         <!-- Memory -->
         <div class="flex flex-col gap-1">
-          <span class="font-medium text-default">Memory</span>
-          <UProgress :model-value="memPercent" color="primary" size="sm" />
+          <div class="flex items-center justify-between">
+            <span class="font-medium text-default">Memory</span>
+            <span class="font-mono text-[11px] text-muted">{{ memPercent }}%</span>
+          </div>
+          <UProgress :model-value="memPercent" :color="usageColor(memPercent)" size="sm" />
           <span class="text-[11px] text-dimmed">
             {{ formatBytes(monitor.latest.memory.usedBytes) }} / {{ formatBytes(monitor.latest.memory.totalBytes) }}
             <template v-if="monitor.latest.swap.totalBytes > 0">
@@ -130,7 +142,16 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
         <div class="flex flex-col gap-1">
           <span class="font-medium text-default">CPU</span>
           <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-primary">
+            <span
+              class="text-sm font-semibold"
+              :class="
+                (monitor.latest.cpu?.aggregatePct ?? 0) >= 90
+                  ? 'text-error'
+                  : (monitor.latest.cpu?.aggregatePct ?? 0) >= 75
+                    ? 'text-warning'
+                    : 'text-primary'
+              "
+            >
               {{ monitor.latest.cpu ? `${monitor.latest.cpu.aggregatePct}%` : '—' }}
             </span>
             <svg viewBox="0 0 100 32" class="h-4 w-12 text-primary" preserveAspectRatio="none">

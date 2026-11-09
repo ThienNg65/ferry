@@ -26,6 +26,7 @@ declare module 'vue' {
     HistoryDialog: typeof import('./src/components/history/HistoryDialog.vue')['default']
     ImportSessionsDialog: typeof import('./src/components/sessions/ImportSessionsDialog.vue')['default']
     JumpHostHopEditor: typeof import('./src/components/sessions/JumpHostHopEditor.vue')['default']
+    LogSearchBar: typeof import('./src/components/logs/LogSearchBar.vue')['default']
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
     MonitorPanel: typeof import('./src/components/monitor/MonitorPanel.vue')['default']
     OpenEditsPanel: typeof import('./src/components/edits/OpenEditsPanel.vue')['default']

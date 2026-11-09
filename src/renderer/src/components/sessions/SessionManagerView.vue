@@ -61,7 +61,17 @@ const form = reactive<QuickConnectInput>({
   password: ''
 })
 
+const canQuickConnect = computed(() => form.host.trim().length > 0 && form.username.trim().length > 0)
+
+/** When the active picker tab is already bound to a saved site (restored on launch or dropped), surface a 1-click connect banner. */
+const activeTabSite = computed<Site | null>(() => {
+  const siteId = sessions.activeTab?.siteId
+  if (!siteId) return null
+  return sites.sites.find((s) => s.id === siteId) ?? null
+})
+
 async function onConnect(): Promise<void> {
+  if (!canQuickConnect.value || sessions.connecting) return
   try {
     await sessions.connect({ ...form, proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit' })
   } catch {
@@ -219,162 +229,206 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-full items-center justify-center overflow-y-auto bg-default py-8">
-    <div class="flex w-full max-w-sm flex-col gap-4">
-      <UCard>
-        <template #header>
-          <div class="flex items-center justify-between">
-            <h1 class="text-base font-medium text-highlighted">Sites</h1>
-            <div class="flex items-center gap-1.5">
-              <UButton
-                :label="selectMode ? 'Cancel' : 'Select'"
-                size="xs"
-                variant="ghost"
-                color="neutral"
-                @click="toggleSelectMode"
-              />
-              <UTooltip text="Import from WinSCP/PuTTY">
+  <div class="flex h-full items-start justify-center overflow-y-auto bg-default px-6 py-8">
+    <div class="my-auto flex w-full max-w-4xl flex-col gap-4">
+      <UCard v-if="activeTabSite" class="border-primary/40 bg-primary/5">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex min-w-0 items-center gap-3">
+            <UIcon name="i-lucide-plug-zap" class="size-5 shrink-0 text-primary" />
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium text-highlighted">
+                {{ sessions.status === 'error' ? 'Connection lost:' : 'Tab site:' }} {{ activeTabSite.name }}
+              </div>
+              <div class="truncate text-xs text-muted">
+                {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
+                <span v-if="sessions.statusMessage" class="text-error"> — {{ sessions.statusMessage }}</span>
+              </div>
+            </div>
+          </div>
+          <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
+            {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
+          </UButton>
+        </div>
+      </UCard>
+
+      <div class="grid grid-cols-1 gap-6 md:grid-cols-[1.2fr_1fr] md:items-start">
+        <UCard>
+          <template #header>
+            <div class="flex items-center justify-between">
+              <h1 class="text-base font-medium text-highlighted">Sites</h1>
+              <div class="flex items-center gap-1.5">
                 <UButton
-                  icon="i-lucide-import"
+                  v-if="sites.sites.length > 0"
+                  :label="selectMode ? 'Cancel' : 'Select'"
                   size="xs"
                   variant="ghost"
                   color="neutral"
-                  @click="importOpen = true"
+                  @click="toggleSelectMode"
                 />
-              </UTooltip>
-              <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
+                <UTooltip text="Import from WinSCP/PuTTY">
+                  <UButton
+                    icon="i-lucide-import"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    aria-label="Import sites"
+                    @click="importOpen = true"
+                  />
+                </UTooltip>
+                <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
+              </div>
             </div>
-          </div>
-        </template>
+          </template>
 
-        <div v-if="sites.loading" class="py-4 text-center text-xs text-muted">Loading sites…</div>
-        <div v-else-if="sites.sites.length === 0" class="py-4 text-center text-xs text-muted">
-          No saved sites yet — add one, or use Quick Connect below.
-        </div>
-        <template v-else>
-          <UInput
-            v-model="searchQuery"
-            icon="i-lucide-search"
-            placeholder="Search sites…"
-            size="xs"
-            class="mb-2 w-full"
-          />
-          <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
-            No sites match "{{ searchQuery }}".
-          </p>
-          <div
-            v-if="selectMode"
-            class="mb-2 flex items-center justify-between rounded-md bg-muted px-2 py-1.5 text-xs text-default"
-          >
-            <span>{{ selectedIds.size }} selected</span>
-            <UButton
-              label="Delete selected"
-              icon="i-lucide-trash-2"
+          <div v-if="sites.loading" class="py-6 text-center text-xs text-muted">Loading sites…</div>
+          <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-2 py-6 text-center">
+            <UIcon name="i-lucide-server" class="size-6 text-dimmed" />
+            <p class="text-xs text-muted">No saved sites yet — add one, import from WinSCP/PuTTY, or use Quick Connect.</p>
+          </div>
+          <template v-else>
+            <UInput
+              v-model="searchQuery"
+              icon="i-lucide-search"
+              placeholder="Search sites by name, host, or user…"
               size="xs"
+              class="mb-2.5 w-full"
+            />
+            <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
+              No sites match "{{ searchQuery }}".
+            </p>
+            <div
+              v-if="selectMode"
+              class="mb-2 flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5 text-xs text-default"
+            >
+              <span>{{ selectedIds.size }} selected</span>
+              <UButton
+                label="Delete selected"
+                icon="i-lucide-trash-2"
+                size="xs"
+                color="error"
+                variant="soft"
+                :disabled="selectedIds.size === 0"
+                @click="openBulkDeleteConfirm"
+              />
+            </div>
+            <div class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5">
+              <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
+                <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
+                  {{ section.name }}
+                </div>
+                <ul class="flex flex-col gap-1">
+                  <li
+                    v-for="site in section.sites"
+                    :key="site.id"
+                    class="group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
+                    :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
+                  >
+                    <UCheckbox
+                      v-if="selectMode"
+                      :model-value="selectedIds.has(site.id)"
+                      @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
+                    />
+                    <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
+                    <button
+                      type="button"
+                      class="min-w-0 flex-1 text-left rounded-xs focus-visible:outline-2 focus-visible:outline-primary"
+                      @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
+                    >
+                      <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
+                      <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
+                    </button>
+                    <template v-if="!selectMode">
+                      <UTooltip text="Duplicate site">
+                        <UButton
+                          icon="i-lucide-copy"
+                          color="neutral"
+                          variant="ghost"
+                          size="xs"
+                          aria-label="Duplicate site"
+                          :loading="duplicatingId === site.id"
+                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                          @click="onDuplicate(site)"
+                        />
+                      </UTooltip>
+                      <UTooltip text="Edit site">
+                        <UButton
+                          icon="i-lucide-pencil"
+                          color="neutral"
+                          variant="ghost"
+                          size="xs"
+                          aria-label="Edit site"
+                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                          @click="openEditDialog(site)"
+                        />
+                      </UTooltip>
+                      <UTooltip text="Delete site">
+                        <UButton
+                          icon="i-lucide-trash-2"
+                          color="neutral"
+                          variant="ghost"
+                          size="xs"
+                          aria-label="Delete site"
+                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                          @click="deleteTarget = site"
+                        />
+                      </UTooltip>
+                    </template>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </template>
+        </UCard>
+
+        <UCard>
+          <template #header>
+            <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
+          </template>
+
+          <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
+            <div class="flex gap-3">
+              <UFormField label="Host" class="flex-1">
+                <UInput v-model="form.host" placeholder="example.com" class="w-full" />
+              </UFormField>
+              <UFormField label="Port" class="w-24">
+                <UInput v-model.number="form.port" type="number" class="w-full" />
+              </UFormField>
+            </div>
+            <UFormField label="Username">
+              <UInput v-model="form.username" placeholder="root" class="w-full" />
+            </UFormField>
+            <UFormField label="Password">
+              <UInput v-model="form.password" type="password" placeholder="Optional for agent auth" class="w-full" />
+            </UFormField>
+
+            <UCheckbox
+              v-if="settings.defaultProxy"
+              v-model="bypassDefaultProxy"
+              label="Bypass default proxy for this connection"
+            />
+
+            <UAlert
+              v-if="sessions.status === 'error'"
               color="error"
               variant="soft"
-              :disabled="selectedIds.size === 0"
-              @click="openBulkDeleteConfirm"
+              :title="sessions.statusMessage ?? 'Connection failed'"
             />
-          </div>
-          <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
-            <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
-              {{ section.name }}
-            </div>
-            <ul class="flex flex-col gap-1">
-              <li
-                v-for="site in section.sites"
-                :key="site.id"
-                class="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted"
-              >
-                <UCheckbox
-                  v-if="selectMode"
-                  :model-value="selectedIds.has(site.id)"
-                  @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
-                />
-                <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
-                <button
-                  class="min-w-0 flex-1 text-left"
-                  @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
-                >
-                  <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
-                  <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
-                </button>
-                <template v-if="!selectMode">
-                  <UTooltip text="Duplicate site">
-                    <UButton
-                      icon="i-lucide-copy"
-                      color="neutral"
-                      variant="ghost"
-                      size="xs"
-                      :loading="duplicatingId === site.id"
-                      class="opacity-0 group-hover:opacity-100"
-                      @click="onDuplicate(site)"
-                    />
-                  </UTooltip>
-                  <UTooltip text="Edit site">
-                    <UButton
-                      icon="i-lucide-pencil"
-                      color="neutral"
-                      variant="ghost"
-                      size="xs"
-                      class="opacity-0 group-hover:opacity-100"
-                      @click="openEditDialog(site)"
-                    />
-                  </UTooltip>
-                  <UTooltip text="Delete site">
-                    <UButton
-                      icon="i-lucide-trash-2"
-                      color="neutral"
-                      variant="ghost"
-                      size="xs"
-                      class="opacity-0 group-hover:opacity-100"
-                      @click="deleteTarget = site"
-                    />
-                  </UTooltip>
-                </template>
-              </li>
-            </ul>
-          </div>
-        </template>
-      </UCard>
+          </form>
 
-      <UCard>
-        <template #header>
-          <h1 class="text-base font-medium text-highlighted">Quick Connect</h1>
-        </template>
-
-        <div class="flex flex-col gap-3">
-          <UFormField label="Host">
-            <UInput v-model="form.host" placeholder="example.com" class="w-full" />
-          </UFormField>
-          <UFormField label="Port">
-            <UInput v-model.number="form.port" type="number" class="w-full" />
-          </UFormField>
-          <UFormField label="Username">
-            <UInput v-model="form.username" class="w-full" />
-          </UFormField>
-          <UFormField label="Password">
-            <UInput v-model="form.password" type="password" class="w-full" />
-          </UFormField>
-
-          <label v-if="settings.defaultProxy" class="flex items-center gap-2 text-sm text-default">
-            <input type="checkbox" v-model="bypassDefaultProxy" class="size-4" />
-            Bypass default proxy for this connection
-          </label>
-
-          <UAlert
-            v-if="sessions.status === 'error'"
-            color="error"
-            variant="soft"
-            :title="sessions.statusMessage ?? 'Connection failed'"
-          />
-        </div>
-
-        <template #footer>
-          <UButton block :loading="sessions.connecting" @click="onConnect">Connect</UButton>
-        </template>
-      </UCard>
+          <template #footer>
+            <UButton
+              type="submit"
+              form="ferry-quick-connect-form"
+              block
+              :disabled="!canQuickConnect"
+              :loading="sessions.connecting"
+              @click="onConnect"
+            >
+              Connect
+            </UButton>
+          </template>
+        </UCard>
+      </div>
 
       <p v-if="version" class="text-center text-[11px] text-muted">Ferry v{{ version }}</p>
     </div>

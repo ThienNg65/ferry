@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
+import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import type { ProxyType } from '@shared/contract'
 import { useSettingsStore } from '../../stores/settings.store'
 import { DEFAULT_ACCENT_COLOR, useUiStore } from '../../stores/ui.store'
@@ -94,7 +95,7 @@ async function save(): Promise<void> {
           <UTooltip v-for="preset in ACCENT_PRESETS" :key="preset.hex" :text="preset.label">
             <button
               type="button"
-              class="size-6 shrink-0 rounded-full ring-2 ring-offset-2 ring-offset-default"
+              class="size-6 shrink-0 rounded-full ring-2 ring-offset-2 ring-offset-default focus-visible:outline-2 focus-visible:outline-primary"
               :class="ui.accentColor === preset.hex ? 'ring-primary' : 'ring-transparent'"
               :style="{ backgroundColor: preset.hex }"
               :aria-label="preset.label"
@@ -112,10 +113,7 @@ async function save(): Promise<void> {
       </div>
       <div class="mt-4 flex flex-col gap-3">
         <div class="text-sm font-medium text-highlighted">Transfer bandwidth limit</div>
-        <label class="flex items-center gap-2 text-sm text-default">
-          <input type="checkbox" v-model="unlimited" class="size-4" />
-          Unlimited
-        </label>
+        <UCheckbox v-model="unlimited" label="Unlimited" />
         <div class="flex items-center gap-2">
           <UInput
             v-model.number="limitInput"
@@ -134,10 +132,7 @@ async function save(): Promise<void> {
             Used by any site set to "Use app default" — for connecting through a corporate proxy with no bastion host.
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm text-default">
-          <input type="checkbox" v-model="proxyEnabled" class="size-4" />
-          Enable
-        </label>
+        <UCheckbox v-model="proxyEnabled" label="Enable" />
         <template v-if="proxyEnabled">
           <URadioGroup v-model="proxyType" :items="proxyTypeOptions" orientation="horizontal" />
           <div class="flex gap-2">

@@ -9,6 +9,8 @@ const props = defineProps<{
   entries: FileEntry[]
   selected: Set<string>
   side: 'local' | 'remote'
+  loading?: boolean
+  filtered?: boolean
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
@@ -42,6 +44,14 @@ function measureRow(el: Element | ComponentPublicInstance | null): void {
   }
 }
 
+function scrollToIndex(index: number): void {
+  if (index >= 0 && index < props.entries.length) {
+    rowVirtualizer.value.scrollToIndex(index, { align: 'auto' })
+  }
+}
+
+defineExpose({ scrollToIndex })
+
 const emit = defineEmits<{
   select: [path: string, event: MouseEvent]
   open: [entry: FileEntry]
@@ -56,6 +66,7 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   sort: [column: SortColumn]
+  'clear-filter': []
 }>()
 </script>
 
@@ -98,10 +109,19 @@ const emit = defineEmits<{
         />
       </button>
       <span v-if="side === 'remote'" class="w-36 shrink-0 text-right">Permissions</span>
-      <span class="w-7 shrink-0" />
+      <span class="w-14 shrink-0" />
     </div>
     <div ref="scrollEl" class="flex-1 overflow-y-auto px-1 py-1">
-      <div v-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+      <div v-if="loading && entries.length === 0" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
+        <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
+        <p class="text-xs text-dimmed">Loading directory…</p>
+      </div>
+      <div v-else-if="entries.length === 0 && filtered" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
+        <UIcon name="i-lucide-search-x" class="size-5 text-dimmed" />
+        <p class="text-xs text-dimmed">No files match the current filter</p>
+        <UButton size="xs" color="neutral" variant="soft" @click="emit('clear-filter')">Clear filter</UButton>
+      </div>
+      <div v-else-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
         <p class="text-xs text-dimmed">Empty folder</p>
       </div>

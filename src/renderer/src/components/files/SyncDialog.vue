@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
 import { invoke } from '../../api'
@@ -133,10 +134,11 @@ function close(): void {
         <UFormField label="Direction">
           <URadioGroup v-model="direction" :items="directionOptions" @update:model-value="plan = null" />
         </UFormField>
-        <label class="flex items-center gap-2 text-sm text-default">
-          <input type="checkbox" v-model="deleteExtras" class="size-4" @change="plan = null" />
-          Delete destination files not present in the source (mirror)
-        </label>
+        <UCheckbox
+          v-model="deleteExtras"
+          label="Delete destination files not present in the source (mirror)"
+          @update:model-value="plan = null"
+        />
 
         <UButton
           color="neutral"

@@ -6,7 +6,7 @@ import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useOperationsStore } from '../../stores/operations.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
-import { useDockState } from '../../composables/useDockState'
+import { useDockState, type DockTab } from '../../composables/useDockState'
 import { clampDockHeight } from '../../stores/ui.store'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
@@ -26,6 +26,15 @@ const editSessions = useEditSessionsStore()
 // the TitleBar busy indicator) can open the dock on a specific tab.
 const { collapsed, tab, terminalEverShown, openDock } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
+
+/** Clicking an already-open dock tab collapses the dock; clicking any tab while collapsed expands to it. */
+function onTabClick(target: DockTab): void {
+  if (!collapsed.value && tab.value === target) {
+    collapsed.value = true
+    return
+  }
+  openDock(target)
+}
 
 const COLLAPSED_HEIGHT = 36
 
@@ -92,58 +101,61 @@ function basename(path: string): string {
       @pointermove="onResizeMove"
       @pointerup="onResizeEnd"
     />
-    <div class="flex items-center justify-between bg-muted px-2 py-1">
+    <div
+      class="flex items-center justify-between bg-muted px-2 py-1 select-none"
+      @dblclick.self="collapsed = !collapsed"
+    >
       <div class="flex items-center gap-1">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Transfers"
             size="xs"
-            :color="tab === 'transfers' ? 'primary' : 'neutral'"
-            :variant="tab === 'transfers' ? 'soft' : 'ghost'"
-            @click="openDock('transfers')"
+            :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
+            :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
+            @click="onTabClick('transfers')"
           />
         </UChip>
         <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
           <UButton
             label="Activity"
             size="xs"
-            :color="tab === 'activity' ? 'primary' : 'neutral'"
-            :variant="tab === 'activity' ? 'soft' : 'ghost'"
-            @click="openDock('activity')"
+            :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
+            :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
+            @click="onTabClick('activity')"
           />
         </UChip>
         <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
           <UButton
             label="Log Tail"
             size="xs"
-            :color="tab === 'tail' ? 'primary' : 'neutral'"
-            :variant="tab === 'tail' ? 'soft' : 'ghost'"
-            @click="openDock('tail')"
+            :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
+            :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
+            @click="onTabClick('tail')"
           />
         </UChip>
         <UButton
           label="Terminal"
           size="xs"
-          :color="tab === 'terminal' ? 'primary' : 'neutral'"
-          :variant="tab === 'terminal' ? 'soft' : 'ghost'"
+          :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
+          :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
           :disabled="sessions.status !== 'connected'"
-          @click="openDock('terminal')"
+          @click="onTabClick('terminal')"
         />
         <UButton
           label="Monitor"
           size="xs"
-          :color="tab === 'monitor' ? 'primary' : 'neutral'"
-          :variant="tab === 'monitor' ? 'soft' : 'ghost'"
+          :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
+          :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
           :disabled="sessions.status !== 'connected'"
-          @click="openDock('monitor')"
+          @click="onTabClick('monitor')"
         />
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Edits"
             size="xs"
-            :color="tab === 'edits' ? 'primary' : 'neutral'"
-            :variant="tab === 'edits' ? 'soft' : 'ghost'"
-            @click="openDock('edits')"
+            :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
+            :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
+            @click="onTabClick('edits')"
           />
         </UChip>
       </div>
@@ -153,6 +165,7 @@ function basename(path: string): string {
           color="neutral"
           variant="ghost"
           size="xs"
+          :aria-label="collapsed ? 'Expand dock' : 'Collapse dock'"
           @click="collapsed = !collapsed"
         />
       </UTooltip>

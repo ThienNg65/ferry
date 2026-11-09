@@ -132,6 +132,15 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       }
       this.items.delete(transferId)
       await this.enqueue(item.sessionId, item.kind, item.localPath, item.remotePath, item.isDir)
+    },
+
+    /** Removes completed, failed, and cancelled transfers from the in-memory queue view. */
+    clearFinished(): void {
+      for (const [id, item] of this.items.entries()) {
+        if (item.state === 'done' || item.state === 'error' || item.state === 'cancelled') {
+          this.items.delete(id)
+        }
+      }
     }
   }
 })

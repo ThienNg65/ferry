@@ -233,14 +233,26 @@ const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendly
       </UTooltip>
     </div>
     <div v-else-if="side === 'remote'" class="w-36 shrink-0"></div>
-    <div class="flex w-7 shrink-0 items-center justify-center">
+    <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
+      <UTooltip v-if="transferIcon" :text="transferTooltip">
+        <UButton
+          :icon="transferIcon"
+          color="primary"
+          variant="ghost"
+          size="xs"
+          :aria-label="transferTooltip"
+          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          @click.stop="emit('transfer', entry)"
+        />
+      </UTooltip>
       <UTooltip text="Delete">
         <UButton
           icon="i-lucide-trash-2"
           color="neutral"
           variant="ghost"
           size="xs"
-          class="opacity-0 group-hover:opacity-100"
+          aria-label="Delete"
+          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           @click.stop="emit('remove', entry)"
         />
       </UTooltip>

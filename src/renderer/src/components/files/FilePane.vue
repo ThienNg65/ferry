@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { DownloadsPathResult, FileEntry, UnzipResult } from '@shared/contract'
+import type { FileEntry, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -14,6 +14,7 @@ import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
+import { formatBytes } from '../../utils/format'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
@@ -45,10 +46,13 @@ const notify = useNotify()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
+const toolbarRef = ref<InstanceType<typeof FileToolbar> | null>(null)
+const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
 const showNewFolder = ref(false)
 const newFolderName = ref('')
 const isDropTarget = ref(false)
 const filterText = ref('')
+const isFiltered = computed(() => filterText.value.trim().length > 0)
 const filteredEntries = computed(() => {
   const needle = filterText.value.trim().toLowerCase()
   if (!needle) {
@@ -56,6 +60,34 @@ const filteredEntries = computed(() => {
   }
   return store.entries.filter((e) => e.name.toLowerCase().includes(needle))
 })
+
+const paneSummary = computed(() => {
+  const list = filteredEntries.value
+  let folders = 0
+  let files = 0
+  for (const e of list) {
+    if (e.isDir) folders++
+    else files++
+  }
+  const parts: string[] = []
+  if (folders > 0) parts.push(`${folders} ${folders === 1 ? 'folder' : 'folders'}`)
+  if (files > 0) parts.push(`${files} ${files === 1 ? 'file' : 'files'}`)
+  const base = parts.length > 0 ? parts.join(', ') : '0 items'
+  return isFiltered.value ? `${base} (filtered from ${store.entries.length})` : base
+})
+
+const selectionSummary = computed(() => {
+  const count = store.selected.size
+  if (count === 0) return ''
+  let bytes = 0
+  for (const e of store.entries) {
+    if (store.selected.has(e.path) && !e.isDir) {
+      bytes += e.size
+    }
+  }
+  return bytes > 0 ? `${count} selected (${formatBytes(bytes)})` : `${count} selected`
+})
+
 const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
@@ -65,7 +97,7 @@ const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editConfirmTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
-const editorState = ref<{ editId: string, localTempPath: string, remotePath: string } | null>(null)
+const editorState = ref<{ editId: string; localTempPath: string; remotePath: string } | null>(null)
 const pendingDelete = ref<FileEntry[] | null>(null)
 const deleting = ref(false)
 
@@ -474,7 +506,11 @@ async function onDrop(event: DragEvent): Promise<void> {
 async function onKeydown(event: KeyboardEvent): Promise<void> {
   // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
   // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+  if (
+    event.target instanceof HTMLInputElement ||
+    event.target instanceof HTMLTextAreaElement ||
+    (event.target instanceof HTMLElement && event.target.isContentEditable)
+  ) {
     return
   }
   // While a row is mid-rename, its own input owns keyboard input (it stops keydown propagation) —
@@ -485,6 +521,11 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
     event.preventDefault()
     await store.load()
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    toolbarRef.value?.focusFilter()
     return
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
@@ -500,12 +541,55 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     }
     return
   }
-  if (event.key === 'Escape' && filterText.value) {
-    event.preventDefault()
-    filterText.value = ''
+  if (event.key === 'Escape') {
+    if (filterText.value) {
+      event.preventDefault()
+      filterText.value = ''
+    } else if (store.selected.size > 0) {
+      event.preventDefault()
+      store.selectAll([])
+    }
     return
   }
-  if (event.key !== 'Delete' && event.key !== 'Backspace') {
+  if (event.key === 'Backspace') {
+    event.preventDefault()
+    await store.goUp()
+    return
+  }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const list = filteredEntries.value
+    if (list.length === 0) return
+    event.preventDefault()
+    const selectedPaths = Array.from(store.selected)
+    const lastSelectedPath = selectedPaths[selectedPaths.length - 1]
+    const currentIdx = lastSelectedPath ? list.findIndex((e) => e.path === lastSelectedPath) : -1
+    const nextIdx =
+      event.key === 'ArrowDown'
+        ? Math.min(list.length - 1, currentIdx + 1)
+        : currentIdx <= 0
+          ? 0
+          : currentIdx - 1
+    const nextPath = list[nextIdx].path
+    if (event.shiftKey) {
+      store.selectRange(nextPath)
+    } else {
+      store.selectOnly(nextPath)
+    }
+    fileListRef.value?.scrollToIndex(nextIdx)
+    return
+  }
+  if (event.key === 'Enter') {
+    if (store.selected.size === 1) {
+      const [path] = store.selected
+      const entry = filteredEntries.value.find((e) => e.path === path)
+      if (entry) {
+        event.preventDefault()
+        onOpen(entry)
+      }
+    }
+    return
+  }
+  if (event.key !== 'Delete') {
     return
   }
   if (store.selected.size === 0) {
@@ -593,9 +677,9 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
 
 <template>
   <div
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
+    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0 focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-inset"
     :class="[
-      collapsedRail ? 'w-10 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
+      collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
@@ -604,15 +688,32 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
     @drop="onDrop"
     @keydown="onKeydown"
   >
-    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted px-3">
-      <div v-if="showBody" class="flex items-center gap-1.5">
-        <UIcon :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'" class="size-3.5 text-highlighted" />
-        <span class="text-xs font-semibold uppercase tracking-wide text-highlighted">{{ side }}</span>
+    <button
+      v-if="collapsedRail"
+      type="button"
+      aria-label="Show Local pane"
+      title="Show Local pane"
+      class="flex h-full w-full flex-col items-center gap-3 bg-muted/40 py-2.5 text-muted transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+      @click="ui.toggleLocalPane()"
+    >
+      <UIcon name="i-lucide-panel-left-open" class="size-4 shrink-0" />
+      <span class="select-none text-[10px] font-semibold uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">
+        Local
+      </span>
+    </button>
+    <template v-else>
+      <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted px-3">
+        <div class="flex items-center gap-1.5">
+          <UIcon :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'" class="size-3.5 text-highlighted" />
+          <span class="text-xs font-semibold uppercase tracking-wide text-highlighted">{{ side }}</span>
+        </div>
+        <span v-if="side === 'remote' && sessions.activeTab.hostLabel" class="truncate text-[11px] font-mono text-muted">
+          {{ sessions.activeTab.hostLabel }}
+        </span>
       </div>
-    </div>
-    <template v-if="showBody">
       <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
       <FileToolbar
+        ref="toolbarRef"
         :side="side"
         :loading="store.loading"
         :selected-count="store.selected.size"
@@ -645,9 +746,12 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
       </div>
       <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
       <FileList
+        ref="fileListRef"
         :entries="filteredEntries"
         :selected="store.selected"
         :side="side"
+        :loading="store.loading"
+        :filtered="isFiltered"
         :transfer-icon="transferIcon"
         :show-tail="showTail"
         :allow-extract="showTail"
@@ -667,7 +771,21 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @compress="onCompress"
         @chmod="onOpenChmod"
         @edit="onEdit"
+        @clear-filter="filterText = ''"
       />
+      <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-[11px] text-muted">
+        <span class="truncate">{{ paneSummary }}</span>
+        <div v-if="selectionSummary" class="flex items-center gap-1.5">
+          <span class="font-medium text-default">{{ selectionSummary }}</span>
+          <button
+            type="button"
+            class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+            @click="store.selectAll([])"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
       <FilePreviewDialog
         v-model:open="previewOpen"
         :entry="previewEntry"
