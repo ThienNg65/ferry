@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
+## 0.14.11 - 2026-11-09
 
 ### Added
 - Comprehensive UI/UX enhancements across Session Manager, Shell Chrome, File Browser, and Bottom Dock:
