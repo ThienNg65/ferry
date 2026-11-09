@@ -727,6 +727,38 @@ export interface ClipboardTextResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Payload for the `update:available` channel — a newer version is being downloaded in the background. */
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'not-available'
+  | 'error'
+  | 'disabled'
+
+export interface UpdateProgress {
+  percent: number
+  bytesPerSecond: number
+  transferred: number
+  total: number
+}
+
+export interface UpdateState {
+  status: UpdateStatus
+  currentVersion: string
+  availableVersion?: string
+  progress?: UpdateProgress
+  error?: string
+  lastCheckedAt?: string
+}
+
+export interface CheckUpdateResult {
+  status: UpdateStatus
+  version?: string
+  error?: string
+}
+
 export interface UpdateAvailableEvent {
   version: string
 }
@@ -752,6 +784,8 @@ export interface AppSettings {
   bandwidthLimitKBps: number | null
   /** App-wide default proxy, used by any site whose own `proxyMode` is `'inherit'` (or absent) — null/absent means no default. */
   defaultProxy?: ProxyInfo
+  /** Whether Ferry automatically checks for updates on startup and periodically in the background. */
+  autoCheckUpdates?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -789,6 +823,7 @@ export const INVOKE_CHANNELS = {
   settingsSetOpenTabs: 'settings:setOpenTabs',
   settingsSetBandwidthLimit: 'settings:setBandwidthLimit',
   settingsSetDefaultProxy: 'settings:setDefaultProxy',
+  settingsSetAutoCheckUpdates: 'settings:setAutoCheckUpdates',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
@@ -862,6 +897,8 @@ export const INVOKE_CHANNELS = {
   windowClose: 'window:close',
   windowIsMaximized: 'window:isMaximized',
   // auto-update
+  updateCheck: 'update:check',
+  updateGetStatus: 'update:getStatus',
   updateInstallNow: 'update:installNow',
   // profiling
   profileReport: 'profile:report'
@@ -891,7 +928,8 @@ export const EVENT_CHANNELS = {
   terminalExit: 'terminal:exit',
   windowStateChange: 'window:state-change',
   updateAvailable: 'update:available',
-  updateDownloaded: 'update:downloaded'
+  updateDownloaded: 'update:downloaded',
+  updateStatus: 'update:status'
 } as const
 
 /** Union of every valid event channel string. */

@@ -16,7 +16,8 @@ const appSettingsStoreMock = {
   get: vi.fn(),
   setOpenTabSiteIds: vi.fn(),
   setBandwidthLimitKBps: vi.fn(),
-  setDefaultProxy: vi.fn()
+  setDefaultProxy: vi.fn(),
+  setAutoCheckUpdates: vi.fn()
 }
 
 const transferQueueMock = {
@@ -101,6 +102,12 @@ describe('settings.ipc', () => {
     const proxy = { type: 'socks5' as const, host: 'proxy', port: 1080 }
     const result = await invoke('settings:setDefaultProxy', proxy)
     expect(appSettingsStoreMock.setDefaultProxy).toHaveBeenCalledWith(proxy)
+    expect(result).toEqual({ ok: true, data: undefined })
+  })
+
+  it('settings:setAutoCheckUpdates forwards the boolean setting', async () => {
+    const result = await invoke('settings:setAutoCheckUpdates', false)
+    expect(appSettingsStoreMock.setAutoCheckUpdates).toHaveBeenCalledWith(false)
     expect(result).toEqual({ ok: true, data: undefined })
   })
 

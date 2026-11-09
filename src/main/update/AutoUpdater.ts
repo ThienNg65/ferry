@@ -1,9 +1,20 @@
 import { app, BrowserWindow } from 'electron'
 import {
   EVENT_CHANNELS,
+  type CheckUpdateResult,
   type UpdateAvailableEvent,
-  type UpdateDownloadedEvent
+  type UpdateDownloadedEvent,
+  type UpdateState
 } from '../../shared/contract'
+import { AppSettingsStore } from '../app/AppSettingsStore'
+
+let initialized = false
+let periodicTimer: NodeJS.Timeout | null = null
+
+let currentState: UpdateState = {
+  status: app.isPackaged ? 'idle' : 'disabled',
+  currentVersion: app.getVersion()
+}
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -13,24 +24,34 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+function updateState(patch: Partial<UpdateState>): void {
+  currentState = { ...currentState, ...patch }
+  broadcast(EVENT_CHANNELS.updateStatus, currentState)
+}
+
+/** Returns the current snapshot of auto-update state. */
+export function getUpdateState(): UpdateState {
+  return { ...currentState }
+}
+
 /**
  * Wires electron-updater's GitHub-Releases-based update check.
  *
  * `electron-builder.yml`'s `publish.owner`/`publish.repo` point at the real
  * repo, and `.github/workflows/ci.yml`'s `auto-release` job publishes a real
  * GitHub Release (including `latest.yml`) on every push to `main` — so the
- * feed itself is real and live. Two things remain genuinely unproven: the
- * installer isn't code-signed yet (see `electron-builder.yml`'s own comment
- * on `CSC_LINK`/`CSC_KEY_PASSWORD`, and `.claude/plan/ferry-smartscreen-signing-plan.md`
- * for the SignPath-based plan to fix that), and this has not yet been
- * exercised end-to-end against a real install (an older packaged build
- * actually detecting/downloading/installing a newer release) — flag both if
- * either is ever reported broken.
- * A no-op in dev (`app.isPackaged` is false, matching electron-updater's own
- * recommendation not to run update checks against a local/unpackaged build).
+ * feed itself is real and live.
+ *
+ * In dev (`app.isPackaged` is false), status is marked as 'disabled'.
  */
 export async function initAutoUpdater(): Promise<void> {
+  if (initialized) {
+    return
+  }
+  initialized = true
+
   if (!app.isPackaged) {
+    updateState({ status: 'disabled' })
     return
   }
 
@@ -38,24 +59,104 @@ export async function initAutoUpdater(): Promise<void> {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
-  autoUpdater.on('update-available', (info) => {
-    broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
-  })
-  autoUpdater.on('update-downloaded', (info) => {
-    broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
-  })
-  // Never surfaced as a user-facing error toast (there's nothing actionable a
-  // user can do about a feed/network hiccup), but logged rather than fully
-  // swallowed — a silent blanket swallow here previously hid a real, ongoing
-  // failure (the feed's latest.yml was never being published) for an unknown
-  // number of releases with nothing in any log to point at it.
-  autoUpdater.on('error', (err) => {
-    console.error('[AutoUpdater]', err)
+  autoUpdater.on('checking-for-update', () => {
+    updateState({ status: 'checking', error: undefined })
   })
 
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[AutoUpdater] checkForUpdates failed', err)
+  autoUpdater.on('update-available', (info) => {
+    updateState({
+      status: 'downloading',
+      availableVersion: info.version,
+      error: undefined
+    })
+    broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
   })
+
+  autoUpdater.on('download-progress', (progress) => {
+    updateState({
+      status: 'downloading',
+      progress: {
+        percent: Math.round(progress.percent),
+        bytesPerSecond: Math.round(progress.bytesPerSecond),
+        transferred: progress.transferred,
+        total: progress.total
+      }
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    updateState({
+      status: 'downloaded',
+      availableVersion: info.version,
+      error: undefined
+    })
+    broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    updateState({ status: 'not-available', error: undefined })
+  })
+
+  autoUpdater.on('error', (err) => {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[AutoUpdater]', err)
+    updateState({ status: 'error', error: message })
+  })
+
+  // Periodic check timer (every 6 hours)
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+  if (periodicTimer) {
+    clearInterval(periodicTimer)
+  }
+  periodicTimer = setInterval(() => {
+    const settings = AppSettingsStore.getInstance().get()
+    if (settings.autoCheckUpdates !== false) {
+      void checkForUpdates(false)
+    }
+  }, SIX_HOURS_MS)
+  periodicTimer.unref?.()
+
+  const settings = AppSettingsStore.getInstance().get()
+  if (settings.autoCheckUpdates !== false) {
+    void checkForUpdates(false)
+  }
+}
+
+/** Checks for updates immediately. If isManual is true, returns status or error directly to caller. */
+export async function checkForUpdates(isManual = false): Promise<CheckUpdateResult> {
+  if (!app.isPackaged) {
+    updateState({ status: 'disabled' })
+    return { status: 'disabled', error: 'Updates are disabled in development mode' }
+  }
+
+  if (currentState.status === 'checking' || currentState.status === 'downloading') {
+    return { status: currentState.status, version: currentState.availableVersion }
+  }
+
+  updateState({
+    status: 'checking',
+    lastCheckedAt: new Date().toISOString(),
+    error: undefined
+  })
+
+  try {
+    const { autoUpdater } = await import('electron-updater')
+    const checkResult = await autoUpdater.checkForUpdates()
+    if (!checkResult || checkResult.updateInfo.version === app.getVersion()) {
+      updateState({ status: 'not-available' })
+      return { status: 'not-available', version: app.getVersion() }
+    }
+    return { status: 'available', version: checkResult.updateInfo.version }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (isManual) {
+      console.error('[AutoUpdater] manual checkForUpdates failed', err)
+    } else {
+      console.error('[AutoUpdater] background checkForUpdates failed', err)
+    }
+    updateState({ status: 'error', error: message })
+    return { status: 'error', error: message }
+  }
 }
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */

@@ -4,16 +4,22 @@ import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import type { ProxyType } from '@shared/contract'
 import { useSettingsStore } from '../../stores/settings.store'
+import { useUpdateStore } from '../../stores/update.store'
+import { useNotify } from '../../composables/useNotify'
 import { DEFAULT_ACCENT_COLOR, useUiStore } from '../../stores/ui.store'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const settings = useSettingsStore()
+const update = useUpdateStore()
+const notify = useNotify()
 const ui = useUiStore()
 const unlimited = ref(true)
 const limitInput = ref(1024)
 const saving = ref(false)
+const checkingUpdate = ref(false)
+const autoCheckUpdates = ref(true)
 
 const proxyEnabled = ref(false)
 const proxyType = ref<ProxyType>('socks5')
@@ -44,6 +50,8 @@ watch(
       return
     }
     await settings.fetch()
+    void update.init()
+    autoCheckUpdates.value = settings.autoCheckUpdates
     unlimited.value = settings.bandwidthLimitKBps === null
     limitInput.value = settings.bandwidthLimitKBps ?? 1024
     proxyEnabled.value = Boolean(settings.defaultProxy)
@@ -55,6 +63,39 @@ watch(
   }
 )
 
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec >= 1024 * 1024) {
+    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
+  }
+  return `${Math.round(bytesPerSec / 1024)} KB/s`
+}
+
+function formatTime(iso: string | null): string {
+  if (!iso) return 'Never'
+  try {
+    const date = new Date(iso)
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return iso
+  }
+}
+
+async function handleCheckUpdate(): Promise<void> {
+  checkingUpdate.value = true
+  try {
+    const res = await update.checkNow()
+    if (res.status === 'not-available') {
+      notify.success('Up to date', `Ferry v${update.currentVersion} is the latest version`)
+    } else if (res.status === 'disabled') {
+      notify.error('Updates unavailable', 'Auto-update is disabled in development mode')
+    } else if (res.status === 'error' && res.error) {
+      notify.error('Update check failed', res.error)
+    }
+  } finally {
+    checkingUpdate.value = false
+  }
+}
+
 function close(): void {
   emit('update:open', false)
 }
@@ -62,6 +103,7 @@ function close(): void {
 async function save(): Promise<void> {
   saving.value = true
   try {
+    await settings.setAutoCheckUpdates(autoCheckUpdates.value)
     await settings.setBandwidthLimitKBps(unlimited.value ? null : Math.max(1, Math.round(limitInput.value)))
     await settings.setDefaultProxy(
       proxyEnabled.value && proxyHost.value.trim()
@@ -149,6 +191,58 @@ async function save(): Promise<void> {
             />
           </div>
         </template>
+      </div>
+
+      <div class="mt-4 flex flex-col gap-3 border-t border-muted pt-4">
+        <div class="flex items-center justify-between">
+          <div class="text-sm font-medium text-highlighted">Updates & About</div>
+          <span class="text-xs text-muted">v{{ update.currentVersion || '0.14.11' }}</span>
+        </div>
+        <UCheckbox v-model="autoCheckUpdates" label="Automatically check for updates" />
+
+        <div v-if="update.isDownloading" class="flex flex-col gap-1.5 rounded bg-muted/30 p-2.5 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="font-medium text-toned">Downloading Ferry v{{ update.availableVersion }}...</span>
+            <span class="text-muted">{{ update.progress?.percent || 0 }}% ({{ formatSpeed(update.progress?.bytesPerSecond || 0) }})</span>
+          </div>
+          <div class="h-1.5 w-full overflow-hidden rounded bg-muted">
+            <div
+              class="h-full bg-primary transition-all duration-300"
+              :style="{ width: `${update.progress?.percent || 0}%` }"
+            />
+          </div>
+        </div>
+
+        <div v-else-if="update.isDownloaded" class="flex items-center justify-between rounded border border-green-500/20 bg-green-500/10 p-2.5 text-xs text-green-400">
+          <span>Ferry v{{ update.availableVersion }} is ready to install</span>
+          <UButton color="success" size="xs" icon="i-lucide-refresh-cw" @click="update.installNow">
+            Restart & Install
+          </UButton>
+        </div>
+
+        <div class="flex items-center justify-between pt-1">
+          <div class="flex items-center gap-2">
+            <UButton
+              size="xs"
+              variant="outline"
+              :loading="checkingUpdate || update.isChecking"
+              :disabled="!update.canCheck"
+              icon="i-lucide-refresh-cw"
+              @click="handleCheckUpdate"
+            >
+              Check for updates
+            </UButton>
+            <span v-if="update.lastCheckedAt" class="text-[11px] text-muted">
+              Last checked: {{ formatTime(update.lastCheckedAt) }}
+            </span>
+          </div>
+          <span v-if="update.status === 'not-available'" class="text-[11px] text-muted">
+            Latest version installed
+          </span>
+          <span v-else-if="update.status === 'disabled'" class="text-[11px] text-muted">
+            Dev mode
+          </span>
+        </div>
       </div>
     </template>
 

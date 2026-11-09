@@ -11,6 +11,8 @@ import { useSettingsDialog } from '../../composables/useSettingsDialog'
 import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
+import { useUpdateStore } from '../../stores/update.store'
+import { useNotify } from '../../composables/useNotify'
 
 const { isOpen: open } = useCommandPalette()
 const sessions = useSessionsStore()
@@ -19,6 +21,8 @@ const ui = useUiStore()
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const { openDock } = useDockState()
+const updateStore = useUpdateStore()
+const notify = useNotify()
 
 function onKeydown(event: KeyboardEvent): void {
   // Terminal-first: while the xterm textarea is focused, Ctrl+K belongs to the
@@ -64,7 +68,22 @@ const groups = computed(() => {
       onSelect: () => run(() => ui.toggleLocalPane())
     },
     { label: 'History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
-    { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) }
+    { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
+    {
+      label: 'Check for updates…',
+      icon: 'i-lucide-refresh-cw',
+      onSelect: () =>
+        run(async () => {
+          const res = await updateStore.checkNow()
+          if (res.status === 'not-available') {
+            notify.success('Up to date', `Ferry v${updateStore.currentVersion} is the latest version`)
+          } else if (res.status === 'disabled') {
+            notify.error('Updates unavailable', 'Auto-update is disabled in development mode')
+          } else if (res.status === 'error' && res.error) {
+            notify.error('Update check failed', res.error)
+          }
+        })
+    }
   ]
 
   if (sessions.status === 'connected') {

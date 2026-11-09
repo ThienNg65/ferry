@@ -11,6 +11,7 @@ import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
 import { useNotify } from './composables/useNotify'
+import { useUpdateStore } from './stores/update.store'
 import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 
@@ -26,6 +27,7 @@ const FilePane = defineAsyncComponent(() => import('./components/files/FilePane.
 const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomDock.vue'))
 
 const sessions = useSessionsStore()
+const updateStore = useUpdateStore()
 const ui = useUiStore()
 const isConnected = computed(() => sessions.status === 'connected')
 const isResizingPane = ref(false)
@@ -91,6 +93,7 @@ function onPaneResizerMouseUp() {
 }
 
 onMounted(() => {
+  void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin
   requestAnimationFrame(() => {

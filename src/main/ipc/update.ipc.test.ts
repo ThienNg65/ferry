@@ -13,9 +13,13 @@ vi.mock('electron', () => ({
 }))
 
 const installUpdateNowMock = vi.fn()
+const checkForUpdatesMock = vi.fn()
+const getUpdateStateMock = vi.fn()
 
 vi.mock('../update/AutoUpdater', () => ({
-  installUpdateNow: installUpdateNowMock
+  installUpdateNow: installUpdateNowMock,
+  checkForUpdates: checkForUpdatesMock,
+  getUpdateState: getUpdateStateMock
 }))
 
 async function invoke(channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> {
@@ -30,6 +34,31 @@ describe('update.ipc', () => {
     vi.clearAllMocks()
     const { registerUpdateHandlers } = await import('./update.ipc')
     registerUpdateHandlers()
+  })
+
+  describe('update:check', () => {
+    it('triggers checkForUpdates with manual=true', async () => {
+      checkForUpdatesMock.mockResolvedValueOnce({ status: 'not-available', version: '0.14.11' })
+      const result = await invoke('update:check')
+      expect(checkForUpdatesMock).toHaveBeenCalledWith(true)
+      expect(result).toEqual({ ok: true, data: { status: 'not-available', version: '0.14.11' } })
+    })
+
+    it('wraps thrown errors in an error envelope', async () => {
+      checkForUpdatesMock.mockRejectedValueOnce(new Error('network offline'))
+      const result = await invoke('update:check')
+      expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'network offline' })
+    })
+  })
+
+  describe('update:getStatus', () => {
+    it('returns getUpdateState snapshot', async () => {
+      const mockState = { status: 'idle', currentVersion: '0.14.11' }
+      getUpdateStateMock.mockReturnValueOnce(mockState)
+      const result = await invoke('update:getStatus')
+      expect(getUpdateStateMock).toHaveBeenCalledOnce()
+      expect(result).toEqual({ ok: true, data: mockState })
+    })
   })
 
   describe('update:installNow', () => {

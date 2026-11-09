@@ -7,6 +7,7 @@ import { useGlobalActivity } from '../../composables/useGlobalActivity'
 import { useUiStore } from '../../stores/ui.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSettingsDialog } from '../../composables/useSettingsDialog'
+import { useUpdateStore } from '../../stores/update.store'
 import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
@@ -15,6 +16,7 @@ const { isBusy, label: activityLabel } = useGlobalActivity()
 const ui = useUiStore()
 const sessions = useSessionsStore()
 const settingsDialog = useSettingsDialog()
+const updateStore = useUpdateStore()
 const historyDialog = useHistoryDialog()
 const commandPalette = useCommandPalette()
 const { openDock } = useDockState()
@@ -104,6 +106,20 @@ function close(): void {
         </UTooltip>
       </Transition>
       <span class="text-xs font-medium text-toned">Ferry</span>
+      <Transition name="fade">
+        <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
+          <button
+            type="button"
+            aria-label="Restart to update"
+            class="flex items-center gap-1 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-400 transition-colors hover:bg-green-500/30"
+            style="-webkit-app-region: no-drag"
+            @click="updateStore.installNow()"
+          >
+            <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
+            <span class="hidden sm:inline">Update ready</span>
+          </button>
+        </UTooltip>
+      </Transition>
       <UTooltip text="Command palette (Ctrl+K)">
         <button
           type="button"

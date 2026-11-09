@@ -25,6 +25,10 @@ export function registerSettingsHandlers(): void {
     TransferQueue.getInstance().setBandwidthLimitKBps(limit)
   })
 
+  handle<void>(INVOKE_CHANNELS.settingsSetAutoCheckUpdates, (enabled) => {
+    AppSettingsStore.getInstance().setAutoCheckUpdates(Boolean(enabled))
+  })
+
   handle<void>(INVOKE_CHANNELS.settingsSetDefaultProxy, (proxy) => {
     AppSettingsStore.getInstance().setDefaultProxy(proxy as ProxyConfig | null)
   })

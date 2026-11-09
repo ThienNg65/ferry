@@ -16,6 +16,7 @@ interface StoreSchema {
   openTabSiteIds: string[]
   bandwidthLimitKBps: number | null
   defaultProxy: StoredProxy | null
+  autoCheckUpdates: boolean
 }
 
 function encrypt(plaintext: string | undefined): string | undefined {
@@ -57,7 +58,7 @@ export class AppSettingsStore {
     if (!this._store) {
       this._store = new Store<StoreSchema>({
         name: 'app-settings',
-        defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null }
+        defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null, autoCheckUpdates: true }
       })
     }
     return this._store
@@ -77,12 +78,17 @@ export class AppSettingsStore {
       bandwidthLimitKBps: this.store.get('bandwidthLimitKBps'),
       defaultProxy: proxy
         ? { type: proxy.type, host: proxy.host, port: proxy.port, username: proxy.username, hasPassword: Boolean(proxy.secretPassword) }
-        : undefined
+        : undefined,
+      autoCheckUpdates: this.store.get('autoCheckUpdates') ?? true
     }
   }
 
   setOpenTabSiteIds(siteIds: string[]): void {
     this.store.set('openTabSiteIds', siteIds)
+  }
+
+  setAutoCheckUpdates(enabled: boolean): void {
+    this.store.set('autoCheckUpdates', enabled)
   }
 
   setBandwidthLimitKBps(limit: number | null): void {

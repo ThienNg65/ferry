@@ -21,7 +21,8 @@ const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.windowMinimize,
   INVOKE_CHANNELS.windowMaximizeToggle,
   INVOKE_CHANNELS.windowClose,
-  INVOKE_CHANNELS.windowIsMaximized
+  INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.updateGetStatus
 ])
 
 /**

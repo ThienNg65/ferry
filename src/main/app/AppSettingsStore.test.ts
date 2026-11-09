@@ -63,7 +63,7 @@ describe('AppSettingsStore', () => {
 
   it('defaults to empty tabs, unlimited bandwidth, and no default proxy', () => {
     const store = new AppSettingsStore()
-    expect(store.get()).toEqual({ openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: undefined })
+    expect(store.get()).toEqual({ openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: undefined, autoCheckUpdates: true })
   })
 
   it('round-trips open tab site ids through a fresh instance (same underlying store)', () => {
@@ -81,6 +81,15 @@ describe('AppSettingsStore', () => {
 
     store.setBandwidthLimitKBps(null)
     expect(new AppSettingsStore().get().bandwidthLimitKBps).toBeNull()
+  })
+
+  it('round-trips the autoCheckUpdates setting', () => {
+    const store = new AppSettingsStore()
+    expect(store.get().autoCheckUpdates).toBe(true)
+    store.setAutoCheckUpdates(false)
+    expect(new AppSettingsStore().get().autoCheckUpdates).toBe(false)
+    store.setAutoCheckUpdates(true)
+    expect(new AppSettingsStore().get().autoCheckUpdates).toBe(true)
   })
 
   it('round-trips a default proxy, exposing hasPassword instead of the plaintext password', () => {

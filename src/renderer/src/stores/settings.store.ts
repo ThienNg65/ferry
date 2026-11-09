@@ -6,15 +6,17 @@ import { invoke } from '../api'
 interface SettingsState {
   bandwidthLimitKBps: number | null
   defaultProxy: ProxyInfo | undefined
+  autoCheckUpdates: boolean
   loaded: boolean
   inFlightFetch: Promise<void> | null
 }
 
-/** Small app-wide settings persisted by the main process (`AppSettingsStore`) — the transfer bandwidth cap and the default proxy any site's `proxyMode: 'inherit'` falls back to. */
+/** Small app-wide settings persisted by the main process (`AppSettingsStore`) — the transfer bandwidth cap, the default proxy, and update settings. */
 export const useSettingsStore = defineStore('settings', {
   state: (): SettingsState => ({
     bandwidthLimitKBps: null,
     defaultProxy: undefined,
+    autoCheckUpdates: true,
     loaded: false,
     inFlightFetch: null
   }),
@@ -29,6 +31,7 @@ export const useSettingsStore = defineStore('settings', {
           const settings = await invoke<AppSettings>(INVOKE_CHANNELS.settingsGet)
           this.bandwidthLimitKBps = settings.bandwidthLimitKBps
           this.defaultProxy = settings.defaultProxy
+          this.autoCheckUpdates = settings.autoCheckUpdates ?? true
           this.loaded = true
         } finally {
           this.inFlightFetch = null
@@ -46,6 +49,11 @@ export const useSettingsStore = defineStore('settings', {
     async setDefaultProxy(proxy: ProxyConfig | null): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.settingsSetDefaultProxy, proxy)
       await this.fetch()
+    },
+
+    async setAutoCheckUpdates(enabled: boolean): Promise<void> {
+      await invoke<void>(INVOKE_CHANNELS.settingsSetAutoCheckUpdates, enabled)
+      this.autoCheckUpdates = enabled
     }
   }
 })

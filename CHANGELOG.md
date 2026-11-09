@@ -5,6 +5,13 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- Enhanced Auto Update lifecycle management, discoverability, and UX:
+  - **Manual Update Checks**: Added an interactive "Check for updates" action in the Settings dialog and Command Palette (`Ctrl+K`) with live status feedback.
+  - **Real-Time Download Progress**: Added a download progress bar in Settings showing transfer percentage and current download speed (`MB/s` or `KB/s`).
+  - **State Machine & Awareness**: Implemented in-memory update state tracking (`idle`, `checking`, `downloading`, `downloaded`, `not-available`, `error`, `disabled`) with reactive push events to all renderer windows.
+  - **User Preferences & Periodic Checks**: Added an "Automatically check for updates" toggle in Settings (persisted in `AppSettingsStore`) and a background 6-hour periodic check timer.
+  - **TitleBar Update Indicator**: Added an "Update ready" badge button in the TitleBar when an update is downloaded for one-click restart.
+  - **Dev Mode Guard**: Unpackaged development mode safely reports `disabled` status without throwing uncaught electron-updater errors.
 - Tail Log UI/UX, format, contrast, and productivity overhaul:
   - **Grep Filter Mode**: Added a filter toggle (`Alt+F` / filter icon in search bar) to isolate matching lines in real time alongside standard match navigation.
   - **Stream Status & Control**: Added an interactive `● LIVE` / `⏸ PAUSED (+N)` status pill with click-to-resume auto-scrolling, a sleek floating jump-to-latest button, and a one-click "Export log to file" download action.
