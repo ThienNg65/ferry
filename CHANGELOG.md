@@ -5,12 +5,6 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
-- Live log tail feature overhaul:
-  - **Virtual Scrolling & 60fps Performance**: Replaced unbounded DOM rendering with `@tanstack/vue-virtual`, allowing seamless 60fps scrolling and instant responsiveness even on high-throughput 5,000+ line streams.
-  - **Syntax & Log Level Highlighting**: Automatic classification and color coding of log entries (`ERROR`, `WARN`, `INFO`, `DEBUG`, stack traces, and internal notices) with left-border indicators, text tints, and badges.
-  - **In-Log Find (`Ctrl+F`)**: Integrated interactive search bar supporting match counting (`X of Y`), next/previous navigation (`Enter` / `Shift+Enter`), match case (`Aa`), regular expressions (`.*`), in-line `<mark>` highlights with active match emphasis, and automatic virtual scrolling to matching lines.
-  - **Enhanced UI/UX**: Top toolbar with pulsating live status indicator dot, line count badge, log level filters (`All`, `Errors`, `Warnings+`, `Info+`, `Debug`), wrap/nowrap toggle, clear view, copy button, and floating "Jump to latest (+N)" button with smooth entrance animation.
-  - **Dock Tabs Enhancements**: Per-tab live status indicators, unread line count badges (`+N`) on background tabs, middle-click to close, "Close all" button, and active tail count chip on the dock's "Log Tail" button.
 - Comprehensive UI/UX enhancements across Session Manager, Shell Chrome, File Browser, and Bottom Dock:
   - **Session Manager & Connection UX**: Upgraded Session Manager to a responsive two-column layout with a scrollable saved-sites list alongside Quick Connect, a prominent reconnect/connect top banner for disconnected site tabs, Enter-to-submit form ergonomics, and side-by-side Host/Port fields.
   - **Title Bar & Command Palette Discoverability**: Added a clickable `Search / Commands (Ctrl+K)` trigger pill and a `History` icon button in the title bar, plus dock-switching commands (`Terminal`, `Log Tail`, `Resource Monitor`, `Transfers`) in the Command Palette.
@@ -25,6 +19,20 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ### Fixed
 - Added keyboard `:focus-visible` outlines and focus-within visibility across custom chrome buttons, tabs, and file-row action controls.
 - Distinguished loading, filtered-empty (with a one-click "Clear filter" button), and genuinely empty directory states in the file list.
+
+## 0.14.10 - 2026-11-09
+
+### Added
+- Live log tail feature overhaul:
+  - **Virtual Scrolling & 60fps Performance**: Replaced unbounded DOM rendering with `@tanstack/vue-virtual`, allowing seamless 60fps scrolling and instant responsiveness even on high-throughput 5,000+ line streams.
+  - **Syntax & Log Level Highlighting**: Automatic classification and color coding of log entries (`ERROR`, `WARN`, `INFO`, `DEBUG`, stack traces, and internal notices) with left-border indicators, text tints, and badges.
+  - **In-Log Find (`Ctrl+F`)**: Integrated interactive search bar supporting match counting (`X of Y`), next/previous navigation (`Enter` / `Shift+Enter`), match case (`Aa`), regular expressions (`.*`), in-line `<mark>` highlights with active match emphasis, and automatic virtual scrolling to matching lines.
+  - **Enhanced UI/UX**: Top toolbar with pulsating live status indicator dot, line count badge, log level filters (`All`, `Errors`, `Warnings+`, `Info+`, `Debug`), wrap/nowrap toggle, clear view, copy button, and floating "Jump to latest (+N)" button with smooth entrance animation.
+  - **Dock Tabs Enhancements**: Per-tab live status indicators, unread line count badges (`+N`) on background tabs, middle-click to close, "Close all" button, and active tail count chip on the dock's "Log Tail" button.
+
+### Changed
+
+### Fixed
 
 ## 0.14.9 - 2026-08-02
 

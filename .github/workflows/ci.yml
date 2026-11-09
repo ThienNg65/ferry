@@ -71,7 +71,16 @@ jobs:
         id: version
         shell: bash
         run: |
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          # Ensure we never overwrite an already-published release tag if a previous
+          # cycle's version-bump PR on protected `main` has not been merged yet.
+          git fetch --tags --force origin
+          while git rev-parse -q --verify "refs/tags/v$(node -p "require('./package.json').version")" >/dev/null; do
+            echo "Tag v$(node -p "require('./package.json').version") already exists; advancing patch version..."
+            npm version patch --no-git-tag-version
+          done
+          ver=$(node -p "require('./package.json').version")
+          node -e "const fs=require('fs');fs.writeFileSync('VERSION',process.argv[1])" "$ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
 
       - name: Finalize changelog
         run: node ./.github/scripts/prepare-release.js
@@ -82,7 +91,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add CHANGELOG.md
+          git add CHANGELOG.md package.json package-lock.json VERSION
 
           if git diff --cached --quiet; then
             echo "No changelog changes."
