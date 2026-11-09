@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
+## 0.14.12 - 2026-11-09
 
 ### Added
 - Tail Log UI/UX, format, contrast, and productivity overhaul:
