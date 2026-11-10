@@ -4,6 +4,26 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 
 ## Unreleased
 
+## [0.15.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.15.0...ferry-v0.15.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* address code review findings for fast remote browsing ([3308808](https://github.com/ThienNg65/ferry/commit/3308808b820019344205969492654db78472aefb))
+
+
+### Performance Improvements
+
+* add in-memory SWR directory caching and optimistic navigation ([619be6e](https://github.com/ThienNg65/ferry/commit/619be6e6179188973ebe250b38cca1337ceed4c8))
+* add remote exec directory listing parser and command generator ([7f65b94](https://github.com/ThienNg65/ferry/commit/7f65b9469da6b0b22d6f200a40886e7b867dc83e))
+* implement exec-first directory listing with SFTP fallback ([5cadf5f](https://github.com/ThienNg65/ferry/commit/5cadf5f95d9a3ca3f3382c6c12e31047bc7f8ef7))
+* wire hover prefetching and force refresh for remote directory navigation ([9267cba](https://github.com/ThienNg65/ferry/commit/9267cba1ed703dfb9916fae606606e441a0d49a6))
+
+
+### Documentation
+
+* add fast ssh remote browsing implementation plan ([7cc361a](https://github.com/ThienNg65/ferry/commit/7cc361a791511db378ab1c7613dde07101d07f59))
+
 ## [0.15.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.14.15...ferry-v0.15.0) (2026-11-10)
 
 
