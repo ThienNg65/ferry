@@ -6,7 +6,7 @@ import type { ProxyType } from '@shared/contract'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
-import { DEFAULT_ACCENT_COLOR, useUiStore } from '../../stores/ui.store'
+import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -28,6 +28,10 @@ const proxyPort = ref(1080)
 const proxyUsername = ref('')
 const proxyPassword = ref('')
 
+const densityOptions: { label: string; value: Density }[] = [
+  { label: 'Comfortable', value: 'comfortable' },
+  { label: 'Compact', value: 'compact' }
+]
 const proxyTypeOptions: { label: string; value: ProxyType }[] = [
   { label: 'SOCKS5', value: 'socks5' },
   { label: 'HTTP CONNECT', value: 'http' }
@@ -163,6 +167,15 @@ async function save(): Promise<void> {
             @update:model-value="(v: string | undefined) => { if (v) ui.setAccentColor(v) }"
           />
         </div>
+      </div>
+      <div class="mt-4 flex flex-col gap-3">
+        <div class="text-sm font-medium text-highlighted">Row density</div>
+        <URadioGroup
+          :model-value="ui.density"
+          :items="densityOptions"
+          orientation="horizontal"
+          @update:model-value="(v: string) => ui.setDensity(v as Density)"
+        />
       </div>
       <div class="mt-4 flex flex-col gap-3">
         <div class="text-sm font-medium text-highlighted">Transfer bandwidth limit</div>

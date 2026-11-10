@@ -724,7 +724,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
     <template v-else>
       <div
         class="flex h-9 shrink-0 items-center border-b border-muted pl-2"
-        :class="ui.activePane === side ? 'bg-elevated shadow-[inset_3px_0_0_var(--ui-primary)]' : 'bg-muted'"
+        :class="ui.activePane === side ? 'bg-elevated shadow-[inset_3px_0_0_var(--ui-primary)]' : 'bg-default'"
       >
         <UIcon
           :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"

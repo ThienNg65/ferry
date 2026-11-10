@@ -3,6 +3,7 @@ import { computed, ref, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { FileEntry } from '@shared/contract'
 import type { SortColumn, SortDirection } from '../../utils/fileSort'
+import { useUiStore } from '../../stores/ui.store'
 import FileRow from './FileRow.vue'
 
 const props = defineProps<{
@@ -20,6 +21,8 @@ const props = defineProps<{
   sortDirection: SortDirection
 }>()
 
+const ui = useUiStore()
+
 // Virtualize the row list so directories with thousands of entries mount only
 // the visible rows (plus overscan) instead of one real DOM node each. Rows are
 // measured (measureElement) rather than assumed to be a fixed height: a row's
@@ -30,7 +33,7 @@ const rowVirtualizer = useVirtualizer(
   computed(() => ({
     count: props.entries.length,
     getScrollElement: () => scrollEl.value,
-    estimateSize: () => 34,
+    estimateSize: () => (ui.density === 'compact' ? 26 : 34),
     overscan: 8,
     getItemKey: (index: number) => props.entries[index]?.path ?? index
   }))
@@ -74,11 +77,17 @@ const emit = defineEmits<{
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
+    <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-default"
+      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
     >
       <span class="size-4 shrink-0" />
-      <button type="button" class="flex-1 truncate text-left hover:text-highlighted" @click="emit('sort', 'name')">
+      <button
+        type="button"
+        class="flex-1 truncate text-left hover:text-highlighted"
+        :class="sortColumn === 'name' ? 'text-highlighted' : ''"
+        @click="emit('sort', 'name')"
+      >
         Name
         <UIcon
           v-if="sortColumn === 'name'"
@@ -89,6 +98,7 @@ const emit = defineEmits<{
       <button
         type="button"
         class="w-20 shrink-0 text-right hover:text-highlighted"
+        :class="sortColumn === 'size' ? 'text-highlighted' : ''"
         @click="emit('sort', 'size')"
       >
         Size
@@ -100,7 +110,8 @@ const emit = defineEmits<{
       </button>
       <button
         type="button"
-        class="w-40 shrink-0 text-right hover:text-highlighted"
+        class="w-32 shrink-0 text-right hover:text-highlighted"
+        :class="sortColumn === 'modified' ? 'text-highlighted' : ''"
         @click="emit('sort', 'modified')"
       >
         Modified
@@ -113,7 +124,7 @@ const emit = defineEmits<{
       <span v-if="side === 'remote'" class="w-36 shrink-0 text-right">Permissions</span>
       <span class="w-14 shrink-0" />
     </div>
-    <div ref="scrollEl" class="flex-1 overflow-y-auto">
+    <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div v-if="loading && entries.length === 0" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
         <p class="text-xs text-dimmed">Loading directory…</p>

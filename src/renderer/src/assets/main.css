@@ -4,6 +4,10 @@
 @theme {
   --font-sans: '-apple-system', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 }
 
 @theme static {

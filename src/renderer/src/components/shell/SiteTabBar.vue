@@ -5,6 +5,11 @@ import { useUiStore } from '../../stores/ui.store'
 const sessions = useSessionsStore()
 const ui = useUiStore()
 
+/** Hide `user@host` when the tab's label already is (or contains) the host, e.g. a site named after its IP. */
+function showHost(label: string | null | undefined, hostLabel: string | null | undefined): boolean {
+  return Boolean(label && hostLabel && !label.includes(hostLabel.split('@').pop() ?? hostLabel))
+}
+
 function onCloseTab(event: MouseEvent, tabId: string): void {
   event.stopPropagation()
   void sessions.closeTab(tabId)
@@ -12,15 +17,16 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 overflow-x-auto border-b border-accented bg-muted px-2 py-1">
+  <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
+  <div class="flex items-end gap-1 overflow-x-auto bg-muted px-2 pt-1 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
     <div
       v-for="tab in sessions.tabs"
       :key="tab.tabId"
-      class="group flex max-w-52 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
+      class="group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-xs transition-colors"
       :class="
         tab.tabId === sessions.activeTabId
-          ? 'border-primary/30 bg-primary/10 font-medium text-primary'
-          : 'border-transparent text-muted hover:bg-elevated hover:text-default'
+          ? 'bg-default font-medium text-highlighted'
+          : 'text-muted hover:bg-elevated hover:text-default'
       "
       :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
       @click="sessions.setActiveTab(tab.tabId)"
@@ -41,7 +47,13 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         name="i-lucide-server"
         class="size-3 shrink-0 text-muted"
       />
-      <span class="truncate">{{ tab.label ?? 'New Tab' }}</span>
+      <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
+      <span
+        v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
+        class="min-w-0 truncate font-normal text-muted"
+      >
+        {{ tab.hostLabel }}
+      </span>
       <UTooltip text="Close tab (Middle-click)">
         <button
           type="button"
@@ -61,6 +73,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
     <UTooltip text="New tab">
       <UButton
         icon="i-lucide-plus"
+        class="mb-1"
         size="xs"
         variant="ghost"
         color="neutral"
@@ -71,6 +84,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
     <div class="flex-1"></div>
     <UTooltip :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
       <UButton
+        class="mb-1"
         size="xs"
         variant="ghost"
         color="neutral"
