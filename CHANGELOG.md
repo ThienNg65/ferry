@@ -2,7 +2,7 @@
 
 All notable changes to Ferry are documented in this file, in Keep a Changelog style.
 
-## Unreleased
+## 0.14.14 - 2026-11-10
 
 ### Added
 - **Site Export & Backup**: Added `sites:export` IPC channel and a dedicated "Export sites" button in the Sites card header, generating a formatted JSON backup (`ferry-sites-backup.json`) with DPAPI secrets securely excluded.
