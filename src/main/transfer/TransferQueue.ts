@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream } from 'fs'
 import { stat } from 'fs/promises'
 import { Transform } from 'stream'
 import * as path from 'path'
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
@@ -437,10 +437,6 @@ export class TransferQueue {
   }
 
   private broadcast(evt: TransferEvent): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.transferEvent, evt)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.transferEvent, evt)
   }
 }

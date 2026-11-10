@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS, type OperationEvent, type OperationKind } from '../../shared/contract'
 
@@ -148,11 +148,7 @@ export class OperationRegistry {
       cancellable: entry.meta.cancellable,
       ...partial
     }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.operationEvent, evt)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.operationEvent, evt)
     return evt
   }
 }

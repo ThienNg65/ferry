@@ -17,8 +17,6 @@
 import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
-
 const JUMP_HOST = '127.0.0.1'
 const JUMP_PORT = 2299 // Docker-mapped — reachable from this test process.
 const TARGET_HOST = '127.0.0.1'

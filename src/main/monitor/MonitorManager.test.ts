@@ -5,15 +5,8 @@ import { EVENT_CHANNELS } from '../../shared/contract'
 // outside a real Electron process, so mock only that (same pattern as
 // TailManager.test.ts / TerminalManager.test.ts).
 const sent: Array<{ channel: string; evt: unknown }> = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (channel: string, evt: unknown) => sent.push({ channel, evt }) }
-      }
-    ]
-  }
+vi.mock('../host/host', () => ({
+  host: () => ({ broadcast: (channel: string, evt: unknown) => sent.push({ channel, evt }) })
 }))
 
 interface FakeExecResult {

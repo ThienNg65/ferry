@@ -9,7 +9,7 @@ export default defineConfig({
     build: {
       minify: 'esbuild',
       rollupOptions: {
-        external: ['ssh2', 'archiver', 'electron-store']
+        external: ['ssh2', 'archiver', 'conf']
       }
     }
   },

@@ -76,6 +76,11 @@ change — they cover things like the exec-first recursive delete, optimistic st
 of full reloads, the drag-and-drop dual-mechanism split, host-key TOFU verification, and the
 real-2FA prompt flow, in more depth than belongs here.
 
+## Code style
+
+- **Add no comments.** New or changed code carries no comments or JSDoc; names and types must
+  explain it. Leave existing comments in untouched code as they are.
+
 ## Design docs and plans (historical, not authoritative for current state)
 
 `.claude/architecture/` holds the original backend/frontend design docs written before

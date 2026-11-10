@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import { isTransient } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
@@ -63,29 +63,17 @@ export class TailManager {
 
   private broadcastLine(tailId: string, line: string): void {
     const payload: TailLineEvent = { tailId, line }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailLine, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.tailLine, payload)
   }
 
   private broadcastNotice(tailId: string, message: string): void {
     const payload: TailNoticeEvent = { tailId, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailNotice, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.tailNotice, payload)
   }
 
   private broadcastEnd(tailId: string, error?: string): void {
     const payload: TailEndEvent = { tailId, error }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailEnd, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.tailEnd, payload)
   }
 
   private ensureReaper(): void {

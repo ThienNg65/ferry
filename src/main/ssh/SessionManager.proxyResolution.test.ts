@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProxyConfig } from '../../shared/contract'
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
-
 const FAKE_DEFAULT_PROXY: ProxyConfig = { type: 'socks5', host: 'default.proxy.example', port: 1080 }
 
 vi.mock('../app/AppSettingsStore', () => ({

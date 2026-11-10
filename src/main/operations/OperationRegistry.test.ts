@@ -4,15 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // outside a real Electron process, so mock only that (standard pattern, see
 // PROJECT_MAP "Build / run / test").
 const sent: unknown[] = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (_channel: string, evt: unknown) => sent.push(evt) }
-      }
-    ]
-  }
+vi.mock('../host/host', () => ({
+  host: () => ({ broadcast: (channel: string, evt: unknown) => sent.push(evt) })
 }))
 
 import { OperationRegistry } from './OperationRegistry'

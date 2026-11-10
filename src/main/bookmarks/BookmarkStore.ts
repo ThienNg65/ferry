@@ -1,4 +1,5 @@
-import Store from 'electron-store'
+import Conf from 'conf'
+import { host } from '../host/host'
 import { randomUUID } from 'crypto'
 import type { Bookmark, BookmarkInput } from '../../shared/contract'
 
@@ -9,11 +10,11 @@ interface StoreSchema {
 /** Persists directory bookmarks to `bookmarks.json` under the OS userData directory — no secrets involved, so unlike SiteStore there's nothing to encrypt. */
 export class BookmarkStore {
   private static instance: BookmarkStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'bookmarks', defaults: { bookmarks: [] } })
+      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'bookmarks', defaults: { bookmarks: [] } })
     }
     return this._store
   }

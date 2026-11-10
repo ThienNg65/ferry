@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const appMock = {
   getPath: vi.fn((name: string) => `/fake/${name}`),
@@ -17,12 +18,6 @@ const nativeImageMock = {
 }
 
 vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  },
   app: appMock,
   clipboard: clipboardMock,
   nativeImage: nativeImageMock

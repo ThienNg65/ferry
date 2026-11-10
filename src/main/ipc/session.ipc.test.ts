@@ -1,20 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
 /**
  * Captures every channel registered via `handle()`'s `ipcMain.handle(channel, cb)`
  * so the wrapped callback can be invoked directly, without a real Electron runtime.
  */
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const sessionManagerMock = {
   openFromSite: vi.fn(),

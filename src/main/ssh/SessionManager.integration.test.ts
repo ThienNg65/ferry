@@ -13,8 +13,6 @@
 import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
-
 const HOST = '127.0.0.1'
 const PORT = 2299
 const USERNAME = 'ferrytest'

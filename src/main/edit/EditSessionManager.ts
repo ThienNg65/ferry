@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { promises as fs, watch, type FSWatcher } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { BrowserWindow, shell } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { downloadForEdit, uploadForEdit } from '../fs/RemoteFsService'
@@ -45,16 +45,12 @@ export class EditSessionManager {
   }
 
   private broadcast(evt: EditEvent): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.editEvent, evt)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.editEvent, evt)
   }
 
   /** Opens a LOCAL file directly in the OS default app — the local file already is the source of truth, so no temp copy or watcher is needed. */
   async openLocal(localPath: string): Promise<void> {
-    const result = await shell.openPath(localPath)
+    const result = await host().openPath(localPath)
     if (result) {
       throw new SshError('UNKNOWN', `Could not open "${localPath}": ${result}`)
     }
@@ -65,7 +61,7 @@ export class EditSessionManager {
     const existing = [...this.edits.values()].find((e) => e.sessionId === sessionId && e.remotePath === remotePath)
     if (existing) {
       if (!builtin) {
-        const result = await shell.openPath(existing.localTempPath)
+        const result = await host().openPath(existing.localTempPath)
         if (result) {
           throw new SshError('UNKNOWN', `Could not open "${existing.localTempPath}": ${result}`)
         }
@@ -99,7 +95,7 @@ export class EditSessionManager {
     )
 
     if (!builtin) {
-      const result = await shell.openPath(localTempPath)
+      const result = await host().openPath(localTempPath)
       if (result) {
         throw new SshError('UNKNOWN', `Could not open "${localTempPath}": ${result}`)
       }
@@ -152,7 +148,7 @@ export class EditSessionManager {
     if (!entry) {
       throw new SshError('NOT_FOUND', `Edit session ${editId} not found`)
     }
-    const result = await shell.openPath(entry.localTempPath)
+    const result = await host().openPath(entry.localTempPath)
     if (result) {
       throw new SshError('UNKNOWN', `Could not open "${entry.localTempPath}": ${result}`)
     }

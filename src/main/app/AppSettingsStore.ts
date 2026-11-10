@@ -1,6 +1,6 @@
-import Store from 'electron-store'
-import { safeStorage } from 'electron'
-import { SshError } from '../ssh/errors'
+import Conf from 'conf'
+import { host } from '../host/host'
+import { encrypt, decrypt } from '../host/secrets'
 import type { AppSettings, ProxyConfig } from '../../shared/contract'
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
@@ -19,30 +19,6 @@ interface StoreSchema {
   autoCheckUpdates: boolean
 }
 
-function encrypt(plaintext: string | undefined): string | undefined {
-  if (!plaintext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine')
-  }
-  return safeStorage.encryptString(plaintext).toString('base64')
-}
-
-function decrypt(ciphertext: string | undefined): string | undefined {
-  if (!ciphertext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
-  }
-  try {
-    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
-  } catch (e) {
-    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
-  }
-}
-
 /**
  * Persists small app-wide settings to `app-settings.json` under the OS
  * userData directory — mirrors {@link SiteStore}'s persistence pattern, but
@@ -52,12 +28,13 @@ function decrypt(ciphertext: string | undefined): string | undefined {
  */
 export class AppSettingsStore {
   private static instance: AppSettingsStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({
-        name: 'app-settings',
+      this._store = new Conf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'app-settings',
         defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null, autoCheckUpdates: true }
       })
     }

@@ -12,11 +12,11 @@ import { describe, expect, it, vi } from 'vitest'
  */
 const disks = new Map<string, Record<string, unknown>>()
 
-vi.mock('electron-store', () => {
+vi.mock('conf', () => {
   class FakeStore {
     private readonly name: string
-    constructor(opts: { name: string; defaults: Record<string, unknown> }) {
-      this.name = opts.name
+    constructor(opts: { configName: string; defaults: Record<string, unknown> }) {
+      this.name = opts.configName
       if (!disks.has(this.name)) {
         disks.set(this.name, { ...opts.defaults })
       }
@@ -30,14 +30,6 @@ vi.mock('electron-store', () => {
   }
   return { default: FakeStore }
 })
-
-vi.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`ENC:${plaintext}`),
-    decryptString: (buf: Buffer) => buf.toString().replace(/^ENC:/, '')
-  }
-}))
 
 const { pickSecret, SiteStore } = await import('./SiteStore')
 
