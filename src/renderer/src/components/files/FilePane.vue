@@ -403,7 +403,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
         destPath: `${remoteFs.currentPath.replace(/\/$/, '')}/${zipName}`
       })
     }
-    await store.load()
+    await store.load(store.currentPath, { forceRefresh: true })
     notify.success('Compressed', `${entry.name} → ${zipName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -422,7 +422,7 @@ async function performExtract(entry: FileEntry, folderName: string): Promise<voi
       archivePath: entry.path,
       targetDir: `${remoteFs.currentPath.replace(/\/$/, '')}/${folderName}`
     })
-    await remoteFs.load()
+    await remoteFs.load(remoteFs.currentPath, { forceRefresh: true })
     notify.success('Extracted', `${entry.name} → ${folderName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -526,7 +526,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
     event.preventDefault()
-    await store.load(undefined, { forceRefresh: true })
+    await store.load(store.currentPath, { forceRefresh: true })
     return
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
@@ -729,7 +729,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :can-bookmark="canBookmark"
         :show-sync="showTail"
         @up="store.goUp"
-        @refresh="store.load(undefined, { forceRefresh: true })"
+        @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
         @toggle-permissions="ui.togglePermissionsDisplay()"
         @transfer-selected="onTransferSelected"

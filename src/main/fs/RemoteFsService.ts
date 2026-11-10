@@ -75,19 +75,27 @@ async function listRemoteSftp(shell: RemoteShell, rawPath: string): Promise<File
  * Lists a remote directory using exec-first single-roundtrip execution,
  * falling back to SFTP when exec is unavailable or fails.
  */
-export async function listRemote(sessionId: string, dirPath?: string): Promise<FileListResult> {
+export async function listRemote(
+  sessionId: string,
+  dirPath?: string,
+  isPrefetch = false
+): Promise<FileListResult> {
   const manager = SessionManager.getInstance()
   const rawPath = dirPath && dirPath.length > 0 ? dirPath : manager.cwd(sessionId)
   const shell = manager.shell(sessionId)
 
   const execResult = await listRemoteExec(shell, rawPath)
   if (execResult) {
-    manager.setCwd(sessionId, execResult.path)
+    if (!isPrefetch) {
+      manager.setCwd(sessionId, execResult.path)
+    }
     return execResult
   }
 
   const sftpResult = await listRemoteSftp(shell, rawPath)
-  manager.setCwd(sessionId, sftpResult.path)
+  if (!isPrefetch) {
+    manager.setCwd(sessionId, sftpResult.path)
+  }
   return sftpResult
 }
 

@@ -7,11 +7,40 @@ import { compareEntries, type SortColumn, type SortDirection } from '../utils/fi
 import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
 
 const CACHE_TTL_MS = 60_000
+const MAX_CACHE_ENTRIES = 100
+
+/** In-flight prefetch deduplication tracker across sessions. */
+const inFlightPrefetches = new Set<string>()
 
 export interface DirCacheEntry {
   path: string
   entries: FileEntry[]
   timestamp: number
+}
+
+function setCache(
+  bucket: PerSessionFs,
+  canonicalPath: string,
+  entries: FileEntry[],
+  aliasPath?: string
+): void {
+  if (bucket.dirCache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = bucket.dirCache.keys().next().value
+    if (oldestKey) bucket.dirCache.delete(oldestKey)
+  }
+  const cacheEntry: DirCacheEntry = {
+    path: canonicalPath,
+    entries: [...entries],
+    timestamp: Date.now()
+  }
+  const canonicalKey = normalizeDirPath(canonicalPath)
+  bucket.dirCache.set(canonicalKey, cacheEntry)
+  if (aliasPath) {
+    const aliasKey = normalizeDirPath(aliasPath)
+    if (aliasKey && aliasKey !== canonicalKey) {
+      bucket.dirCache.set(aliasKey, cacheEntry)
+    }
+  }
 }
 
 /** Remote directory-browsing state for a single session. */
@@ -139,19 +168,17 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         // Fast-path: instantly display cached entries (0ms)
         entry.currentPath = cached.path
         entry.entries = [...cached.entries].sort(compareEntries(entry.sortColumn, entry.sortDirection))
+        entry.selected = new Set()
+        entry.selectAnchor = null
         entry.loading = false
         entry.error = null
 
         // Silently revalidate in background without blocking
         void (async () => {
           try {
-            const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath)
+            const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, false)
             if (this.requestSeq[sessionId] === seq && this.bySession[sessionId] && result?.path) {
-              entry.dirCache.set(normalizeDirPath(result.path), {
-                path: result.path,
-                entries: [...result.entries],
-                timestamp: Date.now()
-              })
+              setCache(entry, result.path, result.entries, dirPath)
               if (entry.currentPath === result.path) {
                 entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
               }
@@ -162,6 +189,11 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         })()
         return
       }
+
+      const previousPath = entry.currentPath
+      const previousEntries = entry.entries
+      const previousSelected = entry.selected
+      const previousAnchor = entry.selectAnchor
 
       if (normalized) {
         // Optimistic navigation: update current path immediately for instant breadcrumb feedback
@@ -177,17 +209,13 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       }
 
       try {
-        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath)
+        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, false)
         if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
           return
         }
 
-        // Store into in-memory SWR cache
-        entry.dirCache.set(normalizeDirPath(result.path), {
-          path: result.path,
-          entries: [...result.entries],
-          timestamp: Date.now()
-        })
+        // Store into in-memory SWR cache (both canonical and requested paths)
+        setCache(entry, result.path, result.entries, dirPath)
 
         entry.currentPath = result.path
         entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
@@ -197,6 +225,11 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
           return
         }
+        // Rollback optimistic navigation on failure
+        entry.currentPath = previousPath
+        entry.entries = previousEntries
+        entry.selected = previousSelected
+        entry.selectAnchor = previousAnchor
         entry.error = e instanceof Error ? e.message : String(e)
       } finally {
         if (this.requestSeq[sessionId] === seq && this.bySession[sessionId]) {
@@ -206,7 +239,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     /**
-     * Prefetches a directory listing in the background quietly without changing current view.
+     * Prefetches a directory listing in the background quietly without changing current view or CWD.
      */
     async prefetchDir(dirPath: string): Promise<void> {
       const sessionId = useSessionsStore().activeSessionId
@@ -218,17 +251,19 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         return
       }
 
+      const prefetchKey = `${sessionId}:${normalized}`
+      if (inFlightPrefetches.has(prefetchKey)) return
+      inFlightPrefetches.add(prefetchKey)
+
       try {
-        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath)
-        if (this.bySession[sessionId]) {
-          entry.dirCache.set(normalizeDirPath(result.path), {
-            path: result.path,
-            entries: [...result.entries],
-            timestamp: Date.now()
-          })
+        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, true)
+        if (this.bySession[sessionId] && result?.path) {
+          setCache(entry, result.path, result.entries, dirPath)
         }
       } catch {
         // Prefetch failures are non-critical
+      } finally {
+        inFlightPrefetches.delete(prefetchKey)
       }
     },
 
@@ -260,7 +295,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
       await invoke<void>(INVOKE_CHANNELS.fsRemoteMkdir, sessionId, target)
       bucket.dirCache.delete(normalizeDirPath(this.currentPath))
-      await this.load(undefined, { forceRefresh: true })
+      await this.load(this.currentPath, { forceRefresh: true })
     },
 
     /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */

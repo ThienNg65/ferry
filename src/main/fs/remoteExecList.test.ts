@@ -114,4 +114,15 @@ describe('remoteExecList', () => {
     expect(parseRemoteListOutput('')).toBeNull()
     expect(parseRemoteListOutput('{ invalid json')).toBeNull()
   })
+
+  it('tolerates MOTD banners and shell greetings surrounding JSON output', () => {
+    const raw = `Welcome to Ubuntu 22.04 LTS (GNU/Linux 5.15.0-generic x86_64)
+Last login: Mon Nov 10 04:00:00 2026 from 10.0.0.1
+{"path": "/home/user", "entries": [{"name": "file.txt", "path": "/home/user/file.txt", "isDir": false, "size": 12, "mtimeMs": 1000, "permissions": "0644", "isSymlink": false}]}
+`
+    const result = parseRemoteListOutput(raw)
+    expect(result).not.toBeNull()
+    expect(result?.path).toBe('/home/user')
+    expect(result?.entries).toHaveLength(1)
+  })
 })

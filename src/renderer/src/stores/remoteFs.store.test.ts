@@ -103,4 +103,48 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.currentPath).toBe('/var/log/nginx')
     expect(store.entries[0].name).toBe('access.log')
   })
+
+  it('clears selection when navigating to a cached directory', async () => {
+    const store = useRemoteFsStore()
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/log',
+      entries: [{ name: 'a.txt', path: '/var/log/a.txt', isDir: false, size: 10, permissions: '0644' }]
+    })
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/cache',
+      entries: [{ name: 'b.txt', path: '/var/cache/b.txt', isDir: false, size: 20, permissions: '0644' }]
+    })
+
+    await store.loadForSession('sess-1', '/var/log')
+    store.selectOnly('/var/log/a.txt')
+    expect(store.selected.has('/var/log/a.txt')).toBe(true)
+
+    // Load second dir
+    await store.loadForSession('sess-1', '/var/cache')
+    // Now return to cached first dir
+    await store.loadForSession('sess-1', '/var/log')
+    expect(store.selected.size).toBe(0)
+    expect(store.currentPath).toBe('/var/log')
+  })
+
+  it('rolls back currentPath and entries when optimistic navigation fails', async () => {
+    const store = useRemoteFsStore()
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/log',
+      entries: [{ name: 'a.txt', path: '/var/log/a.txt', isDir: false, size: 10, permissions: '0644' }]
+    })
+
+    await store.loadForSession('sess-1', '/var/log')
+    expect(store.currentPath).toBe('/var/log')
+    expect(store.entries).toHaveLength(1)
+
+    // Try navigating to a restricted path that fails
+    vi.mocked(api.invoke).mockRejectedValueOnce(new Error('Permission denied'))
+    await store.loadForSession('sess-1', '/root')
+
+    // Should rollback to previous path and entries
+    expect(store.currentPath).toBe('/var/log')
+    expect(store.entries).toHaveLength(1)
+    expect(store.error).toBe('Permission denied')
+  })
 })

@@ -75,4 +75,18 @@ describe('RemoteFsService.listRemote', () => {
     expect(mockShell.readdir).toHaveBeenCalledWith('/home/user')
     expect(result.entries[0].name).toBe('home.txt')
   })
+
+  it('does not update session cwd when isPrefetch is true', async () => {
+    mockShell.exec.mockResolvedValueOnce({
+      code: 0,
+      stdout: JSON.stringify({
+        path: '/var/log/nginx',
+        entries: []
+      }),
+      stderr: ''
+    })
+
+    await listRemote('sess-1', '/var/log/nginx', true)
+    expect(mockManager.setCwd).not.toHaveBeenCalled()
+  })
 })

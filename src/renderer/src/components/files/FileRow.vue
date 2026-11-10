@@ -173,9 +173,21 @@ const showPermissions = computed(() => props.side === 'remote' && !!props.entry.
 const technicalPermissions = computed(() => (props.entry.permissions ? toTechnical(props.entry.permissions) : ''))
 const friendlyPermissions = computed(() => (props.entry.permissions ? toFriendlyLabel(props.entry.permissions) : ''))
 
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
 function onMouseEnter(): void {
   if (props.entry.isDir && props.side === 'remote') {
-    emit('hover-dir', props.entry.path)
+    if (hoverTimer) clearTimeout(hoverTimer)
+    hoverTimer = setTimeout(() => {
+      emit('hover-dir', props.entry.path)
+    }, 150)
+  }
+}
+
+function onMouseLeave(): void {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
   }
 }
 </script>
@@ -185,6 +197,7 @@ function onMouseEnter(): void {
   <div
     class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
     @mouseenter="onMouseEnter"
+    @mouseleave="onMouseLeave"
     :class="
       selected
         ? 'bg-primary/10 text-highlighted'

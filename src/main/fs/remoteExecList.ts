@@ -73,10 +73,13 @@ interface RawExecOutput {
  * Returns `null` if the output is not valid JSON or does not match the expected schema.
  */
 export function parseRemoteListOutput(stdout: string): FileListResult | null {
-  const trimmed = stdout.trim()
-  if (!trimmed || !trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+  const firstBrace = stdout.indexOf('{')
+  const lastBrace = stdout.lastIndexOf('}')
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
     return null
   }
+
+  const trimmed = stdout.slice(firstBrace, lastBrace + 1)
 
   try {
     const parsed = JSON.parse(trimmed) as Partial<RawExecOutput>
