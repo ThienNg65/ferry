@@ -45,10 +45,10 @@ FTP/FTPS/SCP.
 
 Download the latest Windows installer from this repository's
 [Releases](https://github.com/ThienNg65/ferry/releases) page and run it. Ferry is currently
-Windows-only. Every push to `main` publishes a new release automatically.
+Windows-only. Releases are automated via GitHub Actions and Google Release Please when new versions are tagged and published.
 
 The installer is currently **unsigned**, so Windows SmartScreen will warn on first run — this is
-expected, not a sign of tampering. Ferry's release pipeline (`.github/workflows/ci.yml`) has a
+expected, not a sign of tampering. Ferry's release pipeline (`.github/workflows/release.yml`) has a
 dormant signing stage ready to go live via [SignPath](https://signpath.io)'s free open-source
 Authenticode signing program the moment that application is approved; see
 `.claude/plan/ferry-smartscreen-signing-plan.md` for the full plan.

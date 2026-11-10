@@ -86,14 +86,27 @@ not necessarily what shipped.
 
 ## CI/CD & Release Workflow (Release Please)
 
+For full architectural details, see [docs/ci-cd-release-workflow.md](docs/ci-cd-release-workflow.md).
+
 - **Branch Protection**: `main` is protected. CI never pushes directly to `main`.
 - **Commit Convention**: Always use **Conventional Commits** (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, `refactor:`, `test:`).
-  - `feat:` triggers a **minor** version bump.
-  - `fix:` / `perf:` triggers a **patch** version bump.
-  - Breaking changes (`feat!:` or `BREAKING CHANGE:`) trigger a **major** bump.
+  - `feat:` triggers a **minor** version bump (`0.x.0`).
+  - `fix:` / `perf:` triggers a **patch** version bump (`0.0.x`).
+  - Breaking changes (`feat!:` or `BREAKING CHANGE:`) trigger a **major** bump (`x.0.0`).
 - **Workflow Architecture**:
   - `.github/workflows/ci.yml`: Runs on PRs and pushes to `main` for verification (`typecheck`, `test`, `build`).
   - `.github/workflows/release.yml`: Runs Google `release-please` on `main`. It maintains a single accumulating Release PR (`chore: release X.Y.Z`) with updated `package.json`, `VERSION`, and `CHANGELOG.md`.
   - **Cutting a Release**: Merging the Release PR automatically cuts the GitHub release and triggers the Windows runner to build `Ferry-Setup-*.exe`, `latest.yml`, and `*.blockmap` and attach them to the release.
   - Do NOT manually hack versions in `package.json` on `main` or add ad-hoc version-bump loops. Releases are managed through the Release PR.
+
+```mermaid
+flowchart LR
+    A["Feature PRs\n(Conventional Commits)"] --> B["CI Verify\n(Typecheck & Tests)"]
+    B --> C["Merge to main"]
+    C --> D["Release-Please\nMaintains 1 Release PR"]
+    D --> E["Maintainer Merges Release PR"]
+    E --> F["electron-builder\nPackages .exe & latest.yml"]
+    F --> G["Publish GitHub Release\n& Client Auto-Update"]
+```
+
 
