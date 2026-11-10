@@ -49,7 +49,7 @@ async function copyCurrentPath(): Promise<void> {
 </script>
 
 <template>
-  <div class="border-b border-muted px-2 py-1">
+  <div class="min-w-0 flex-1 px-1">
     <UInput
       v-if="editing"
       v-model="draft"

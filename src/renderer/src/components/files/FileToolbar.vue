@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import Popover from '@nuxt/ui/components/Popover.vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Bookmark } from '@shared/contract'
 
 const props = defineProps<{
@@ -29,6 +30,17 @@ const emit = defineEmits<{
   'sync-folder': []
 }>()
 
+const moreItems = computed<DropdownMenuItem[]>(() => {
+  const items: DropdownMenuItem[] = [{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => emit('mkdir') }]
+  if (props.showSync) {
+    items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
+  }
+  if (props.side === 'remote') {
+    items.push({ label: 'Switch permissions display', icon: 'i-lucide-shield', onSelect: () => emit('toggle-permissions') })
+  }
+  return items
+})
+
 const filterInputRef = ref<{ inputRef?: HTMLInputElement } | HTMLInputElement | null>(null)
 
 function focusFilter(): void {
@@ -52,7 +64,7 @@ function onFilterInput(value: string | number): void {
 </script>
 
 <template>
-  <div class="flex items-center gap-1 border-b border-muted px-2 py-1">
+  <div class="flex shrink-0 items-center gap-1 pr-2">
     <UTooltip text="Go up one level (Backspace)">
       <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
     </UTooltip>
@@ -67,26 +79,13 @@ function onFilterInput(value: string | number): void {
         @click="emit('refresh')"
       />
     </UTooltip>
-    <UTooltip text="New folder">
-      <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
-    </UTooltip>
-    <UTooltip v-if="side === 'remote'" text="Switch permissions display (technical/friendly)">
-      <UButton
-        icon="i-lucide-shield"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        aria-label="Switch permissions display"
-        @click="emit('toggle-permissions')"
-      />
-    </UTooltip>
     <UInput
       ref="filterInputRef"
       :model-value="filterText ?? ''"
       icon="i-lucide-search"
       placeholder="Filter (Ctrl+F)…"
       size="xs"
-      class="w-36"
+      class="w-32"
       :ui="{ trailing: 'pointer-events-auto' }"
       @update:model-value="onFilterInput"
     >
@@ -109,9 +108,6 @@ function onFilterInput(value: string | number): void {
       <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" @click="emit('transfer-selected')">
         {{ selectedCount }}
       </UButton>
-    </UTooltip>
-    <UTooltip v-if="showSync" text="Sync this folder…">
-      <UButton icon="i-lucide-folder-sync" color="neutral" variant="ghost" size="xs" aria-label="Sync this folder" @click="emit('sync-folder')" />
     </UTooltip>
     <Popover v-if="canBookmark !== false">
       <UTooltip text="Bookmarks">
@@ -159,5 +155,8 @@ function onFilterInput(value: string | number): void {
         </div>
       </template>
     </Popover>
+    <UDropdownMenu :items="moreItems">
+      <UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
+    </UDropdownMenu>
   </div>
 </template>

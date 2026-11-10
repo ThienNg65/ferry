@@ -47,6 +47,8 @@ interface UiState {
   dockHeight: number
   accentColor: string
   localPaneWidth: number
+  /** Which file pane the user last interacted with — per-launch layout state, not persisted. */
+  activePane: 'local' | 'remote'
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
@@ -95,7 +97,8 @@ export const useUiStore = defineStore('ui', {
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
     accentColor: loadAccentColor(),
-    localPaneWidth: loadLocalPaneWidth()
+    localPaneWidth: loadLocalPaneWidth(),
+    activePane: 'remote'
   }),
 
   actions: {

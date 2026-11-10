@@ -524,6 +524,17 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   if (renamingPath.value !== null) {
     return
   }
+  // F6 hops to the other pane (the Windows Explorer convention); Tab stays native so keyboard
+  // users can still reach the toolbar, the ⋯ menu and the dock.
+  if (event.key === 'F6' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+    const other = props.side === 'local' ? 'remote' : 'local'
+    const el = document.querySelector<HTMLElement>(`[data-pane="${other}"]`)
+    if (el && !(other === 'local' && !ui.showLocalPane)) {
+      event.preventDefault()
+      el.focus()
+    }
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
     event.preventDefault()
     await store.load(store.currentPath, { forceRefresh: true })
@@ -683,12 +694,15 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
 
 <template>
   <div
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0 focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-inset"
+    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
+    :data-pane="side"
+    @focusin="ui.activePane = side"
+    @pointerdown="ui.activePane = side"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
@@ -708,17 +722,18 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
       </span>
     </button>
     <template v-else>
-      <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted px-3">
-        <div class="flex items-center gap-1.5">
-          <UIcon :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'" class="size-3.5 text-highlighted" />
-          <span class="text-xs font-semibold uppercase tracking-wide text-highlighted">{{ side }}</span>
-        </div>
-        <span v-if="side === 'remote' && sessions.activeTab.hostLabel" class="truncate text-[11px] font-mono text-muted">
-          {{ sessions.activeTab.hostLabel }}
-        </span>
-      </div>
-      <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
-      <FileToolbar
+      <div
+        class="flex h-9 shrink-0 items-center border-b border-muted pl-2"
+        :class="ui.activePane === side ? 'bg-elevated shadow-[inset_3px_0_0_var(--ui-primary)]' : 'bg-muted'"
+      >
+        <UIcon
+          :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"
+          class="size-3.5 shrink-0"
+          :class="ui.activePane === side ? 'text-highlighted' : 'text-muted'"
+          :title="side === 'local' ? 'Local' : 'Remote'"
+        />
+        <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
+        <FileToolbar
         ref="toolbarRef"
         :side="side"
         :loading="store.loading"
@@ -737,7 +752,8 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @jump-bookmark="onJumpBookmark"
         @remove-bookmark="onRemoveBookmark"
         @sync-folder="syncDialogOpen = true"
-      />
+        />
+      </div>
       <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
         <UInput
           v-model="newFolderName"
@@ -750,12 +766,22 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         />
         <UButton size="xs" @click="submitMkdir">Create</UButton>
       </div>
-      <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
+      <div v-if="store.error" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
+        <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
+        <button
+          type="button"
+          class="shrink-0 font-medium hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+          @click="store.load(store.currentPath, { forceRefresh: true })"
+        >
+          Retry
+        </button>
+      </div>
       <FileList
         ref="fileListRef"
         :entries="filteredEntries"
         :selected="store.selected"
         :side="side"
+        :active="ui.activePane === side"
         :loading="store.loading"
         :filtered="isFiltered"
         :transfer-icon="transferIcon"

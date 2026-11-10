@@ -9,13 +9,13 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { zebraRowClass } from '../../utils/rowStyle'
 
 const props = defineProps<{
   entry: FileEntry
   selected: boolean
+  /** True when this row's pane is the active one — selection is drawn loud there and grey elsewhere. */
+  active: boolean
   side: 'local' | 'remote'
-  index: number
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
@@ -195,13 +195,15 @@ function onMouseLeave(): void {
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
   <div
-    class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
+    class="group flex cursor-default select-none items-center gap-2 px-3 py-1.5 text-[13px]"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     :class="
       selected
-        ? 'bg-primary/10 text-highlighted'
-        : ['text-default hover:bg-muted', zebraRowClass(index)]
+        ? active
+          ? 'bg-primary/20 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
+          : 'bg-accented text-highlighted'
+        : 'text-default hover:bg-elevated/60'
     "
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"
