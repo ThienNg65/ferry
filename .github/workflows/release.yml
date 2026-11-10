@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-assets:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Cache electron and electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-builder-win-${{ runner.os }}-${{ hashFiles('package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            electron-builder-win-${{ runner.os }}-
+
+      - name: Build and Package with Electron Builder
+        shell: bash
+        run: |
+          npm run build
+          # Retry packaging in case of transient CDN/gateway timeouts
+          max_attempts=3
+          attempt=1
+          until npx electron-builder --publish never; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::electron-builder packaging failed after $max_attempts attempts."
+              exit 1
+            fi
+            echo "Packaging failed on attempt $attempt. Retrying in 15 seconds..."
+            attempt=$((attempt + 1))
+            sleep 15
+          done
+
+      # --- Dormant SignPath signing stage --------------------------------
+      # Gated on SIGNPATH_ORGANIZATION_ID being set. Truly dormant while unset.
+      - name: Upload unsigned installer for signing
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/Ferry-Setup-*.exe
+
+      - name: Submit signing request to SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ferry
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Regenerate update metadata for signed binary
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        run: node ./.github/scripts/regenerate-update-yml.js
+      # --- End dormant SignPath signing stage ----------------------------
+
+      - name: Upload Release Assets to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" "${assets[@]}" --clobber

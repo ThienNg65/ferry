@@ -83,3 +83,17 @@ implementation began; `.claude/plan/` holds every approved feature-round impleme
 sequence. Both are useful for *why* something was built a certain way, but the code and
 PROJECT_MAP.md are the source of truth for current behavior — plans describe intent at the time,
 not necessarily what shipped.
+
+## CI/CD & Release Workflow (Release Please)
+
+- **Branch Protection**: `main` is protected. CI never pushes directly to `main`.
+- **Commit Convention**: Always use **Conventional Commits** (`feat:`, `fix:`, `perf:`, `chore:`, `docs:`, `refactor:`, `test:`).
+  - `feat:` triggers a **minor** version bump.
+  - `fix:` / `perf:` triggers a **patch** version bump.
+  - Breaking changes (`feat!:` or `BREAKING CHANGE:`) trigger a **major** bump.
+- **Workflow Architecture**:
+  - `.github/workflows/ci.yml`: Runs on PRs and pushes to `main` for verification (`typecheck`, `test`, `build`).
+  - `.github/workflows/release.yml`: Runs Google `release-please` on `main`. It maintains a single accumulating Release PR (`chore: release X.Y.Z`) with updated `package.json`, `VERSION`, and `CHANGELOG.md`.
+  - **Cutting a Release**: Merging the Release PR automatically cuts the GitHub release and triggers the Windows runner to build `Ferry-Setup-*.exe`, `latest.yml`, and `*.blockmap` and attach them to the release.
+  - Do NOT manually hack versions in `package.json` on `main` or add ad-hoc version-bump loops. Releases are managed through the Release PR.
+
