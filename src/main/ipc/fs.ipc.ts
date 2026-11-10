@@ -38,8 +38,8 @@ export function registerFsHandlers(): void {
     return LocalFs.writeFileText(request.path, request.content)
   })
 
-  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath) =>
-    RemoteFs.listRemote(sessionId as string, dirPath as string | undefined)
+  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath, isPrefetch) =>
+    RemoteFs.listRemote(sessionId as string, dirPath as string | undefined, Boolean(isPrefetch))
   )
   handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) =>
     RemoteFs.mkdirRemote(sessionId as string, dirPath as string)

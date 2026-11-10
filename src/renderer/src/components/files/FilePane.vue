@@ -215,6 +215,12 @@ function onOpen(entry: FileEntry): void {
   previewOpen.value = true
 }
 
+function onHoverDir(path: string): void {
+  if (props.side === 'remote') {
+    void remoteFs.prefetchDir(path)
+  }
+}
+
 /** Plain click selects only this row; Ctrl/Cmd toggles it; Shift extends from the last-clicked row. */
 function onSelect(path: string, event: MouseEvent): void {
   if (event.shiftKey) {
@@ -397,7 +403,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
         destPath: `${remoteFs.currentPath.replace(/\/$/, '')}/${zipName}`
       })
     }
-    await store.load()
+    await store.load(store.currentPath, { forceRefresh: true })
     notify.success('Compressed', `${entry.name} → ${zipName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -416,7 +422,7 @@ async function performExtract(entry: FileEntry, folderName: string): Promise<voi
       archivePath: entry.path,
       targetDir: `${remoteFs.currentPath.replace(/\/$/, '')}/${folderName}`
     })
-    await remoteFs.load()
+    await remoteFs.load(remoteFs.currentPath, { forceRefresh: true })
     notify.success('Extracted', `${entry.name} → ${folderName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -520,7 +526,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
     event.preventDefault()
-    await store.load()
+    await store.load(store.currentPath, { forceRefresh: true })
     return
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
@@ -723,7 +729,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :can-bookmark="canBookmark"
         :show-sync="showTail"
         @up="store.goUp"
-        @refresh="store.load()"
+        @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
         @toggle-permissions="ui.togglePermissionsDisplay()"
         @transfer-selected="onTransferSelected"
@@ -771,6 +777,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @compress="onCompress"
         @chmod="onOpenChmod"
         @edit="onEdit"
+        @hover-dir="onHoverDir"
         @clear-filter="filterText = ''"
       />
       <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-[11px] text-muted">

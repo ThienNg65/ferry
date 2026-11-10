@@ -3,6 +3,7 @@ import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
 import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
@@ -39,15 +40,27 @@ async function resolveSymlink(shell: RemoteShell, entry: FileEntry): Promise<Fil
 }
 
 /**
- * Lists a remote directory over SFTP. Falls back to the session's current
- * working directory when no path is given, and always resolves to a
- * canonical absolute path (via `realpath`) so the renderer's breadcrumb and
- * subsequent relative operations never have to guess at "." semantics.
+ * Tries to list a remote directory via a single remote exec command (Python 3/POSIX).
+ * Returns null if the remote system lacks exec capability, the command fails, or the output is unparseable.
  */
-export async function listRemote(sessionId: string, dirPath?: string): Promise<FileListResult> {
-  const manager = SessionManager.getInstance()
-  const rawPath = dirPath && dirPath.length > 0 ? dirPath : manager.cwd(sessionId)
-  const shell = manager.shell(sessionId)
+async function listRemoteExec(shell: RemoteShell, targetPath: string): Promise<FileListResult | null> {
+  try {
+    const cmd = buildRemoteListCommand(targetPath)
+    const res = await shell.exec(cmd, { timeoutMs: 10_000 })
+    if (res.code === 0 && res.stdout) {
+      return parseRemoteListOutput(res.stdout)
+    }
+  } catch {
+    // Shell exec disabled, channel rejected, or command timed out
+  }
+  return null
+}
+
+/**
+ * Standard SFTP directory listing fallback for restricted accounts or environments
+ * without shell exec access.
+ */
+async function listRemoteSftp(shell: RemoteShell, rawPath: string): Promise<FileListResult> {
   const resolved = await shell.realpath(rawPath)
   const rawEntries = (await shell.readdir(resolved))
     .filter((e) => e.filename !== '.' && e.filename !== '..')
@@ -55,8 +68,35 @@ export async function listRemote(sessionId: string, dirPath?: string): Promise<F
   const entries = await Promise.all(
     rawEntries.map((e) => (e.isSymlink ? resolveSymlink(shell, e) : e))
   )
-  manager.setCwd(sessionId, resolved)
   return { path: resolved, entries }
+}
+
+/**
+ * Lists a remote directory using exec-first single-roundtrip execution,
+ * falling back to SFTP when exec is unavailable or fails.
+ */
+export async function listRemote(
+  sessionId: string,
+  dirPath?: string,
+  isPrefetch = false
+): Promise<FileListResult> {
+  const manager = SessionManager.getInstance()
+  const rawPath = dirPath && dirPath.length > 0 ? dirPath : manager.cwd(sessionId)
+  const shell = manager.shell(sessionId)
+
+  const execResult = await listRemoteExec(shell, rawPath)
+  if (execResult) {
+    if (!isPrefetch) {
+      manager.setCwd(sessionId, execResult.path)
+    }
+    return execResult
+  }
+
+  const sftpResult = await listRemoteSftp(shell, rawPath)
+  if (!isPrefetch) {
+    manager.setCwd(sessionId, sftpResult.path)
+  }
+  return sftpResult
 }
 
 /** Creates a remote directory. */

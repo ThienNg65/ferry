@@ -67,6 +67,7 @@ const emit = defineEmits<{
   edit: [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
+  'hover-dir': [path: string]
 }>()
 </script>
 
@@ -155,6 +156,7 @@ const emit = defineEmits<{
             @start-rename="emit('start-rename', $event)"
             @chmod="emit('chmod', $event)"
             @edit="emit('edit', $event)"
+            @hover-dir="emit('hover-dir', $event)"
           />
         </div>
       </div>

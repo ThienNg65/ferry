@@ -101,10 +101,10 @@ describe('fs.ipc', () => {
     expect(LocalFs.writeFileText).toHaveBeenCalledWith('/tmp/a.txt', 'hello')
   })
 
-  it('fs:remote:list forwards sessionId and path', async () => {
+  it('fs:remote:list forwards sessionId, path, and isPrefetch flag', async () => {
     vi.mocked(RemoteFs.listRemote).mockResolvedValueOnce({ entries: [], path: '/root' })
-    const result = await invoke('fs:remote:list', 'sess-1', '/root')
-    expect(RemoteFs.listRemote).toHaveBeenCalledWith('sess-1', '/root')
+    const result = await invoke('fs:remote:list', 'sess-1', '/root', true)
+    expect(RemoteFs.listRemote).toHaveBeenCalledWith('sess-1', '/root', true)
     expect(result).toEqual({ ok: true, data: { entries: [], path: '/root' } })
   })
 
