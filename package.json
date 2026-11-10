@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:sidecar": "vite build -c vite.sidecar.config.mts",
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder",
     "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
