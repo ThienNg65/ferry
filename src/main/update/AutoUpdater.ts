@@ -10,6 +10,7 @@ import { AppSettingsStore } from '../app/AppSettingsStore'
 
 let initialized = false
 let periodicTimer: NodeJS.Timeout | null = null
+let cachedAutoUpdater: typeof import('electron-updater').autoUpdater | null = null
 
 let currentState: UpdateState = {
   status: app.isPackaged ? 'idle' : 'disabled',
@@ -27,6 +28,23 @@ function broadcast(channel: string, payload: unknown): void {
 function updateState(patch: Partial<UpdateState>): void {
   currentState = { ...currentState, ...patch }
   broadcast(EVENT_CHANNELS.updateStatus, currentState)
+}
+
+/** Resolves the autoUpdater instance across ESM/CJS interop boundaries. */
+async function getAutoUpdater() {
+  if (cachedAutoUpdater) {
+    return cachedAutoUpdater
+  }
+  const mod = (await import('electron-updater')) as {
+    autoUpdater?: typeof import('electron-updater').autoUpdater
+    default?: { autoUpdater?: typeof import('electron-updater').autoUpdater }
+  }
+  const updater = mod.default?.autoUpdater ?? mod.autoUpdater
+  if (!updater) {
+    throw new Error('electron-updater failed to load autoUpdater instance')
+  }
+  cachedAutoUpdater = updater
+  return updater
 }
 
 /** Returns the current snapshot of auto-update state. */
@@ -55,7 +73,7 @@ export async function initAutoUpdater(): Promise<void> {
     return
   }
 
-  const { autoUpdater } = await import('electron-updater')
+  const autoUpdater = await getAutoUpdater()
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
@@ -140,7 +158,7 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
   })
 
   try {
-    const { autoUpdater } = await import('electron-updater')
+    const autoUpdater = await getAutoUpdater()
     const checkResult = await autoUpdater.checkForUpdates()
     if (!checkResult || checkResult.updateInfo.version === app.getVersion()) {
       updateState({ status: 'not-available' })
@@ -161,6 +179,6 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
 export async function installUpdateNow(): Promise<void> {
-  const { autoUpdater } = await import('electron-updater')
+  const autoUpdater = await getAutoUpdater()
   autoUpdater.quitAndInstall()
 }
