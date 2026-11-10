@@ -91,35 +91,31 @@ function close(): void {
       </UTooltip>
     </div>
     <div class="flex items-center gap-2 justify-self-center">
-      <Transition name="fade">
-        <UTooltip v-if="isBusy" :text="activityLabel">
-          <button
-            type="button"
-            aria-label="Show activity"
-            class="flex items-center"
-            :class="sessions.status === 'connected' ? 'cursor-pointer' : 'cursor-default'"
-            style="-webkit-app-region: no-drag"
-            @click="showActivity"
-          >
-            <span class="size-2 rounded-full bg-primary animate-pulse" />
-          </button>
-        </UTooltip>
-      </Transition>
+      <UTooltip v-if="isBusy" :text="activityLabel">
+        <button
+          type="button"
+          aria-label="Show activity"
+          class="flex items-center"
+          :class="sessions.status === 'connected' ? 'cursor-pointer' : 'cursor-default'"
+          style="-webkit-app-region: no-drag"
+          @click="showActivity"
+        >
+          <span class="size-2 rounded-full bg-primary animate-pulse" />
+        </button>
+      </UTooltip>
       <span class="text-xs font-medium text-toned">Ferry</span>
-      <Transition name="fade">
-        <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
-          <button
-            type="button"
-            aria-label="Restart to update"
-            class="flex items-center gap-1 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-400 transition-colors hover:bg-green-500/30"
-            style="-webkit-app-region: no-drag"
-            @click="updateStore.installNow()"
-          >
-            <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
-            <span class="hidden sm:inline">Update ready</span>
-          </button>
-        </UTooltip>
-      </Transition>
+      <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
+        <button
+          type="button"
+          aria-label="Restart to update"
+          class="flex items-center gap-1 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-400 transition-colors hover:bg-green-500/30"
+          style="-webkit-app-region: no-drag"
+          @click="updateStore.installNow()"
+        >
+          <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
+          <span class="hidden sm:inline">Update ready</span>
+        </button>
+      </UTooltip>
       <UTooltip text="Command palette (Ctrl+K)">
         <button
           type="button"

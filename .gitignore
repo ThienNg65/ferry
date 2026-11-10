@@ -5,3 +5,5 @@ dist/
 .DS_Store
 
 .agents/
+docs/agent-reviews
+scratch

@@ -6,6 +6,7 @@ import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
+import { useNotify } from '../../composables/useNotify'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
@@ -15,6 +16,7 @@ import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 const sessions = useSessionsStore()
 const sites = useSitesStore()
 const settings = useSettingsStore()
+const notify = useNotify()
 const version = ref('')
 /** Only shown when an app-wide default proxy is actually configured — otherwise this control has nothing to bypass and would just be clutter. */
 const bypassDefaultProxy = ref(false)
@@ -61,7 +63,17 @@ const form = reactive<QuickConnectInput>({
   password: ''
 })
 
-const canQuickConnect = computed(() => form.host.trim().length > 0 && form.username.trim().length > 0)
+const canQuickConnect = computed(() => {
+  const port = Number(form.port)
+  return (
+    form.host.trim().length > 0 &&
+    form.username.trim().length > 0 &&
+    Number.isInteger(port) &&
+    port >= 1 &&
+    port <= 65535
+  )
+})
+const canConnect = canQuickConnect
 
 /** When the active picker tab is already bound to a saved site (restored on launch or dropped), surface a 1-click connect banner. */
 const activeTabSite = computed<Site | null>(() => {
@@ -132,6 +144,25 @@ async function onDuplicate(site: Site): Promise<void> {
 /** Bulk-select-and-delete mode — mainly for cleaning up a batch of accidentally-duplicated imports at once. */
 const selectMode = ref(false)
 const selectedIds = reactive(new Set<string>())
+const selectedSiteIds = selectedIds
+
+async function onExportSites(): Promise<void> {
+  try {
+    const jsonStr = await invoke<string>(INVOKE_CHANNELS.sitesExport)
+    const blob = new Blob([jsonStr], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'ferry-sites-backup.json'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    notify.success('Sites exported', 'Saved to ferry-sites-backup.json')
+  } catch (e) {
+    notify.error('Export failed', e instanceof Error ? e.message : String(e))
+  }
+}
 
 function toggleSelectMode(): void {
   selectMode.value = !selectMode.value
@@ -153,6 +184,7 @@ const bulkDeleteError = ref<string | null>(null)
 const selectedSites = computed(() => sites.sites.filter((s) => selectedIds.has(s.id)))
 
 function openBulkDeleteConfirm(): void {
+  if (selectedIds.size === 0) return
   bulkDeleteError.value = null
   bulkDeleteOpen.value = true
 }
@@ -275,6 +307,16 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     @click="importOpen = true"
                   />
                 </UTooltip>
+                <UTooltip text="Export sites backup">
+                  <UButton
+                    icon="i-lucide-download"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    aria-label="Export sites"
+                    @click="onExportSites"
+                  />
+                </UTooltip>
                 <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
               </div>
             </div>
@@ -300,14 +342,14 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               v-if="selectMode"
               class="mb-2 flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5 text-xs text-default"
             >
-              <span>{{ selectedIds.size }} selected</span>
+              <span>{{ selectedSiteIds.size }} selected</span>
               <UButton
                 label="Delete selected"
                 icon="i-lucide-trash-2"
                 size="xs"
                 color="error"
                 variant="soft"
-                :disabled="selectedIds.size === 0"
+                :disabled="selectedSiteIds.size === 0"
                 @click="openBulkDeleteConfirm"
               />
             </div>
@@ -391,11 +433,11 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 <UInput v-model="form.host" placeholder="example.com" class="w-full" />
               </UFormField>
               <UFormField label="Port" class="w-24">
-                <UInput v-model.number="form.port" type="number" class="w-full" />
+                <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
               </UFormField>
             </div>
             <UFormField label="Username">
-              <UInput v-model="form.username" placeholder="root" class="w-full" />
+              <UInput v-model="form.username" placeholder="e.g. root" class="w-full" />
             </UFormField>
             <UFormField label="Password">
               <UInput v-model="form.password" type="password" placeholder="Optional for agent auth" class="w-full" />
@@ -462,7 +504,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       <template #body>
         <div class="flex flex-col gap-3">
           <p class="text-sm text-default">
-            Delete these {{ selectedSites.length }} sites? This cannot be undone.
+            Delete {{ selectedSites.length === 1 ? 'this 1 site' : `these ${selectedSites.length} sites` }}? This cannot be undone.
           </p>
           <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
             <li v-for="site in selectedSites" :key="site.id" class="truncate text-xs text-default">
@@ -474,7 +516,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       </template>
       <template #footer>
         <UButton color="neutral" variant="outline" @click="bulkDeleteOpen = false">Cancel</UButton>
-        <UButton color="error" :loading="bulkDeleting" @click="confirmBulkDelete">
+        <UButton color="error" :disabled="selectedSiteIds.size === 0" :loading="bulkDeleting" @click="confirmBulkDelete">
           Delete {{ selectedSites.length }}
         </UButton>
       </template>

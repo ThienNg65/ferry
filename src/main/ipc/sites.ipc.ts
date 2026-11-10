@@ -30,4 +30,8 @@ export function registerSitesHandlers(): void {
   handle<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan, () => {
     return scanImportCandidates()
   })
+
+  handle<string>(INVOKE_CHANNELS.sitesExport, () => {
+    return SiteStore.getInstance().exportSites()
+  })
 }

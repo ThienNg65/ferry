@@ -49,9 +49,9 @@ function onKeydown(event: KeyboardEvent): void {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
-function run(action: () => void): void {
-  action()
+function run(action: () => void | Promise<void>): void {
   open.value = false
+  void action()
 }
 
 const groups = computed(() => {
@@ -118,7 +118,9 @@ const groups = computed(() => {
 <template>
   <UModal v-model:open="open" :ui="{ content: 'max-w-lg' }">
     <template #content>
-      <UCommandPalette :groups="groups" placeholder="Type a command or search sites…" :close="false" />
+      <div @keydown.enter.stop>
+        <UCommandPalette :groups="groups" placeholder="Type a command or search sites…" :close="false" />
+      </div>
     </template>
   </UModal>
 </template>

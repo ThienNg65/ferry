@@ -20,6 +20,7 @@ import { EditSessionManager } from '../edit/EditSessionManager'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
+  type IpcErrorCode,
   type JumpHostConfig,
   type KeyboardInteractiveRequestEvent,
   type ProxyConfig,
@@ -407,6 +408,12 @@ export class SessionManager {
     initialCwd: string,
     trustedHostKey?: TrustedHostKey
   ): Promise<{ sessionId: string; status: SessionStatus }> {
+    if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
+      throw new SshError(
+        'INVALID_PORT' as unknown as IpcErrorCode,
+        'Port must be an integer between 1 and 65535'
+      )
+    }
     // Lazy-load ssh2 (a heavy module with a native optional dep) only when the
     // user actually connects, keeping it off the app-startup critical path.
     // Aliased so the runtime binding doesn't collide with the file-wide `Client`

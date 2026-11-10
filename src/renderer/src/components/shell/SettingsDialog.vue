@@ -103,20 +103,31 @@ function close(): void {
 async function save(): Promise<void> {
   saving.value = true
   try {
+    const rawLimit = Number(limitInput.value)
+    const sanitizedLimit =
+      unlimited.value || !Number.isFinite(rawLimit) || rawLimit <= 0
+        ? null
+        : Math.max(1, Math.round(rawLimit))
+
     await settings.setAutoCheckUpdates(autoCheckUpdates.value)
-    await settings.setBandwidthLimitKBps(unlimited.value ? null : Math.max(1, Math.round(limitInput.value)))
+    await settings.setBandwidthLimitKBps(sanitizedLimit)
+    const host = proxyHost.value.trim()
+    const port = Number(proxyPort.value) || 1080
     await settings.setDefaultProxy(
-      proxyEnabled.value && proxyHost.value.trim()
+      proxyEnabled.value && host
         ? {
             type: proxyType.value,
-            host: proxyHost.value,
-            port: proxyPort.value,
-            username: proxyUsername.value || undefined,
+            host,
+            port: port >= 1 && port <= 65535 ? port : 1080,
+            username: proxyUsername.value.trim() || undefined,
             password: proxyPassword.value ? proxyPassword.value : undefined
           }
         : null
     )
+    notify.success('Settings saved', 'Your preferences have been updated')
     close()
+  } catch (err) {
+    notify.error('Failed to save settings', err instanceof Error ? err.message : String(err))
   } finally {
     saving.value = false
   }
@@ -131,7 +142,7 @@ async function save(): Promise<void> {
     @update:open="(v: boolean) => { if (!v) close() }"
   >
     <template #body>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-3 max-h-[70vh] overflow-y-auto pr-1">
         <div class="text-sm font-medium text-highlighted">Accent color</div>
         <div class="flex items-center gap-2">
           <UTooltip v-for="preset in ACCENT_PRESETS" :key="preset.hex" :text="preset.label">
@@ -162,7 +173,8 @@ async function save(): Promise<void> {
             type="number"
             :min="1"
             :disabled="unlimited"
-            class="w-32"
+            class="w-32 transition-opacity"
+            :class="unlimited ? 'opacity-50 cursor-not-allowed' : ''"
           />
           <span class="text-xs text-muted">KB/s, applies to all transfers combined</span>
         </div>

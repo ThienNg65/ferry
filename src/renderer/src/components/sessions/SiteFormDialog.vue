@@ -145,8 +145,23 @@ const canSave = computed(
   () =>
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    (!useJumpHost.value || jumpHops.value.every((hop) => hop.host.trim().length > 0 && hop.username.trim().length > 0)) &&
-    (proxyMode.value !== 'custom' || proxyHost.value.trim().length > 0)
+    Number.isInteger(form.port) &&
+    form.port >= 1 &&
+    form.port <= 65535 &&
+    (!useJumpHost.value ||
+      jumpHops.value.every(
+        (hop) =>
+          hop.host.trim().length > 0 &&
+          hop.username.trim().length > 0 &&
+          Number.isInteger(hop.port) &&
+          hop.port >= 1 &&
+          hop.port <= 65535
+      )) &&
+    (proxyMode.value !== 'custom' ||
+      (proxyHost.value.trim().length > 0 &&
+        Number.isInteger(proxyPort.value) &&
+        proxyPort.value >= 1 &&
+        proxyPort.value <= 65535))
 )
 
 /** True while an incomplete jump host is the reason Save is disabled — used to force the Advanced section open so the offending fields are never hidden. */
@@ -274,7 +289,7 @@ async function save(): Promise<void> {
             <UInput v-model="form.host" placeholder="example.com" class="w-full" />
           </UFormField>
           <UFormField label="Port" class="w-24">
-            <UInput v-model.number="form.port" type="number" class="w-full" />
+            <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
           </UFormField>
         </div>
         <UFormField label="Username">
@@ -375,7 +390,7 @@ async function save(): Promise<void> {
                     <UInput v-model="proxyHost" placeholder="proxy.example.com" class="w-full" />
                   </UFormField>
                   <UFormField label="Port" class="w-24">
-                    <UInput v-model.number="proxyPort" type="number" class="w-full" />
+                    <UInput v-model.number="proxyPort" type="number" min="1" max="65535" class="w-full" />
                   </UFormField>
                 </div>
                 <div class="flex gap-3">

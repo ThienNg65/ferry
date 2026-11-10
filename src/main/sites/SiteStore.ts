@@ -211,6 +211,15 @@ export class SiteStore {
     return this.store.get('sites').map(toPublicSite)
   }
 
+  exportSites(): string {
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      sites: this.list()
+    }
+    return JSON.stringify(payload, null, 2)
+  }
+
   create(input: SiteInput): Site {
     const now = new Date().toISOString()
     const stored: StoredSite = {

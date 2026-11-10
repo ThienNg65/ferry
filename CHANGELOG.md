@@ -5,6 +5,9 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 ## Unreleased
 
 ### Added
+- **Site Export & Backup**: Added `sites:export` IPC channel and a dedicated "Export sites" button in the Sites card header, generating a formatted JSON backup (`ferry-sites-backup.json`) with DPAPI secrets securely excluded.
+- **Root Filesystem Deletion Guard**: Added defensive path validation to `LocalFsService.remove()` and `RemoteShell.deleteRecursive()` preventing accidental deletion of root paths (`/`, `C:\`, `C:/`, or empty target).
+- **CDP Automation Client**: Added `scripts/cdp-client.js` for Chrome DevTools Protocol automation, DOM inspection, and screenshot verification.
 - Enhanced Auto Update lifecycle management, discoverability, and UX:
   - **Manual Update Checks**: Added an interactive "Check for updates" action in the Settings dialog and Command Palette (`Ctrl+K`) with live status feedback.
   - **Real-Time Download Progress**: Added a download progress bar in Settings showing transfer percentage and current download speed (`MB/s` or `KB/s`).
@@ -26,12 +29,20 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
   - **Transfer Queue & Monitor Polish**: Added a "Clear finished" action in the Transfer Queue, basename-first transfer labels with live throughput (`B/s`) and percentage readouts, threshold-colored (`primary`/`warning`/`error`) storage/memory/CPU bars in the Resource Monitor, and an `Unsaved` badge + theme-aware CodeMirror styling in the built-in Editor.
 
 ### Changed
+- **Quick Connect Onboarding Polish**: Updated Username placeholder from `"root"` to `"e.g. root"` to eliminate false affordances of a pre-filled default.
+- **Settings Bandwidth Affordance**: Added visible disabled styling (`opacity-50 cursor-not-allowed`) to the bandwidth limit input when "Unlimited" is checked, and bounded the proxy options with scrollable overflow.
+- **Batch Deletion Safety**: Disabled the "Delete" button in the Sites toolbar when 0 sites are selected, preventing destructive "Delete 0 sites" confirmation prompts.
+- **Multi-File Keyboard Deletion Safety**: Enforced confirmation dialogs in `FilePane.vue` whenever multiple files are selected for keyboard deletion (`Delete` key), preventing silent mass deletion of plain files.
 - Remapped `Backspace` in the file browser to navigate up to the parent directory (`goUp()`) instead of deleting selected files; destructive file deletion remains on `Delete`.
 - Clicking the already-active tab in the bottom dock (or double-clicking the dock header) now collapses the dock; site tabs now support middle-click to close and show live connection status dots.
 - Elevated log tail color contrast across error, warning, debug, line-number gutter, and search highlights to meet WCAG 2.2 AA standards in both light and dark themes.
 - Formatted leading timestamps in log lines with a subtle dimmed monospace tone for effortless visual message scanning.
 
 ### Fixed
+- **Command Palette Modal Stacking**: Fixed dual-modal rendering and text overlap collisions when triggering dialogs (e.g. Settings, History) from the Command Palette (`Ctrl+K`) by synchronously closing the palette before invoking action handlers and stopping Enter key propagation.
+- **Port Boundary Validation**: Enforced integer range constraints (`1..65535`) in Quick Connect, SiteFormDialog, and `SessionManager.connect()`, preventing out-of-range ports (`-1`, `0`, `70000`, `NaN`) and replacing raw Node `RangeError` alerts with clean validation feedback.
+- **Settings Save Error Handling**: Sanitized empty bandwidth inputs and wrapped `SettingsDialog.save()` with `try/catch` and toast notifications, preventing unhandled promise rejections.
+- **Vue Transition Console Warnings**: Removed conflicting `<Transition>` wrappers around `<UTooltip>` in `TitleBar.vue`.
 - Removed the 40px blank indentation gap on unclassified log lines so lines align cleanly adjacent to the line-number gutter.
 - Added keyboard `:focus-visible` outlines and focus-within visibility across custom chrome buttons, tabs, and file-row action controls.
 - Distinguished loading, filtered-empty (with a one-click "Clear filter" button), and genuinely empty directory states in the file list.

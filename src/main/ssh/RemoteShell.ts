@@ -1,4 +1,5 @@
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
+import type { IpcErrorCode } from '../../shared/contract'
 import { SshError } from './errors'
 import { withRetry } from './retry'
 import { shellEscape } from './shellEscape'
@@ -524,6 +525,13 @@ export class RemoteShell {
    * or the shell command itself fails.
    */
   async deleteRecursive(remotePath: string): Promise<void> {
+    const trimmed = (remotePath ?? '').trim()
+    if (!trimmed || trimmed === '/' || trimmed === '/*') {
+      throw new SshError(
+        'INVALID_TARGET' as unknown as IpcErrorCode,
+        `Refusing to delete remote root or empty path "${remotePath}"`
+      )
+    }
     try {
       const result = await this.exec(`rm -rf -- ${shellEscape(remotePath)}`, { timeoutMs: 5 * 60 * 1000 })
       if (result.code === 0) {

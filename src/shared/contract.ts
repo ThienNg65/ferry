@@ -818,6 +818,7 @@ export const INVOKE_CHANNELS = {
   sitesDelete: 'sites:delete',
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
+  sitesExport: 'sites:export',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',

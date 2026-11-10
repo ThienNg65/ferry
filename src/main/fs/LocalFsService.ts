@@ -2,7 +2,20 @@ import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
-import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+import type { FileEntry, FileListResult, FileReadResult, IpcErrorCode } from '../../shared/contract'
+
+function isRootOrEmpty(p: string): boolean {
+  const trimmed = (p ?? '').trim()
+  if (!trimmed) {
+    return true
+  }
+  const normalized = trimmed.replace(/\\/g, '/')
+  if (normalized === '/' || /^[a-zA-Z]:\/?$/.test(normalized)) {
+    return true
+  }
+  const resolved = path.resolve(trimmed)
+  return resolved === path.parse(resolved).root
+}
 
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
@@ -120,6 +133,12 @@ export async function writeFileText(filePath: string, content: string): Promise<
 
 /** Deletes a local file or directory (recursively for directories). */
 export async function remove(targetPath: string, isDir: boolean): Promise<void> {
+  if (isRootOrEmpty(targetPath)) {
+    throw new SshError(
+      'INVALID_TARGET' as unknown as IpcErrorCode,
+      `Refusing to delete root or empty path "${targetPath}"`
+    )
+  }
   try {
     if (isDir) {
       await fs.rm(targetPath, { recursive: true })

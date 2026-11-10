@@ -597,9 +597,9 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   event.preventDefault()
   const targets = store.entries.filter((e) => store.selected.has(e.path))
-  // Folders always confirm before deleting — the keyboard shortcut only skips the
-  // dialog when every selected entry is a plain file.
-  if (targets.some((e) => e.isDir)) {
+  // Folders and multi-item selections always confirm before deleting — the
+  // keyboard shortcut only skips the dialog when exactly one plain file is selected.
+  if (targets.length > 1 || targets.some((e) => e.isDir)) {
     pendingDelete.value = targets
     return
   }
