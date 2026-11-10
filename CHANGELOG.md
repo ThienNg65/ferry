@@ -4,6 +4,125 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 
 ## Unreleased
 
+## [0.15.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.14.15...ferry-v0.15.0) (2026-11-10)
+
+
+### Features
+
+* Activity dock tab — live progress for every long-running operation ([1c0e46b](https://github.com/ThienNg65/ferry/commit/1c0e46b765a14b0a514391b8987bc42d9246cd2b))
+* add zebra striping and directory bolding to file browser rows ([b0048e2](https://github.com/ThienNg65/ferry/commit/b0048e2a392ede9aa98a27a9cd691470531562bc))
+* add zebra striping to process monitor rows ([d31609b](https://github.com/ThienNg65/ferry/commit/d31609b0502eb57cc811f8fc5f95cb00280e3739))
+* built-in editor improvements, pane resizing, and ui polishing ([9a5ecd2](https://github.com/ThienNg65/ferry/commit/9a5ecd25d6057f9160b7cd078a39bfded460f218))
+* connection progress dialog & Happy Eyeballs speed enhancement ([881061c](https://github.com/ThienNg65/ferry/commit/881061c6e110e8b39e15bf7456aeb04e7ed6d906))
+* download to active workspace and prevent silent overwrites ([b5f1a86](https://github.com/ThienNg65/ferry/commit/b5f1a866b985210abcdd2b46556c79434c66dcb5))
+* **files:** confirm before deleting folders (and file trash-button/context-menu deletes) ([a01363c](https://github.com/ThienNg65/ferry/commit/a01363c3e2fa6a2df0b49a53098e84de4a6a5d49))
+* hide jump host and proxy fields behind progressive disclosure in Add Site dialog ([6f8064c](https://github.com/ThienNg65/ferry/commit/6f8064cb3753b9ee89579fb419180f72bb57ab33))
+* **logs:** enhance tail log viewer with virtual scrolling, color tracking, and in-log search ([073c82f](https://github.com/ThienNg65/ferry/commit/073c82fb9544e425f113cf3a422fe799fcf10280))
+* Monitor dock tab — remote CPU/memory/load resource monitor ([da940af](https://github.com/ThienNg65/ferry/commit/da940af4973e96bae3f4c8f845fbfb8465eca042))
+* **monitor:** storage usage, top-processes table, resizable dock ([09795f0](https://github.com/ThienNg65/ferry/commit/09795f0b0d89d2ebb41f05f40df753ef5288a998))
+* **security:** harden main-process against Electron checklist gaps ([3739bda](https://github.com/ThienNg65/ferry/commit/3739bda0ef0a9111c271eced21b4f23b206e2053))
+* **sites:** add bulk select and delete for saved sites ([71dac70](https://github.com/ThienNg65/ferry/commit/71dac7083e8ed15787f13e5012680963a9162c1e))
+* **tail:** enhance UI/UX, formatting, contrast, and controls for live log tail ([4b9db7e](https://github.com/ThienNg65/ferry/commit/4b9db7eca9aa172279b8413481dff81029e1df52))
+* **ui:** enhance UI/UX across session manager, shell chrome, file browser, and bottom dock ([2df0306](https://github.com/ThienNg65/ferry/commit/2df03069339a8c5ee2468c95ce64a0c00da70feb))
+* **update:** enhance auto-update with manual checks, progress tracking, and settings ([1d8c6e6](https://github.com/ThienNg65/ferry/commit/1d8c6e654c90419f16ffafe4da2e1977619fe7b7))
+* **ux:** multi-agent UX polish, site export, port validation, and deletion safety ([10dd62c](https://github.com/ThienNg65/ferry/commit/10dd62c517794ebbf64c1029152f9ce1e1022eb2))
+* v0.9.0 — compress-to-zip, bandwidth limit, tab persistence, theme, command palette ([885322e](https://github.com/ThienNg65/ferry/commit/885322e5d92a2a1a27a97eecfe986acd36dfb0cb))
+* WinSCP-parity gap review — 13 features (v0.13.0) ([b52d2c6](https://github.com/ThienNg65/ferry/commit/b52d2c60f68a376ba0d677d3b3d71478c9ddc069))
+
+
+### Bug Fixes
+
+* address final review findings on ui-polish branch ([4d1f049](https://github.com/ThienNg65/ferry/commit/4d1f049f64e9ff6829175a7b8c842674b6b725ce))
+* **build:** point auto-update feed at real GitHub repo ([cf0bd77](https://github.com/ThienNg65/ferry/commit/cf0bd77c5edcfd84c3430f22fd7e4c9f9d41223c))
+* **dnd:** resolve dropped-file paths via webUtils for Electron 43 ([4f67ec8](https://github.com/ThienNg65/ferry/commit/4f67ec831fefc4bb2fb697366e5eeb745c677fc6))
+* Live tail log navigation and immediate output (Ticket [#2](https://github.com/ThienNg65/ferry/issues/2)) ([31abdcb](https://github.com/ThienNg65/ferry/commit/31abdcb17d8f4aa9391cc4c49d33541e42d1e62e))
+* Milestone 2 pilot-hardening — bug fixes, test coverage, Open Edits UI ([de2f5ee](https://github.com/ThienNg65/ferry/commit/de2f5ee309809203790dec7e2ecfa97ae2a580db))
+* prevent app crash on unhandled ssh client error events ([f59811e](https://github.com/ThienNg65/ferry/commit/f59811e6704cf347d4920c818c1aa5c141c1387e))
+* prevent remote command injection in compress/extract via crafted filenames ([4353311](https://github.com/ThienNg65/ferry/commit/4353311ed2b1b10fa501636023dd411c559a0226))
+* publish latest.yml so auto-update actually works, prep dormant SignPath signing ([e1bfcf2](https://github.com/ThienNg65/ferry/commit/e1bfcf2bd40a82d51d542c5d2e7c98db6c17ed97))
+* **release:** auto-publish releases with generated changelog notes ([c2a85f2](https://github.com/ThienNg65/ferry/commit/c2a85f27f9747ab3e14158fee4b4407f3c000e2c))
+* **release:** push git tag before electron-builder publish ([0f032a2](https://github.com/ThienNg65/ferry/commit/0f032a2e6a8177ef5bc0b4e74f340be0b1c963ad))
+* resolve critical and high-priority code review findings ([ca4e7ce](https://github.com/ThienNg65/ferry/commit/ca4e7cefcf2adbc91705f186f05481088098ffa1))
+* **security:** allow clipboard-write through the permission handler ([7b71803](https://github.com/ThienNg65/ferry/commit/7b71803ba27949d1ea5cc378544b49468b00242b))
+* **sites:** batch import into one refetch and avoid duplicate re-creates ([cdb718e](https://github.com/ThienNg65/ferry/commit/cdb718ea99591a0aa50093592a625eabc432b556))
+* **sites:** stop WinSCP import self-recursion producing duplicated names ([7be8ae2](https://github.com/ThienNg65/ferry/commit/7be8ae28c8ad974ff27e701cf190c13b02177bb0))
+* **tail:** fail fast on permanent errors instead of retrying ([d7c3dee](https://github.com/ThienNg65/ferry/commit/d7c3dee7cbb9b335e66f4fb5b38615647274c957))
+* terminal keyboard interaction — focus, copy/paste, right-click ([e2f5692](https://github.com/ThienNg65/ferry/commit/e2f56920a81585b6ea224910dc7b50536df3e394))
+* type check ([1f9c1f6](https://github.com/ThienNg65/ferry/commit/1f9c1f6c896b005b3981947557f26842ba7c8dec))
+* **update:** resolve electron-updater CJS interop for autoUpdater export ([e801a00](https://github.com/ThienNg65/ferry/commit/e801a005e51f7a4862386800b8520564338265fc))
+
+
+### Performance Improvements
+
+* **main:** lazy-load ssh2 and archiver off the startup path ([80e4cee](https://github.com/ThienNg65/ferry/commit/80e4cee57bbaefefc4e33688d80116e15a7d7457))
+* optimize app startup time ([f032202](https://github.com/ThienNg65/ferry/commit/f0322023dc3d4c82c87c145ed19c9cad95641d5c))
+* **renderer:** virtualize FileList with @tanstack/vue-virtual ([80f323d](https://github.com/ThienNg65/ferry/commit/80f323dd206a9000a3467a8864076bb0d2ba3cdd))
+
+
+### Documentation
+
+* add 0.8.0 changelog entry for the file-op perf pass and injection fix ([1d7e36a](https://github.com/ThienNg65/ferry/commit/1d7e36acc33f26be681f7538df4956f6a132624c))
+* add changelog entries for UI polish work ([e8cab5c](https://github.com/ThienNg65/ferry/commit/e8cab5c903d114833d1c9c6503af8f706bcb5d31))
+* add changelog entry for 0.11.0 security & performance hardening ([e26f3b9](https://github.com/ThienNg65/ferry/commit/e26f3b95adb2b676ff4515cb7d4fe54e56c2126c))
+* add CI/CD release engineering guide and architecture diagram ([06d9525](https://github.com/ThienNg65/ferry/commit/06d9525be21304c04113eead661c45e7064fc832))
+* add LICENSE, README, and package release metadata ([5241e74](https://github.com/ThienNg65/ferry/commit/5241e74f2c4abb2b8a916de0b8a2a9a746e84759))
+* add real app screenshots to README ([1a0e579](https://github.com/ThienNg65/ferry/commit/1a0e5799a18b901cf8da33e013ca07cfdf4b14ab))
+* **changelog:** release v0.14.5 ([6a2177c](https://github.com/ThienNg65/ferry/commit/6a2177c7f341ed1e0c6972d0237d09c1732492b2))
+* correct PROJECT_MAP gotchas on the WinSCP import self-recursion bug ([ac1effe](https://github.com/ThienNg65/ferry/commit/ac1effe6dd82996d3f08b6b921f035a97f539282))
+* correct PROJECT_MAP's permission-handler description, add clipboard gotcha ([a033d34](https://github.com/ThienNg65/ferry/commit/a033d3468b5477191c2879b3deaa7ef3a449b3cb))
+* finalize v0.14.5 changelog ([102b70a](https://github.com/ThienNg65/ferry/commit/102b70a9fba5c3d6b52e687dd39b334ec240b876))
+* finalize v0.14.6 changelog ([c337175](https://github.com/ThienNg65/ferry/commit/c337175590923cc4b862c226de6bb42804164881))
+* finalize v0.14.6 changelog ([e44aa2f](https://github.com/ThienNg65/ferry/commit/e44aa2f9dd1af12f9d12ab7eaef1e25e8152c686))
+* finalize v0.14.7 changelog ([1fb00b6](https://github.com/ThienNg65/ferry/commit/1fb00b69a61b59eca683d6d4d78a712ef403b10e))
+* finalize v0.14.8 changelog ([e798a48](https://github.com/ThienNg65/ferry/commit/e798a48e97ec7a837218e16be4ee467fda4253b9))
+* finalize v0.14.9 changelog ([c500d1c](https://github.com/ThienNg65/ferry/commit/c500d1cde67964d609ef4a46b330a91bc672c5de))
+* update changelog for perf improvements ([5e9c1ad](https://github.com/ThienNg65/ferry/commit/5e9c1ad3130bd1256283fd90c4bd231d769bd594))
+* update changelog for ssh client error fix ([39e1baf](https://github.com/ThienNg65/ferry/commit/39e1baffa51b94d37dc170b2d41ea7000df19e31))
+* update PROJECT_MAP for round-6 (Activity/Monitor dock, terminal fix, UI pass) ([28b0af6](https://github.com/ThienNg65/ferry/commit/28b0af6493939f47e91b2f004add03f16d9ba886))
+* write handoff.md for the security & performance hardening session ([f30bf75](https://github.com/ThienNg65/ferry/commit/f30bf759283fd67879f17c5d95d406b0a24d30dd))
+
+
+### Styles
+
+* visual hierarchy pass — separate chrome from content, sharpen selection ([98958d8](https://github.com/ThienNg65/ferry/commit/98958d8ca08d9cdf2f68eb462d0925d548483f2a))
+
+
+### Miscellaneous Chores
+
+* bump version to 0.14.6 ([750a94b](https://github.com/ThienNg65/ferry/commit/750a94b2160c2367db379ddb5427d6f56ed86671))
+* **deps:** upgrade Electron v30 -&gt; v43 and modernize build toolchain ([c4f421a](https://github.com/ThienNg65/ferry/commit/c4f421af14d0085d4740e8113b052f85c9b0279c))
+* **release:** bump to 0.14.11 and guard CD pipeline against existing tags ([dab59ea](https://github.com/ThienNg65/ferry/commit/dab59ea8f1fd1b737df564dc55c745523e8e00b2))
+* **release:** bump version to 0.14.2 [skip ci] ([4534275](https://github.com/ThienNg65/ferry/commit/45342752b21b99b81f79a629fea7ffb07b01f988))
+* **release:** bump version to 0.14.3 [skip ci] ([e1408bd](https://github.com/ThienNg65/ferry/commit/e1408bd205ce66b88ec5de1f602351837abceb55))
+* **release:** bump version to 0.14.4 [skip ci] ([127836c](https://github.com/ThienNg65/ferry/commit/127836cb3ee2d77b466029d10e6dc9ac0fb8159b))
+* **release:** bump version to 0.14.5 [skip ci] ([37988d0](https://github.com/ThienNg65/ferry/commit/37988d031daa0ccf3493bfb22aa6398bcce73746))
+* **release:** bump version to 0.14.6 [skip ci] ([7e20a81](https://github.com/ThienNg65/ferry/commit/7e20a81cec53fa86340fad0dcb1b1004073e5bba))
+* start next development cycle ([c8f4147](https://github.com/ThienNg65/ferry/commit/c8f414705e4dd37545be8beac5c13e8592b435ba))
+* start next development cycle ([6fdf920](https://github.com/ThienNg65/ferry/commit/6fdf920b601986c0f90798f9edc3e90efd61de26))
+* start next development cycle ([531d8cd](https://github.com/ThienNg65/ferry/commit/531d8cdedd4649392fb58145b4d582c934219770))
+* start next development cycle ([66f058b](https://github.com/ThienNg65/ferry/commit/66f058b9900211ab6a082632e9782b118c34f66b))
+* start next development cycle ([8b859c1](https://github.com/ThienNg65/ferry/commit/8b859c1f88e8f6c1c34c7175c448416e8507ae64))
+* start next development cycle ([a5901d7](https://github.com/ThienNg65/ferry/commit/a5901d73d7121635ba0c50f8912bb19cf0a6ed89))
+* start next development cycle ([e238d48](https://github.com/ThienNg65/ferry/commit/e238d48eddb81c6c206444e11cdf59591c6f79e9))
+
+
+### Build System
+
+* stop bundling renderer-only deps into packaged app ([3d7680c](https://github.com/ThienNg65/ferry/commit/3d7680c4b7c02d9c520fe6cb5c6e6fae5fd63f1b))
+
+
+### Continuous Integration
+
+* add typecheck/test CI and tag-triggered release workflow ([4fedacd](https://github.com/ThienNg65/ferry/commit/4fedacd49ad4af38679cd2337b19a83874aa552c))
+* adopt release-please workflow and sync version to 0.14.15 ([6066865](https://github.com/ThienNg65/ferry/commit/60668656689dcec32f6967e7116f5754f4f511c2))
+* auto-tag on main and grant release job write perms ([0a127e4](https://github.com/ThienNg65/ferry/commit/0a127e4d775e838382d6420d391b73168636920e))
+* enhance github actions workflow for atomic releases ([6ffab8d](https://github.com/ThienNg65/ferry/commit/6ffab8dc71edbd844a59b7243e8fc79ad10ef59e))
+* explicitly push lightweight tag ([ac1f6e8](https://github.com/ThienNg65/ferry/commit/ac1f6e83760072833728eca03ea68aaf8791badf))
+* fix github release 422 error by deferring api calls until after git push ([b6efbcc](https://github.com/ThienNg65/ferry/commit/b6efbcce9bb2fa73bbb6cf6848fd04e385089897))
+* fix npm exit-handler crash on windows runners ([5081344](https://github.com/ThienNg65/ferry/commit/50813444914a7bd55afb7ae5fb7483cd21d32075))
+* handle protected branch on main with PR fallback and tag resilience ([ee09e83](https://github.com/ThienNg65/ferry/commit/ee09e83df9bef4e2411a95b16780e297c5995c6a))
+* harden electron-builder packaging with cache, retry, and prebuilt ico ([c68e3bb](https://github.com/ThienNg65/ferry/commit/c68e3bb3c6f28ec02a0aa74bfb855fb2952eb4b2))
+
 ## 0.14.14 - 2026-11-10
 
 ### Added
