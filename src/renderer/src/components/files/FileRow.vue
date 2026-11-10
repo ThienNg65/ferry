@@ -9,13 +9,14 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { zebraRowClass } from '../../utils/rowStyle'
+import { formatShortDate } from '../../utils/format'
 
 const props = defineProps<{
   entry: FileEntry
   selected: boolean
+  /** True when this row's pane is the active one — selection is drawn loud there and grey elsewhere. */
+  active: boolean
   side: 'local' | 'remote'
-  index: number
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
@@ -147,7 +148,7 @@ function formatSize(size: number, isDir: boolean): string {
   return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
-function formatDate(iso: string | null): string {
+function formatFullDate(iso: string | null): string {
   if (!iso) {
     return ''
   }
@@ -195,14 +196,17 @@ function onMouseLeave(): void {
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
   <div
-    class="group flex cursor-default select-none items-center gap-2 rounded-md px-3 py-1.5 text-[13px]"
+    class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
-    :class="
+    :class="[
+      ui.density === 'compact' ? 'py-0.5' : 'py-1.5',
       selected
-        ? 'bg-primary/10 text-highlighted'
-        : ['text-default hover:bg-muted', zebraRowClass(index)]
-    "
+        ? active
+          ? 'bg-primary/20 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
+          : 'bg-accented text-highlighted'
+        : 'text-default hover:bg-elevated/60'
+    ]"
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"
     @dblclick="emit('open', entry)"
@@ -243,8 +247,8 @@ function onMouseLeave(): void {
       @blur="submitRename"
     />
     <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-xs text-dimmed">{{ formatSize(entry.size, entry.isDir) }}</span>
-    <span class="w-40 shrink-0 text-right text-xs text-dimmed">{{ formatDate(entry.modifiedAt) }}</span>
+    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted">{{ formatSize(entry.size, entry.isDir) }}</span>
+    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-dimmed">

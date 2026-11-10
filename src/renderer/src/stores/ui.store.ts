@@ -3,6 +3,7 @@ import { generateShadeRamp } from '../utils/colorRamp'
 
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
+const DENSITY_KEY = 'ferry:ui:density'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
 const ACCENT_KEY = 'ferry:ui:accentColor'
@@ -13,6 +14,7 @@ export const DEFAULT_LOCAL_PANE_WIDTH = 33.33
 
 export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
+export type Density = 'compact' | 'comfortable'
 
 /** The dock's pre-resize default (matches the old fixed `h-56`) — zero regression for existing users. */
 export const MIN_DOCK_HEIGHT = 224
@@ -43,14 +45,21 @@ function loadDockHeight(): number {
 interface UiState {
   showLocalPane: boolean
   permissionsDisplay: PermissionsDisplay
+  density: Density
   theme: Theme
   dockHeight: number
   accentColor: string
   localPaneWidth: number
+  /** Which file pane the user last interacted with — per-launch layout state, not persisted. */
+  activePane: 'local' | 'remote'
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
   return localStorage.getItem(PERMISSIONS_DISPLAY_KEY) === 'technical' ? 'technical' : 'friendly'
+}
+
+function loadDensity(): Density {
+  return localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable'
 }
 
 function systemPrefersDark(): boolean {
@@ -92,10 +101,12 @@ export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
     showLocalPane: localStorage.getItem(STORAGE_KEY) !== 'false',
     permissionsDisplay: loadPermissionsDisplay(),
+    density: loadDensity(),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
     accentColor: loadAccentColor(),
-    localPaneWidth: loadLocalPaneWidth()
+    localPaneWidth: loadLocalPaneWidth(),
+    activePane: 'remote'
   }),
 
   actions: {
@@ -107,6 +118,11 @@ export const useUiStore = defineStore('ui', {
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
       localStorage.setItem(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
+    },
+
+    setDensity(density: Density): void {
+      this.density = density
+      localStorage.setItem(DENSITY_KEY, density)
     },
 
     /** Applies the persisted theme to the document — call once on app start. */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
@@ -26,6 +26,16 @@ const editSessions = useEditSessionsStore()
 // the TitleBar busy indicator) can open the dock on a specific tab.
 const { collapsed, tab, terminalEverShown, isMaximized, openDock } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
+
+// The dock starts collapsed; a newly queued transfer opens it on Transfers.
+watch(
+  () => transfers.items.size,
+  (size, prev) => {
+    if (size > prev && collapsed.value) {
+      openDock('transfers')
+    }
+  }
+)
 
 /** Clicking an already-open dock tab collapses the dock; clicking any tab while collapsed expands to it. */
 function onTabClick(target: DockTab): void {

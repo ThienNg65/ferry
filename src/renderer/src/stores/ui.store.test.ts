@@ -26,3 +26,38 @@ describe('clampDockHeight', () => {
     expect(clampDockHeight(300, 1200)).toBe(300)
   })
 })
+
+describe('ui store layout state', () => {
+  async function freshStore(stored: Record<string, string> = {}) {
+    const { vi } = await import('vitest')
+    const { createPinia, setActivePinia } = await import('pinia')
+    const data = new Map(Object.entries(stored))
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v)
+    })
+    vi.stubGlobal('window', { innerHeight: 900 })
+    setActivePinia(createPinia())
+    const { useUiStore } = await import('./ui.store')
+    return { ui: useUiStore(), data }
+  }
+
+  it('defaults activePane to remote and does not persist it', async () => {
+    const { ui, data } = await freshStore()
+    expect(ui.activePane).toBe('remote')
+    ui.activePane = 'local'
+    expect(data.size).toBe(0)
+  })
+
+  it('defaults density to comfortable and persists setDensity', async () => {
+    const { ui, data } = await freshStore()
+    expect(ui.density).toBe('comfortable')
+    ui.setDensity('compact')
+    expect(data.get('ferry:ui:density')).toBe('compact')
+  })
+
+  it('restores a stored compact density', async () => {
+    const { ui } = await freshStore({ 'ferry:ui:density': 'compact' })
+    expect(ui.density).toBe('compact')
+  })
+})
