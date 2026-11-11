@@ -23,7 +23,9 @@ Before the source repository is made private, restore the previous `electron-bui
 ## Scope and security
 
 - This migration **does not rewrite or delete Git history**. Earlier publicly published code could still exist in clones, forks, or cached source archives.
-- Release Please still creates **private-source release records** and changelog entries. Public releases receive only a short product-facing release note (not private commit URLs). Public changelog maintenance is separate and should be editorially reviewed.
+- Release Please creates private-source release records and changelog entries. The publication job copies sanitized release categories to the public release body and `CHANGELOG.md`, stripping private commit/PR links and rejecting unrecognized private URLs.
+- The publication job uses GitHub GraphQL `createCommitOnBranch` to create a GitHub-signed public changelog commit, verifies its signature, and creates the release tag pointing to it. This supplies the **Verified** badge beside the public release commit without distributing private signing keys. The tag itself is lightweight and unsigned; Windows installer code signing is a separate feature.
+- Existing `ferry-v0.18.1` remains attached to its original unsigned commit. Published tags are not moved; the Verified public-commit workflow applies to subsequent versions.
 - The old `v0.18.0` binaries continue to check `ThienNg65/ferry`; the bridge release is mandatory before switching repository visibility.
 - The publicly published compiled app contains client-side JS that can be extracted or reverse engineered. A private repository prevents easy source browsing but does not make shipped client code a secret.
 - `ferry-release` should not run a build from private code or expose a private checkout token.

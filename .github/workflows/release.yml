@@ -116,22 +116,38 @@ jobs:
             exit 1
           fi
 
-      - name: Publish public GitHub Release
+      - name: Create verified public changelog commit
+        id: public-release
+        shell: bash
+        env:
+          SOURCE_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+        run: node .github/scripts/publish-public-release.mjs
+
+      - name: Publish signed-commit-backed public GitHub Release
         shell: bash
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
           VERSION: ${{ needs.release-please.outputs.version }}
+          VERIFIED_SHA: ${{ steps.public-release.outputs.commit_sha }}
+          NOTES_FILE: ${{ steps.public-release.outputs.notes_file }}
         run: |
           shopt -s nullglob
           assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
-          # Do not copy private release-please commit links or internal notes.
-          printf 'Ferry %s is available for Windows. Download the installer below.\n' "$VERSION" > "$RUNNER_TEMP/public-release-notes.md"
-          if gh release view "$TAG" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$RUNNER_TEMP/public-release-notes.md"
-          else
-            gh release create "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$RUNNER_TEMP/public-release-notes.md"
+          # Never move an existing release tag: release tags must be stable.
+          existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)
+          if [ -n "$existing_sha" ] && [ "$existing_sha" != "$VERIFIED_SHA" ]; then
+            echo "::error::Public release tag $TAG already points at a different commit ($existing_sha)."
+            exit 1
           fi
-          gh release upload "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --clobber
+          if gh release view "$TAG" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$NOTES_FILE"
+            gh release upload "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$NOTES_FILE" --target "$VERIFIED_SHA"
+          fi
 
       # Keep this enabled during migration: existing installers currently poll
       # ThienNg65/ferry, so they need one bridge release from the old feed.
