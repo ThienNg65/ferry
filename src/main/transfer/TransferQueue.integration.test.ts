@@ -253,6 +253,22 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
     expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
   })
+  it('overwriting a remote file keeps its mode and writes through a symlink', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const realFile = `${remoteDir}/real.sh`
+    const link = `${remoteDir}/link.sh`
+    await shell.exec(`printf old > ${realFile} && chmod 755 ${realFile} && ln -s ${realFile} ${link}`)
+    const localFile = path.join(localDir, 'link.sh')
+    await fs.writeFile(localFile, 'new content')
+
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, link)
+
+    await waitFor(async () => (await shell.readFile(realFile, 1024)).content === 'new content')
+    expect((await shell.stat(realFile)).mode & 0o777).toBe(0o755)
+    expect((await shell.exec(`test -L ${link} && echo link`)).stdout.trim()).toBe('link')
+  })
+
   it('retry resumes an interrupted upload from the existing .part and the bytes match', async () => {
     const { remoteDir, localDir } = await freshDirs()
     const data = randomBytes(900_000)

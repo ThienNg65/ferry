@@ -26,6 +26,7 @@ export interface TransferJob {
   /** Epoch ms when queued — close enough to "started" for History's purposes; queueing delay is usually negligible. */
   queuedAt: number
   resume?: boolean
+  sourceStamp?: string
 }
 
 /**
@@ -124,6 +125,7 @@ export class TransferQueue {
   private readonly pending: TransferJob[] = []
   private readonly active = new Map<string, TransferJob>()
   private readonly retryable = new Map<string, TransferJob>()
+  private readonly paused = new Set<string>()
   private readonly rateLimiter = new RateLimiter()
   /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect a transfer's own outcome (see `notifyTerminal`). */
   private readonly terminalListeners: Array<(job: TransferJob, evt: TransferEvent) => void> = []
@@ -195,6 +197,7 @@ export class TransferQueue {
       throw new SshError('NOT_FOUND', 'Transfer cannot be retried')
     }
     this.retryable.delete(transferId)
+    this.paused.delete(transferId)
     this.pending.push({ ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true })
     this.broadcast({ transferId, kind: old.kind, state: 'queued' })
     this.pump()
@@ -218,6 +221,7 @@ export class TransferQueue {
     if (idx !== -1) {
       const [job] = this.pending.splice(idx, 1)
       this.rememberRetryable(job)
+      this.paused.add(transferId)
       this.broadcast({ transferId, kind: job.kind, state: 'paused' })
     }
   }
@@ -225,8 +229,13 @@ export class TransferQueue {
   /** Cancels a transfer, whether still queued or actively streaming. */
   cancel(transferId: string): void {
     const pausedJob = this.retryable.get(transferId)
+    if (pausedJob && !this.paused.has(transferId)) {
+      this.retryable.delete(transferId)
+      return
+    }
     if (pausedJob) {
       this.retryable.delete(transferId)
+      this.paused.delete(transferId)
       const evt: TransferEvent = { transferId, kind: pausedJob.kind, state: 'cancelled' }
       this.broadcast(evt)
       this.notifyTerminal(pausedJob, evt)
@@ -276,8 +285,11 @@ export class TransferQueue {
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
-      const totalBytes =
-        kind === 'upload' ? (await stat(job.localPath)).size : (await shell.stat(job.remotePath)).size
+      const source = kind === 'upload' ? await stat(job.localPath) : await shell.stat(job.remotePath)
+      const totalBytes = source.size ?? 0
+      const stamp = `${totalBytes}:${kind === 'upload' ? (source as { mtimeMs: number }).mtimeMs : source.mtime}`
+      const resume = job.resume === true && (job.sourceStamp === undefined || job.sourceStamp === stamp)
+      job.sourceStamp = stamp
 
       const startedAt = Date.now()
       let lastEmit = 0
@@ -300,7 +312,7 @@ export class TransferQueue {
         remotePath: job.remotePath,
         signal: job.controller.signal,
         size: totalBytes,
-        resume: job.resume === true,
+        resume,
         onProgress: emitProgress
       })
 
@@ -310,8 +322,12 @@ export class TransferQueue {
     } catch (e) {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
       const message = e instanceof Error ? e.message : String(e)
-      this.rememberRetryable(job)
-      if (cancelled && job.controller.signal.reason === PAUSE_REASON) {
+      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
+      if (!cancelled || pausedNow) {
+        this.rememberRetryable(job)
+      }
+      if (pausedNow) {
+        this.paused.add(transferId)
         this.broadcast({ transferId, kind, state: 'paused' })
         return
       }
@@ -536,8 +552,12 @@ export class TransferQueue {
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
-      this.rememberRetryable(job)
-      if (cancelled && job.controller.signal.reason === PAUSE_REASON) {
+      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
+      if (!cancelled || pausedNow) {
+        this.rememberRetryable(job)
+      }
+      if (pausedNow) {
+        this.paused.add(transferId)
         this.broadcast({ transferId, kind, state: 'paused' })
         return
       }

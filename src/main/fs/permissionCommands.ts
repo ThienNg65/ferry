@@ -2,7 +2,7 @@ import { SshError } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
 
 const MODE_PATTERN = /^[0-7]{3,4}$/
-const NAME_PATTERN = /^[a-z_][a-z0-9_.-]*$/i
+const NAME_PATTERN = /^([a-z_][a-z0-9_.-]*|\d+)$/i
 
 export function buildChmodCommand(targetPath: string, mode: string, recursive: boolean): string {
   if (!MODE_PATTERN.test(mode)) {

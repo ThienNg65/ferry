@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, UnzipResult } from '@shared/contract'
+import type { FileEntry, FileListResult, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -521,6 +521,10 @@ async function moveInto(folder: FileEntry, fromPath: string, name: string): Prom
   if (props.side === 'remote') {
     await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessions.activeSessionId, fromPath, toPath)
   } else {
+    const listing = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, folder.path)
+    if (listing.entries.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`"${name}" already exists in ${folder.name}`)
+    }
     await invoke<void>(INVOKE_CHANNELS.fsLocalRename, fromPath, toPath)
   }
 }

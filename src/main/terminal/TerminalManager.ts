@@ -99,8 +99,9 @@ export class TerminalManager {
     })
     stream.on('close', () => {
       batcher.flush()
+      const closedByUser = this.terminals.get(terminalId) !== entry
       this.terminals.delete(terminalId)
-      if (fallback && !sawData && Date.now() - startedAt < EARLY_EXIT_MS) {
+      if (fallback && !closedByUser && !sawData && Date.now() - startedAt < EARLY_EXIT_MS) {
         void fallback().catch(() => this.broadcastExit(terminalId, entry.exitCode))
         return
       }

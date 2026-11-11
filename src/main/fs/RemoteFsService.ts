@@ -268,14 +268,18 @@ async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: s
 
 export async function commitRemoteFile(shell: RemoteShell, tempPath: string, target: string): Promise<void> {
   const sftp = await shell.sftp()
-  const hadTarget = await shell.stat(target).then(() => true, () => false)
-  if (!(await posixRename(sftp, tempPath, target))) {
-    await replaceRemoteFile(shell, tempPath, target, hadTarget)
+  const resolved = await resolveRemotePath(sftp, target)
+  const existing = await shell.stat(resolved).then((s) => s, () => null)
+  if (existing) {
+    await shell.chmod(tempPath, (existing.mode & 0o7777).toString(8).padStart(4, '0'))
+  }
+  if (!(await posixRename(sftp, tempPath, resolved))) {
+    await replaceRemoteFile(shell, tempPath, resolved, existing !== null)
   }
 }
 
-async function sudoExec(shell: RemoteShell, command: string, input?: Buffer): Promise<Buffer> {
-  const result = await shell.execWithStdin(`sudo -n ${command}`, input)
+async function sudoExec(shell: RemoteShell, command: string, input?: Buffer, prefix = ''): Promise<Buffer> {
+  const result = await shell.execWithStdin(`${prefix}sudo -n ${command}`, input)
   if (result.code !== 0) {
     const message = result.stderr.trim()
     if (/password is required|a terminal is required|no tty present/i.test(message)) {
@@ -309,7 +313,7 @@ export async function uploadForEditSudo(sessionId: string, localPath: string, re
   const target = shellEscape(remotePath)
   const temp = shellEscape(`${remotePath}.ferry-tmp-${randomBytes(4).toString('hex')}`)
   try {
-    await sudoExec(shell, `tee -- ${temp} > /dev/null`, data)
+    await sudoExec(shell, `tee -- ${temp} > /dev/null`, data, 'umask 077; ')
     await sudoExec(shell, `chmod --reference=${target} -- ${temp}`)
     await sudoExec(shell, `chown --reference=${target} -- ${temp}`)
     await sudoExec(shell, `mv -f -- ${temp} ${target}`)

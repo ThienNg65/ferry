@@ -19,6 +19,7 @@ describe('buildChownCommand', () => {
     expect(buildChownCommand('/x', 'deploy', 'www-data', false)).toBe("chown deploy:www-data -- '/x'")
     expect(buildChownCommand('/x', '', 'staff', true)).toBe("chown -R :staff -- '/x'")
     expect(buildChownCommand('/x', 'bob', '', false)).toBe("chown bob -- '/x'")
+    expect(buildChownCommand('/x', '1000', '1000', false)).toBe("chown 1000:1000 -- '/x'")
   })
 
   it('rejects empty and unsafe names', () => {
