@@ -83,7 +83,7 @@ async function github(path, token, options = {}) {
   return data
 }
 
-async function signedCommit(publicRepo, token, expectedHeadOid, changelog) {
+async function signedCommit(publicRepo, token, expectedHeadOid, changelog, version) {
   const body = {
     query: `mutation($input: CreateCommitOnBranchInput!) {
       createCommitOnBranch(input: $input) { commit { oid } }
@@ -92,7 +92,7 @@ async function signedCommit(publicRepo, token, expectedHeadOid, changelog) {
       input: {
         branch: { repositoryNameWithOwner: publicRepo, refName: 'refs/heads/main' },
         expectedHeadOid,
-        message: { headline: 'docs: publish verified Ferry release changelog' },
+        message: { headline: `docs: publish Ferry ${version} changelog` },
         fileChanges: {
           additions: [{ path: 'CHANGELOG.md', contents: Buffer.from(changelog, 'utf8').toString('base64') }]
         }
@@ -142,12 +142,25 @@ async function main() {
   if (changed) {
     const ref = await github(`/repos/${publicRepo}/git/ref/heads/main`, publicToken)
     if (ref.object?.type !== 'commit') throw new Error('Public main does not reference a commit')
-    sha = await signedCommit(publicRepo, publicToken, ref.object.sha, content)
+    sha = await signedCommit(publicRepo, publicToken, ref.object.sha, content, version)
   } else {
-    // An already published version should retain its existing tag on reruns.
-    const tagRef = await github(`/repos/${publicRepo}/git/ref/tags/${encodeURIComponent(tag)}`, publicToken)
-    if (tagRef.object?.type !== 'commit') throw new Error('Expected a lightweight public release tag')
-    sha = tagRef.object.sha
+    // Preserve an existing tag. If a run failed after signing but before
+    // creating the release, recover its verified changelog commit on rerun.
+    const response = await fetch(`${API}/repos/${publicRepo}/git/ref/tags/${encodeURIComponent(tag)}`, {
+      headers: { Authorization: `Bearer ${publicToken}`, Accept: 'application/vnd.github+json' }
+    })
+    if (response.ok) {
+      const tagRef = await response.json()
+      if (tagRef.object?.type !== 'commit') throw new Error('Expected a lightweight public release tag')
+      sha = tagRef.object.sha
+    } else if (response.status === 404) {
+      const commits = await github(`/repos/${publicRepo}/commits?path=CHANGELOG.md&per_page=30`, publicToken)
+      const found = commits.find(commit => commit.commit?.message === `docs: publish Ferry ${version} changelog`)
+      if (!found) throw new Error('Existing changelog entry has no identifiable signed commit')
+      sha = found.sha
+    } else {
+      throw new Error(`Cannot check existing public tag (HTTP ${response.status})`)
+    }
   }
   const commit = await github(`/repos/${publicRepo}/commits/${sha}`, publicToken)
   if (commit.commit?.verification?.verified !== true) {
