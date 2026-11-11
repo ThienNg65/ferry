@@ -35,12 +35,14 @@ const emit = defineEmits<{
   'jump-bookmark': [path: string]
   'remove-bookmark': [id: string]
   'sync-folder': []
+  'compare-folder': []
 }>()
 
 const moreItems = computed<DropdownMenuItem[]>(() => {
   const items: DropdownMenuItem[] = []
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
+    items.push({ label: 'Compare with local folder…', icon: 'i-lucide-columns-2', onSelect: () => emit('compare-folder') })
   }
   items.push({
     label: props.showHidden ? 'Hide hidden files (Ctrl+H)' : 'Show hidden files (Ctrl+H)',

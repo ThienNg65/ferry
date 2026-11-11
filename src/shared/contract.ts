@@ -519,6 +519,23 @@ export interface SyncPlan {
   totalBytes: number
 }
 
+export type CompareStatus = 'same' | 'localOnly' | 'remoteOnly' | 'localNewer' | 'remoteNewer' | 'sizeDiff'
+
+export interface CompareRequest {
+  sessionId: string
+  localPath: string
+  remotePath: string
+}
+
+export interface CompareRow {
+  relPath: string
+  status: CompareStatus
+  localSize?: number
+  remoteSize?: number
+  localMtimeMs?: number
+  remoteMtimeMs?: number
+}
+
 export interface SyncRunResult {
   queuedTransferIds: string[]
   deletedCount: number
@@ -921,6 +938,7 @@ export const INVOKE_CHANNELS = {
   // one-way directory sync (mirror)
   syncPreview: 'sync:preview',
   syncRun: 'sync:run',
+  syncCompare: 'sync:compare',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',

@@ -23,6 +23,7 @@ import FilePreviewDialog from './FilePreviewDialog.vue'
 import EditorDialog from './EditorDialog.vue'
 import ChmodDialog from './ChmodDialog.vue'
 import SyncDialog from './SyncDialog.vue'
+import CompareDialog from './CompareDialog.vue'
 
 interface TransferIntent {
   sessionId: string
@@ -210,6 +211,7 @@ const transferIcon = computed(() => {
 
 const showTail = computed(() => props.side === 'remote' && sessions.status === 'connected')
 const syncDialogOpen = ref(false)
+const compareDialogOpen = ref(false)
 
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
@@ -848,6 +850,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @jump-bookmark="onJumpBookmark"
         @remove-bookmark="onRemoveBookmark"
         @sync-folder="syncDialogOpen = true"
+        @compare-folder="compareDialogOpen = true"
         />
       </div>
       <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
@@ -934,6 +937,13 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :remote-path="editorState?.remotePath ?? null"
       />
       <ChmodDialog v-model:open="chmodOpen" :entry="chmodTarget" @submit="onSubmitChmod" />
+      <CompareDialog
+        v-if="side === 'remote'"
+        v-model:open="compareDialogOpen"
+        :session-id="sessions.activeSessionId"
+        :initial-local-path="localFs.currentPath"
+        :initial-remote-path="remoteFs.currentPath"
+      />
       <SyncDialog
         v-if="side === 'remote'"
         v-model:open="syncDialogOpen"
