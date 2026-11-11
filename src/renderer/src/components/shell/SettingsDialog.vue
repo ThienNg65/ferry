@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import type { ProxyType } from '@shared/contract'
+import TerminalAppearanceSettings from './TerminalAppearanceSettings.vue'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
@@ -177,6 +178,7 @@ async function save(): Promise<void> {
           @update:model-value="(v: string) => ui.setDensity(v as Density)"
         />
       </div>
+      <TerminalAppearanceSettings />
       <div class="mt-4 flex flex-col gap-3">
         <div class="text-sm font-medium text-highlighted">Transfer bandwidth limit</div>
         <UCheckbox v-model="unlimited" label="Unlimited" />

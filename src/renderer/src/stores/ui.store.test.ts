@@ -60,4 +60,54 @@ describe('ui store layout state', () => {
     const { ui } = await freshStore({ 'ferry:ui:density': 'compact' })
     expect(ui.density).toBe('compact')
   })
+
+  it('defaults terminal appearance and persists setters', async () => {
+    const { ui, data } = await freshStore()
+    expect(ui.terminalScheme).toBe('ferry')
+    expect(ui.terminalFont).toBe('default')
+    expect(ui.terminalFontSize).toBe(14)
+    ui.setTerminalScheme('nord')
+    ui.setTerminalFontSize(99)
+    expect(data.get('ferry:ui:terminalScheme')).toBe('nord')
+    expect(ui.terminalFontSize).toBe(24)
+    expect(data.get('ferry:ui:terminalFontSize')).toBe('24')
+  })
+
+  it('falls back to defaults for invalid stored terminal values', async () => {
+    const { ui } = await freshStore({
+      'ferry:ui:terminalScheme': 'bogus',
+      'ferry:ui:terminalFont': 'bogus',
+      'ferry:ui:terminalFontSize': 'abc',
+      'ferry:ui:terminalLineHeight': '9'
+    })
+    expect(ui.terminalScheme).toBe('ferry')
+    expect(ui.terminalFont).toBe('default')
+    expect(ui.terminalFontSize).toBe(14)
+    expect(ui.terminalLineHeight).toBe(1.5)
+  })
+
+  it('keeps spaces typed into the custom font name', async () => {
+    const { ui } = await freshStore()
+    ui.setTerminalFont('custom')
+    ui.setTerminalFontCustom('Fira ')
+    expect(ui.terminalFontCustom).toBe('Fira ')
+    ui.setTerminalFontCustom('Fira Code')
+    expect(ui.terminalAppearance.fontFamily).toBe("'Fira Code', monospace")
+  })
+
+  it('treats an empty stored size or line height as the default', async () => {
+    const { ui } = await freshStore({ 'ferry:ui:terminalFontSize': '', 'ferry:ui:terminalLineHeight': ' ' })
+    expect(ui.terminalFontSize).toBe(14)
+    expect(ui.terminalLineHeight).toBe(1)
+  })
+
+  it('terminalAppearance follows the app theme for the ferry scheme and resets', async () => {
+    const { ui } = await freshStore({ 'ferry:ui:theme': 'dark' })
+    const dark = ui.terminalAppearance.theme.background
+    ui.theme = 'light'
+    expect(ui.terminalAppearance.theme.background).not.toBe(dark)
+    ui.setTerminalFontSize(18)
+    ui.resetTerminalAppearance()
+    expect(ui.terminalFontSize).toBe(14)
+  })
 })

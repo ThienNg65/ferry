@@ -1,5 +1,31 @@
 import { defineStore } from 'pinia'
 import { generateShadeRamp } from '../utils/colorRamp'
+import {
+  DEFAULT_FONT_ID,
+  DEFAULT_FONT_SIZE,
+  DEFAULT_LINE_HEIGHT,
+  DEFAULT_SCHEME_ID,
+  buildFontFamily,
+  clampFontSize,
+  clampLineHeight,
+  isFontId,
+  isSchemeId,
+  resolveTheme,
+  type TerminalTheme
+} from '../utils/terminalAppearance'
+
+const TERM_SCHEME_KEY = 'ferry:ui:terminalScheme'
+const TERM_FONT_KEY = 'ferry:ui:terminalFont'
+const TERM_FONT_CUSTOM_KEY = 'ferry:ui:terminalFontCustom'
+const TERM_FONT_SIZE_KEY = 'ferry:ui:terminalFontSize'
+const TERM_LINE_HEIGHT_KEY = 'ferry:ui:terminalLineHeight'
+
+export interface TerminalAppearance {
+  fontFamily: string
+  fontSize: number
+  lineHeight: number
+  theme: TerminalTheme
+}
 
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
@@ -50,6 +76,11 @@ interface UiState {
   dockHeight: number
   accentColor: string
   localPaneWidth: number
+  terminalScheme: string
+  terminalFont: string
+  terminalFontCustom: string
+  terminalFontSize: number
+  terminalLineHeight: number
   /** Which file pane the user last interacted with — per-launch layout state, not persisted. */
   activePane: 'local' | 'remote'
 }
@@ -96,6 +127,21 @@ function loadLocalPaneWidth(): number {
   return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : DEFAULT_LOCAL_PANE_WIDTH
 }
 
+function loadTerminalScheme(): string {
+  const stored = localStorage.getItem(TERM_SCHEME_KEY)
+  return stored && isSchemeId(stored) ? stored : DEFAULT_SCHEME_ID
+}
+
+function loadTerminalFont(): string {
+  const stored = localStorage.getItem(TERM_FONT_KEY)
+  return stored && isFontId(stored) ? stored : DEFAULT_FONT_ID
+}
+
+function loadTerminalNumber(key: string, fallback: number, clamp: (n: number) => number): number {
+  const raw = localStorage.getItem(key)
+  return raw === null || raw.trim() === '' ? fallback : clamp(Number(raw))
+}
+
 /** UI-layout preferences that persist across restarts (not session/domain state). */
 export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
@@ -106,10 +152,57 @@ export const useUiStore = defineStore('ui', {
     dockHeight: loadDockHeight(),
     accentColor: loadAccentColor(),
     localPaneWidth: loadLocalPaneWidth(),
+    terminalScheme: loadTerminalScheme(),
+    terminalFont: loadTerminalFont(),
+    terminalFontCustom: (localStorage.getItem(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
+    terminalFontSize: loadTerminalNumber(TERM_FONT_SIZE_KEY, DEFAULT_FONT_SIZE, clampFontSize),
+    terminalLineHeight: loadTerminalNumber(TERM_LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT, clampLineHeight),
     activePane: 'remote'
   }),
 
+  getters: {
+    terminalAppearance: (state): TerminalAppearance => ({
+      fontFamily: buildFontFamily(state.terminalFont, state.terminalFontCustom),
+      fontSize: state.terminalFontSize,
+      lineHeight: state.terminalLineHeight,
+      theme: resolveTheme(state.terminalScheme, state.theme)
+    })
+  },
+
   actions: {
+    setTerminalScheme(id: string): void {
+      this.terminalScheme = isSchemeId(id) ? id : DEFAULT_SCHEME_ID
+      localStorage.setItem(TERM_SCHEME_KEY, this.terminalScheme)
+    },
+
+    setTerminalFont(id: string): void {
+      this.terminalFont = isFontId(id) ? id : DEFAULT_FONT_ID
+      localStorage.setItem(TERM_FONT_KEY, this.terminalFont)
+    },
+
+    setTerminalFontCustom(name: string): void {
+      this.terminalFontCustom = name.slice(0, 60)
+      localStorage.setItem(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom)
+    },
+
+    setTerminalFontSize(size: number): void {
+      this.terminalFontSize = clampFontSize(size)
+      localStorage.setItem(TERM_FONT_SIZE_KEY, String(this.terminalFontSize))
+    },
+
+    setTerminalLineHeight(height: number): void {
+      this.terminalLineHeight = clampLineHeight(height)
+      localStorage.setItem(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight))
+    },
+
+    resetTerminalAppearance(): void {
+      this.setTerminalScheme(DEFAULT_SCHEME_ID)
+      this.setTerminalFont(DEFAULT_FONT_ID)
+      this.setTerminalFontCustom('')
+      this.setTerminalFontSize(DEFAULT_FONT_SIZE)
+      this.setTerminalLineHeight(DEFAULT_LINE_HEIGHT)
+    },
+
     toggleLocalPane(): void {
       this.showLocalPane = !this.showLocalPane
       localStorage.setItem(STORAGE_KEY, String(this.showLocalPane))
