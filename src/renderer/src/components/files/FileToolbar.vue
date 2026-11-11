@@ -38,9 +38,7 @@ const emit = defineEmits<{
 }>()
 
 const moreItems = computed<DropdownMenuItem[]>(() => {
-  const items: DropdownMenuItem[] = [{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => emit('mkdir') },
-    { label: 'New file', icon: 'i-lucide-file-plus', onSelect: () => emit('touch') }
-  ]
+  const items: DropdownMenuItem[] = []
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
   }
@@ -98,6 +96,12 @@ function onFilterInput(value: string | number): void {
         :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
         @click="emit('refresh')"
       />
+    </UTooltip>
+    <UTooltip text="New folder">
+      <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
+    </UTooltip>
+    <UTooltip text="New file">
+      <UButton icon="i-lucide-file-plus" color="neutral" variant="ghost" size="xs" aria-label="New file" @click="emit('touch')" />
     </UTooltip>
     <UInput
       ref="filterInputRef"
