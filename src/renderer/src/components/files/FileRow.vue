@@ -281,9 +281,9 @@ function onMouseLeave(): void {
       @blur="cancelRename"
     />
     <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
-    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
-    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
+    <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
+    <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
           {{ technicalPermissions }}
@@ -291,7 +291,7 @@ function onMouseLeave(): void {
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>
       </UTooltip>
     </div>
-    <div v-else-if="side === 'remote'" class="w-36 shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
+    <div v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
     <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
       <UTooltip v-if="transferIcon" :text="transferTooltip">
         <UButton

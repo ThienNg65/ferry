@@ -75,10 +75,44 @@ const emit = defineEmits<{
   'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
 import { COLUMN_HIDE } from '../../utils/paneColumns'
+import { DEFAULT_COLUMN_WIDTHS, type ColumnKey } from '../../utils/columnPrefs'
+
+const columnVars = computed(() => ({
+  '--col-size': `${ui.columns.widths.size}px`,
+  '--col-modified': `${ui.columns.widths.modified}px`,
+  '--col-permissions': `${ui.columns.widths.permissions}px`
+}))
+
+const columnMenuItems = computed(() => {
+  const keys: { key: ColumnKey; label: string }[] = [
+    { key: 'size', label: 'Size' },
+    { key: 'modified', label: 'Modified' },
+    ...(props.side === 'remote' ? [{ key: 'permissions' as const, label: 'Permissions' }] : [])
+  ]
+  return keys.map(({ key, label }) => ({
+    type: 'checkbox' as const,
+    label,
+    checked: !ui.columns.hidden.includes(key),
+    onUpdateChecked: (checked: boolean) => ui.setColumnVisible(key, checked)
+  }))
+})
+
+function startResize(key: ColumnKey, event: PointerEvent): void {
+  const startX = event.clientX
+  const startWidth = ui.columns.widths[key] ?? DEFAULT_COLUMN_WIDTHS[key]
+  const onMove = (e: PointerEvent): void => ui.setColumnWidth(key, startWidth + (startX - e.clientX))
+  const onUp = (): void => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    ui.persistColumns()
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
 </script>
 
 <template>
-  <div class="@container flex min-h-0 flex-1 flex-col">
+  <div class="@container flex min-h-0 flex-1 flex-col" :style="columnVars">
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
@@ -98,11 +132,13 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
         />
       </button>
       <button
+        v-if="!ui.columns.hidden.includes('size')"
         type="button"
-        class="w-20 shrink-0 text-right hover:text-highlighted"
+        class="relative w-[var(--col-size)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
         @click="emit('sort', 'size')"
       >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('size', $event)" />
         Size
         <UIcon
           v-if="sortColumn === 'size'"
@@ -111,11 +147,13 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
         />
       </button>
       <button
+        v-if="!ui.columns.hidden.includes('modified')"
         type="button"
-        class="w-32 shrink-0 text-right hover:text-highlighted"
+        class="relative w-[var(--col-modified)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
         @click="emit('sort', 'modified')"
       >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('modified', $event)" />
         Modified
         <UIcon
           v-if="sortColumn === 'modified'"
@@ -123,8 +161,19 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
           class="inline size-3 align-text-bottom"
         />
       </button>
-      <span v-if="side === 'remote'" class="w-36 shrink-0 text-right" :class="COLUMN_HIDE.remote.permissions">Permissions</span>
-      <span class="w-14 shrink-0" />
+      <span
+        v-if="side === 'remote' && !ui.columns.hidden.includes('permissions')"
+        class="relative w-[var(--col-permissions)] shrink-0 text-right"
+        :class="COLUMN_HIDE.remote.permissions"
+      >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @pointerdown.stop.prevent="startResize('permissions', $event)" />
+        Permissions
+      </span>
+      <span class="flex w-14 shrink-0 justify-end">
+        <UDropdownMenu :items="columnMenuItems">
+          <UButton icon="i-lucide-columns-3" color="neutral" variant="ghost" size="xs" aria-label="Choose columns" />
+        </UDropdownMenu>
+      </span>
     </div>
     <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">

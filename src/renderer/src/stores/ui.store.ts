@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { clampColumnWidth, parseColumnPrefs, type ColumnKey, type ColumnPrefs } from '../utils/columnPrefs'
 import { generateShadeRamp } from '../utils/colorRamp'
 import {
   DEFAULT_FONT_ID,
@@ -27,10 +28,19 @@ export interface TerminalAppearance {
   theme: TerminalTheme
 }
 
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
 const SHOW_HIDDEN_KEY = 'ferry:ui:showHidden'
+const COLUMNS_KEY = 'ferry:ui:columns'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
 const ACCENT_KEY = 'ferry:ui:accentColor'
@@ -74,6 +84,7 @@ interface UiState {
   permissionsDisplay: PermissionsDisplay
   density: Density
   showHidden: boolean
+  columns: ColumnPrefs
   theme: Theme
   dockHeight: number
   accentColor: string
@@ -151,6 +162,7 @@ export const useUiStore = defineStore('ui', {
     permissionsDisplay: loadPermissionsDisplay(),
     density: loadDensity(),
     showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
+    columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
     accentColor: loadAccentColor(),
@@ -214,6 +226,24 @@ export const useUiStore = defineStore('ui', {
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
       localStorage.setItem(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
+    },
+
+    setColumnVisible(key: ColumnKey, visible: boolean): void {
+      const hidden = this.columns.hidden.filter((k) => k !== key)
+      this.columns = { ...this.columns, hidden: visible ? hidden : [...hidden, key] }
+      this.persistColumns()
+    },
+
+    setColumnWidth(key: ColumnKey, px: number): void {
+      this.columns = { ...this.columns, widths: { ...this.columns.widths, [key]: clampColumnWidth(px) } }
+    },
+
+    persistColumns(): void {
+      try {
+        localStorage.setItem(COLUMNS_KEY, JSON.stringify(this.columns))
+      } catch {
+        return
+      }
     },
 
     toggleShowHidden(): void {
