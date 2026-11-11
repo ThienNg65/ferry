@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
@@ -13,6 +13,7 @@ import { useUiStore } from '../../stores/ui.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
+import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
 import { formatBytes, formatShortDate } from '../../utils/format'
@@ -126,6 +127,23 @@ watch(filteredEntries, (entries) => {
 /** Slim always-visible rail when Local is hidden — never fully unmounts (see ui.store.ts). */
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
+
+const unregisterPaneActions = registerPaneActions(props.side, {
+  rename: () => {
+    if (store.selected.size === 1) {
+      renamingPath.value = [...store.selected][0]
+    }
+  },
+  remove: () => void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path))),
+  transfer: () => void onTransferSelected(),
+  edit: () => {
+    const entry = store.entries.find((e) => store.selected.has(e.path))
+    if (store.selected.size === 1 && entry && !entry.isDir) {
+      void onEdit(entry)
+    }
+  }
+})
+onBeforeUnmount(unregisterPaneActions)
 
 void bookmarks.ensureLoaded()
 

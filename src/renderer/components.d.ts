@@ -36,6 +36,7 @@ declare module 'vue' {
     ProcessTable: typeof import('./src/components/monitor/ProcessTable.vue')['default']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']
     SettingsDialog: typeof import('./src/components/shell/SettingsDialog.vue')['default']
+    ShortcutsDialog: typeof import('./src/components/shell/ShortcutsDialog.vue')['default']
     SiteFormDialog: typeof import('./src/components/sessions/SiteFormDialog.vue')['default']
     SiteTabBar: typeof import('./src/components/shell/SiteTabBar.vue')['default']
     SyncDialog: typeof import('./src/components/files/SyncDialog.vue')['default']

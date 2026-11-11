@@ -11,6 +11,8 @@ import { clampLocalPaneWidth } from './utils/paneColumns'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
+import { useShortcutsDialog } from './composables/useShortcutsDialog'
+import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
 import TitleBar from './components/shell/TitleBar.vue'
@@ -41,6 +43,8 @@ window.addEventListener('resize', onWindowResize)
 onUnmounted(() => {
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onTabShortcut)
+  window.removeEventListener('mousemove', onPaneResizerMouseMove)
+  window.removeEventListener('mouseup', onPaneResizerMouseUp)
 })
 // Gates the connected subtree's FIRST mount only, so FilePane/BottomDock stay off the
 // cold-start bundle-eval path until the user actually connects — v-show (not this flag) handles
@@ -59,6 +63,7 @@ watch(
 const { isBusy } = useGlobalActivity()
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
+const shortcutsDialog = useShortcutsDialog()
 const notify = useNotify()
 
 ui.initTheme()
@@ -117,6 +122,18 @@ function onPaneResizerMouseUp() {
 }
 
 function onTabShortcut(event: KeyboardEvent): void {
+  if (event.key === '?' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    const target = event.target
+    const typing =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && (target.isContentEditable || target.closest('.xterm') !== null))
+    if (!typing) {
+      event.preventDefault()
+      shortcutsDialog.open()
+    }
+    return
+  }
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return
   }
@@ -230,6 +247,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
+    <ShortcutsDialog v-model:open="shortcutsDialog.isOpen.value" />
     <CommandPalette />
   </UApp>
 </template>

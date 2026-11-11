@@ -237,6 +237,9 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         </UDropdownMenu>
       </span>
     </div>
+    <div class="h-0.5 shrink-0">
+      <UProgress v-if="loading && entries.length > 0" size="xs" />
+    </div>
     <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
       <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
