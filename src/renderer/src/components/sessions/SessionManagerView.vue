@@ -13,6 +13,7 @@ const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessions
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
+import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
@@ -164,6 +165,14 @@ async function confirmDelete(): Promise<void> {
 }
 
 const duplicatingId = ref<string | null>(null)
+
+function siteMenuItems(site: Site): ContextMenuItem[] {
+  return [
+    { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => void onDuplicate(site) },
+    { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => openEditDialog(site) },
+    { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => { deleteTarget.value = site } }
+  ]
+}
 
 async function onDuplicate(site: Site): Promise<void> {
   duplicatingId.value = site.id
@@ -428,9 +437,8 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                   {{ section.name }}
                 </div>
                 <ul class="flex flex-col gap-1">
+                  <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
                   <li
-                    v-for="site in section.sites"
-                    :key="site.id"
                     class="group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
                     :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
                   >
@@ -454,43 +462,18 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                       <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
                       <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
                     </button>
-                    <template v-if="!selectMode">
-                      <UTooltip text="Duplicate site">
-                        <UButton
-                          icon="i-lucide-copy"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Duplicate site"
-                          :loading="duplicatingId === site.id"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="onDuplicate(site)"
-                        />
-                      </UTooltip>
-                      <UTooltip text="Edit site">
-                        <UButton
-                          icon="i-lucide-pencil"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Edit site"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="openEditDialog(site)"
-                        />
-                      </UTooltip>
-                      <UTooltip text="Delete site">
-                        <UButton
-                          icon="i-lucide-trash-2"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Delete site"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="deleteTarget = site"
-                        />
-                      </UTooltip>
-                    </template>
+                    <UDropdownMenu v-if="!selectMode" :items="siteMenuItems(site)">
+                      <UButton
+                        icon="i-lucide-ellipsis"
+                        color="neutral"
+                        variant="ghost"
+                        size="xs"
+                        :aria-label="`Actions for ${site.name}`"
+                        :loading="duplicatingId === site.id"
+                      />
+                    </UDropdownMenu>
                   </li>
+                  </ContextMenu>
                 </ul>
               </div>
             </div>

@@ -308,7 +308,7 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           :aria-label="transferTooltip"
-          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           @click.stop="emit('transfer', entry)"
         />
       </UTooltip>
@@ -319,7 +319,7 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           aria-label="Delete"
-          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           @click.stop="emit('remove', entry)"
         />
       </UTooltip>
