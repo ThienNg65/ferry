@@ -16,6 +16,7 @@ const props = defineProps<{
   /** Shows the "Sync this folder" button — only meaningful on the remote pane while connected. */
   showSync?: boolean
   canGoBack?: boolean
+  showHidden?: boolean
   canGoForward?: boolean
 }>()
 
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   up: []
   refresh: []
   mkdir: []
+  'toggle-hidden': []
   'toggle-permissions': []
   'transfer-selected': []
   'update:filterText': [value: string]
@@ -39,6 +41,11 @@ const moreItems = computed<DropdownMenuItem[]>(() => {
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
   }
+  items.push({
+    label: props.showHidden ? 'Hide hidden files (Ctrl+H)' : 'Show hidden files (Ctrl+H)',
+    icon: props.showHidden ? 'i-lucide-eye-off' : 'i-lucide-eye',
+    onSelect: () => emit('toggle-hidden')
+  })
   if (props.side === 'remote') {
     items.push({ label: 'Switch permissions display', icon: 'i-lucide-shield', onSelect: () => emit('toggle-permissions') })
   }

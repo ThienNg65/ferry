@@ -58,10 +58,11 @@ const filterText = ref('')
 const isFiltered = computed(() => filterText.value.trim().length > 0)
 const filteredEntries = computed(() => {
   const needle = filterText.value.trim().toLowerCase()
+  const visible = ui.showHidden ? store.entries : store.entries.filter((e) => !e.name.startsWith('.'))
   if (!needle) {
-    return store.entries
+    return visible
   }
-  return store.entries.filter((e) => e.name.toLowerCase().includes(needle))
+  return visible.filter((e) => e.name.toLowerCase().includes(needle))
 })
 
 const paneSummary = computed(() => {
@@ -547,6 +548,11 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     await store.load(store.currentPath, { forceRefresh: true })
     return
   }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
+    event.preventDefault()
+    ui.toggleShowHidden()
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
     event.preventDefault()
     toolbarRef.value?.focusFilter()
@@ -766,6 +772,8 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @up="store.goUp"
         @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
+        :show-hidden="ui.showHidden"
+        @toggle-hidden="ui.toggleShowHidden()"
         @toggle-permissions="ui.togglePermissionsDisplay()"
         @transfer-selected="onTransferSelected"
         @bookmark="onBookmarkFolder"

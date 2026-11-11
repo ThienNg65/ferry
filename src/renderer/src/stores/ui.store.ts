@@ -30,6 +30,7 @@ export interface TerminalAppearance {
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
+const SHOW_HIDDEN_KEY = 'ferry:ui:showHidden'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
 const ACCENT_KEY = 'ferry:ui:accentColor'
@@ -72,6 +73,7 @@ interface UiState {
   showLocalPane: boolean
   permissionsDisplay: PermissionsDisplay
   density: Density
+  showHidden: boolean
   theme: Theme
   dockHeight: number
   accentColor: string
@@ -148,6 +150,7 @@ export const useUiStore = defineStore('ui', {
     showLocalPane: localStorage.getItem(STORAGE_KEY) !== 'false',
     permissionsDisplay: loadPermissionsDisplay(),
     density: loadDensity(),
+    showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
     accentColor: loadAccentColor(),
@@ -211,6 +214,11 @@ export const useUiStore = defineStore('ui', {
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
       localStorage.setItem(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
+    },
+
+    toggleShowHidden(): void {
+      this.showHidden = !this.showHidden
+      localStorage.setItem(SHOW_HIDDEN_KEY, String(this.showHidden))
     },
 
     setDensity(density: Density): void {
