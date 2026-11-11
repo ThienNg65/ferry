@@ -22,6 +22,7 @@ interface EditEntry {
   /** mtime (ms) of localTempPath as of its last successful upload (or the initial download) — used by disposeAll() to avoid deleting an edit that never made it back to the server. */
   lastSyncedMtimeMs: number
   remoteStamp: { mtime: number; size: number } | null
+  conflictNotified: boolean
   /** True once the underlying SSH session has closed — the watcher is stopped but the temp file is kept. */
   sessionClosed: boolean
 }
@@ -75,6 +76,7 @@ export class EditSessionManager {
     }
 
     const editId = randomUUID()
+    const remoteStamp = await this.remoteStamp(sessionId, remotePath)
     const basename = remotePath.split('/').filter(Boolean).pop() ?? 'file'
     const tempDir = path.join(os.tmpdir(), 'ferry-edit', sessionId, randomUUID())
     const localTempPath = path.join(tempDir, basename)
@@ -115,7 +117,8 @@ export class EditSessionManager {
       watcher: null,
       debounceTimer: null,
       lastSyncedMtimeMs: stats.mtimeMs,
-      remoteStamp: await this.remoteStamp(sessionId, remotePath),
+      remoteStamp,
+      conflictNotified: false,
       sessionClosed: false
     }
     this.edits.set(editId, entry)
@@ -204,6 +207,10 @@ export class EditSessionManager {
     if (!force && entry.remoteStamp) {
       const current = await this.remoteStamp(entry.sessionId, entry.remotePath)
       if (current && (current.mtime !== entry.remoteStamp.mtime || current.size !== entry.remoteStamp.size)) {
+        if (entry.conflictNotified) {
+          return
+        }
+        entry.conflictNotified = true
         this.broadcast({
           editId: entry.editId,
           sessionId: entry.sessionId,
@@ -232,6 +239,7 @@ export class EditSessionManager {
       const stats = await fs.stat(entry.localTempPath)
       entry.lastSyncedMtimeMs = stats.mtimeMs
       entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath)
+      entry.conflictNotified = false
       this.broadcast({
         editId: entry.editId,
         sessionId: entry.sessionId,

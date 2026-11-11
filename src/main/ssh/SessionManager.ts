@@ -134,6 +134,7 @@ export class SessionManager {
   private readonly sessions = new Map<string, SessionEntry>()
   /** Resolvers for keyboard-interactive prompts currently awaiting a renderer response, keyed by requestId. */
   private readonly pendingConnects = new Map<string, () => void>()
+  private readonly connectTimers = new Map<string, { pause: () => void; resume: () => void }>()
   private readonly pendingHostKeys = new Map<string, { sessionId: string; resolve: (accept: boolean) => void }>()
   private readonly pendingKeyboardInteractive = new Map<string, { sessionId: string; resolve: (responses: string[]) => void }>()
 
@@ -193,10 +194,27 @@ export class SessionManager {
     pending.resolve(accept)
   }
 
+  setHostKeyPrompter(prompter: (sessionId: string, host: string, port: number, fingerprint: string) => Promise<boolean>): void {
+    this.hostKeyPrompter = prompter
+  }
+
+  private hostKeyPrompter = (sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> =>
+    this.askRendererHostKey(sessionId, host, port, fingerprint)
+
+  private pauseConnectTimer(sessionId: string): void {
+    this.connectTimers.get(sessionId)?.pause()
+  }
+
+  private resumeConnectTimer(sessionId: string): void {
+    this.connectTimers.get(sessionId)?.resume()
+  }
+
   private promptHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
-    if (process.env.FERRY_TRUST_NEW_HOSTS === '1') {
-      return Promise.resolve(true)
-    }
+    this.pauseConnectTimer(sessionId)
+    return this.hostKeyPrompter(sessionId, host, port, fingerprint).finally(() => this.resumeConnectTimer(sessionId))
+  }
+
+  private askRendererHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
     return new Promise((resolve) => {
       const requestId = randomUUID()
       this.pendingHostKeys.set(requestId, { sessionId, resolve })
@@ -216,7 +234,8 @@ export class SessionManager {
     instructions: string,
     prompts: { prompt: string; echo: boolean }[]
   ): Promise<string[]> {
-    return new Promise((resolve) => {
+    this.pauseConnectTimer(sessionId)
+    return new Promise<string[]>((resolve) => {
       const requestId = randomUUID()
       this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
@@ -225,7 +244,7 @@ export class SessionManager {
           win.webContents.send(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
         }
       }
-    })
+    }).finally(() => this.resumeConnectTimer(sessionId))
   }
 
   /**
@@ -329,7 +348,7 @@ export class SessionManager {
       host,
       port,
       username,
-      readyTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
+      readyTimeout: 0,
       keepaliveInterval: 15_000,
       keepaliveCountMax: 4,
       tryKeyboard: true,
@@ -376,7 +395,20 @@ export class SessionManager {
   /** Connects one `ssh2.Client` (either the target host or a jump host), resolving on `ready`. Real keyboard-interactive prompts route through {@link promptKeyboardInteractive} under the given `sessionId`. */
   private connectClient(sessionId: string, client: Client, config: ConnectConfig, password: string | undefined, authMethod?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const disarm = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+      }
+      const arm = (): void => {
+        disarm()
+        timer = setTimeout(onTimeout, DEFAULT_CONNECT_TIMEOUT_MS)
+      }
       const cleanup = (): void => {
+        disarm()
+        this.connectTimers.delete(sessionId)
         client.removeListener('ready', onReady)
         client.removeListener('error', onError)
         client.removeListener('timeout', onTimeout)
@@ -394,8 +426,11 @@ export class SessionManager {
       }
       const onTimeout = (): void => {
         cleanup()
+        client.destroy()
         reject(new SshError('SSH_TIMEOUT', `Connection to ${config.host} timed out`))
       }
+      this.connectTimers.set(sessionId, { pause: disarm, resume: arm })
+      arm()
       client.on('ready', onReady)
       client.on('error', onError)
       client.on('timeout', onTimeout)

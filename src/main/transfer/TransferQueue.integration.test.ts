@@ -64,6 +64,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('../ssh/SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ TransferQueue } = await import('./TransferQueue'))
     const result = await SessionManager.getInstance().openQuickConnect({
       name: 'ferry-test',

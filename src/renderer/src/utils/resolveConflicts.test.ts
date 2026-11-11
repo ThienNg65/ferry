@@ -38,6 +38,10 @@ describe('resolveConflicts', () => {
     expect(out[0].remotePath).toBe('/srv/a (2).txt')
     expect(out[0].localPath).toBe('C:\\src\\a.txt')
   })
+  it('rename avoids names used by other items in the same batch', () => {
+    const out = resolveConflicts([up('a.txt', null), up('a (1).txt', null)], [{ name: 'a.txt', modifiedAt: null }], 'rename')
+    expect(new Set(out.map((i) => i.remotePath)).size).toBe(2)
+  })
   it('rename rewrites the local path for downloads', () => {
     const down: ConflictIntent = { ...up('a.txt', null), direction: 'download', localPath: 'C:\\dst\\a.txt', remotePath: '/srv/a.txt' }
     expect(resolveConflicts([down], targets, 'rename')[0].localPath).toBe('C:\\dst\\a (2).txt')

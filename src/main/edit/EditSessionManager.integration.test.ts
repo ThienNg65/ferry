@@ -58,6 +58,7 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('../ssh/SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ EditSessionManager } = await import('./EditSessionManager'))
     remote = await import('../fs/RemoteFsService')
     sessionId = (
@@ -100,11 +101,60 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
     await waitFor(() => events.some((e) => e.editId === editId && e.state === 'remote-changed'))
     expect(await readRemote(remotePath)).toBe('changed by someone else, longer')
 
+    await new Promise((r) => setTimeout(r, 1500))
+    await fs.writeFile(localTempPath, 'my edit again')
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(events.filter((e) => e.editId === editId && e.state === 'remote-changed')).toHaveLength(1)
+    await fs.writeFile(localTempPath, 'my edit')
     await manager.forceReupload(editId)
     expect(await readRemote(remotePath)).toBe('my edit')
 
     const listing = await remote.listRemote(sessionId, REMOTE_BASE)
     expect(listing.entries.some((e) => e.name.includes('.ferry-tmp-'))).toBe(false)
     await SessionManager.getInstance().shell(sessionId).unlink(remotePath)
+  }, 30_000)
+
+  it('saves through a symlink without replacing it', async () => {
+    const id = randomUUID()
+    const real = `${REMOTE_BASE}/real-${id}.txt`
+    const link = `${REMOTE_BASE}/link-${id}.txt`
+    await putRemote(real, 'before')
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const sftp = await shell.sftp()
+    await new Promise<void>((res, rej) => sftp.symlink(real, link, (e) => (e ? rej(e) : res())))
+    await putRemote(link, 'after')
+    const st = await new Promise<{ isSymbolicLink(): boolean }>((res, rej) => sftp.lstat(link, (e, s) => (e ? rej(e) : res(s))))
+    expect(st.isSymbolicLink()).toBe(true)
+    expect(await readRemote(real)).toBe('after')
+    await shell.unlink(link)
+    await shell.unlink(real)
+  }, 30_000)
+
+  it('keeps the original when the fallback rename fails', async () => {
+    const remotePath = `${REMOTE_BASE}/fallback-${randomUUID()}.txt`
+    await putRemote(remotePath, 'keep me')
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const sftp = (await shell.sftp()) as unknown as { ext_openssh_rename: unknown }
+    const origExt = sftp.ext_openssh_rename
+    const origRename = shell.rename.bind(shell)
+    sftp.ext_openssh_rename = () => {
+      throw new Error('Server does not support this extended request')
+    }
+    shell.rename = async (from: string, to: string) => {
+      if (from.includes('.ferry-tmp-')) {
+        throw new Error('simulated rename failure')
+      }
+      return origRename(from, to)
+    }
+    try {
+      await expect(putRemote(remotePath, 'new content')).rejects.toThrow()
+    } finally {
+      sftp.ext_openssh_rename = origExt
+      shell.rename = origRename
+    }
+    expect(await readRemote(remotePath)).toBe('keep me')
+    const names = (await remote.listRemote(sessionId, REMOTE_BASE)).entries.map((e) => e.name)
+    expect(names.some((n) => n.includes('.ferry-tmp-') || n.includes('.ferry-bak-'))).toBe(false)
+    await shell.unlink(remotePath)
   }, 30_000)
 })

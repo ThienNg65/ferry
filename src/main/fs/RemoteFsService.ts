@@ -220,21 +220,47 @@ function posixRename(sftp: SFTPWrapper, from: string, to: string): Promise<boole
   })
 }
 
+function resolveRemotePath(sftp: SFTPWrapper, remotePath: string): Promise<string> {
+  return new Promise((resolve) => sftp.realpath(remotePath, (e, abs) => resolve(e ? remotePath : abs)))
+}
+
+async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: string, hadTarget: boolean): Promise<void> {
+  if (!hadTarget) {
+    await shell.rename(tempPath, target)
+    return
+  }
+  const backup = `${target}.ferry-bak-${randomBytes(4).toString('hex')}`
+  await shell.rename(target, backup)
+  try {
+    await shell.rename(tempPath, target)
+  } catch (e) {
+    await shell.rename(backup, target).catch(() => undefined)
+    throw e
+  }
+  await shell.unlink(backup).catch(() => undefined)
+}
+
 export async function uploadForEdit(sessionId: string, localPath: string, remotePath: string): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
   const sftp = await shell.sftp()
-  const existing = await statRemoteForEdit(sessionId, remotePath)
-  const tempPath = `${remotePath}.ferry-tmp-${randomBytes(4).toString('hex')}`
+  const target = await resolveRemotePath(sftp, remotePath)
+  const existing = await statRemoteForEdit(sessionId, target)
+  const tempPath = `${target}.ferry-tmp-${randomBytes(4).toString('hex')}`
   try {
-    await writeRemoteFile(sftp, localPath, tempPath)
+    try {
+      await writeRemoteFile(sftp, localPath, tempPath)
+    } catch (e) {
+      if (existing && /permission denied/i.test(e instanceof Error ? e.message : '')) {
+        await writeRemoteFile(sftp, localPath, target)
+        return
+      }
+      throw e
+    }
     if (existing) {
       await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0'))
     }
-    if (!(await posixRename(sftp, tempPath, remotePath))) {
-      if (existing) {
-        await shell.unlink(remotePath)
-      }
-      await shell.rename(tempPath, remotePath)
+    if (!(await posixRename(sftp, tempPath, target))) {
+      await replaceRemoteFile(shell, tempPath, target, existing !== null)
     }
   } catch (e) {
     await shell.unlink(tempPath).catch(() => undefined)

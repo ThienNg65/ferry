@@ -40,7 +40,7 @@ function isNewer(source: string | null, target: string | null): boolean {
 
 export function resolveConflicts<T extends ConflictIntent>(intents: T[], targets: ConflictTarget[], choice: ConflictChoice): T[] {
   const byName = new Map(targets.map((t) => [t.name, t]))
-  const taken = new Set(byName.keys())
+  const taken = new Set([...byName.keys(), ...intents.map((i) => i.targetName)])
   const result: T[] = []
   for (const intent of intents) {
     const target = byName.get(intent.targetName)

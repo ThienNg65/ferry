@@ -16,7 +16,6 @@ export default defineConfig({
     // two files independently trust/forget the same host:port fingerprint at
     // the same time. Sequential file execution trades some wall-clock time
     // for determinism, which matters more here than speed.
-    env: { FERRY_TRUST_NEW_HOSTS: '1' },
     fileParallelism: false
   }
 })
