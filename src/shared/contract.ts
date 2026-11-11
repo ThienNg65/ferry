@@ -841,6 +841,7 @@ export const INVOKE_CHANNELS = {
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
+  sitesImportJson: 'sites:import-json',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',

@@ -165,6 +165,19 @@ async function onExportSites(): Promise<void> {
   }
 }
 
+async function onImportSitesJson(): Promise<void> {
+  try {
+    const result = await invoke<{ imported: number; skipped: number } | null>(INVOKE_CHANNELS.sitesImportJson)
+    if (!result) {
+      return
+    }
+    await sites.fetchSites()
+    notify.success('Sites imported', `${result.imported} added, ${result.skipped} already saved`)
+  } catch (e) {
+    notify.error('Import failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
 function toggleSelectMode(): void {
   selectMode.value = !selectMode.value
   selectedIds.clear()
@@ -319,6 +332,16 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     color="neutral"
                     aria-label="Import sites"
                     @click="importOpen = true"
+                  />
+                </UTooltip>
+                <UTooltip text="Import sites backup">
+                  <UButton
+                    icon="i-lucide-upload"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    aria-label="Import sites backup"
+                    @click="onImportSitesJson"
                   />
                 </UTooltip>
                 <UTooltip text="Export sites backup">
