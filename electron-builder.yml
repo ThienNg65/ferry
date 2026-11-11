@@ -6,13 +6,13 @@ directories:
 files:
   - out/**/*
 # Auto-update feed — electron-updater (wired in src/main/update/AutoUpdater.ts)
-# checks this on every launch of a packaged build, against this GitHub repo's
-# Releases. `checkForUpdatesAndNotify()` fails quietly if no matching release
+# checks this on every launch of a packaged build, against the public
+# ThienNg65/ferry-release repository's GitHub Releases. `checkForUpdatesAndNotify()` fails quietly if no matching release
 # has been published yet — see AutoUpdater.ts's error handling.
 publish:
   provider: github
   owner: ThienNg65
-  repo: ferry
+  repo: ferry-release
   # electron-builder defaults to draft releases (hidden from the Releases page
   # until manually published) unless told otherwise.
   releaseType: release
