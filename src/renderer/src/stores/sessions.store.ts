@@ -258,12 +258,18 @@ export const useSessionsStore = defineStore('sessions', {
       trustedHostKey?: { host: string; port: number }
     ): Promise<void> {
       const notify = useNotify()
+      const startedSessionId = tab.sessionId
+      const isAbandoned = (): boolean =>
+        tab.sessionId !== startedSessionId || !this.tabs.some((t) => t.tabId === tab.tabId)
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
           ...request,
           sessionId: tab.sessionId,
           trustedHostKey
         })
+        if (isAbandoned()) {
+          return
+        }
         // tab.sessionId is already set during openSession prep
         // Preload the initial listing before flipping `status` — App.vue's
         // picker→file-browser swap is gated on `status`, so this keeps the
@@ -273,6 +279,9 @@ export const useSessionsStore = defineStore('sessions', {
         // longer be `activeTab` by the time this resolves if the user
         // switched tabs mid-connect.
         await useRemoteFsStore().loadForSession(result.sessionId)
+        if (isAbandoned()) {
+          return
+        }
         // An intervening `sessionStatus` event (e.g. the connection dropping
         // mid-load) may already have moved this tab to a terminal state —
         // don't fight that with a stale success overwrite/toast.
@@ -285,6 +294,9 @@ export const useSessionsStore = defineStore('sessions', {
         // connected by the time the user clicks the Terminal dock tab.
         void useTerminalStreamsStore().ensureTerminal(result.sessionId)
       } catch (e) {
+        if (isAbandoned()) {
+          return
+        }
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
@@ -294,8 +306,10 @@ export const useSessionsStore = defineStore('sessions', {
         }
         throw e
       } finally {
-        tab.connecting = false
-        tab.connectPromise = null
+        if (!isAbandoned()) {
+          tab.connecting = false
+          tab.connectPromise = null
+        }
       }
     },
 
@@ -346,21 +360,33 @@ export const useSessionsStore = defineStore('sessions', {
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
+    async cancelConnect(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab || !tab.connecting || !tab.sessionId) {
+        return
+      }
+      const sessionId = tab.sessionId
+      tab.sessionId = null
+      tab.status = null
+      tab.statusMessage = null
+      tab.progressMessages = []
+      tab.connecting = false
+      tab.connectPromise = null
+      if (this.pendingKeyboardPrompt?.sessionId === sessionId) {
+        this.pendingKeyboardPrompt = null
+      }
+      await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
+      useRemoteFsStore().clearSession(sessionId)
+    },
+
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */
     async closeTab(tabId: string): Promise<void> {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab) {
         return
       }
-      if (tab.connecting && tab.connectPromise) {
-        // Wait out the in-flight connect instead of detaching the tab now — otherwise
-        // openSession's eventual result sets fields on an orphaned tab and, worse, a real SSH
-        // session finishes connecting with no tab left to close it from.
-        try {
-          await tab.connectPromise
-        } catch {
-          // Already recorded on the tab (status/statusMessage) by openSession's own catch.
-        }
+      if (this.pendingKeyboardPrompt?.sessionId === tab.sessionId) {
+        this.pendingKeyboardPrompt = null
       }
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)

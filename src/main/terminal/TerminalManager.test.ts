@@ -75,7 +75,9 @@ describe('TerminalManager', () => {
     expect(stream!.write).toHaveBeenCalledWith("cd '/home/user/project'\n")
 
     stream!.emit('data', Buffer.from('hello'))
-    expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: new Uint8Array(Buffer.from('hello')) }])
+    await vi.waitFor(() =>
+      expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: new Uint8Array(Buffer.from('hello')) }])
+    )
   })
 
   it('skips the cd when cwd is "." (no configured start path)', async () => {

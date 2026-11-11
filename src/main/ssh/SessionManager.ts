@@ -38,6 +38,7 @@ interface SessionEntry {
   shell: RemoteShell
   status: SessionStatus
   cwdRemote: string
+  abort: () => void
 }
 
 interface ConnectInput {
@@ -129,7 +130,8 @@ export class SessionManager {
   private static instance: SessionManager | null = null
   private readonly sessions = new Map<string, SessionEntry>()
   /** Resolvers for keyboard-interactive prompts currently awaiting a renderer response, keyed by requestId. */
-  private readonly pendingKeyboardInteractive = new Map<string, (responses: string[]) => void>()
+  private readonly pendingConnects = new Map<string, () => void>()
+  private readonly pendingKeyboardInteractive = new Map<string, { sessionId: string; resolve: (responses: string[]) => void }>()
 
   static getInstance(): SessionManager {
     if (SessionManager.instance === null) {
@@ -170,12 +172,12 @@ export class SessionManager {
 
   /** Delivers the renderer's answers for a pending keyboard-interactive prompt. Safe to call with a stale/unknown requestId (e.g. a duplicate submit) — it's just ignored. */
   respondKeyboardInteractive(requestId: string, responses: string[]): void {
-    const resolve = this.pendingKeyboardInteractive.get(requestId)
-    if (!resolve) {
+    const pending = this.pendingKeyboardInteractive.get(requestId)
+    if (!pending) {
       return
     }
     this.pendingKeyboardInteractive.delete(requestId)
-    resolve(responses)
+    pending.resolve(responses)
   }
 
   /** Broadcasts a keyboard-interactive challenge to the renderer and waits for its answer. */
@@ -187,7 +189,7 @@ export class SessionManager {
   ): Promise<string[]> {
     return new Promise((resolve) => {
       const requestId = randomUUID()
-      this.pendingKeyboardInteractive.set(requestId, resolve)
+      this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
@@ -292,6 +294,8 @@ export class SessionManager {
       port,
       username,
       readyTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 4,
       tryKeyboard: true,
       hostVerifier
     }
@@ -418,7 +422,15 @@ export class SessionManager {
     // user actually connects, keeping it off the app-startup critical path.
     // Aliased so the runtime binding doesn't collide with the file-wide `Client`
     // type-only import.
+    let cancelledEarly = false
+    this.pendingConnects.set(sessionId, () => {
+      cancelledEarly = true
+    })
     const { Client: SshClient } = await import('ssh2')
+    this.pendingConnects.delete(sessionId)
+    if (cancelledEarly) {
+      throw new SshError('CANCELLED', 'Connection cancelled')
+    }
     const client = new SshClient()
     const hops = input.jumpHosts ?? []
     const jumpClients: Client[] = hops.map(() => new SshClient())
@@ -431,6 +443,15 @@ export class SessionManager {
       jc.on('error', () => {})
     }
 
+    let sock: ClientChannel | Duplex | undefined
+    let aborted = false
+    let rejectCancelled: (e: Error) => void = () => {}
+    const cancelled = new Promise<never>((_, reject) => {
+      rejectCancelled = reject
+    })
+    cancelled.catch(() => {})
+    const guard = <T>(p: Promise<T>): Promise<T> => Promise.race([p, cancelled])
+
     const entry: SessionEntry = {
       sessionId,
       siteId,
@@ -438,7 +459,16 @@ export class SessionManager {
       jumpClients,
       shell: new RemoteShell(client),
       status: 'connecting',
-      cwdRemote: initialCwd
+      cwdRemote: initialCwd,
+      abort: () => {
+        aborted = true
+        client.destroy()
+        for (const jc of jumpClients) {
+          jc.destroy()
+        }
+        sock?.destroy()
+        rejectCancelled(new SshError('CANCELLED', 'Connection cancelled'))
+      }
     }
     this.sessions.set(sessionId, entry)
 
@@ -449,7 +479,6 @@ export class SessionManager {
     // established if a later step throws — otherwise a proxy socket (or an intermediate jump
     // tunnel) that connected successfully just before a subsequent auth/host-key failure would
     // never be closed.
-    let sock: ClientChannel | Duplex | undefined
     try {
       if (input.proxy) {
         // Only ever supplies hop 0's transport — reaching hop 1+ (or the
@@ -459,24 +488,35 @@ export class SessionManager {
         // do I reach the first machine."
         const first = hops.length > 0 ? hops[0] : input
         this.broadcastProgress(sessionId, 'Searching for proxy...')
-        sock = await connectViaProxy(input.proxy, first.host, first.port)
+        const proxied = connectViaProxy(input.proxy, first.host, first.port)
+        proxied.then(
+          (s) => {
+            if (aborted) {
+              s.destroy()
+            }
+          },
+          () => undefined
+        )
+        sock = await guard(proxied)
         this.broadcastProgress(sessionId, 'Connecting to proxy...')
         this.broadcastProgress(sessionId, 'Authenticating...')
         this.broadcastProgress(sessionId, `Using username "${first.username}".`)
       } else {
         const first = hops.length > 0 ? hops[0] : input
         this.broadcastProgress(sessionId, 'Searching for host...')
-        sock = await new Promise<net.Socket>((resolve, reject) => {
+        sock = await guard(new Promise<net.Socket>((resolve, reject) => {
           const s = net.createConnection({
             host: first.host,
             port: first.port,
             autoSelectFamily: true,
             autoSelectFamilyAttemptTimeout: 250
           })
+          sock = s
           const timeoutId = setTimeout(() => {
             s.destroy()
             reject(new SshError('SSH_TIMEOUT', `Connection to ${first.host} timed out`))
           }, DEFAULT_CONNECT_TIMEOUT_MS)
+          s.once('close', () => clearTimeout(timeoutId))
           s.once('lookup', () => {
             this.broadcastProgress(sessionId, 'Connecting to host...')
           })
@@ -490,7 +530,7 @@ export class SessionManager {
             clearTimeout(timeoutId)
             reject(new SshError('SSH_CONNECT', err.message))
           })
-        })
+        }))
       }
       for (let i = 0; i < hops.length; i++) {
         const hop = hops[i]
@@ -506,7 +546,7 @@ export class SessionManager {
           hopConfig.sock = sock
         }
         try {
-          await this.connectClient(sessionId, hopClient, hopConfig, hop.password, hop.authMethod)
+          await guard(this.connectClient(sessionId, hopClient, hopConfig, hop.password, hop.authMethod))
         } catch (e) {
           throw hopMismatch.value
             ? new SshError(
@@ -518,7 +558,7 @@ export class SessionManager {
             : e
         }
         const next = i + 1 < hops.length ? hops[i + 1] : input
-        sock = await this.forwardThroughJump(hopClient, next.host, next.port)
+        sock = await guard(this.forwardThroughJump(hopClient, next.host, next.port))
       }
 
       const { config: targetConfig, hostKeyMismatch, agentIdentityCount } = await this.buildConnectConfig(
@@ -533,7 +573,7 @@ export class SessionManager {
       }
 
       try {
-        await this.connectClient(sessionId, client, targetConfig, input.password, input.authMethod)
+        await guard(this.connectClient(sessionId, client, targetConfig, input.password, input.authMethod))
       } catch (e) {
         if (hostKeyMismatch.value) {
           throw new SshError(
@@ -601,9 +641,20 @@ export class SessionManager {
   close(sessionId: string): void {
     const entry = this.sessions.get(sessionId)
     if (!entry) {
+      this.pendingConnects.get(sessionId)?.()
       return
     }
+    const wasConnecting = entry.status === 'connecting'
     entry.status = 'disconnected'
+    if (wasConnecting) {
+      entry.abort()
+    }
+    for (const [requestId, pending] of this.pendingKeyboardInteractive) {
+      if (pending.sessionId === sessionId) {
+        this.pendingKeyboardInteractive.delete(requestId)
+        pending.resolve([])
+      }
+    }
     TailManager.getInstance().stopAllForSession(sessionId)
     TerminalManager.getInstance().closeAllForSession(sessionId)
     OperationRegistry.getInstance().cancelAllForSession(sessionId)

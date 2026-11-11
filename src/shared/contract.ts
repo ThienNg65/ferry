@@ -858,8 +858,6 @@ export const INVOKE_CHANNELS = {
   editList: 'edit:list',
   // terminal
   terminalOpen: 'terminal:open',
-  terminalWrite: 'terminal:write',
-  terminalResize: 'terminal:resize',
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
@@ -932,6 +930,28 @@ export const EVENT_CHANNELS = {
   updateDownloaded: 'update:downloaded',
   updateStatus: 'update:status'
 } as const
+
+export const SEND_CHANNELS = {
+  terminalAck: 'terminal:ack',
+  terminalInput: 'terminal:input',
+  terminalResize: 'terminal:resize'
+} as const
+
+export interface TerminalAckEvent {
+  terminalId: string
+  bytes: number
+}
+
+export interface TerminalInputEvent {
+  terminalId: string
+  data: string
+}
+
+export interface TerminalResizeEvent {
+  terminalId: string
+  cols: number
+  rows: number
+}
 
 /** Union of every valid event channel string. */
 export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS]

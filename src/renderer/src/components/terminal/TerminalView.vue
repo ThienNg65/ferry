@@ -28,6 +28,13 @@ function attachContainer(sessionId: string, el: Element | null): void {
   }
   inst.term.open(el as HTMLElement)
   attachedSessions.add(sessionId)
+  void import('@xterm/addon-webgl')
+    .then(({ WebglAddon }) => {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      inst.term.loadAddon(webgl)
+    })
+    .catch(() => undefined)
   // Terminal convention: right-click copies the selection if there is one,
   // otherwise pastes. The listener lives exactly as long as the container div.
   el.addEventListener('contextmenu', (e) => {
@@ -83,11 +90,19 @@ watch(() => [props.active, sessions.activeSessionId] as const, () => void syncAc
   immediate: true
 })
 
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
 function onWindowResize(): void {
-  const sessionId = sessions.activeSessionId
-  if (props.active && sessionId) {
-    void fitAndResize(sessionId)
+  if (resizeTimer !== null) {
+    clearTimeout(resizeTimer)
   }
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null
+    const sessionId = sessions.activeSessionId
+    if (props.active && sessionId) {
+      void fitAndResize(sessionId)
+    }
+  }, 50)
 }
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -107,6 +122,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
   resizeObserver?.disconnect()
+  if (resizeTimer !== null) {
+    clearTimeout(resizeTimer)
+  }
 })
 </script>
 

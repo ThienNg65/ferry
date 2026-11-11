@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
-import type { ClipboardTextResult, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
+import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract'
+import type { ClipboardTextResult, TerminalAckEvent, TerminalInputEvent, TerminalResizeEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { terminalKeyAction } from '../utils/terminalKeys'
 
@@ -10,7 +10,12 @@ interface TerminalInstance {
   terminalId: string
   term: Terminal
   fit: FitAddon
+  unacked: number
+  cols: number
+  rows: number
 }
+
+const ACK_BATCH_BYTES = 100 * 1024
 
 /**
  * Live xterm.js instances, kept OUTSIDE Pinia's reactive state (a plain
@@ -78,7 +83,21 @@ function ensureSubscriptions(): void {
     return
   }
   dataUnsub = onEvent<TerminalDataEvent>(EVENT_CHANNELS.terminalData, (evt) => {
-    findByTerminalId(evt.terminalId)?.term.write(evt.data)
+    const inst = findByTerminalId(evt.terminalId)
+    const bytes = evt.data.length
+    if (!inst) {
+      const ack: TerminalAckEvent = { terminalId: evt.terminalId, bytes }
+      window.api.send(SEND_CHANNELS.terminalAck, ack)
+      return
+    }
+    inst.term.write(evt.data, () => {
+      inst.unacked += bytes
+      if (inst.unacked >= ACK_BATCH_BYTES) {
+        const ack: TerminalAckEvent = { terminalId: inst.terminalId, bytes: inst.unacked }
+        inst.unacked = 0
+        window.api.send(SEND_CHANNELS.terminalAck, ack)
+      }
+    })
   })
   exitUnsub = onEvent<TerminalExitEvent>(EVENT_CHANNELS.terminalExit, (evt) => {
     findByTerminalId(evt.terminalId)?.term.write('\r\n[Process exited]\r\n')
@@ -137,11 +156,12 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         // Deferred to first actual use — @xterm/xterm isn't parsed/evaluated
         // until a terminal is opened, keeping it off the cold-start path.
         const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
-        const term = new Terminal({ cursorBlink: true, convertEol: true })
+        const term = new Terminal({ cursorBlink: true, scrollback: 5000 })
         const fit = new FitAddon()
         term.loadAddon(fit)
         term.onData((data) => {
-          void invoke<void>(INVOKE_CHANNELS.terminalWrite, { terminalId, data })
+          const input: TerminalInputEvent = { terminalId, data }
+          window.api.send(SEND_CHANNELS.terminalInput, input)
         })
         // Clipboard shortcuts (Ctrl+C copies only when a selection exists —
         // otherwise it stays a SIGINT; Ctrl+V/Ctrl+Shift+V/Shift+Insert paste).
@@ -161,7 +181,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           }
           return true
         })
-        instances.set(sessionId, { terminalId, term, fit })
+        instances.set(sessionId, { terminalId, term, fit, unacked: 0, cols: 0, rows: 0 })
         this.knownSessionIds.push(sessionId)
         return terminalId
       })()
@@ -200,7 +220,13 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       if (!inst) {
         return
       }
-      void invoke<void>(INVOKE_CHANNELS.terminalResize, { terminalId: inst.terminalId, cols, rows })
+      if (inst.cols === cols && inst.rows === rows) {
+        return
+      }
+      inst.cols = cols
+      inst.rows = rows
+      const size: TerminalResizeEvent = { terminalId: inst.terminalId, cols, rows }
+      window.api.send(SEND_CHANNELS.terminalResize, size)
     },
 
     /** Tears down a session's terminal entirely — called when its tab closes/disconnects. */

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { INVOKE_CHANNELS, EVENT_CHANNELS } from '../shared/contract'
+import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '../shared/contract'
 
 const preloadStartTime = performance.now()
 const preloadTimeOrigin = performance.timeOrigin
@@ -11,6 +11,7 @@ const preloadTimeOrigin = performance.timeOrigin
  */
 const ALLOWED_INVOKE_CHANNELS = Object.values(INVOKE_CHANNELS)
 const ALLOWED_ON_CHANNELS = Object.values(EVENT_CHANNELS)
+const ALLOWED_SEND_CHANNELS = Object.values(SEND_CHANNELS)
 
 type InvokeChannel = string
 type OnChannel = string
@@ -40,6 +41,8 @@ export interface ElectronAPI {
    * @param listener - Callback invoked when the event fires.
    */
   on: (channel: OnChannel, listener: IpcListener) => () => void
+
+  send: (channel: string, ...args: unknown[]) => void
 
   /**
    * Removes a specific listener from a push-event channel.
@@ -81,6 +84,12 @@ contextBridge.exposeInMainWorld('api', {
       return Promise.reject(new Error(`IPC channel not allowed: ${channel}`))
     }
     return ipcRenderer.invoke(channel, ...args)
+  },
+
+  send(channel: string, ...args: unknown[]): void {
+    if ((ALLOWED_SEND_CHANNELS as readonly string[]).includes(channel)) {
+      ipcRenderer.send(channel, ...args)
+    }
   },
 
   on(channel: string, listener: IpcListener): () => void {
