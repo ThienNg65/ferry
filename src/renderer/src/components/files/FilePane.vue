@@ -907,7 +907,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @edit-root="onEditAsRoot"
         @clear-filter="filterText = ''"
       />
-      <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-[11px] text-muted">
+      <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-2xs text-muted">
         <span class="truncate">{{ paneSummary }}</span>
         <div v-if="selectionSummary" class="flex items-center gap-1.5">
           <span class="font-medium text-default">{{ selectionSummary }}</span>

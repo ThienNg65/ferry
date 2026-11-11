@@ -105,7 +105,7 @@ const progressRightLabel = computed(() => {
       </div>
     </div>
     <UProgress :model-value="percent" :color="statusColor" size="xs" />
-    <div class="flex items-center justify-between text-[11px] text-muted">
+    <div class="flex items-center justify-between text-2xs text-muted">
       <span v-if="error" class="text-error truncate">{{ error }}</span>
       <span v-else>{{ formatBytes(bytesTransferred) }} / {{ formatBytes(totalBytes) }} ({{ percent }}%)</span>
       <span class="font-mono">{{ progressRightLabel }}</span>

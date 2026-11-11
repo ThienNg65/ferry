@@ -112,25 +112,25 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
         <div class="flex flex-col gap-1">
           <div class="flex items-center justify-between">
             <span class="font-medium text-default">Storage</span>
-            <span v-if="monitor.latest.disk" class="font-mono text-[11px] text-muted">{{ diskPercent }}%</span>
+            <span v-if="monitor.latest.disk" class="font-mono text-2xs text-muted">{{ diskPercent }}%</span>
           </div>
           <template v-if="monitor.latest.disk">
             <UProgress :model-value="diskPercent" :color="usageColor(diskPercent)" size="sm" />
-            <span class="text-[11px] text-muted">
+            <span class="text-2xs text-muted">
               {{ formatBytes(monitor.latest.disk.usedBytes) }} / {{ formatBytes(monitor.latest.disk.totalBytes) }}
             </span>
           </template>
-          <span v-else class="text-[11px] text-muted">Unavailable</span>
+          <span v-else class="text-2xs text-muted">Unavailable</span>
         </div>
 
         <!-- Memory -->
         <div class="flex flex-col gap-1">
           <div class="flex items-center justify-between">
             <span class="font-medium text-default">Memory</span>
-            <span class="font-mono text-[11px] text-muted">{{ memPercent }}%</span>
+            <span class="font-mono text-2xs text-muted">{{ memPercent }}%</span>
           </div>
           <UProgress :model-value="memPercent" :color="usageColor(memPercent)" size="sm" />
-          <span class="text-[11px] text-muted">
+          <span class="text-2xs text-muted">
             {{ formatBytes(monitor.latest.memory.usedBytes) }} / {{ formatBytes(monitor.latest.memory.totalBytes) }}
             <template v-if="monitor.latest.swap.totalBytes > 0">
               · swap {{ formatBytes(monitor.latest.swap.usedBytes) }} ({{ swapPercent }}%)

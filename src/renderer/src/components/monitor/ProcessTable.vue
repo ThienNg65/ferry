@@ -67,7 +67,7 @@ function sortIcon(key: SortKey): string {
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-default"
+      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1 text-2xs font-medium uppercase tracking-wide text-default"
     >
       <button type="button" class="flex-1 truncate text-left hover:text-highlighted" @click="toggleSort('name')">
         Name
@@ -102,7 +102,7 @@ function sortIcon(key: SortKey): string {
         <div
           v-for="virtualRow in virtualRows"
           :key="virtualRow.key as string | number"
-          class="absolute left-0 top-0 flex w-full items-center gap-2 px-2 text-[11px] text-default"
+          class="absolute left-0 top-0 flex w-full items-center gap-2 px-2 text-2xs text-default"
           :style="{ height: '28px', transform: `translateY(${virtualRow.start}px)` }"
         >
           <span class="flex-1 truncate" :title="sortedProcesses[virtualRow.index].name">

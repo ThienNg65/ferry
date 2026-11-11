@@ -56,7 +56,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       />
       <span
         v-else-if="tab.status === 'connected'"
-        class="size-2 shrink-0 rounded-full bg-emerald-500"
+        class="size-2 shrink-0 rounded-full bg-success"
       />
       <UIcon
         v-else-if="tab.siteId"

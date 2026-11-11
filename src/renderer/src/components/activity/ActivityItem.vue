@@ -99,7 +99,7 @@ const statusIcon = computed(() => {
     <!-- Determinate when the op reports totals; indeterminate (animated) otherwise. -->
     <UProgress v-if="determinate" :model-value="percent" :color="statusColor" size="xs" />
     <UProgress v-else-if="running" :model-value="null" color="primary" size="xs" />
-    <div class="flex items-center justify-between text-[11px] text-muted">
+    <div class="flex items-center justify-between text-2xs text-muted">
       <span v-if="error" class="text-error truncate">{{ error }}</span>
       <span v-else-if="progressText">{{ progressText }}</span>
       <span v-else>{{ state }}</span>

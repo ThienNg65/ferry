@@ -431,7 +431,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             </div>
             <div class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5">
               <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
-                <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
+                <div v-if="section.name" class="mt-2 px-2 text-2xs font-medium uppercase tracking-wide text-muted first:mt-0">
                   {{ section.name }}
                 </div>
                 <ul class="flex flex-col gap-1">
@@ -552,7 +552,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
         </UCard>
       </div>
 
-      <p v-if="version" class="text-center text-[11px] text-muted">Ferry v{{ version }}</p>
+      <p v-if="version" class="text-center text-2xs text-muted">Ferry v{{ version }}</p>
     </div>
 
     <SiteFormDialog v-model:open="formOpen" :site="editingSite" />

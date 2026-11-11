@@ -250,15 +250,15 @@ function basename(path: string): string {
               <!-- Live status indicator dot -->
               <span
                 v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-emerald-500 shrink-0"
+                class="size-1.5 rounded-full bg-success shrink-0"
               />
               <span
                 v-else-if="tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-rose-500 shrink-0"
+                class="size-1.5 rounded-full bg-error shrink-0"
               />
               <span
                 v-else
-                class="size-1.5 rounded-full bg-neutral-400 shrink-0"
+                class="size-1.5 rounded-full bg-accented shrink-0"
               />
 
               <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
@@ -272,7 +272,7 @@ function basename(path: string): string {
               <!-- Unread badge if inactive tab has incoming lines -->
               <span
                 v-if="tailStreams.unreadMap[openTail.tailId] && tailStreams.activeTailId !== openTail.tailId"
-                class="rounded-full bg-primary/20 px-1 py-0.2 text-[9px] font-mono font-bold text-primary"
+                class="rounded-full bg-primary/20 px-1 py-0.2 text-2xs font-mono font-bold text-primary"
               >
                 +{{ tailStreams.unreadMap[openTail.tailId] }}
               </span>
@@ -324,7 +324,7 @@ function basename(path: string): string {
               <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
             </div>
             <p class="text-xs font-semibold text-default">No active log streams</p>
-            <p class="text-[11px] text-muted max-w-sm">
+            <p class="text-2xs text-muted max-w-sm">
               Right-click any log or text file in the Remote file pane and select <span class="font-medium text-default">"Tail this file live"</span> to stream real-time output.
             </p>
           </div>

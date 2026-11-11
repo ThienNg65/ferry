@@ -240,7 +240,7 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <div v-else-if="update.isDownloaded" class="flex items-center justify-between rounded border border-green-500/20 bg-green-500/10 p-2.5 text-xs text-green-400">
+        <div v-else-if="update.isDownloaded" class="flex items-center justify-between rounded border border-success/20 bg-success/10 p-2.5 text-xs text-success">
           <span>Ferry v{{ update.availableVersion }} is ready to install</span>
           <UButton color="success" size="xs" icon="i-lucide-refresh-cw" @click="update.installNow">
             Restart & Install
@@ -259,14 +259,14 @@ async function save(): Promise<void> {
             >
               Check for updates
             </UButton>
-            <span v-if="update.lastCheckedAt" class="text-[11px] text-muted">
+            <span v-if="update.lastCheckedAt" class="text-2xs text-muted">
               Last checked: {{ formatTime(update.lastCheckedAt) }}
             </span>
           </div>
-          <span v-if="update.status === 'not-available'" class="text-[11px] text-muted">
+          <span v-if="update.status === 'not-available'" class="text-2xs text-muted">
             Latest version installed
           </span>
-          <span v-else-if="update.status === 'disabled'" class="text-[11px] text-muted">
+          <span v-else-if="update.status === 'disabled'" class="text-2xs text-muted">
             Dev mode
           </span>
         </div>

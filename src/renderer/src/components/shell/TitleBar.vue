@@ -108,7 +108,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Restart to update"
-          class="flex items-center gap-1 rounded bg-green-500/20 px-1.5 py-0.5 text-[10px] font-medium text-green-400 transition-colors hover:bg-green-500/30"
+          class="flex items-center gap-1 rounded bg-success/20 px-1.5 py-0.5 text-2xs font-medium text-success transition-colors hover:bg-success/30"
           style="-webkit-app-region: no-drag"
           @click="updateStore.installNow()"
         >
@@ -120,7 +120,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Open command palette"
-          class="flex items-center gap-1.5 rounded-md border border-default bg-default/70 px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          class="flex items-center gap-1.5 rounded-md border border-default bg-default/70 px-2 py-0.5 text-2xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
           style="-webkit-app-region: no-drag"
           @click="commandPalette.open()"
         >
@@ -155,7 +155,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Close"
-          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-red-500 hover:text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-red-500"
+          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-error hover:text-inverted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-error"
           @click="close"
         >
           <UIcon name="i-lucide-x" class="size-4" />
