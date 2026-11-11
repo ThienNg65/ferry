@@ -292,6 +292,19 @@ export class RemoteShell {
     })
   }
 
+  openShellAt(cwd: string, opts: { cols: number; rows: number }): Promise<ClientChannel> {
+    return new Promise((resolve, reject) => {
+      const command = `cd ${shellEscape(cwd)} 2>/dev/null; exec "$SHELL" -l`
+      this.client.exec(command, { pty: { term: 'xterm-256color', cols: opts.cols, rows: opts.rows } }, (err, stream) => {
+        if (err) {
+          reject(new SshError('SSH_EXEC', err.message))
+          return
+        }
+        resolve(stream)
+      })
+    })
+  }
+
   // ── SFTP ─────────────────────────────────────────────────────────────────────
 
   /** Lazily opens (and caches) the SFTP subsystem for this connection. */

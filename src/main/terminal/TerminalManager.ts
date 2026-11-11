@@ -6,6 +6,8 @@ import { FlowControl } from './FlowControl'
 import { OutputBatcher } from './OutputBatcher'
 import { EVENT_CHANNELS, type TerminalDataEvent, type TerminalExitEvent } from '../../shared/contract'
 
+const EARLY_EXIT_MS = 1500
+
 interface TerminalEntry {
   sessionId: string
   stream: ClientChannel
@@ -51,7 +53,32 @@ export class TerminalManager {
   /** Opens a PTY shell on `sessionId`'s connection. `terminalId` is caller-chosen. */
   async open(terminalId: string, sessionId: string, cols: number, rows: number): Promise<void> {
     const shell = SessionManager.getInstance().shell(sessionId)
-    const stream = await shell.openShell({ cols, rows })
+    const cwd = SessionManager.getInstance().cwd(sessionId)
+    const hasCwd = Boolean(cwd) && cwd !== '.'
+    const openPlain = async (): Promise<void> => {
+      const plain = await shell.openShell({ cols, rows })
+      this.attach(terminalId, sessionId, plain)
+      if (hasCwd) {
+        plain.write(` cd ${shellEscape(cwd)}\n`)
+      }
+    }
+    if (!hasCwd) {
+      await openPlain()
+      return
+    }
+    let stream: ClientChannel
+    try {
+      stream = await shell.openShellAt(cwd, { cols, rows })
+    } catch {
+      await openPlain()
+      return
+    }
+    this.attach(terminalId, sessionId, stream, openPlain)
+  }
+
+  private attach(terminalId: string, sessionId: string, stream: ClientChannel, fallback?: () => Promise<void>): void {
+    const startedAt = Date.now()
+    let sawData = false
     const flow = new FlowControl(
       () => stream.pause(),
       () => stream.resume()
@@ -64,6 +91,7 @@ export class TerminalManager {
       this.broadcastData(terminalId, data)
     })
     stream.on('data', (chunk: Buffer) => {
+      sawData = true
       batcher.push(chunk)
     })
     stream.on('exit', (code: number | null) => {
@@ -72,16 +100,12 @@ export class TerminalManager {
     stream.on('close', () => {
       batcher.flush()
       this.terminals.delete(terminalId)
+      if (fallback && !sawData && Date.now() - startedAt < EARLY_EXIT_MS) {
+        void fallback().catch(() => this.broadcastExit(terminalId, entry.exitCode))
+        return
+      }
       this.broadcastExit(terminalId, entry.exitCode)
     })
-
-    // Land the fresh shell in the site's configured remote start path, if any
-    // (SessionManager.cwd() is already seeded from Site.remoteInitialPath at
-    // connect time — '.' means no real path was configured, so skip the cd).
-    const cwd = SessionManager.getInstance().cwd(sessionId)
-    if (cwd && cwd !== '.') {
-      stream.write(`cd ${shellEscape(cwd)}\n`)
-    }
   }
 
   /** Sends keystrokes/input to a shell. */

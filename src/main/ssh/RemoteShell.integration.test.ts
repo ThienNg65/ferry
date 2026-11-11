@@ -179,6 +179,21 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
     await expect(shell.touch(file)).rejects.toThrow()
   })
 
+  it('openShellAt() starts the shell in the directory without a cd in history', async () => {
+    await shell.exec(': > ~/.bash_history')
+    const stream = await shell.openShellAt(testDir, { cols: 80, rows: 24 })
+    let output = ''
+    stream.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+    await new Promise((r) => setTimeout(r, 800))
+    stream.write('pwd; echo MARK; history\n')
+    await vi.waitFor(() => expect(output).toContain('MARK'), { timeout: 5000 })
+    expect(output).toContain(testDir)
+    expect(output).not.toMatch(/cd\s/)
+    expect(output).not.toMatch(/\bcd\s/)
+  })
+
   it('mkdirRecursive() creates nested missing parents in one call, and is idempotent', async () => {
     await shell.mkdirRecursive(`${testDir}/a/b/c`)
     const stats = await shell.stat(`${testDir}/a/b/c`)
