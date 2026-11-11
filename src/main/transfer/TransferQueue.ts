@@ -59,6 +59,7 @@ const TREE_ITEM_CONCURRENCY = 4
 const PROGRESS_THROTTLE_MS = 200
 const PART_SUFFIX = '.part'
 const MAX_RETRYABLE = 200
+const PAUSE_REASON = 'pause'
 
 /**
  * Global rate limiter shared by every concurrent transfer, so a configured
@@ -207,8 +208,35 @@ export class TransferQueue {
     }
   }
 
+  pause(transferId: string): void {
+    const activeJob = this.active.get(transferId)
+    if (activeJob) {
+      activeJob.controller.abort(PAUSE_REASON)
+      return
+    }
+    const idx = this.pending.findIndex((j) => j.transferId === transferId)
+    if (idx !== -1) {
+      const [job] = this.pending.splice(idx, 1)
+      this.rememberRetryable(job)
+      this.broadcast({ transferId, kind: job.kind, state: 'paused' })
+    }
+  }
+
   /** Cancels a transfer, whether still queued or actively streaming. */
   cancel(transferId: string): void {
+    const pausedJob = this.retryable.get(transferId)
+    if (pausedJob) {
+      this.retryable.delete(transferId)
+      const evt: TransferEvent = { transferId, kind: pausedJob.kind, state: 'cancelled' }
+      this.broadcast(evt)
+      this.notifyTerminal(pausedJob, evt)
+      if (!pausedJob.isTree) {
+        const remote = pausedJob.kind === 'upload'
+        const part = `${remote ? pausedJob.remotePath : pausedJob.localPath}${PART_SUFFIX}`
+        void (remote ? SessionManager.getInstance().shell(pausedJob.sessionId).unlink(part) : unlink(part)).catch(() => undefined)
+      }
+      return
+    }
     const activeJob = this.active.get(transferId)
     if (activeJob) {
       activeJob.controller.abort()
@@ -282,8 +310,12 @@ export class TransferQueue {
     } catch (e) {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
       const message = e instanceof Error ? e.message : String(e)
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.rememberRetryable(job)
+      if (cancelled && job.controller.signal.reason === PAUSE_REASON) {
+        this.broadcast({ transferId, kind, state: 'paused' })
+        return
+      }
+      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }
@@ -314,7 +346,7 @@ export class TransferQueue {
     try {
       await this.streamFile(sftp, opts, partPath, offset)
     } catch (e) {
-      if (e instanceof SshError && e.code === 'CANCELLED') {
+      if (e instanceof SshError && e.code === 'CANCELLED' && opts.signal.reason !== PAUSE_REASON) {
         await this.removePart(opts, partPath)
       }
       throw e
@@ -501,8 +533,12 @@ export class TransferQueue {
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.rememberRetryable(job)
+      if (cancelled && job.controller.signal.reason === PAUSE_REASON) {
+        this.broadcast({ transferId, kind, state: 'paused' })
+        return
+      }
+      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }

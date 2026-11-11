@@ -123,6 +123,10 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       await invoke<void>(INVOKE_CHANNELS.transferCancel, transferId)
     },
 
+    async pause(transferId: string): Promise<void> {
+      await invoke<void>(INVOKE_CHANNELS.transferPause, transferId)
+    },
+
     async retry(transferId: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.transferRetry, transferId)
     },

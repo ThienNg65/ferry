@@ -20,4 +20,8 @@ export function registerTransferHandlers(): void {
   handle<void>(INVOKE_CHANNELS.transferRetry, (transferId) => {
     TransferQueue.getInstance().retry(transferId as string)
   })
+
+  handle<void>(INVOKE_CHANNELS.transferPause, (transferId) => {
+    TransferQueue.getInstance().pause(transferId as string)
+  })
 }

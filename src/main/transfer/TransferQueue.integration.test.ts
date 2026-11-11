@@ -290,4 +290,33 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     )
     expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
   })
+  it('pause keeps the .part and resume finishes with identical bytes', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const data = randomBytes(1_000_000)
+    const localFile = path.join(localDir, 'pause.bin')
+    await fs.writeFile(localFile, data)
+    const remoteFile = `${remoteDir}/pause.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(300)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      await waitFor(() => shell.stat(`${remoteFile}.part`).then((st) => st.size > 0, () => false))
+      queue.pause(id)
+      await new Promise((r) => setTimeout(r, 500))
+      const pausedSize = (await shell.stat(`${remoteFile}.part`)).size
+      expect(pausedSize).toBeLessThan(data.length)
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.setBandwidthLimitKBps(null)
+      queue.retry(id)
+      await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+    const sftp = await shell.sftp()
+    const tmp = path.join(localDir, 'back.bin')
+    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
+    expect((await fs.readFile(tmp)).equals(data)).toBe(true)
+  })
 })

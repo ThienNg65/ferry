@@ -360,7 +360,7 @@ export interface FileReadResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TransferKind = 'upload' | 'download'
-export type TransferState = 'queued' | 'started' | 'progress' | 'done' | 'error' | 'cancelled'
+export type TransferState = 'queued' | 'started' | 'progress' | 'paused' | 'done' | 'error' | 'cancelled'
 
 /** Request payload for `transfer:enqueue`. */
 export interface TransferEnqueueRequest {
@@ -864,6 +864,7 @@ export const INVOKE_CHANNELS = {
   transferEnqueue: 'transfer:enqueue',
   transferCancel: 'transfer:cancel',
   transferRetry: 'transfer:retry',
+  transferPause: 'transfer:pause',
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
