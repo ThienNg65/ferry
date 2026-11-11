@@ -12,6 +12,7 @@ import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
+import { useConfirm } from '../../composables/useConfirm'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
 import { formatBytes, formatShortDate } from '../../utils/format'
@@ -47,6 +48,7 @@ const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
+const confirm = useConfirm()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
@@ -101,11 +103,8 @@ const renamingPath = ref<string | null>(null)
 const transferConflict = ref<{ intents: TransferIntent[]; targets: FileEntry[]; conflicts: Array<{ intent: TransferIntent; target: FileEntry }> } | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
-const editConfirmTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
 const editorState = ref<{ editId: string; localTempPath: string; remotePath: string } | null>(null)
-const pendingDelete = ref<FileEntry[] | null>(null)
-const deleting = ref(false)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -347,14 +346,19 @@ async function onTail(entry: FileEntry): Promise<void> {
 async function onEdit(entry: FileEntry): Promise<void> {
   const isLarge = entry.size > 5 * 1024 * 1024 // 5MB
   if (isArchive(entry.name) || isLarge) {
-    editConfirmTarget.value = entry
-    return
+    const proceed = await confirm({
+      title: 'Warning: Large or Binary File',
+      body: `The file ${entry.name} is an archive or very large. Editing it will download the entire file in the background, which may take a long time, and editing binary files in a text editor could corrupt them. Are you sure you want to edit it?`,
+      confirmLabel: 'Proceed'
+    })
+    if (!proceed) {
+      return
+    }
   }
   await performEdit(entry)
 }
 
 async function performEdit(entry: FileEntry, viaSudo = false): Promise<void> {
-  editConfirmTarget.value = null
   try {
     if (props.side === 'local') {
       await invoke<void>(INVOKE_CHANNELS.editOpenLocal, entry.path)
@@ -711,8 +715,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     return
   }
   event.preventDefault()
-  const targets = store.entries.filter((e) => store.selected.has(e.path))
-  pendingDelete.value = targets
+  void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path)))
 }
 
 async function onRename(entry: FileEntry, newName: string): Promise<void> {
@@ -740,29 +743,25 @@ function onStartRename(entry: FileEntry): void {
  * keyboard shortcut, this path always confirms first — it's a deliberate click, not a fast-path key. */
 function onRemoveEntry(entry: FileEntry): void {
   if (store.selected.size > 1 && store.selected.has(entry.path)) {
-    pendingDelete.value = store.entries.filter((e) => store.selected.has(e.path))
+    void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path)))
     return
   }
-  pendingDelete.value = [entry]
+  void confirmDeleteEntries([entry])
 }
 
-async function confirmPendingDelete(): Promise<void> {
-  if (!pendingDelete.value) {
-    return
-  }
-  deleting.value = true
-  try {
-    if (pendingDelete.value.length > 1) {
-      await store.removeMany(pendingDelete.value)
-    } else {
-      await store.remove(pendingDelete.value[0])
-    }
-    pendingDelete.value = null
-  } catch (e) {
-    notify.error('Delete failed', e instanceof Error ? e.message : String(e))
-  } finally {
-    deleting.value = false
-  }
+async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
+  const single = entries.length === 1 ? entries[0] : null
+  await confirm({
+    title: 'Delete',
+    body: single
+      ? `Delete ${single.name}${single.isDir ? ' and everything inside it' : ''}? This cannot be undone.`
+      : `Delete these ${entries.length} items? This cannot be undone.`,
+    items: single ? undefined : entries.map((e) => e.name),
+    confirmLabel: 'Delete',
+    confirmColor: 'error',
+    destructive: true,
+    action: () => (entries.length > 1 ? store.removeMany(entries) : store.remove(entries[0]))
+  })
 }
 
 function onOpenChmod(entry: FileEntry): void {
@@ -998,47 +997,6 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           <UButton color="neutral" variant="outline" @click="resolveTransferConflict('rename')">Keep both</UButton>
           <UButton color="neutral" variant="outline" @click="resolveTransferConflict('newer')">Overwrite if newer</UButton>
           <UButton color="primary" @click="resolveTransferConflict('overwrite')">Overwrite all</UButton>
-        </template>
-      </UModal>
-      <UModal
-        :open="Boolean(pendingDelete)"
-        title="Delete"
-        :ui="{ footer: 'justify-end' }"
-        @update:open="(v: boolean) => { if (!v) pendingDelete = null }"
-      >
-        <template #body>
-          <p v-if="pendingDelete && pendingDelete.length === 1" class="text-sm text-default">
-            Delete <span class="font-medium">{{ pendingDelete[0].name }}</span
-            >{{ pendingDelete[0].isDir ? ' and everything inside it' : '' }}? This cannot be undone.
-          </p>
-          <div v-else-if="pendingDelete" class="flex flex-col gap-3">
-            <p class="text-sm text-default">Delete these {{ pendingDelete.length }} items? This cannot be undone.</p>
-            <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
-              <li v-for="e in pendingDelete" :key="e.path" class="truncate text-xs text-default">{{ e.name }}</li>
-            </ul>
-          </div>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="pendingDelete = null">Cancel</UButton>
-          <UButton color="error" :loading="deleting" @click="confirmPendingDelete">Delete</UButton>
-        </template>
-      </UModal>
-      <UModal
-        :open="Boolean(editConfirmTarget)"
-        title="Warning: Large or Binary File"
-        :ui="{ footer: 'justify-end' }"
-        @update:open="(v: boolean) => { if (!v) editConfirmTarget = null }"
-      >
-        <template #body>
-          <p class="text-sm text-default">
-            The file <span class="font-medium">{{ editConfirmTarget?.name }}</span> is an archive or very large. 
-            Editing it will download the entire file in the background, which may take a long time, and editing binary files in a text editor could corrupt them.
-            Are you sure you want to edit it?
-          </p>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="editConfirmTarget = null">Cancel</UButton>
-          <UButton color="primary" @click="editConfirmTarget && performEdit(editConfirmTarget)">Proceed</UButton>
         </template>
       </UModal>
     </template>

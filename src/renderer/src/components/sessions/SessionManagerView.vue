@@ -7,6 +7,7 @@ import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
+import { useConfirm } from '../../composables/useConfirm'
 import { ENVIRONMENT_DOT } from '../../utils/environment'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
@@ -148,20 +149,17 @@ function openEditDialog(site: Site): void {
   formOpen.value = true
 }
 
-const deleteTarget = ref<Site | null>(null)
-const deleting = ref(false)
+const confirm = useConfirm()
 
-async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) {
-    return
-  }
-  deleting.value = true
-  try {
-    await sites.deleteSite(deleteTarget.value.id)
-    deleteTarget.value = null
-  } finally {
-    deleting.value = false
-  }
+async function confirmDelete(site: Site): Promise<void> {
+  await confirm({
+    title: 'Delete site',
+    body: `Delete ${site.name}? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    confirmColor: 'error',
+    destructive: true,
+    action: () => sites.deleteSite(site.id)
+  })
 }
 
 const duplicatingId = ref<string | null>(null)
@@ -170,7 +168,7 @@ function siteMenuItems(site: Site): ContextMenuItem[] {
   return [
     { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => void onDuplicate(site) },
     { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => openEditDialog(site) },
-    { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => { deleteTarget.value = site } }
+    { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => void confirmDelete(site) }
   ]
 }
 
@@ -559,23 +557,6 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 
     <SiteFormDialog v-model:open="formOpen" :site="editingSite" />
     <ImportSessionsDialog v-model:open="importOpen" />
-
-    <UModal
-      :open="Boolean(deleteTarget)"
-      title="Delete site"
-      :ui="{ footer: 'justify-end' }"
-      @update:open="(v: boolean) => { if (!v) deleteTarget = null }"
-    >
-      <template #body>
-        <p class="text-sm text-default">
-          Delete <span class="font-medium">{{ deleteTarget?.name }}</span>? This cannot be undone.
-        </p>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="deleteTarget = null">Cancel</UButton>
-        <UButton color="error" :loading="deleting" @click="confirmDelete">Delete</UButton>
-      </template>
-    </UModal>
 
     <UModal
       :open="bulkDeleteOpen"

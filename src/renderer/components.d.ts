@@ -17,6 +17,7 @@ declare module 'vue' {
     ChmodDialog: typeof import('./src/components/files/ChmodDialog.vue')['default']
     CommandPalette: typeof import('./src/components/shell/CommandPalette.vue')['default']
     CompareDialog: typeof import('./src/components/files/CompareDialog.vue')['default']
+    ConfirmDialog: typeof import('./src/components/shell/ConfirmDialog.vue')['default']
     EditorDialog: typeof import('./src/components/files/EditorDialog.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
