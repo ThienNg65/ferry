@@ -9,12 +9,19 @@ const props = defineProps<{
   confirmColor?: 'primary' | 'error' | 'warning'
   destructive?: boolean
   action?: () => Promise<void>
+  secondaryLabel?: string
+  secondaryAction?: () => void | Promise<void>
 }>()
 
 const emit = defineEmits<{ close: [value: boolean] }>()
 
 const busy = ref(false)
 const error = ref<string | null>(null)
+
+async function onSecondary(): Promise<void> {
+  emit('close', false)
+  await props.secondaryAction?.()
+}
 
 async function onConfirm(): Promise<void> {
   if (!props.action) {
@@ -47,6 +54,7 @@ async function onConfirm(): Promise<void> {
     </template>
     <template #footer>
       <UButton color="neutral" variant="outline" :autofocus="destructive" @click="emit('close', false)">Cancel</UButton>
+      <UButton v-if="secondaryLabel" color="neutral" variant="soft" @click="onSecondary">{{ secondaryLabel }}</UButton>
       <UButton :color="confirmColor ?? 'primary'" :loading="busy" :autofocus="!destructive" @click="onConfirm">
         {{ confirmLabel ?? 'Confirm' }}
       </UButton>

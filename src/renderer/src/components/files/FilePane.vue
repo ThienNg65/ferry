@@ -346,10 +346,15 @@ async function onTail(entry: FileEntry): Promise<void> {
 async function onEdit(entry: FileEntry): Promise<void> {
   const isLarge = entry.size > 5 * 1024 * 1024 // 5MB
   if (isArchive(entry.name) || isLarge) {
+    const archive = isArchive(entry.name)
     const proceed = await confirm({
-      title: 'Warning: Large or Binary File',
-      body: `The file ${entry.name} is an archive or very large. Editing it will download the entire file in the background, which may take a long time, and editing binary files in a text editor could corrupt them. Are you sure you want to edit it?`,
-      confirmLabel: 'Proceed'
+      title: archive ? 'Edit an archive?' : 'Edit a large file?',
+      body: archive
+        ? `${entry.name} is an archive. Editing it in a text editor can corrupt it.`
+        : `${entry.name} is ${formatBytes(entry.size)}. Editing downloads the whole file first, which may take a while.`,
+      confirmLabel: 'Edit anyway',
+      secondaryLabel: 'Download instead',
+      secondaryAction: () => onTransfer(entry)
     })
     if (!proceed) {
       return

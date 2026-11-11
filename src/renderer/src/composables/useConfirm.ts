@@ -8,6 +8,8 @@ export interface ConfirmOptions {
   confirmColor?: 'primary' | 'error' | 'warning'
   destructive?: boolean
   action?: () => Promise<void>
+  secondaryLabel?: string
+  secondaryAction?: () => void | Promise<void>
 }
 
 export function useConfirm(): (options: ConfirmOptions) => Promise<boolean> {
