@@ -1,12 +1,14 @@
 import { randomUUID } from 'crypto'
 import { createReadStream, createWriteStream } from 'fs'
-import { stat } from 'fs/promises'
+import { rename, stat, unlink } from 'fs/promises'
 import { Transform } from 'stream'
+import type { SFTPWrapper } from 'ssh2'
 import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
 import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
+import { commitRemoteFile } from '../fs/RemoteFsService'
 import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { runConcurrent } from '../util/concurrency'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
@@ -54,6 +56,7 @@ const MAX_CONCURRENT = 3
 const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
+const PART_SUFFIX = '.part'
 
 /**
  * Global rate limiter shared by every concurrent transfer, so a configured
@@ -274,11 +277,41 @@ export class TransferQueue {
     onProgress: (bytesTransferred: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
+    const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
+    const partPath = `${destPath}${PART_SUFFIX}`
+    try {
+      await this.streamFile(sftp, opts, partPath)
+    } catch (e) {
+      if (e instanceof SshError && e.code === 'CANCELLED') {
+        await this.removePart(opts, partPath)
+      }
+      throw e
+    }
+    if (opts.kind === 'upload') {
+      await commitRemoteFile(opts.shell, partPath, destPath)
+    } else {
+      await rename(partPath, destPath)
+    }
+  }
+
+  private async removePart(opts: { shell: RemoteShell; kind: TransferKind }, partPath: string): Promise<void> {
+    if (opts.kind === 'upload') {
+      await opts.shell.unlink(partPath).catch(() => undefined)
+    } else {
+      await unlink(partPath).catch(() => undefined)
+    }
+  }
+
+  private async streamFile(
+    sftp: SFTPWrapper,
+    opts: { kind: TransferKind; localPath: string; remotePath: string; signal: AbortSignal; onProgress: (bytesTransferred: number) => void },
+    partPath: string
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const readStream =
         opts.kind === 'upload' ? createReadStream(opts.localPath) : sftp.createReadStream(opts.remotePath)
       const writeStream =
-        opts.kind === 'upload' ? sftp.createWriteStream(opts.remotePath) : createWriteStream(opts.localPath)
+        opts.kind === 'upload' ? sftp.createWriteStream(partPath) : createWriteStream(partPath)
 
       const throttle = createThrottleTransform(this.rateLimiter)
 

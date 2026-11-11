@@ -240,6 +240,14 @@ async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: s
   await shell.unlink(backup).catch(() => undefined)
 }
 
+export async function commitRemoteFile(shell: RemoteShell, tempPath: string, target: string): Promise<void> {
+  const sftp = await shell.sftp()
+  const hadTarget = await shell.stat(target).then(() => true, () => false)
+  if (!(await posixRename(sftp, tempPath, target))) {
+    await replaceRemoteFile(shell, tempPath, target, hadTarget)
+  }
+}
+
 export async function uploadForEdit(sessionId: string, localPath: string, remotePath: string): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
   const sftp = await shell.sftp()

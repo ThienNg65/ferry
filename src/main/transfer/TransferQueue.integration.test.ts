@@ -220,4 +220,37 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
       code: 'NOT_FOUND'
     })
   })
+  it('an upload never exposes a half-written final file and cancel removes the .part', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'slow.bin')
+    await fs.writeFile(localFile, Buffer.alloc(1_000_000, 'x'))
+    const remoteFile = `${remoteDir}/slow.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(200)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      await waitFor(() => shell.stat(`${remoteFile}.part`).then(() => true, () => false))
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.cancel(id)
+      await waitFor(async () => !(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)))
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+  })
+
+  it('a finished upload leaves no .part behind', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'ok.txt')
+    await fs.writeFile(localFile, 'done')
+    const remoteFile = `${remoteDir}/ok.txt`
+    const shell = SessionManager.getInstance().shell(sessionId)
+
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, remoteFile)
+
+    await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
+    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
+  })
 })
