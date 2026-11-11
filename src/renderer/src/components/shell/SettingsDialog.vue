@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../stores/settings.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
+import { formatDateTime, formatSpeed } from '../../utils/format'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -68,21 +69,8 @@ watch(
   }
 )
 
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec >= 1024 * 1024) {
-    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-  }
-  return `${Math.round(bytesPerSec / 1024)} KB/s`
-}
-
 function formatTime(iso: string | null): string {
-  if (!iso) return 'Never'
-  try {
-    const date = new Date(iso)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return iso
-  }
+  return iso ? formatDateTime(iso) : 'Never'
 }
 
 async function handleCheckUpdate(): Promise<void> {

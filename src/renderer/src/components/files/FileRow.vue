@@ -10,7 +10,7 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { formatBytes, formatShortDate } from '../../utils/format'
+import { formatBytes, formatDateTime, formatShortDate } from '../../utils/format'
 import { COLUMN_HIDE } from '../../utils/paneColumns'
 
 const props = defineProps<{
@@ -180,13 +180,6 @@ function submitRename(): void {
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
 
-function formatFullDate(iso: string | null): string {
-  if (!iso) {
-    return ''
-  }
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
 const transferTooltip = computed(() => {
   const verb = props.side === 'local' ? 'Upload' : 'Download'
   return props.entry.isDir ? `${verb} folder` : `${verb} to ${props.side === 'local' ? 'remote' : 'local'}`
@@ -292,7 +285,7 @@ function onMouseLeave(): void {
     />
     <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
     <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
-    <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import type { HistoryEntry } from '@shared/contract'
 import { useHistoryStore } from '../../stores/history.store'
 import { useConfirm } from '../../composables/useConfirm'
-import { formatBytes, formatElapsed } from '../../utils/format'
+import { formatBytes, formatDateTime, formatElapsed } from '../../utils/format'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -66,10 +66,6 @@ const statusColor: Record<HistoryEntry['status'], 'success' | 'error' | 'neutral
   cancelled: 'neutral'
 }
 
-function formatWhen(epochMs: number): string {
-  return new Date(epochMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
 const entries = computed(() => history.entries)
 
 const confirm = useConfirm()
@@ -117,7 +113,7 @@ function close(): void {
                 <div class="truncate">{{ entry.label }}</div>
                 <div class="truncate text-xs text-dimmed">
                   <span v-if="entry.siteName">{{ entry.siteName }} · </span>
-                  {{ formatWhen(entry.finishedAt) }}
+                  {{ formatDateTime(entry.finishedAt) }}
                   <span v-if="entry.bytes"> · {{ formatBytes(entry.bytes) }}</span>
                   <span> · {{ formatElapsed(entry.finishedAt - entry.startedAt) }}</span>
                 </div>

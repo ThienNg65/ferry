@@ -13,6 +13,17 @@ export function formatBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
+export function formatDateTime(value: string | number | null): string {
+  if (value === null || value === '') {
+    return ''
+  }
+  return new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+export function formatSpeed(bytesPerSec: number): string {
+  return `${formatBytes(bytesPerSec)}/s`
+}
+
 /** Compact date for file lists: "Nov 10, 14:32" within the current year, "Nov 10, 2025" otherwise; '' for null. */
 export function formatShortDate(iso: string | null, now: Date = new Date()): string {
   if (!iso) {
@@ -20,7 +31,7 @@ export function formatShortDate(iso: string | null, now: Date = new Date()): str
   }
   const date = new Date(iso)
   if (date.getFullYear() === now.getFullYear()) {
-    return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+    return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }

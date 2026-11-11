@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TransferKind, TransferState } from '@shared/contract'
-import { formatBytes } from '../../utils/format'
+import { formatBytes, formatSpeed } from '../../utils/format'
 
 const props = defineProps<{
   kind: TransferKind
@@ -68,7 +68,7 @@ const progressRightLabel = computed(() => {
   }
   const parts: string[] = []
   if (props.bytesPerSec && props.bytesPerSec > 0) {
-    parts.push(`${formatBytes(props.bytesPerSec)}/s`)
+    parts.push(formatSpeed(props.bytesPerSec))
   }
   const eta = formatEta(props.etaMs)
   if (eta) {
