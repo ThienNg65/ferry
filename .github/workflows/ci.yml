@@ -35,8 +35,9 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Test public release sanitization
-        run: node --test .github/scripts/publish-public-release.test.mjs
+      - name: Test repository automation scripts
+        shell: bash
+        run: node --test .github/scripts/*.test.mjs
 
       - name: Build
         run: npm run build
