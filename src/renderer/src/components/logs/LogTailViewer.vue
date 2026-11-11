@@ -12,6 +12,7 @@ import {
   type LogLevel
 } from '../../utils/logParser'
 import LogSearchBar from './LogSearchBar.vue'
+import { KEYWORD_CLASSES, buildKeywordRegex, splitByKeywords } from '../../utils/keywordHighlight'
 
 const props = defineProps<{ tailId: string }>()
 
@@ -109,6 +110,22 @@ const levelCounts = computed(() => {
   }
   return { errors, warns, infos, debugs }
 })
+
+const keywords = ref<string[]>([])
+const keywordDraft = ref('')
+const keywordRegex = computed(() => buildKeywordRegex(keywords.value))
+
+function addKeyword(): void {
+  const value = keywordDraft.value.trim()
+  if (value && !keywords.value.includes(value) && keywords.value.length < KEYWORD_CLASSES.length) {
+    keywords.value = [...keywords.value, value]
+  }
+  keywordDraft.value = ''
+}
+
+function removeKeyword(index: number): void {
+  keywords.value = keywords.value.filter((_, i) => i !== index)
+}
 
 // Search Regex Builder
 const searchRegex = computed<RegExp | null>(() => {
@@ -599,6 +616,26 @@ onUnmounted(() => {
         @close="closeSearch"
       />
     </Transition>
+    <div v-if="searchOpen" class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-muted px-3 py-1">
+      <span class="text-xs text-muted">Highlight</span>
+      <span
+        v-for="(keyword, kIdx) in keywords"
+        :key="keyword"
+        class="inline-flex items-center gap-1 rounded-xs px-1.5 py-0.5 text-xs"
+        :class="KEYWORD_CLASSES[kIdx]"
+      >
+        {{ keyword }}
+        <button type="button" class="leading-none" :aria-label="`Remove ${keyword}`" @click="removeKeyword(kIdx)">×</button>
+      </span>
+      <UInput
+        v-if="keywords.length < KEYWORD_CLASSES.length"
+        v-model="keywordDraft"
+        size="xs"
+        placeholder="Add keyword, press Enter"
+        class="w-48"
+        @keyup.enter="addKeyword"
+      />
+    </div>
 
     <!-- Virtualized Log Line Viewer -->
     <div
@@ -691,7 +728,17 @@ onUnmounted(() => {
                 v-if="parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp"
                 class="text-muted text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block"
               >{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp }}</span>
-              <span>{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).rest }}</span>
+              <template
+                v-for="(chunk, kIdx) in splitByKeywords(parseTimestampPrefix(filteredLines[virtualRow.index].text).rest, keywordRegex)"
+                :key="kIdx"
+              >
+                <mark
+                  v-if="chunk.group !== null"
+                  class="rounded-xs px-0.5 text-inherit"
+                  :class="KEYWORD_CLASSES[chunk.group]"
+                >{{ chunk.text }}</mark>
+                <span v-else>{{ chunk.text }}</span>
+              </template>
             </template>
           </div>
         </div>
