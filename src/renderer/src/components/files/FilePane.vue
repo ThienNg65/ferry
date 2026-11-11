@@ -257,18 +257,19 @@ async function submitMkdir(): Promise<void> {
   }
 }
 
-function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string): TransferIntent | null {
+function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string, targetDir?: string): TransferIntent | null {
   if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
     notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
     return null
   }
   const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
   if (sourceSide === 'local') {
-    const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
+    const remoteTarget = `${(targetDir ?? remoteFs.currentPath).replace(/\/$/, '')}/${entry.name}`
     return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name, ...source }
   } else {
-    const localDir = localFs.currentPath.replace(/[/\\]$/, '')
-    const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
+    const localBase = targetDir ?? localFs.currentPath
+    const localDir = localBase.replace(/[/\\]$/, '')
+    const sep = localBase.includes('\\') ? '\\' : '/'
     const localTarget = `${localDir}${sep}${entry.name}`
     return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name, ...source }
   }
@@ -523,6 +524,56 @@ async function onDrop(event: DragEvent): Promise<void> {
     return
   }
   await transferEntry(payload.side, payload.entry)
+}
+
+async function moveInto(folder: FileEntry, fromPath: string, name: string): Promise<void> {
+  if (fromPath === folder.path || name === '' || name.includes('/') || name.includes('\\')) return
+  const sep = folder.path.includes('\\') ? '\\' : '/'
+  const toPath = `${folder.path.replace(/[/\\]$/, '')}${sep}${name}`
+  if (props.side === 'remote') {
+    await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessions.activeSessionId, fromPath, toPath)
+  } else {
+    await invoke<void>(INVOKE_CHANNELS.fsLocalRename, fromPath, toPath)
+  }
+}
+
+async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void> {
+  isDropTarget.value = false
+  const sessionId = sessions.activeSessionId
+  try {
+    if (isOsFileDrag(event) && event.dataTransfer) {
+      const intents: TransferIntent[] = []
+      let moved = false
+      for (const item of event.dataTransfer.items) {
+        const file = item.kind === 'file' ? item.getAsFile() : null
+        const localPath = file ? window.api.getPathForFile(file) : ''
+        if (!file || !localPath) continue
+        if (props.side === 'local') {
+          await moveInto(folder, localPath, file.name)
+          moved = true
+        } else if (sessionId) {
+          const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
+          const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir, size: file.size }, sessionId, folder.path)
+          if (intent) intents.push(intent)
+        }
+      }
+      if (intents.length > 0) await enqueueIntents(intents)
+      if (moved) await store.load(store.currentPath, { forceRefresh: true })
+      return
+    }
+    const payload = getDragPayload()
+    clearDrag()
+    if (!payload) return
+    if (payload.side === props.side) {
+      await moveInto(folder, payload.entry.path, payload.entry.name)
+      await store.load(store.currentPath, { forceRefresh: true })
+    } else if (sessionId) {
+      const intent = buildTransferIntent(payload.side, payload.entry, sessionId, folder.path)
+      if (intent) await enqueueIntents([intent])
+    }
+  } catch (e) {
+    notify.error('Move failed', e instanceof Error ? e.message : String(e))
+  }
 }
 
 async function onKeydown(event: KeyboardEvent): Promise<void> {
@@ -841,6 +892,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @chmod="onOpenChmod"
         @edit="onEdit"
         @hover-dir="onHoverDir"
+        @drop-on="onDropOnFolder"
         @clear-filter="filterText = ''"
       />
       <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-[11px] text-muted">

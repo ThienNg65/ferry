@@ -72,6 +72,7 @@ const emit = defineEmits<{
   sort: [column: SortColumn]
   'clear-filter': []
   'hover-dir': [path: string]
+  'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
 import { COLUMN_HIDE } from '../../utils/paneColumns'
 </script>
@@ -170,6 +171,7 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
             @chmod="emit('chmod', $event)"
             @edit="emit('edit', $event)"
             @hover-dir="emit('hover-dir', $event)"
+            @drop-on="(entry, event) => emit('drop-on', entry, event)"
           />
         </div>
       </div>

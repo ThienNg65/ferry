@@ -61,7 +61,26 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   'hover-dir': [path: string]
+  'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
+
+const dropHover = ref(false)
+
+function onRowDragOver(event: DragEvent): void {
+  if (props.entry.isDir) {
+    event.preventDefault()
+    dropHover.value = true
+  }
+}
+
+function onRowDrop(event: DragEvent): void {
+  dropHover.value = false
+  if (props.entry.isDir) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('drop-on', props.entry, event)
+  }
+}
 
 const notify = useNotify()
 
@@ -211,6 +230,7 @@ function onMouseLeave(): void {
     @mouseleave="onMouseLeave"
     :class="[
       ui.density === 'compact' ? 'py-0.5' : 'py-1.5',
+      dropHover ? 'ring-2 ring-primary ring-inset' : '',
       selected
         ? active
           ? 'bg-primary/25 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
@@ -222,6 +242,9 @@ function onMouseLeave(): void {
     @dblclick="emit('open', entry)"
     @dragstart="onDragStart"
     @dragend="clearDrag"
+    @dragover="onRowDragOver"
+    @dragleave="dropHover = false"
+    @drop="onRowDrop"
   >
     <UTooltip v-if="entry.isSymlink" :text="symlinkTooltip">
       <span class="relative inline-flex size-4 shrink-0">
