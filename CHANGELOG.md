@@ -9,6 +9,13 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.19.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.19.0...ferry-v0.19.1) (2026-11-11)
+
+
+### Documentation
+
+* explain Release Please bot PR checks and token setup ([9f12d43](https://github.com/ThienNg65/ferry/commit/9f12d4346bd8d1317e6cba6a4b50f348f5652754))
+
 ## [0.19.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.18.4...ferry-v0.19.0) (2026-11-11)
 
 
