@@ -606,6 +606,9 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           </div>
         </div>
       </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" @click="sessions.cancelConnect(sessions.activeTabId)">Cancel</UButton>
+      </template>
     </UModal>
   </div>
 </template>

@@ -258,6 +258,9 @@ export const useSessionsStore = defineStore('sessions', {
       trustedHostKey?: { host: string; port: number }
     ): Promise<void> {
       const notify = useNotify()
+      const startedSessionId = tab.sessionId
+      const isAbandoned = (): boolean =>
+        tab.sessionId !== startedSessionId || !this.tabs.some((t) => t.tabId === tab.tabId)
       try {
         const result = await invoke<SessionOpenResult>(INVOKE_CHANNELS.sessionOpen, {
           ...request,
@@ -285,6 +288,9 @@ export const useSessionsStore = defineStore('sessions', {
         // connected by the time the user clicks the Terminal dock tab.
         void useTerminalStreamsStore().ensureTerminal(result.sessionId)
       } catch (e) {
+        if (isAbandoned()) {
+          return
+        }
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
@@ -294,8 +300,10 @@ export const useSessionsStore = defineStore('sessions', {
         }
         throw e
       } finally {
-        tab.connecting = false
-        tab.connectPromise = null
+        if (!isAbandoned()) {
+          tab.connecting = false
+          tab.connectPromise = null
+        }
       }
     },
 
@@ -346,21 +354,28 @@ export const useSessionsStore = defineStore('sessions', {
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
+    /** Aborts the in-flight connect of a tab and returns it to the picker. */
+    async cancelConnect(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab || !tab.connecting || !tab.sessionId) {
+        return
+      }
+      const sessionId = tab.sessionId
+      tab.sessionId = null
+      tab.status = null
+      tab.statusMessage = null
+      tab.progressMessages = []
+      tab.connecting = false
+      tab.connectPromise = null
+      this.pendingKeyboardPrompt = null
+      await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
+    },
+
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */
     async closeTab(tabId: string): Promise<void> {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab) {
         return
-      }
-      if (tab.connecting && tab.connectPromise) {
-        // Wait out the in-flight connect instead of detaching the tab now — otherwise
-        // openSession's eventual result sets fields on an orphaned tab and, worse, a real SSH
-        // session finishes connecting with no tab left to close it from.
-        try {
-          await tab.connectPromise
-        } catch {
-          // Already recorded on the tab (status/statusMessage) by openSession's own catch.
-        }
       }
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
