@@ -80,6 +80,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({
       label: transferTooltip.value,
       icon: props.transferIcon,
+      kbds: ['F5'],
       onSelect: () => emit('transfer', props.entry)
     })
   }
