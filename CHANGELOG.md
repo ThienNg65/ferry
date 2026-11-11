@@ -9,6 +9,30 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.18.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.17.0...ferry-v0.18.0) (2026-11-11)
+
+
+### Features
+
+* confirm host key fingerprint on first connect ([5713f85](https://github.com/ThienNg65/ferry/commit/5713f853a5819d87e89783ddf6822e4e33b69f7f))
+* richer transfer conflict dialog and F5 copy ([0934643](https://github.com/ThienNg65/ferry/commit/0934643f2ba00afd409fda2bb73891c549a91a73))
+
+
+### Bug Fixes
+
+* accessibility baseline (labels, contrast, reduced motion) ([0257370](https://github.com/ThienNg65/ferry/commit/0257370134d0e80c82e0f0127bcd383b57732641))
+* address review findings (host-key bypass, prompt timeout, safe edit saves, conflict rename) ([3dcf1cf](https://github.com/ThienNg65/ferry/commit/3dcf1cf4112f39283ee7e6afdbdb06e810b8da14))
+* confirm single-file delete, cancel rename and path edit on blur ([05ed33e](https://github.com/ThienNg65/ferry/commit/05ed33eca4f9e31898d1fe7850884b4d806cb6d6))
+* detect remote changes and save edits atomically ([af83769](https://github.com/ThienNg65/ferry/commit/af8376933c204a6ba36ada3edac4f363807c74b4))
+* file list readable at any pane width ([8ad1482](https://github.com/ThienNg65/ferry/commit/8ad1482df3bf75ee265a5d8f0c323d1f73e285b4))
+* keyboard focus and selection visibility in file panes ([f27498c](https://github.com/ThienNg65/ferry/commit/f27498c1da4ed685195e0364a9f032e1334dac28))
+* plain-language connection errors and persistent error toasts ([5da4e1e](https://github.com/ThienNg65/ferry/commit/5da4e1e9eeb791ca93f9c5d636ddb4bea0ecb073))
+
+
+### Documentation
+
+* add UX audit and record new conventions in PROJECT_MAP ([0c771ea](https://github.com/ThienNg65/ferry/commit/0c771ea0b3036d94b853306a011e9cd2dfb85bf0))
+
 ## [0.17.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.16.1...ferry-v0.17.0) (2026-11-11)
 
 
