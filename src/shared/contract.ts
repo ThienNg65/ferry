@@ -291,6 +291,21 @@ export interface KeyboardInteractiveRequestEvent {
   prompts: KeyboardInteractivePrompt[]
 }
 
+/** Push-event payload for `session:host-key-prompt` — first connect to a host:port with no stored fingerprint. */
+export interface HostKeyPromptEvent {
+  requestId: string
+  sessionId: string
+  host: string
+  port: number
+  fingerprint: string
+}
+
+/** Request payload for `session:host-key-respond`. */
+export interface HostKeyRespondRequest {
+  requestId: string
+  accept: boolean
+}
+
 /** Request payload for `session:keyboard-interactive-respond`. */
 export interface KeyboardInteractiveRespondRequest {
   requestId: string
@@ -829,6 +844,7 @@ export const INVOKE_CHANNELS = {
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
   sessionKeyboardInteractiveRespond: 'session:keyboard-interactive-respond',
+  sessionHostKeyRespond: 'session:host-key-respond',
   // local filesystem
   fsLocalList: 'fs:local:list',
   fsLocalMkdir: 'fs:local:mkdir',
@@ -916,6 +932,7 @@ export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   sessionProgress: 'session:progress',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
+  hostKeyPrompt: 'session:host-key-prompt',
   transferEvent: 'transfer:event',
   operationEvent: 'operation:event',
   monitorSample: 'monitor:sample',

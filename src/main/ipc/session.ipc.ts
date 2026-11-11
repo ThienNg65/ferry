@@ -1,6 +1,7 @@
 import { handle } from './envelope'
 import {
   INVOKE_CHANNELS,
+  type HostKeyRespondRequest,
   type KeyboardInteractiveRespondRequest,
   type SessionOpenRequest,
   type SessionOpenResult
@@ -31,5 +32,10 @@ export function registerSessionHandlers(): void {
       throw new SshError('VALIDATION', 'session:keyboardInteractiveRespond requires responses to be an array')
     }
     SessionManager.getInstance().respondKeyboardInteractive(requestId, responses)
+  })
+
+  handle<void>(INVOKE_CHANNELS.sessionHostKeyRespond, (req) => {
+    const { requestId, accept } = req as HostKeyRespondRequest
+    SessionManager.getInstance().respondHostKey(requestId, accept === true)
   })
 }
