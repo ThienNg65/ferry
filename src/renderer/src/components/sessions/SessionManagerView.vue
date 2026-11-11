@@ -273,7 +273,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
               <div class="truncate text-xs text-muted">
                 {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
-                <span v-if="sessions.statusMessage" class="text-error"> — {{ sessions.statusMessage }}</span>
+                <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
               </div>
             </div>
           </div>
@@ -558,6 +558,28 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
     </UModal>
 
     <UModal
+      :open="Boolean(sessions.pendingHostKeyPrompt)"
+      title="Trust this server?"
+      :ui="{ footer: 'justify-end' }"
+      @update:open="(v: boolean) => { if (!v) sessions.respondHostKey(false) }"
+    >
+      <template #body>
+        <div class="flex flex-col gap-3">
+          <p class="text-sm text-default">
+            First connection to
+            <span class="font-medium">{{ sessions.pendingHostKeyPrompt?.host }}:{{ sessions.pendingHostKeyPrompt?.port }}</span>.
+            Check that this fingerprint matches the one your server administrator gave you.
+          </p>
+          <code class="break-all rounded-md bg-muted p-2 font-mono text-xs text-highlighted">{{ sessions.pendingHostKeyPrompt?.fingerprint }}</code>
+        </div>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="outline" autofocus @click="sessions.respondHostKey(false)">Cancel</UButton>
+        <UButton color="primary" @click="sessions.respondHostKey(true)">Trust &amp; connect</UButton>
+      </template>
+    </UModal>
+
+    <UModal
       :open="Boolean(sessions.pendingKeyboardPrompt)"
       title="Authentication required"
       :ui="{ footer: 'justify-end' }"
@@ -590,7 +612,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       </template>
     </UModal>
     <UModal
-      :open="sessions.connecting && !sessions.pendingKeyboardPrompt && !sessions.pendingHostKeyMismatch"
+      :open="sessions.connecting && !sessions.pendingKeyboardPrompt && !sessions.pendingHostKeyPrompt && !sessions.pendingHostKeyMismatch"
       title="Connecting..."
       prevent-close
     >

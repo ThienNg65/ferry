@@ -1,4 +1,6 @@
+import { randomBytes } from 'crypto'
 import { createReadStream, createWriteStream } from 'fs'
+import type { SFTPWrapper } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
@@ -185,16 +187,83 @@ export async function downloadForEdit(
   })
 }
 
-/** Re-uploads a locally-edited file's FULL content back to its remote path — the other half of edit-in-external-editor. */
-export async function uploadForEdit(sessionId: string, localPath: string, remotePath: string): Promise<void> {
-  const shell = SessionManager.getInstance().shell(sessionId)
-  const sftp = await shell.sftp()
-  await new Promise<void>((resolve, reject) => {
+export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number } | null> {
+  try {
+    const stats = await SessionManager.getInstance().shell(sessionId).stat(remotePath)
+    return { mtime: stats.mtime ?? 0, size: stats.size ?? 0, mode: stats.mode & 0o7777 }
+  } catch {
+    return null
+  }
+}
+
+function writeRemoteFile(sftp: SFTPWrapper, localPath: string, remotePath: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const readStream = createReadStream(localPath)
     const writeStream = sftp.createWriteStream(remotePath)
-    readStream.on('error', (e: Error) => reject(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`)))
+    readStream.on('error', (e: Error) => {
+      writeStream.destroy()
+      reject(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
+    })
     writeStream.on('error', (e: Error) => reject(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`)))
     writeStream.on('close', () => resolve())
     readStream.pipe(writeStream)
   })
+}
+
+function posixRename(sftp: SFTPWrapper, from: string, to: string): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    try {
+      sftp.ext_openssh_rename(from, to, (e) => (e ? reject(e) : resolve(true)))
+    } catch {
+      resolve(false)
+    }
+  })
+}
+
+function resolveRemotePath(sftp: SFTPWrapper, remotePath: string): Promise<string> {
+  return new Promise((resolve) => sftp.realpath(remotePath, (e, abs) => resolve(e ? remotePath : abs)))
+}
+
+async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: string, hadTarget: boolean): Promise<void> {
+  if (!hadTarget) {
+    await shell.rename(tempPath, target)
+    return
+  }
+  const backup = `${target}.ferry-bak-${randomBytes(4).toString('hex')}`
+  await shell.rename(target, backup)
+  try {
+    await shell.rename(tempPath, target)
+  } catch (e) {
+    await shell.rename(backup, target).catch(() => undefined)
+    throw e
+  }
+  await shell.unlink(backup).catch(() => undefined)
+}
+
+export async function uploadForEdit(sessionId: string, localPath: string, remotePath: string): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const sftp = await shell.sftp()
+  const target = await resolveRemotePath(sftp, remotePath)
+  const existing = await statRemoteForEdit(sessionId, target)
+  const tempPath = `${target}.ferry-tmp-${randomBytes(4).toString('hex')}`
+  try {
+    try {
+      await writeRemoteFile(sftp, localPath, tempPath)
+    } catch (e) {
+      if (existing && /permission denied/i.test(e instanceof Error ? e.message : '')) {
+        await writeRemoteFile(sftp, localPath, target)
+        return
+      }
+      throw e
+    }
+    if (existing) {
+      await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0'))
+    }
+    if (!(await posixRename(sftp, tempPath, target))) {
+      await replaceRemoteFile(shell, tempPath, target, existing !== null)
+    }
+  } catch (e) {
+    await shell.unlink(tempPath).catch(() => undefined)
+    throw e
+  }
 }

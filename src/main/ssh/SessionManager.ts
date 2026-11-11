@@ -6,6 +6,7 @@ import * as net from 'net'
 import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
+import { friendlyConnectError } from './friendlyConnectError'
 import { probeAgent, rewriteAgentAuthError } from './agentDiagnostics'
 import { connectViaProxy } from './ProxyConnector'
 import { evaluateHostKey, fingerprintHostKey, KnownHostsStore } from './KnownHostsStore'
@@ -22,6 +23,7 @@ import {
   type AuthMethod,
   type IpcErrorCode,
   type JumpHostConfig,
+  type HostKeyPromptEvent,
   type KeyboardInteractiveRequestEvent,
   type ProxyConfig,
   type QuickConnectInput,
@@ -93,6 +95,7 @@ interface HopAuth {
 /** Mutable holder for a hop's host-key mismatch, if its `hostVerifier` rejects — see the comment at its construction site for why this isn't a plain `let`. */
 interface HostKeyMismatchHolder {
   value: { expected: string; presented: string; host: string; port: number } | null
+  rejected: boolean
 }
 
 /** Identifies one specific hop or the target — the only host:port a user-confirmed retry force-trusts, so an unrelated concurrent mismatch elsewhere in the same connection still surfaces its own warning instead of being silently trusted. */
@@ -131,6 +134,8 @@ export class SessionManager {
   private readonly sessions = new Map<string, SessionEntry>()
   /** Resolvers for keyboard-interactive prompts currently awaiting a renderer response, keyed by requestId. */
   private readonly pendingConnects = new Map<string, () => void>()
+  private readonly connectTimers = new Map<string, { pause: () => void; resume: () => void }>()
+  private readonly pendingHostKeys = new Map<string, { sessionId: string; resolve: (accept: boolean) => void }>()
   private readonly pendingKeyboardInteractive = new Map<string, { sessionId: string; resolve: (responses: string[]) => void }>()
 
   static getInstance(): SessionManager {
@@ -180,6 +185,48 @@ export class SessionManager {
     pending.resolve(responses)
   }
 
+  respondHostKey(requestId: string, accept: boolean): void {
+    const pending = this.pendingHostKeys.get(requestId)
+    if (!pending) {
+      return
+    }
+    this.pendingHostKeys.delete(requestId)
+    pending.resolve(accept)
+  }
+
+  setHostKeyPrompter(prompter: (sessionId: string, host: string, port: number, fingerprint: string) => Promise<boolean>): void {
+    this.hostKeyPrompter = prompter
+  }
+
+  private hostKeyPrompter = (sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> =>
+    this.askRendererHostKey(sessionId, host, port, fingerprint)
+
+  private pauseConnectTimer(sessionId: string): void {
+    this.connectTimers.get(sessionId)?.pause()
+  }
+
+  private resumeConnectTimer(sessionId: string): void {
+    this.connectTimers.get(sessionId)?.resume()
+  }
+
+  private promptHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
+    this.pauseConnectTimer(sessionId)
+    return this.hostKeyPrompter(sessionId, host, port, fingerprint).finally(() => this.resumeConnectTimer(sessionId))
+  }
+
+  private askRendererHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const requestId = randomUUID()
+      this.pendingHostKeys.set(requestId, { sessionId, resolve })
+      const payload: HostKeyPromptEvent = { requestId, sessionId, host, port, fingerprint }
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(EVENT_CHANNELS.hostKeyPrompt, payload)
+        }
+      }
+    })
+  }
+
   /** Broadcasts a keyboard-interactive challenge to the renderer and waits for its answer. */
   private promptKeyboardInteractive(
     sessionId: string,
@@ -187,7 +234,8 @@ export class SessionManager {
     instructions: string,
     prompts: { prompt: string; echo: boolean }[]
   ): Promise<string[]> {
-    return new Promise((resolve) => {
+    this.pauseConnectTimer(sessionId)
+    return new Promise<string[]>((resolve) => {
       const requestId = randomUUID()
       this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
@@ -196,7 +244,7 @@ export class SessionManager {
           win.webContents.send(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
         }
       }
-    })
+    }).finally(() => this.resumeConnectTimer(sessionId))
   }
 
   /**
@@ -259,6 +307,7 @@ export class SessionManager {
 
   /** Builds a `hostVerifier`-equipped `ConnectConfig` for one hop (the target host, or a jump host), keyed by its own host:port in `KnownHostsStore`. */
   private async buildConnectConfig(
+    sessionId: string,
     host: string,
     port: number,
     username: string,
@@ -269,7 +318,7 @@ export class SessionManager {
     // get incorrectly narrowed to `null` at the read site in the catch block
     // (TypeScript's control-flow analysis doesn't track closure reassignments) —
     // a mutable holder object sidesteps that.
-    const hostKeyMismatch: HostKeyMismatchHolder = { value: null }
+    const hostKeyMismatch: HostKeyMismatchHolder = { value: null, rejected: false }
     // Only force-trust a mismatch for the exact host:port the user was warned about and
     // confirmed — every other hop/target in this same connect attempt still verifies normally.
     const forceTrustThisHop = trustedHostKey?.host === host && trustedHostKey?.port === port
@@ -278,8 +327,14 @@ export class SessionManager {
       const known = KnownHostsStore.getInstance().get(host, port)
       const decision = evaluateHostKey(known, presented, forceTrustThisHop)
       if (decision === 'trust-new') {
-        KnownHostsStore.getInstance().trust(host, port, presented)
-        verify(true)
+        void this.promptHostKey(sessionId, host, port, presented).then((accept) => {
+          if (accept) {
+            KnownHostsStore.getInstance().trust(host, port, presented)
+          } else {
+            hostKeyMismatch.rejected = true
+          }
+          verify(accept)
+        })
         return
       }
       if (decision === 'match') {
@@ -293,7 +348,7 @@ export class SessionManager {
       host,
       port,
       username,
-      readyTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
+      readyTimeout: 0,
       keepaliveInterval: 15_000,
       keepaliveCountMax: 4,
       tryKeyboard: true,
@@ -340,7 +395,20 @@ export class SessionManager {
   /** Connects one `ssh2.Client` (either the target host or a jump host), resolving on `ready`. Real keyboard-interactive prompts route through {@link promptKeyboardInteractive} under the given `sessionId`. */
   private connectClient(sessionId: string, client: Client, config: ConnectConfig, password: string | undefined, authMethod?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const disarm = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+      }
+      const arm = (): void => {
+        disarm()
+        timer = setTimeout(onTimeout, DEFAULT_CONNECT_TIMEOUT_MS)
+      }
       const cleanup = (): void => {
+        disarm()
+        this.connectTimers.delete(sessionId)
         client.removeListener('ready', onReady)
         client.removeListener('error', onError)
         client.removeListener('timeout', onTimeout)
@@ -354,12 +422,15 @@ export class SessionManager {
       }
       const onError = (e: Error): void => {
         cleanup()
-        reject(new SshError('SSH_CONNECT', e.message))
+        reject(new SshError('SSH_CONNECT', friendlyConnectError(e.message, config.host ?? '', config.port ?? 22)))
       }
       const onTimeout = (): void => {
         cleanup()
+        client.destroy()
         reject(new SshError('SSH_TIMEOUT', `Connection to ${config.host} timed out`))
       }
+      this.connectTimers.set(sessionId, { pause: disarm, resume: arm })
+      arm()
       client.on('ready', onReady)
       client.on('error', onError)
       client.on('timeout', onTimeout)
@@ -528,7 +599,7 @@ export class SessionManager {
           })
           s.once('error', (err) => {
             clearTimeout(timeoutId)
-            reject(new SshError('SSH_CONNECT', err.message))
+            reject(new SshError('SSH_CONNECT', friendlyConnectError(err.message, first.host, first.port)))
           })
         }))
       }
@@ -536,6 +607,7 @@ export class SessionManager {
         const hop = hops[i]
         const hopClient = jumpClients[i]
         const { config: hopConfig, hostKeyMismatch: hopMismatch } = await this.buildConnectConfig(
+          sessionId,
           hop.host,
           hop.port,
           hop.username,
@@ -548,6 +620,9 @@ export class SessionManager {
         try {
           await guard(this.connectClient(sessionId, hopClient, hopConfig, hop.password, hop.authMethod))
         } catch (e) {
+          if (hopMismatch.rejected) {
+            throw new SshError('CANCELLED', 'Connection cancelled — host key not trusted')
+          }
           throw hopMismatch.value
             ? new SshError(
                 'HOST_KEY_MISMATCH',
@@ -562,6 +637,7 @@ export class SessionManager {
       }
 
       const { config: targetConfig, hostKeyMismatch, agentIdentityCount } = await this.buildConnectConfig(
+        sessionId,
         input.host,
         input.port,
         input.username,
@@ -575,6 +651,9 @@ export class SessionManager {
       try {
         await guard(this.connectClient(sessionId, client, targetConfig, input.password, input.authMethod))
       } catch (e) {
+        if (hostKeyMismatch.rejected) {
+          throw new SshError('CANCELLED', 'Connection cancelled — host key not trusted')
+        }
         if (hostKeyMismatch.value) {
           throw new SshError(
             'HOST_KEY_MISMATCH',
@@ -648,6 +727,12 @@ export class SessionManager {
     entry.status = 'disconnected'
     if (wasConnecting) {
       entry.abort()
+    }
+    for (const [requestId, pending] of this.pendingHostKeys) {
+      if (pending.sessionId === sessionId) {
+        this.pendingHostKeys.delete(requestId)
+        pending.resolve(false)
+      }
     }
     for (const [requestId, pending] of this.pendingKeyboardInteractive) {
       if (pending.sessionId === sessionId) {

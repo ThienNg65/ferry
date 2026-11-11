@@ -14,7 +14,8 @@ import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
-import { formatBytes } from '../../utils/format'
+import { formatBytes, formatShortDate } from '../../utils/format'
+import { resolveConflicts, type ConflictChoice } from '../../utils/resolveConflicts'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
@@ -30,6 +31,8 @@ interface TransferIntent {
   remotePath: string
   isDir: boolean
   targetName: string
+  sourceSize: number | null
+  sourceModifiedAt: string | null
 }
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
@@ -92,7 +95,7 @@ const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
-const transferConflict = ref<{ intents: TransferIntent[]; conflicts: string[] } | null>(null)
+const transferConflict = ref<{ intents: TransferIntent[]; targets: FileEntry[]; conflicts: Array<{ intent: TransferIntent; target: FileEntry }> } | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editConfirmTarget = ref<FileEntry | null>(null)
@@ -245,45 +248,49 @@ async function submitMkdir(): Promise<void> {
   }
 }
 
-function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean }, sessionId: string): TransferIntent | null {
+function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string): TransferIntent | null {
   if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
     notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
     return null
   }
+  const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
   if (sourceSide === 'local') {
     const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
-    return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name }
+    return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name, ...source }
   } else {
     const localDir = localFs.currentPath.replace(/[/\\]$/, '')
     const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
     const localTarget = `${localDir}${sep}${entry.name}`
-    return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name }
+    return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name, ...source }
   }
 }
 
 async function checkAndQueueTransfers(intents: TransferIntent[], targetStore: typeof localFs | typeof remoteFs): Promise<void> {
-  const conflicts: string[] = []
+  const conflicts: Array<{ intent: TransferIntent; target: FileEntry }> = []
   for (const intent of intents) {
-    if (targetStore.entries.some((e) => e.name === intent.targetName)) {
-      conflicts.push(intent.targetName)
+    const target = targetStore.entries.find((e) => e.name === intent.targetName)
+    if (target) {
+      conflicts.push({ intent, target })
     }
   }
   if (conflicts.length > 0) {
-    transferConflict.value = { intents, conflicts }
+    transferConflict.value = { intents, targets: [...targetStore.entries], conflicts }
     return
   }
+  await enqueueIntents(intents)
+}
+
+async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
   for (const intent of intents) {
     await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
   }
 }
 
-async function resolveTransferConflict(): Promise<void> {
+async function resolveTransferConflict(choice: ConflictChoice): Promise<void> {
   const conflict = transferConflict.value
   if (!conflict) return
   transferConflict.value = null
-  for (const intent of conflict.intents) {
-    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
-  }
+  await enqueueIntents(resolveConflicts(conflict.intents, conflict.targets, choice))
 }
 
 /** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
@@ -486,7 +493,7 @@ async function onOsDrop(event: DragEvent): Promise<void> {
     const localPath = file ? window.api.getPathForFile(file) : ''
     if (!file || !localPath) continue
     const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
-    const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir }, sessionId)
+    const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir, size: file.size, modifiedAt: new Date(file.lastModified).toISOString() }, sessionId)
     if (intent) intents.push(intent)
   }
   if (intents.length > 0) {
@@ -548,6 +555,21 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
     event.preventDefault()
     store.selectAll(filteredEntries.value)
+    return
+  }
+  if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+    const [path] = store.selected
+    const row = [...document.querySelectorAll<HTMLElement>(`[data-pane="${props.side}"] [data-row-path]`)].find((el) => el.dataset.rowPath === path)
+    if (row) {
+      event.preventDefault()
+      const rect = row.getBoundingClientRect()
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 24, clientY: rect.bottom }))
+    }
+    return
+  }
+  if (event.key === 'F5') {
+    event.preventDefault()
+    await onTransferSelected()
     return
   }
   if (event.key === 'F2') {
@@ -614,18 +636,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
   }
   event.preventDefault()
   const targets = store.entries.filter((e) => store.selected.has(e.path))
-  // Folders and multi-item selections always confirm before deleting — the
-  // keyboard shortcut only skips the dialog when exactly one plain file is selected.
-  if (targets.length > 1 || targets.some((e) => e.isDir)) {
-    pendingDelete.value = targets
-    return
-  }
-  try {
-    await store.removeMany(targets)
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    notify.error('Delete failed', message)
-  }
+  pendingDelete.value = targets
 }
 
 async function onRename(entry: FileEntry, newName: string): Promise<void> {
@@ -694,7 +705,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
 
 <template>
   <div
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
+    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
@@ -766,7 +777,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         />
         <UButton size="xs" @click="submitMkdir">Create</UButton>
       </div>
-      <div v-if="store.error" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
+      <div v-if="store.error" role="alert" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
         <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
         <button
           type="button"
@@ -866,20 +877,29 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
       <UModal
         :open="Boolean(transferConflict)"
         title="File Conflict"
-        :ui="{ footer: 'justify-end' }"
+        :ui="{ footer: 'flex-wrap justify-end' }"
         @update:open="(v: boolean) => { if (!v) transferConflict = null }"
       >
         <template #body>
-          <p class="text-sm text-default mb-2">
-            The following items already exist in the target directory and will be overwritten:
-          </p>
-          <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2 text-xs text-default">
-            <li v-for="name in transferConflict?.conflicts" :key="name" class="truncate">{{ name }}</li>
+          <p class="mb-2 text-sm text-default">These items already exist in the target directory:</p>
+          <ul class="flex max-h-60 flex-col gap-2 overflow-y-auto rounded-md bg-muted p-2 text-xs text-default">
+            <li v-for="c in transferConflict?.conflicts" :key="c.intent.targetName" class="flex flex-col gap-0.5">
+              <span class="truncate font-medium">{{ c.intent.targetName }}</span>
+              <span class="text-muted">
+                New: {{ c.intent.isDir ? 'folder' : formatBytes(c.intent.sourceSize ?? 0) }}, {{ formatShortDate(c.intent.sourceModifiedAt) || 'unknown date' }}
+              </span>
+              <span class="text-muted">
+                Existing: {{ c.target.isDir ? 'folder' : formatBytes(c.target.size) }}, {{ formatShortDate(c.target.modifiedAt) || 'unknown date' }}
+              </span>
+            </li>
           </ul>
         </template>
         <template #footer>
           <UButton color="neutral" variant="outline" @click="transferConflict = null">Cancel</UButton>
-          <UButton color="primary" @click="resolveTransferConflict">Overwrite</UButton>
+          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('skip')">Skip existing</UButton>
+          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('rename')">Keep both</UButton>
+          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('newer')">Overwrite if newer</UButton>
+          <UButton color="primary" @click="resolveTransferConflict('overwrite')">Overwrite all</UButton>
         </template>
       </UModal>
       <UModal

@@ -85,7 +85,7 @@ function onFilterInput(value: string | number): void {
       icon="i-lucide-search"
       placeholder="Filter (Ctrl+F)…"
       size="xs"
-      class="w-32"
+      class="w-24 transition-[width] focus-within:w-40"
       :ui="{ trailing: 'pointer-events-auto' }"
       @update:model-value="onFilterInput"
     >

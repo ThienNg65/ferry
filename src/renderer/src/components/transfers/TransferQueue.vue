@@ -43,7 +43,7 @@ const hasFinished = computed(() =>
       />
       <div v-if="store.list.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-arrow-down-up" class="size-5 text-dimmed" />
-        <p class="text-xs text-dimmed">No transfers yet</p>
+        <p class="text-xs text-muted">No transfers yet</p>
       </div>
     </div>
   </div>

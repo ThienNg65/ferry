@@ -60,6 +60,7 @@ describe.skipIf(!serverAvailable)('SessionManager jump-host tunneling against a 
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('./SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ KnownHostsStore } = await import('./KnownHostsStore'))
   })
 

@@ -26,6 +26,10 @@ export function registerEditHandlers(): void {
     await EditSessionManager.getInstance().closeEdit(editId as string)
   })
 
+  handle<void>(INVOKE_CHANNELS.editForceReupload, async (editId) => {
+    await EditSessionManager.getInstance().forceReupload(editId as string)
+  })
+
   handle<OpenEditSnapshot[]>(INVOKE_CHANNELS.editList, async () => {
     return EditSessionManager.getInstance().listEdits()
   })

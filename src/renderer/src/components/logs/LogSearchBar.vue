@@ -129,6 +129,7 @@ function onKeydown(e: KeyboardEvent): void {
     <!-- Navigation buttons (only relevant when not in filter-only mode or when matches exist) -->
     <UTooltip text="Previous match (Shift+Enter)">
       <UButton
+        aria-label="Previous match (Shift+Enter)"
         icon="i-lucide-chevron-up"
         color="neutral"
         variant="ghost"
@@ -139,6 +140,7 @@ function onKeydown(e: KeyboardEvent): void {
     </UTooltip>
     <UTooltip text="Next match (Enter)">
       <UButton
+        aria-label="Next match (Enter)"
         icon="i-lucide-chevron-down"
         color="neutral"
         variant="ghost"
@@ -175,6 +177,7 @@ function onKeydown(e: KeyboardEvent): void {
 
     <UTooltip text="Filter mode: only display matching lines (Alt+F)">
       <UButton
+        aria-label="Filter mode: only display matching lines (Alt+F)"
         icon="i-lucide-filter"
         size="xs"
         :color="filterOnly ? 'primary' : 'neutral'"
@@ -189,6 +192,7 @@ function onKeydown(e: KeyboardEvent): void {
     <!-- Close button -->
     <UTooltip text="Close (Esc)">
       <UButton
+        aria-label="Close (Esc)"
         icon="i-lucide-x"
         color="neutral"
         variant="ghost"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { renameSelectionEnd } from '../../utils/renameSelection'
 import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry } from '@shared/contract'
@@ -9,7 +10,8 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { formatShortDate } from '../../utils/format'
+import { formatBytes, formatShortDate } from '../../utils/format'
+import { COLUMN_HIDE } from '../../utils/paneColumns'
 
 const props = defineProps<{
   entry: FileEntry
@@ -78,6 +80,7 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({
       label: transferTooltip.value,
       icon: props.transferIcon,
+      kbds: ['F5'],
       onSelect: () => emit('transfer', props.entry)
     })
   }
@@ -107,14 +110,35 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
 })
 
 const draftName = ref(props.entry.name)
+const renameInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
 watch(
   () => props.renaming,
-  (active) => {
+  async (active) => {
     if (active) {
       draftName.value = props.entry.name
+      await nextTick()
+      renameInput.value?.inputRef?.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
     }
   }
 )
+
+function focusPane(): void {
+  document.querySelector<HTMLElement>(`[data-pane="${props.side}"]`)?.focus()
+}
+
+function onMenuCloseAutoFocus(e: Event): void {
+  e.preventDefault()
+  void nextTick(() => {
+    if (!props.renaming) {
+      focusPane()
+    }
+  })
+}
+
+function onRenameEscape(): void {
+  cancelRename()
+  focusPane()
+}
 
 function cancelRename(): void {
   draftName.value = props.entry.name
@@ -128,25 +152,10 @@ function submitRename(): void {
   } else {
     emit('cancel-rename')
   }
+  focusPane()
 }
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
-
-function formatSize(size: number, isDir: boolean): string {
-  if (isDir) {
-    return ''
-  }
-  if (size < 1024) {
-    return `${size} B`
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`
-  }
-  if (size < 1024 * 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(1)} MB`
-  }
-  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
-}
 
 function formatFullDate(iso: string | null): string {
   if (!iso) {
@@ -194,17 +203,18 @@ function onMouseLeave(): void {
 </script>
 
 <template>
-  <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
+  <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: onMenuCloseAutoFocus }">
   <div
     class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
+    :data-row-path="entry.path"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     :class="[
       ui.density === 'compact' ? 'py-0.5' : 'py-1.5',
       selected
         ? active
-          ? 'bg-primary/20 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
-          : 'bg-accented text-highlighted'
+          ? 'bg-primary/25 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
+          : 'bg-elevated text-highlighted shadow-[inset_2px_0_0_var(--ui-border-accented)]'
         : 'text-default hover:bg-elevated/60'
     ]"
     :draggable="!renaming"
@@ -235,29 +245,30 @@ function onMouseLeave(): void {
     />
     <UInput
       v-if="renaming"
+      ref="renameInput"
       v-model="draftName"
       size="xs"
-      class="flex-1"
+      class="min-w-24 flex-1"
       autofocus
       @click.stop
       @dblclick.stop
       @keydown.stop
       @keyup.enter="submitRename"
-      @keyup.esc="cancelRename"
-      @blur="submitRename"
+      @keyup.esc="onRenameEscape"
+      @blur="cancelRename"
     />
-    <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted">{{ formatSize(entry.size, entry.isDir) }}</span>
-    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
-    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end">
+    <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
+    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
+    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
-        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-dimmed">
+        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
           {{ technicalPermissions }}
         </span>
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>
       </UTooltip>
     </div>
-    <div v-else-if="side === 'remote'" class="w-36 shrink-0"></div>
+    <div v-else-if="side === 'remote'" class="w-36 shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
     <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
       <UTooltip v-if="transferIcon" :text="transferTooltip">
         <UButton

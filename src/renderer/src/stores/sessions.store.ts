@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type {
   AppSettings,
+  HostKeyPromptEvent,
   KeyboardInteractiveRequestEvent,
   QuickConnectInput,
   Site,
@@ -61,6 +62,8 @@ interface SessionsState {
   unsubscribeKeyboardInteractive: (() => void) | null
   /** A live keyboard-interactive challenge (2FA/OTP) awaiting the user's answer — global, not per-tab, since only one connect attempt is normally in flight at a time. */
   pendingKeyboardPrompt: KeyboardInteractiveRequestEvent | null
+  unsubscribeHostKey: (() => void) | null
+  pendingHostKeyPrompt: HostKeyPromptEvent | null
 }
 
 function freshTab(): SessionTab {
@@ -88,7 +91,9 @@ export const useSessionsStore = defineStore('sessions', {
       unsubscribeStatus: null,
       unsubscribeProgress: null,
       unsubscribeKeyboardInteractive: null,
-      pendingKeyboardPrompt: null
+      pendingKeyboardPrompt: null,
+      unsubscribeHostKey: null,
+      pendingHostKeyPrompt: null
     }
   },
 
@@ -198,6 +203,24 @@ export const useSessionsStore = defineStore('sessions', {
       )
     },
 
+    ensureHostKeySubscription(): void {
+      if (this.unsubscribeHostKey) {
+        return
+      }
+      this.unsubscribeHostKey = onEvent<HostKeyPromptEvent>(EVENT_CHANNELS.hostKeyPrompt, (evt) => {
+        this.pendingHostKeyPrompt = evt
+      })
+    },
+
+    async respondHostKey(accept: boolean): Promise<void> {
+      const pending = this.pendingHostKeyPrompt
+      if (!pending) {
+        return
+      }
+      this.pendingHostKeyPrompt = null
+      await invoke<void>(INVOKE_CHANNELS.sessionHostKeyRespond, { requestId: pending.requestId, accept })
+    },
+
     /** Submits the user's answers to the current keyboard-interactive challenge (e.g. a typed OTP code). */
     async respondKeyboardInteractive(responses: string[]): Promise<void> {
       const pending = this.pendingKeyboardPrompt
@@ -230,6 +253,7 @@ export const useSessionsStore = defineStore('sessions', {
     ): Promise<void> {
       this.ensureStatusSubscription()
       this.ensureKeyboardInteractiveSubscription()
+      this.ensureHostKeySubscription()
       const tab = this.activeTab
       tab.connecting = true
       tab.sessionId = crypto.randomUUID()
@@ -375,6 +399,9 @@ export const useSessionsStore = defineStore('sessions', {
       if (this.pendingKeyboardPrompt?.sessionId === sessionId) {
         this.pendingKeyboardPrompt = null
       }
+      if (this.pendingHostKeyPrompt?.sessionId === sessionId) {
+        this.pendingHostKeyPrompt = null
+      }
       await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
       useRemoteFsStore().clearSession(sessionId)
     },
@@ -387,6 +414,9 @@ export const useSessionsStore = defineStore('sessions', {
       }
       if (this.pendingKeyboardPrompt?.sessionId === tab.sessionId) {
         this.pendingKeyboardPrompt = null
+      }
+      if (this.pendingHostKeyPrompt?.sessionId === tab.sessionId) {
+        this.pendingHostKeyPrompt = null
       }
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)

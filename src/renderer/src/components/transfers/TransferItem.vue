@@ -89,7 +89,7 @@ const progressRightLabel = computed(() => {
           class="size-3.5 shrink-0 text-muted"
         />
         <span class="shrink-0 font-medium text-highlighted">{{ fileName }}</span>
-        <span v-if="dirPath" class="truncate text-dimmed">in {{ dirPath }}</span>
+        <span v-if="dirPath" class="truncate text-muted">in {{ dirPath }}</span>
       </span>
       <div class="flex shrink-0 items-center gap-1">
         <UTooltip v-if="cancellable" text="Cancel transfer">

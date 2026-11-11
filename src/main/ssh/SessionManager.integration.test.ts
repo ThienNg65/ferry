@@ -47,6 +47,7 @@ describe.skipIf(!serverAvailable)('SessionManager host-key verification against 
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('./SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ KnownHostsStore } = await import('./KnownHostsStore'))
   })
 

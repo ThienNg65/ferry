@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useNotify } from '../../composables/useNotify'
 import { parseBreadcrumbSegments, type BreadcrumbSegment } from '../../utils/pathBreadcrumb'
 
@@ -11,6 +11,16 @@ const editing = ref(false)
 const draft = ref(props.path)
 
 const segments = computed(() => parseBreadcrumbSegments(props.path))
+const strip = ref<HTMLElement | null>(null)
+
+function scrollToEnd(): void {
+  if (strip.value) {
+    strip.value.scrollLeft = strip.value.scrollWidth
+  }
+}
+
+watch(() => [props.path, editing.value], () => void nextTick(scrollToEnd), { flush: 'post' })
+onMounted(scrollToEnd)
 
 function startEdit(): void {
   draft.value = props.path
@@ -58,10 +68,11 @@ async function copyCurrentPath(): Promise<void> {
       autofocus
       @keyup.enter="submit"
       @keyup.esc="cancelEdit"
-      @blur="submit"
+      @blur="cancelEdit"
     />
     <div v-else class="group flex items-center gap-1 text-xs">
       <div
+        ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scrollbar-none"
         @click.self="startEdit"
       >
