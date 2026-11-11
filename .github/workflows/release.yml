@@ -115,7 +115,6 @@ jobs:
             echo "::error::Expected one installer, one blockmap and a nonempty latest.yml."
             exit 1
           fi
-          grep -q 'ferry-release' dist/latest.yml && echo "Update metadata includes release repository" || true
 
       - name: Publish public GitHub Release
         shell: bash
