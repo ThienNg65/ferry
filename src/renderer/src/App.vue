@@ -38,7 +38,10 @@ const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
 window.addEventListener('resize', onWindowResize)
-onUnmounted(() => window.removeEventListener('resize', onWindowResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener('keydown', onTabShortcut)
+})
 // Gates the connected subtree's FIRST mount only, so FilePane/BottomDock stay off the
 // cold-start bundle-eval path until the user actually connects — v-show (not this flag) handles
 // every subsequent disconnect/reconnect, so the subtree (and TerminalView's xterm.js instances)
@@ -113,7 +116,28 @@ function onPaneResizerMouseUp() {
   ui.saveLocalPaneWidth()
 }
 
+function onTabShortcut(event: KeyboardEvent): void {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+    return
+  }
+  const inTerminal = event.target instanceof HTMLElement && event.target.closest('.xterm') !== null
+  if (event.key === 'Tab') {
+    const tabs = sessions.tabs
+    const index = tabs.findIndex((t) => t.tabId === sessions.activeTabId)
+    if (index === -1 || tabs.length < 2) {
+      return
+    }
+    event.preventDefault()
+    const step = event.shiftKey ? -1 : 1
+    sessions.setActiveTab(tabs[(index + step + tabs.length) % tabs.length].tabId)
+  } else if (event.key.toLowerCase() === 'w' && !event.shiftKey && !inTerminal) {
+    event.preventDefault()
+    void sessions.closeTab(sessions.activeTabId)
+  }
+}
+
 onMounted(() => {
+  window.addEventListener('keydown', onTabShortcut)
   void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin

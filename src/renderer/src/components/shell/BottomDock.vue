@@ -8,6 +8,7 @@ import { useUiStore } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
 import { MIN_DOCK_HEIGHT, clampDockHeight } from '../../stores/ui.store'
+import { onTablistKeydown } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
@@ -145,10 +146,12 @@ function basename(path: string): string {
       class="flex items-center justify-between bg-muted px-2 py-1 select-none"
       @dblclick.self="collapsed = !collapsed"
     >
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-1" role="tablist" aria-label="Dock panels" @keydown="onTablistKeydown($event)">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Transfers"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'transfers'"
             size="xs"
             :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
@@ -158,6 +161,8 @@ function basename(path: string): string {
         <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
           <UButton
             label="Activity"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'activity'"
             size="xs"
             :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
@@ -167,6 +172,8 @@ function basename(path: string): string {
         <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
           <UButton
             label="Log Tail"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'tail'"
             size="xs"
             :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
@@ -175,6 +182,8 @@ function basename(path: string): string {
         </UChip>
         <UButton
           label="Terminal"
+          role="tab"
+          :aria-selected="!collapsed && tab === 'terminal'"
           size="xs"
           :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
@@ -182,6 +191,8 @@ function basename(path: string): string {
         />
         <UButton
           label="Monitor"
+          role="tab"
+          :aria-selected="!collapsed && tab === 'monitor'"
           size="xs"
           :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
@@ -190,6 +201,8 @@ function basename(path: string): string {
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Edits"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'edits'"
             size="xs"
             :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
@@ -216,10 +229,13 @@ function basename(path: string): string {
       <template v-else-if="tab === 'tail'">
         <!-- Tail Tabs Header Bar -->
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
-          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
+          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
             <div
               v-for="openTail in tailStreams.tabs"
               :key="openTail.tailId"
+              role="tab"
+              :aria-selected="tailStreams.activeTailId === openTail.tailId"
+              :tabindex="tailStreams.activeTailId === openTail.tailId ? 0 : -1"
               class="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs cursor-pointer border transition-all"
               :class="
                 tailStreams.activeTailId === openTail.tailId
@@ -227,6 +243,8 @@ function basename(path: string): string {
                   : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
               "
               @click="tailStreams.activeTailId = openTail.tailId"
+              @keydown.enter.self="tailStreams.activeTailId = openTail.tailId"
+              @keydown.space.self.prevent="tailStreams.activeTailId = openTail.tailId"
               @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
             >
               <!-- Live status indicator dot -->

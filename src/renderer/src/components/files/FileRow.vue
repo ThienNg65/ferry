@@ -232,6 +232,8 @@ function onMouseLeave(): void {
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: onMenuCloseAutoFocus }">
   <div
+    role="row"
+    :aria-selected="selected"
     class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
     :data-row-path="entry.path"
     @mouseenter="onMouseEnter"

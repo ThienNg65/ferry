@@ -125,6 +125,13 @@ function onBandStart(event: MouseEvent): void {
   window.addEventListener('mouseup', onUp)
 }
 
+function ariaSort(column: SortColumn): 'ascending' | 'descending' | 'none' {
+  if (props.sortColumn !== column) {
+    return 'none'
+  }
+  return props.sortDirection === 'asc' ? 'ascending' : 'descending'
+}
+
 const columnVars = computed(() => ({
   '--col-size': `${ui.columns.widths.size}px`,
   '--col-modified': `${ui.columns.widths.modified}px`,
@@ -163,11 +170,14 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
   <div class="@container flex min-h-0 flex-1 flex-col" :style="columnVars">
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
+      role="row"
       class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
     >
       <span class="size-4 shrink-0" />
       <button
         type="button"
+        role="columnheader"
+        :aria-sort="ariaSort('name')"
         class="min-w-24 flex-1 truncate text-left hover:text-highlighted"
         :class="sortColumn === 'name' ? 'text-highlighted' : ''"
         @click="emit('sort', 'name')"
@@ -182,6 +192,8 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
       <button
         v-if="!ui.columns.hidden.includes('size')"
         type="button"
+        role="columnheader"
+        :aria-sort="ariaSort('size')"
         class="relative w-[var(--col-size)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
         @click="emit('sort', 'size')"
@@ -197,6 +209,8 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
       <button
         v-if="!ui.columns.hidden.includes('modified')"
         type="button"
+        role="columnheader"
+        :aria-sort="ariaSort('modified')"
         class="relative w-[var(--col-modified)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
         @click="emit('sort', 'modified')"
@@ -223,7 +237,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         </UDropdownMenu>
       </span>
     </div>
-    <div ref="scrollEl" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
+    <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
       <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
@@ -238,11 +252,12 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
         <p class="text-xs text-muted">Empty folder</p>
       </div>
-      <div v-else class="relative w-full" :style="{ height: `${totalSize}px` }">
+      <div v-else role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
         <div
           v-for="virtualRow in virtualRows"
           :key="virtualRow.key as string | number"
           :ref="measureRow"
+          role="presentation"
           :data-index="virtualRow.index"
           class="absolute left-0 top-0 w-full"
           :style="{ transform: `translateY(${virtualRow.start}px)` }"
