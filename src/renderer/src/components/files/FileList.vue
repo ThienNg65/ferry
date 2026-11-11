@@ -125,7 +125,7 @@ const emit = defineEmits<{
       <span class="w-14 shrink-0" />
     </div>
     <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-      <div v-if="loading && entries.length === 0" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
+      <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
         <p class="text-xs text-dimmed">Loading directory…</p>
       </div>

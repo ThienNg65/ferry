@@ -273,7 +273,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
               <div class="truncate text-xs text-muted">
                 {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
-                <span v-if="sessions.statusMessage" class="text-error"> — {{ sessions.statusMessage }}</span>
+                <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
               </div>
             </div>
           </div>

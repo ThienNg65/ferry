@@ -92,7 +92,7 @@ const hiddenCoreCount = computed(() => Math.max(0, (monitor.latest?.cpu?.perCore
       <UIcon name="i-lucide-monitor-off" class="size-5 text-dimmed" />
       <p class="text-xs text-dimmed">{{ monitor.statusMessage || 'Resource monitoring is not supported on this server' }}</p>
     </div>
-    <div v-else-if="monitor.status === 'error'" class="flex flex-1 flex-col items-center justify-center gap-2 px-3 py-6 text-center">
+    <div v-else-if="monitor.status === 'error'" role="alert" class="flex flex-1 flex-col items-center justify-center gap-2 px-3 py-6 text-center">
       <UIcon name="i-lucide-circle-alert" class="size-5 text-error" />
       <p class="text-xs text-error">{{ monitor.statusMessage || 'Resource monitoring failed' }}</p>
       <UButton

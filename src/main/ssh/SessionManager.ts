@@ -6,6 +6,7 @@ import * as net from 'net'
 import { BrowserWindow } from 'electron'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
+import { friendlyConnectError } from './friendlyConnectError'
 import { probeAgent, rewriteAgentAuthError } from './agentDiagnostics'
 import { connectViaProxy } from './ProxyConnector'
 import { evaluateHostKey, fingerprintHostKey, KnownHostsStore } from './KnownHostsStore'
@@ -354,7 +355,7 @@ export class SessionManager {
       }
       const onError = (e: Error): void => {
         cleanup()
-        reject(new SshError('SSH_CONNECT', e.message))
+        reject(new SshError('SSH_CONNECT', friendlyConnectError(e.message, config.host ?? '', config.port ?? 22)))
       }
       const onTimeout = (): void => {
         cleanup()
@@ -528,7 +529,7 @@ export class SessionManager {
           })
           s.once('error', (err) => {
             clearTimeout(timeoutId)
-            reject(new SshError('SSH_CONNECT', err.message))
+            reject(new SshError('SSH_CONNECT', friendlyConnectError(err.message, first.host, first.port)))
           })
         }))
       }

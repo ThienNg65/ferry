@@ -755,7 +755,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         />
         <UButton size="xs" @click="submitMkdir">Create</UButton>
       </div>
-      <div v-if="store.error" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
+      <div v-if="store.error" role="alert" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
         <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
         <button
           type="button"

@@ -704,6 +704,7 @@ onUnmounted(() => {
     <!-- Error Banner if Stream Failed -->
     <div
       v-if="error"
+      role="alert"
       class="flex items-center gap-2 border-t border-muted bg-rose-500/10 px-3 py-1.5 text-xs text-error"
     >
       <UIcon name="i-lucide-alert-circle" class="size-4 shrink-0 text-error" />
