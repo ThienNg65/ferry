@@ -90,7 +90,7 @@ async function signedCommit(publicRepo, token, expectedHeadOid, changelog, versi
     }`,
     variables: {
       input: {
-        branch: { repositoryNameWithOwner: publicRepo, refName: 'refs/heads/main' },
+        branch: { repositoryNameWithOwner: publicRepo, branchName: 'main' },
         expectedHeadOid,
         message: { headline: `docs: publish Ferry ${version} changelog` },
         fileChanges: {
