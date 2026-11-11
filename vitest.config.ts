@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { resolve } from 'path'
 
 export default defineConfig({
@@ -9,6 +9,8 @@ export default defineConfig({
     }
   },
   test: {
+    // GitHub release tooling uses node:test, which Vitest must not collect.
+    exclude: [...configDefaults.exclude, '.github/scripts/**/*.test.mjs'],
     // Several suites (RemoteShell/SessionManager/TransferQueue integration
     // tests) share real, disk-backed state across files — KnownHostsStore's
     // known_hosts.json, and the same docker test server/port. Running test
