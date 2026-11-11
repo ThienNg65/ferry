@@ -278,9 +278,22 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
             </div>
           </div>
-          <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
-            {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
-          </UButton>
+          <div class="flex shrink-0 items-center gap-2">
+            <UButton
+              v-if="sessions.restoredSiteTabs.length > 1"
+              icon="i-lucide-plug-zap"
+              size="sm"
+              color="neutral"
+              variant="outline"
+              :disabled="sessions.connecting"
+              @click="sessions.reconnectAll()"
+            >
+              Reconnect all ({{ sessions.restoredSiteTabs.length }})
+            </UButton>
+            <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
+              {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
+            </UButton>
+          </div>
         </div>
       </UCard>
 
