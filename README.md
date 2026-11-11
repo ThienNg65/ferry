@@ -43,9 +43,11 @@ FTP/FTPS/SCP.
 
 ## Installation
 
-Download the latest Windows installer from this repository's
-[Releases](https://github.com/ThienNg65/ferry/releases) page and run it. Ferry is currently
-Windows-only. Releases are automated via GitHub Actions and Google Release Please when new versions are tagged and published.
+Download the latest Windows installer from the public
+[Ferry releases](https://github.com/ThienNg65/ferry-release/releases) page and run it.
+Ferry is currently Windows-only. Development takes place in this source repository, while
+packaged releases and update metadata are published to `ferry-release` by GitHub Actions.
+Existing installations first need a bridge release published to the original `ferry` feed.
 
 The installer is currently **unsigned**, so Windows SmartScreen will warn on first run — this is
 expected, not a sign of tampering. Ferry's release pipeline (`.github/workflows/release.yml`) has a
@@ -69,16 +71,13 @@ conventions, and development notes.
 
 ## Releasing
 
-CI is a single workflow, `.github/workflows/ci.yml`. Every push/PR to `main` runs the `verify` job
-(typecheck + tests + build). On a successful push to `main`, the `auto-release` job also runs the
-whole release pipeline in one linear job: finalize `CHANGELOG.md`'s `## Unreleased` heading, tag
-`vX.Y.Z` locally, build and package the app with `electron-builder` (unsigned), generate release
-notes from `CHANGELOG.md` (via `.github/scripts/extract-release-notes.js`, not the commit history),
-bump `package.json`/`VERSION` to the next patch version and commit that as the start of the next
-development cycle, push the commits and the tag together, then create the GitHub Release and upload
-the installer/blockmap/`latest.yml`. So cutting a release is just: bump `package.json`'s `version`
-and `VERSION` together, add a `CHANGELOG.md` entry, and merge to `main` — everything after that is
-automatic.
+CI lives in `.github/workflows/ci.yml` and runs type checking, tests, and a build on each
+push/PR to `main`. Release Please handles versioning and source release tags through
+`.github/workflows/release.yml`. Its Windows packaging job builds and (when configured with a
+scoped `PUBLIC_RELEASE_TOKEN`) uploads the NSIS installer, blockmap, and `latest.yml` to
+`ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
+the same assets are uploaded to the legacy `ferry` release for existing installations.
+See [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 
 Signing goes through a currently-dormant SignPath stage rather than `electron-builder`'s native
 `CSC_LINK`/`CSC_KEY_PASSWORD` pickup: every step in that stage is gated on the
