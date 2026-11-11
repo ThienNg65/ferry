@@ -89,7 +89,6 @@ export class TerminalManager {
     this.terminals.get(terminalId)?.stream.write(data)
   }
 
-  /** Credits bytes the renderer has finished rendering, unpausing the shell stream if it was throttled. */
   ack(terminalId: string, bytes: number): void {
     this.terminals.get(terminalId)?.flow.ack(bytes)
   }

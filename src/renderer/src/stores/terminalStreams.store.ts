@@ -84,10 +84,12 @@ function ensureSubscriptions(): void {
   }
   dataUnsub = onEvent<TerminalDataEvent>(EVENT_CHANNELS.terminalData, (evt) => {
     const inst = findByTerminalId(evt.terminalId)
+    const bytes = evt.data.length
     if (!inst) {
+      const ack: TerminalAckEvent = { terminalId: evt.terminalId, bytes }
+      window.api.send(SEND_CHANNELS.terminalAck, ack)
       return
     }
-    const bytes = evt.data.length
     inst.term.write(evt.data, () => {
       inst.unacked += bytes
       if (inst.unacked >= ACK_BATCH_BYTES) {

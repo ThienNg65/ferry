@@ -931,26 +931,22 @@ export const EVENT_CHANNELS = {
   updateStatus: 'update:status'
 } as const
 
-/** Fire-and-forget channels the renderer sends to main via `ipcRenderer.send` (no reply, no envelope). */
 export const SEND_CHANNELS = {
   terminalAck: 'terminal:ack',
   terminalInput: 'terminal:input',
   terminalResize: 'terminal:resize'
 } as const
 
-/** Payload for the `terminal:ack` channel — bytes the renderer has finished writing into xterm. */
 export interface TerminalAckEvent {
   terminalId: string
   bytes: number
 }
 
-/** Payload for the `terminal:input` channel — keystrokes/paste for the remote shell. */
 export interface TerminalInputEvent {
   terminalId: string
   data: string
 }
 
-/** Payload for the `terminal:resize` channel. */
 export interface TerminalResizeEvent {
   terminalId: string
   cols: number

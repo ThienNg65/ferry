@@ -79,6 +79,11 @@ describe('terminal.ipc', () => {
   })
 
   describe('terminal:ack', () => {
+    it('ignores a non-finite byte count', () => {
+      sendHandlers.get('terminal:ack')!({}, { terminalId: 't1', bytes: NaN })
+      expect(terminalManagerMock.ack).not.toHaveBeenCalled()
+    })
+
     it('forwards terminalId/bytes to TerminalManager.ack', () => {
       sendHandlers.get('terminal:ack')!({}, { terminalId: 't1', bytes: 1024 })
       expect(terminalManagerMock.ack).toHaveBeenCalledWith('t1', 1024)

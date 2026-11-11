@@ -130,6 +130,7 @@ export class SessionManager {
   private static instance: SessionManager | null = null
   private readonly sessions = new Map<string, SessionEntry>()
   /** Resolvers for keyboard-interactive prompts currently awaiting a renderer response, keyed by requestId. */
+  private readonly pendingConnects = new Map<string, () => void>()
   private readonly pendingKeyboardInteractive = new Map<string, { sessionId: string; resolve: (responses: string[]) => void }>()
 
   static getInstance(): SessionManager {
@@ -421,7 +422,15 @@ export class SessionManager {
     // user actually connects, keeping it off the app-startup critical path.
     // Aliased so the runtime binding doesn't collide with the file-wide `Client`
     // type-only import.
+    let cancelledEarly = false
+    this.pendingConnects.set(sessionId, () => {
+      cancelledEarly = true
+    })
     const { Client: SshClient } = await import('ssh2')
+    this.pendingConnects.delete(sessionId)
+    if (cancelledEarly) {
+      throw new SshError('CANCELLED', 'Connection cancelled')
+    }
     const client = new SshClient()
     const hops = input.jumpHosts ?? []
     const jumpClients: Client[] = hops.map(() => new SshClient())
@@ -435,6 +444,7 @@ export class SessionManager {
     }
 
     let sock: ClientChannel | Duplex | undefined
+    let aborted = false
     let rejectCancelled: (e: Error) => void = () => {}
     const cancelled = new Promise<never>((_, reject) => {
       rejectCancelled = reject
@@ -451,6 +461,7 @@ export class SessionManager {
       status: 'connecting',
       cwdRemote: initialCwd,
       abort: () => {
+        aborted = true
         client.destroy()
         for (const jc of jumpClients) {
           jc.destroy()
@@ -477,7 +488,16 @@ export class SessionManager {
         // do I reach the first machine."
         const first = hops.length > 0 ? hops[0] : input
         this.broadcastProgress(sessionId, 'Searching for proxy...')
-        sock = await guard(connectViaProxy(input.proxy, first.host, first.port))
+        const proxied = connectViaProxy(input.proxy, first.host, first.port)
+        proxied.then(
+          (s) => {
+            if (aborted) {
+              s.destroy()
+            }
+          },
+          () => undefined
+        )
+        sock = await guard(proxied)
         this.broadcastProgress(sessionId, 'Connecting to proxy...')
         this.broadcastProgress(sessionId, 'Authenticating...')
         this.broadcastProgress(sessionId, `Using username "${first.username}".`)
@@ -621,6 +641,7 @@ export class SessionManager {
   close(sessionId: string): void {
     const entry = this.sessions.get(sessionId)
     if (!entry) {
+      this.pendingConnects.get(sessionId)?.()
       return
     }
     const wasConnecting = entry.status === 'connecting'

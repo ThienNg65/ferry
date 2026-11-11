@@ -267,6 +267,9 @@ export const useSessionsStore = defineStore('sessions', {
           sessionId: tab.sessionId,
           trustedHostKey
         })
+        if (isAbandoned()) {
+          return
+        }
         // tab.sessionId is already set during openSession prep
         // Preload the initial listing before flipping `status` — App.vue's
         // picker→file-browser swap is gated on `status`, so this keeps the
@@ -276,6 +279,9 @@ export const useSessionsStore = defineStore('sessions', {
         // longer be `activeTab` by the time this resolves if the user
         // switched tabs mid-connect.
         await useRemoteFsStore().loadForSession(result.sessionId)
+        if (isAbandoned()) {
+          return
+        }
         // An intervening `sessionStatus` event (e.g. the connection dropping
         // mid-load) may already have moved this tab to a terminal state —
         // don't fight that with a stale success overwrite/toast.
@@ -354,7 +360,6 @@ export const useSessionsStore = defineStore('sessions', {
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
-    /** Aborts the in-flight connect of a tab and returns it to the picker. */
     async cancelConnect(tabId: string): Promise<void> {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab || !tab.connecting || !tab.sessionId) {
@@ -367,8 +372,11 @@ export const useSessionsStore = defineStore('sessions', {
       tab.progressMessages = []
       tab.connecting = false
       tab.connectPromise = null
-      this.pendingKeyboardPrompt = null
+      if (this.pendingKeyboardPrompt?.sessionId === sessionId) {
+        this.pendingKeyboardPrompt = null
+      }
       await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
+      useRemoteFsStore().clearSession(sessionId)
     },
 
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */
@@ -376,6 +384,9 @@ export const useSessionsStore = defineStore('sessions', {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab) {
         return
+      }
+      if (this.pendingKeyboardPrompt?.sessionId === tab.sessionId) {
+        this.pendingKeyboardPrompt = null
       }
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)

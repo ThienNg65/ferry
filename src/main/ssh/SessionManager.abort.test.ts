@@ -47,4 +47,15 @@ describe('SessionManager.close() during connect', () => {
     await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' })
     await closed
   })
+
+  it('cancels a connect closed before the ssh2 module finishes loading', async () => {
+    const { SessionManager } = await import('./SessionManager')
+    const manager = SessionManager.getInstance()
+    const pending = manager.openQuickConnect(
+      { host: '127.0.0.1', port, username: 'u', authMethod: 'password', password: 'p' } as never,
+      'early-abort'
+    )
+    manager.close('early-abort')
+    await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' })
+  })
 })
