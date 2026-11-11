@@ -205,13 +205,14 @@ export interface KeyGenerateResult {
  * after import, same as any other password field.
  */
 export interface ImportedSessionCandidate {
-  source: 'winscp' | 'putty'
+  source: 'winscp' | 'putty' | 'sshconfig'
   name: string
   host: string
   port: number
   username: string
   privateKeyPath?: string
   remoteInitialPath?: string
+  jumpHosts?: JumpHostConfig[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

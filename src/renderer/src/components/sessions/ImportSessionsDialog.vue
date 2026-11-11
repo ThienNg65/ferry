@@ -16,6 +16,12 @@ const selected = reactive(new Set<number>())
 const importing = ref(false)
 const error = ref<string | null>(null)
 
+const GROUP_LABELS = {
+  winscp: 'Imported from WinSCP',
+  putty: 'Imported from PuTTY',
+  sshconfig: 'Imported from ~/.ssh/config'
+} as const
+
 /** host:port:username identifies "the same connection" for dedup — matches how a human would recognize a duplicate. */
 function key(host: string, port: number, username: string): string {
   return `${host.toLowerCase()}:${port}:${username.toLowerCase()}`
@@ -83,7 +89,8 @@ async function importSelected(): Promise<void> {
         authMethod: candidate.privateKeyPath ? 'privateKey' : 'password',
         privateKeyPath: candidate.privateKeyPath,
         remoteInitialPath: candidate.remoteInitialPath,
-        group: candidate.source === 'winscp' ? 'Imported from WinSCP' : 'Imported from PuTTY'
+        jumpHosts: candidate.jumpHosts,
+        group: GROUP_LABELS[candidate.source]
       }
       await sites.createSiteWithoutRefetch(input)
       // Prune as each import succeeds, so retrying after a later failure
@@ -104,7 +111,7 @@ async function importSelected(): Promise<void> {
   <UModal
     :open="open"
     title="Import sites"
-    description="Scans this machine's saved WinSCP and PuTTY sessions (Windows only)."
+    description="Scans this machine's saved WinSCP and PuTTY sessions (Windows) and ~/.ssh/config."
     :ui="{ footer: 'justify-end', content: 'max-w-lg' }"
     @update:open="(v: boolean) => { if (!v) close() }"
   >
@@ -120,7 +127,7 @@ async function importSelected(): Promise<void> {
 
         <div v-if="loading" class="py-4 text-center text-xs text-muted">Scanning for saved sessions…</div>
         <div v-else-if="scanned.length === 0" class="py-4 text-center text-xs text-muted">
-          No WinSCP or PuTTY sessions found on this machine.
+          No WinSCP, PuTTY or ~/.ssh/config sessions found on this machine.
         </div>
         <ul v-else class="flex max-h-80 flex-col gap-1 overflow-y-auto">
           <li
