@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useUiStore } from '../../stores/ui.store'
+import { SCROLLBACK_OPTIONS, useUiStore } from '../../stores/ui.store'
+import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
 import {
   CUSTOM_FONT_ID,
   FONT_PRESETS,
@@ -15,6 +16,7 @@ import {
 import { isFontInstalled } from '../../utils/fontInstalled'
 
 const ui = useUiStore()
+const terminalStreams = useTerminalStreamsStore()
 
 const fontItems = [
   ...FONT_PRESETS.map((preset) => ({ label: preset.label, value: preset.id })),
@@ -163,6 +165,16 @@ function onLineHeight(value: number | null | undefined): void {
           @blur="lineHeightDraft = ui.terminalLineHeight"
         />
       </div>
+    </div>
+    <div class="flex flex-col gap-1.5">
+      <label for="terminal-scrollback" class="text-xs text-muted">Scrollback (lines)</label>
+      <USelect
+        id="terminal-scrollback"
+        :model-value="ui.terminalScrollback"
+        :items="SCROLLBACK_OPTIONS"
+        class="w-32"
+        @update:model-value="(v: number) => { ui.setTerminalScrollback(v); terminalStreams.applyAppearance() }"
+      />
     </div>
   </div>
 </template>

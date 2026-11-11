@@ -28,6 +28,11 @@ export interface TerminalAppearance {
   theme: TerminalTheme
 }
 
+function loadScrollback(): number {
+  const stored = Number(readStored(TERM_SCROLLBACK_KEY))
+  return SCROLLBACK_OPTIONS.includes(stored) ? stored : 5000
+}
+
 function readStored(key: string): string | null {
   try {
     return localStorage.getItem(key)
@@ -40,6 +45,8 @@ const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
 const SHOW_HIDDEN_KEY = 'ferry:ui:showHidden'
+const TERM_SCROLLBACK_KEY = 'ferry:ui:terminalScrollback'
+export const SCROLLBACK_OPTIONS = [1000, 5000, 10000, 50000]
 const COLUMNS_KEY = 'ferry:ui:columns'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
@@ -84,6 +91,7 @@ interface UiState {
   permissionsDisplay: PermissionsDisplay
   density: Density
   showHidden: boolean
+  terminalScrollback: number
   columns: ColumnPrefs
   theme: Theme
   dockHeight: number
@@ -162,6 +170,7 @@ export const useUiStore = defineStore('ui', {
     permissionsDisplay: loadPermissionsDisplay(),
     density: loadDensity(),
     showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
+    terminalScrollback: loadScrollback(),
     columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
@@ -244,6 +253,11 @@ export const useUiStore = defineStore('ui', {
       } catch {
         return
       }
+    },
+
+    setTerminalScrollback(lines: number): void {
+      this.terminalScrollback = SCROLLBACK_OPTIONS.includes(lines) ? lines : 5000
+      localStorage.setItem(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
     },
 
     toggleShowHidden(): void {

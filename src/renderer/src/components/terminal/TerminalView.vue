@@ -228,6 +228,14 @@ onBeforeUnmount(() => {
       {{ sessions.activeTab.hostLabel }}
     </div>
     <div ref="containerRef" class="relative min-h-0 flex-1">
+      <div
+        v-if="sessions.activeSessionId && terminalStreams.exitedSessionIds.includes(sessions.activeSessionId)"
+        class="absolute bottom-3 right-3 z-10"
+      >
+        <UButton icon="i-lucide-rotate-cw" size="sm" @click="terminalStreams.restart(sessions.activeSessionId)">
+          Restart shell
+        </UButton>
+      </div>
       <div v-if="searchOpen" class="absolute right-3 top-1 z-10 rounded-md border border-muted bg-default shadow-md">
         <LogSearchBar
           v-model="searchQuery"

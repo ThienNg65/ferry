@@ -81,6 +81,7 @@ function findByTerminalId(terminalId: string): TerminalInstance | undefined {
 
 let dataUnsub: (() => void) | null = null
 let exitUnsub: (() => void) | null = null
+let onShellExited: ((sessionId: string) => void) | null = null
 
 function ensureSubscriptions(): void {
   if (dataUnsub) {
@@ -104,19 +105,50 @@ function ensureSubscriptions(): void {
     })
   })
   exitUnsub = onEvent<TerminalExitEvent>(EVENT_CHANNELS.terminalExit, (evt) => {
-    findByTerminalId(evt.terminalId)?.term.write('\r\n[Process exited]\r\n')
+    const entry = [...instances.entries()].find(([, inst]) => inst.terminalId === evt.terminalId)
+    if (!entry) {
+      return
+    }
+    entry[1].term.write('\r\n[Process exited]\r\n')
+    onShellExited?.(entry[0])
   })
 }
 
 interface TerminalStreamsState {
   /** Reactive mirror of `instances`' keys, so components can `v-for` over known sessions. */
   knownSessionIds: string[]
+  exitedSessionIds: string[]
 }
 
 export const useTerminalStreamsStore = defineStore('terminalStreams', {
-  state: (): TerminalStreamsState => ({ knownSessionIds: [] }),
+  state: (): TerminalStreamsState => ({ knownSessionIds: [], exitedSessionIds: [] }),
 
   actions: {
+    markExited(sessionId: string): void {
+      if (!this.exitedSessionIds.includes(sessionId)) {
+        this.exitedSessionIds.push(sessionId)
+      }
+    },
+
+    async restart(sessionId: string): Promise<void> {
+      const inst = instances.get(sessionId)
+      if (!inst) {
+        return
+      }
+      const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
+        sessionId,
+        cols: inst.term.cols,
+        rows: inst.term.rows
+      })
+      inst.terminalId = terminalId
+      inst.unacked = 0
+      inst.cols = inst.term.cols
+      inst.rows = inst.term.rows
+      this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
+      inst.term.write('\r\n[Shell restarted]\r\n')
+      inst.term.focus()
+    },
+
     /** Returns the cached instance for a session, if one has been opened. */
     getInstance(sessionId: string): TerminalInstance | undefined {
       return instances.get(sessionId)
@@ -150,6 +182,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           return pendingAfterDispose
         }
       }
+      onShellExited = (id) => this.markExited(id)
       ensureSubscriptions()
       const openPromise = (async (): Promise<string> => {
         const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
@@ -164,7 +197,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           import('@xterm/addon-fit'),
           import('@xterm/addon-search')
         ])
-        const term = new Terminal({ cursorBlink: true, scrollback: 5000, ...useUiStore().terminalAppearance })
+        const term = new Terminal({ cursorBlink: true, scrollback: useUiStore().terminalScrollback, ...useUiStore().terminalAppearance })
         const fit = new FitAddon()
         term.loadAddon(fit)
         const search = new SearchAddon()
@@ -211,6 +244,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
     applyAppearance(): void {
       const { fontFamily, fontSize, lineHeight, theme } = useUiStore().terminalAppearance
       for (const { term } of instances.values()) {
+        term.options.scrollback = useUiStore().terminalScrollback
         term.options.fontFamily = fontFamily
         term.options.fontSize = fontSize
         term.options.lineHeight = lineHeight
@@ -267,6 +301,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       }
       instances.delete(sessionId)
       this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
+      this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
       const disposePromise = (async (): Promise<void> => {
         try {
           await invoke<void>(INVOKE_CHANNELS.terminalClose, inst.terminalId)
