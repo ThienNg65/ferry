@@ -386,6 +386,8 @@ export interface TransferEvent {
   totalBytes?: number
   bytesPerSec?: number
   etaMs?: number
+  filesDone?: number
+  filesTotal?: number
   error?: string
 }
 

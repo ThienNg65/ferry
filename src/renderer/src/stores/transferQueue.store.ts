@@ -20,6 +20,8 @@ export interface TransferItemState {
   totalBytes: number
   bytesPerSec: number
   etaMs: number
+  filesDone: number
+  filesTotal: number
   error?: string
 }
 
@@ -36,6 +38,19 @@ export const useTransferQueueStore = defineStore('transferQueue', {
 
   getters: {
     list: (state): TransferItemState[] => Array.from(state.items.values()).reverse(),
+    summary(): { filesDone: number; filesTotal: number; percent: number } {
+      let filesDone = 0
+      let filesTotal = 0
+      let bytes = 0
+      let totalBytes = 0
+      for (const item of this.items.values()) {
+        filesDone += item.filesDone
+        filesTotal += item.filesTotal
+        bytes += item.bytesTransferred
+        totalBytes += item.totalBytes
+      }
+      return { filesDone, filesTotal, percent: totalBytes > 0 ? Math.min(100, Math.round((bytes / totalBytes) * 100)) : 0 }
+    },
     /** Transfers currently queued or moving bytes — drives the dock tab badge. */
     activeCount: (state): number => {
       let count = 0
@@ -68,6 +83,8 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           totalBytes: evt.totalBytes ?? existing?.totalBytes ?? 0,
           bytesPerSec: evt.bytesPerSec ?? 0,
           etaMs: evt.etaMs ?? 0,
+          filesDone: evt.filesDone ?? existing?.filesDone ?? 0,
+          filesTotal: evt.filesTotal ?? existing?.filesTotal ?? 0,
           error: evt.error
         })
         const name = basename(existing?.remotePath || existing?.localPath || '')
@@ -114,7 +131,9 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           bytesTransferred: 0,
           totalBytes: 0,
           bytesPerSec: 0,
-          etaMs: 0
+          etaMs: 0,
+          filesDone: 0,
+          filesTotal: 0
         })
       }
     },

@@ -290,7 +290,7 @@ export class TransferQueue {
         const elapsedSec = (now - startedAt) / 1000
         const bytesPerSec = elapsedSec > 0 ? Math.round((bytesTransferred - offset) / elapsedSec) : 0
         const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
-        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
+        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone: 0, filesTotal: 1 })
       }
 
       await this.runFile({
@@ -304,7 +304,7 @@ export class TransferQueue {
         onProgress: emitProgress
       })
 
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: 1, filesTotal: 1 }
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
@@ -477,6 +477,7 @@ export class TransferQueue {
 
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
+      let filesDone = 0
       // Multiple files stream concurrently now, so "bytes so far" is doneBytes
       // (fully-finished files) plus whatever each still-in-flight file has moved.
       const inFlightBytes = new Map<number, number>()
@@ -497,7 +498,7 @@ export class TransferQueue {
         const elapsedSec = (now - startedAt) / 1000
         const bytesPerSec = elapsedSec > 0 ? Math.round(bytesTransferred / elapsedSec) : 0
         const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
-        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
+        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone, filesTotal: files.length })
       }
 
       await runConcurrent(
@@ -523,11 +524,13 @@ export class TransferQueue {
           })
           inFlightBytes.delete(index)
           doneBytes += file.size
+          filesDone += 1
+          lastEmit = 0
           emitProgress()
         }
       )
 
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length }
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {

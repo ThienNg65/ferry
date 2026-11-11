@@ -16,8 +16,12 @@ const hasFinished = computed(() =>
 
 <template>
   <div class="flex h-full flex-col">
-    <div v-if="store.list.length > 0 && hasFinished" class="flex shrink-0 items-center justify-end border-b border-muted px-2 py-1">
+    <div v-if="store.list.length > 0" class="flex shrink-0 items-center justify-between border-b border-muted px-2 py-1">
+      <span class="text-xs text-muted">
+        {{ store.summary.filesDone }} of {{ store.summary.filesTotal }} · {{ store.summary.percent }}%
+      </span>
       <UButton
+        v-if="hasFinished"
         label="Clear finished"
         color="neutral"
         variant="ghost"
