@@ -31,10 +31,26 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      PUBLIC_REPO: ThienNg65/ferry-release
+      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Verify public publishing access
+        shell: bash
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Configure PUBLIC_RELEASE_TOKEN with Contents: Read and write on ${PUBLIC_REPO}."
+            exit 1
+          fi
+          visibility=$(gh api "repos/$PUBLIC_REPO" --jq '.visibility')
+          if [ "$visibility" != "public" ]; then
+            echo "::error::$PUBLIC_REPO must be public (got $visibility)."
+            exit 1
+          fi
 
       - uses: ./.github/actions/setup-node-deps
 
@@ -52,7 +68,6 @@ jobs:
         shell: bash
         run: |
           npm run build
-          # Retry packaging in case of transient CDN/gateway timeouts
           max_attempts=3
           attempt=1
           until npx electron-builder --publish never; do
@@ -65,8 +80,7 @@ jobs:
             sleep 15
           done
 
-      # --- Dormant SignPath signing stage --------------------------------
-      # Gated on SIGNPATH_ORGANIZATION_ID being set. Truly dormant while unset.
+      # Dormant SignPath stage: active only when the organization ID is configured.
       - name: Upload unsigned installer for signing
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
         id: unsigned-artifact
@@ -90,13 +104,47 @@ jobs:
       - name: Regenerate update metadata for signed binary
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
         run: node ./.github/scripts/regenerate-update-yml.js
-      # --- End dormant SignPath signing stage ----------------------------
 
-      - name: Upload Release Assets to GitHub Release
+      - name: Verify complete installer and update metadata
+        shell: bash
+        run: |
+          shopt -s nullglob
+          installers=(dist/Ferry-Setup-*.exe)
+          blockmaps=(dist/*.blockmap)
+          if [ "${#installers[@]}" -ne 1 ] || [ "${#blockmaps[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
+            echo "::error::Expected one installer, one blockmap and a nonempty latest.yml."
+            exit 1
+          fi
+          grep -q 'ferry-release' dist/latest.yml && echo "Update metadata includes release repository" || true
+
+      - name: Publish public GitHub Release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          VERSION: ${{ needs.release-please.outputs.version }}
         run: |
           shopt -s nullglob
           assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" "${assets[@]}" --clobber
+          # Do not copy private release-please commit links or internal notes.
+          printf 'Ferry %s is available for Windows. Download the installer below.\n' "$VERSION" > "$RUNNER_TEMP/public-release-notes.md"
+          if gh release view "$TAG" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$RUNNER_TEMP/public-release-notes.md"
+          else
+            gh release create "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$RUNNER_TEMP/public-release-notes.md"
+          fi
+          gh release upload "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --clobber
+
+      # Keep this enabled during migration: existing installers currently poll
+      # ThienNg65/ferry, so they need one bridge release from the old feed.
+      # Set PUBLISH_LEGACY_FERRY=false only after the bridge is verified and
+      # users have been given time to update.
+      - name: Publish legacy bridge release
+        if: vars.PUBLISH_LEGACY_FERRY != 'false'
+        shell: bash
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          LEGACY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
+          GH_TOKEN="$LEGACY_TOKEN" gh release upload "$TAG" "${assets[@]}" --repo "${{ github.repository }}" --clobber
