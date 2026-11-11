@@ -60,6 +60,7 @@ const emit = defineEmits<{
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
+  'edit-root': [entry: FileEntry]
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
@@ -111,6 +112,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   }
   if (!props.entry.isDir) {
     items.push({ label: 'Edit', icon: 'i-lucide-file-pen', onSelect: () => emit('edit', props.entry) })
+    if (props.side === 'remote') {
+      items.push({ label: 'Edit as root', icon: 'i-lucide-shield-alert', onSelect: () => emit('edit-root', props.entry) })
+    }
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })

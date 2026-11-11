@@ -562,6 +562,7 @@ export interface EditOpenRemoteRequest {
   sessionId: string
   path: string
   builtin?: boolean
+  viaSudo?: boolean
 }
 
 export interface EditOpenExternalRequest {

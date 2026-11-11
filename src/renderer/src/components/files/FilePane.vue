@@ -351,7 +351,7 @@ async function onEdit(entry: FileEntry): Promise<void> {
   await performEdit(entry)
 }
 
-async function performEdit(entry: FileEntry): Promise<void> {
+async function performEdit(entry: FileEntry, viaSudo = false): Promise<void> {
   editConfirmTarget.value = null
   try {
     if (props.side === 'local') {
@@ -362,12 +362,16 @@ async function performEdit(entry: FileEntry): Promise<void> {
     if (!sessionId) {
       return
     }
-    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path, builtin: true })
+    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path, builtin: true, viaSudo })
     editorState.value = { editId: res.editId, localTempPath: res.localTempPath, remotePath: entry.path }
     editorOpen.value = true
   } catch (e) {
     notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
   }
+}
+
+async function onEditAsRoot(entry: FileEntry): Promise<void> {
+  await performEdit(entry, true)
 }
 
 /** First name not already present in the current remote listing — `report`, `report (1)`, `report (2)`, ... */
@@ -898,6 +902,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @edit="onEdit"
         @hover-dir="onHoverDir"
         @drop-on="onDropOnFolder"
+        @edit-root="onEditAsRoot"
         @clear-filter="filterText = ''"
       />
       <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-[11px] text-muted">

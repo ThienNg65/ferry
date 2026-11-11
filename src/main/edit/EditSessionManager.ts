@@ -5,7 +5,14 @@ import * as path from 'path'
 import { BrowserWindow, shell } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
-import { downloadForEdit, statRemoteForEdit, uploadForEdit } from '../fs/RemoteFsService'
+import {
+  downloadForEdit,
+  downloadForEditSudo,
+  statRemoteForEdit,
+  statRemoteSudo,
+  uploadForEdit,
+  uploadForEditSudo
+} from '../fs/RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS, type EditEvent, type OpenEditSnapshot } from '../../shared/contract'
 
@@ -25,6 +32,7 @@ interface EditEntry {
   conflictNotified: boolean
   /** True once the underlying SSH session has closed — the watcher is stopped but the temp file is kept. */
   sessionClosed: boolean
+  viaSudo: boolean
 }
 
 /**
@@ -63,8 +71,8 @@ export class EditSessionManager {
   }
 
   /** Opens a REMOTE file: downloads it in full to a temp path, opens it in the OS default app (unless builtin is true), then watches it and re-uploads on every save. */
-  async openRemote(sessionId: string, remotePath: string, builtin: boolean = false): Promise<{ editId: string; localTempPath: string }> {
-    const existing = [...this.edits.values()].find((e) => e.sessionId === sessionId && e.remotePath === remotePath)
+  async openRemote(sessionId: string, remotePath: string, builtin: boolean = false, viaSudo: boolean = false): Promise<{ editId: string; localTempPath: string }> {
+    const existing = [...this.edits.values()].find((e) => e.sessionId === sessionId && e.remotePath === remotePath && e.viaSudo === viaSudo)
     if (existing) {
       if (!builtin) {
         const result = await shell.openPath(existing.localTempPath)
@@ -76,7 +84,7 @@ export class EditSessionManager {
     }
 
     const editId = randomUUID()
-    const remoteStamp = await this.remoteStamp(sessionId, remotePath)
+    const remoteStamp = await this.remoteStamp(sessionId, remotePath, viaSudo)
     const basename = remotePath.split('/').filter(Boolean).pop() ?? 'file'
     const tempDir = path.join(os.tmpdir(), 'ferry-edit', sessionId, randomUUID())
     const localTempPath = path.join(tempDir, basename)
@@ -89,6 +97,10 @@ export class EditSessionManager {
     await OperationRegistry.getInstance().run(
       { kind: 'edit-download', sessionId, label: `Opening ${basename} for editing`, cancellable: true },
       async (ctx) => {
+        if (viaSudo) {
+          await downloadForEditSudo(sessionId, remotePath, localTempPath)
+          return
+        }
         await downloadForEdit(
           sessionId, 
           remotePath, 
@@ -119,7 +131,8 @@ export class EditSessionManager {
       lastSyncedMtimeMs: stats.mtimeMs,
       remoteStamp,
       conflictNotified: false,
-      sessionClosed: false
+      sessionClosed: false,
+      viaSudo
     }
     this.edits.set(editId, entry)
     this.watch(entry)
@@ -187,8 +200,8 @@ export class EditSessionManager {
     })
   }
 
-  private async remoteStamp(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number } | null> {
-    const stat = await statRemoteForEdit(sessionId, remotePath)
+  private async remoteStamp(sessionId: string, remotePath: string, viaSudo = false): Promise<{ mtime: number; size: number } | null> {
+    const stat = viaSudo ? await statRemoteSudo(sessionId, remotePath) : await statRemoteForEdit(sessionId, remotePath)
     return stat && { mtime: stat.mtime, size: stat.size }
   }
 
@@ -205,7 +218,7 @@ export class EditSessionManager {
       return
     }
     if (!force && entry.remoteStamp) {
-      const current = await this.remoteStamp(entry.sessionId, entry.remotePath)
+      const current = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
       if (current && (current.mtime !== entry.remoteStamp.mtime || current.size !== entry.remoteStamp.size)) {
         if (entry.conflictNotified) {
           return
@@ -233,12 +246,12 @@ export class EditSessionManager {
       await OperationRegistry.getInstance().run(
         { kind: 'edit-reupload', sessionId: entry.sessionId, label: `Re-uploading ${basename}`, cancellable: false },
         async () => {
-          await uploadForEdit(entry.sessionId, entry.localTempPath, entry.remotePath)
+          await (entry.viaSudo ? uploadForEditSudo : uploadForEdit)(entry.sessionId, entry.localTempPath, entry.remotePath)
         }
       )
       const stats = await fs.stat(entry.localTempPath)
       entry.lastSyncedMtimeMs = stats.mtimeMs
-      entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath)
+      entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
       entry.conflictNotified = false
       this.broadcast({
         editId: entry.editId,

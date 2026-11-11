@@ -13,8 +13,8 @@ export function registerEditHandlers(): void {
   })
 
   handle<EditOpenResult>(INVOKE_CHANNELS.editOpenRemote, async (req) => {
-    const { sessionId, path, builtin } = req as EditOpenRemoteRequest
-    return EditSessionManager.getInstance().openRemote(sessionId, path, builtin)
+    const { sessionId, path, builtin, viaSudo } = req as EditOpenRemoteRequest
+    return EditSessionManager.getInstance().openRemote(sessionId, path, builtin, Boolean(viaSudo))
   })
 
   handle<void>(INVOKE_CHANNELS.editOpenExternal, async (req) => {

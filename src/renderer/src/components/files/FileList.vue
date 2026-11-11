@@ -69,6 +69,7 @@ const emit = defineEmits<{
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
+  'edit-root': [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
   'hover-dir': [path: string]
@@ -267,6 +268,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
             @start-rename="emit('start-rename', $event)"
             @chmod="emit('chmod', $event)"
             @edit="emit('edit', $event)"
+            @edit-root="emit('edit-root', $event)"
             @hover-dir="emit('hover-dir', $event)"
             @drop-on="(entry, event) => emit('drop-on', entry, event)"
           />

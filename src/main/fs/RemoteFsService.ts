@@ -1,4 +1,6 @@
 import { randomBytes } from 'crypto'
+import { readFile as readLocalFile, writeFile as writeLocalFile } from 'fs/promises'
+import { shellEscape } from '../ssh/shellEscape'
 import { createReadStream, createWriteStream } from 'fs'
 import type { SFTPWrapper } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
@@ -269,6 +271,51 @@ export async function commitRemoteFile(shell: RemoteShell, tempPath: string, tar
   const hadTarget = await shell.stat(target).then(() => true, () => false)
   if (!(await posixRename(sftp, tempPath, target))) {
     await replaceRemoteFile(shell, tempPath, target, hadTarget)
+  }
+}
+
+async function sudoExec(shell: RemoteShell, command: string, input?: Buffer): Promise<Buffer> {
+  const result = await shell.execWithStdin(`sudo -n ${command}`, input)
+  if (result.code !== 0) {
+    const message = result.stderr.trim()
+    if (/password is required|a terminal is required|no tty present/i.test(message)) {
+      throw new SshError('SSH_EXEC', 'Passwordless sudo is required to edit as root')
+    }
+    throw new SshError('SSH_EXEC', message || `sudo exited with code ${result.code}`)
+  }
+  return result.stdout
+}
+
+export async function statRemoteSudo(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number } | null> {
+  try {
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const out = (await sudoExec(shell, `stat -c '%Y %s' -- ${shellEscape(remotePath)}`)).toString().trim()
+    const [mtime, size] = out.split(' ').map(Number)
+    return Number.isFinite(mtime) && Number.isFinite(size) ? { mtime, size } : null
+  } catch {
+    return null
+  }
+}
+
+export async function downloadForEditSudo(sessionId: string, remotePath: string, localPath: string): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const content = await sudoExec(shell, `cat -- ${shellEscape(remotePath)}`)
+  await writeLocalFile(localPath, content, { mode: 0o600 })
+}
+
+export async function uploadForEditSudo(sessionId: string, localPath: string, remotePath: string): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const data = await readLocalFile(localPath)
+  const target = shellEscape(remotePath)
+  const temp = shellEscape(`${remotePath}.ferry-tmp-${randomBytes(4).toString('hex')}`)
+  try {
+    await sudoExec(shell, `tee -- ${temp} > /dev/null`, data)
+    await sudoExec(shell, `chmod --reference=${target} -- ${temp}`)
+    await sudoExec(shell, `chown --reference=${target} -- ${temp}`)
+    await sudoExec(shell, `mv -f -- ${temp} ${target}`)
+  } catch (e) {
+    await sudoExec(shell, `rm -f -- ${temp}`).catch(() => undefined)
+    throw e
   }
 }
 

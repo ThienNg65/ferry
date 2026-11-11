@@ -95,6 +95,26 @@ export class RemoteShell {
     })
   }
 
+  execWithStdin(command: string, input?: Buffer): Promise<{ stdout: Buffer; stderr: string; code: number | null }> {
+    return new Promise((resolve, reject) => {
+      this.client.exec(command, (execErr, stream) => {
+        if (execErr) {
+          reject(new SshError('SSH_EXEC', execErr.message))
+          return
+        }
+        const out: Buffer[] = []
+        let stderr = ''
+        stream.on('data', (chunk: Buffer) => out.push(chunk))
+        stream.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString()
+        })
+        stream.on('close', (code: number | null) => resolve({ stdout: Buffer.concat(out), stderr, code }))
+        stream.on('error', (e: Error) => reject(new SshError('SSH_EXEC', e.message)))
+        stream.end(input)
+      })
+    })
+  }
+
   private execOnce(command: string, opts: RemoteOptions): Promise<ExecResult> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
