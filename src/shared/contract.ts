@@ -565,7 +565,7 @@ export interface EditEvent {
   sessionId?: string
   remotePath?: string
   localTempPath: string
-  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'session-closed' | 'closed'
+  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'remote-changed' | 'session-closed' | 'closed'
   error?: string
 }
 
@@ -855,6 +855,7 @@ export const INVOKE_CHANNELS = {
   editOpenRemote: 'edit:openRemote',
   editOpenExternal: 'edit:openExternal',
   editClose: 'edit:close',
+  editForceReupload: 'edit:forceReupload',
   editList: 'edit:list',
   // terminal
   terminalOpen: 'terminal:open',

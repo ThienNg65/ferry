@@ -5,7 +5,7 @@ import * as path from 'path'
 import { BrowserWindow, shell } from 'electron'
 import { SessionManager } from '../ssh/SessionManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
-import { downloadForEdit, uploadForEdit } from '../fs/RemoteFsService'
+import { downloadForEdit, statRemoteForEdit, uploadForEdit } from '../fs/RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS, type EditEvent, type OpenEditSnapshot } from '../../shared/contract'
 
@@ -21,6 +21,7 @@ interface EditEntry {
   debounceTimer: ReturnType<typeof setTimeout> | null
   /** mtime (ms) of localTempPath as of its last successful upload (or the initial download) — used by disposeAll() to avoid deleting an edit that never made it back to the server. */
   lastSyncedMtimeMs: number
+  remoteStamp: { mtime: number; size: number } | null
   /** True once the underlying SSH session has closed — the watcher is stopped but the temp file is kept. */
   sessionClosed: boolean
 }
@@ -114,6 +115,7 @@ export class EditSessionManager {
       watcher: null,
       debounceTimer: null,
       lastSyncedMtimeMs: stats.mtimeMs,
+      remoteStamp: await this.remoteStamp(sessionId, remotePath),
       sessionClosed: false
     }
     this.edits.set(editId, entry)
@@ -182,9 +184,35 @@ export class EditSessionManager {
     })
   }
 
-  private async reupload(entry: EditEntry): Promise<void> {
+  private async remoteStamp(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number } | null> {
+    const stat = await statRemoteForEdit(sessionId, remotePath)
+    return stat && { mtime: stat.mtime, size: stat.size }
+  }
+
+  async forceReupload(editId: string): Promise<void> {
+    const entry = this.edits.get(editId)
+    if (!entry) {
+      throw new SshError('NOT_FOUND', `Edit session ${editId} not found`)
+    }
+    await this.reupload(entry, true)
+  }
+
+  private async reupload(entry: EditEntry, force = false): Promise<void> {
     if (entry.sessionClosed) {
       return
+    }
+    if (!force && entry.remoteStamp) {
+      const current = await this.remoteStamp(entry.sessionId, entry.remotePath)
+      if (current && (current.mtime !== entry.remoteStamp.mtime || current.size !== entry.remoteStamp.size)) {
+        this.broadcast({
+          editId: entry.editId,
+          sessionId: entry.sessionId,
+          remotePath: entry.remotePath,
+          localTempPath: entry.localTempPath,
+          state: 'remote-changed'
+        })
+        return
+      }
     }
     const basename = path.basename(entry.localTempPath)
     this.broadcast({
@@ -203,6 +231,7 @@ export class EditSessionManager {
       )
       const stats = await fs.stat(entry.localTempPath)
       entry.lastSyncedMtimeMs = stats.mtimeMs
+      entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath)
       this.broadcast({
         editId: entry.editId,
         sessionId: entry.sessionId,

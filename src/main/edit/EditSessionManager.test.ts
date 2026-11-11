@@ -13,7 +13,8 @@ vi.mock('../fs/RemoteFsService', () => ({
   downloadForEdit: vi.fn(async (_sessionId: string, _remotePath: string, localPath: string) => {
     await fs.writeFile(localPath, 'original content')
   }),
-  uploadForEdit: vi.fn(async () => {})
+  uploadForEdit: vi.fn(async () => {}),
+  statRemoteForEdit: vi.fn(async () => null)
 }))
 
 async function tempSubdirsFor(sessionId: string): Promise<string[]> {

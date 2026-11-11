@@ -7,6 +7,24 @@ export function useNotify() {
     },
     error(title: string, description?: string): void {
       toast.add({ title, description, color: 'error', icon: 'i-lucide-alert-circle' })
+    },
+    prompt(title: string, description: string, actions: Array<{ label: string; onClick: () => void }>): void {
+      const { id } = toast.add({
+        title,
+        description,
+        color: 'warning',
+        icon: 'i-lucide-triangle-alert',
+        duration: 0,
+        actions: actions.map((a) => ({
+          label: a.label,
+          color: 'neutral' as const,
+          variant: 'outline' as const,
+          onClick: () => {
+            toast.remove(id)
+            a.onClick()
+          }
+        }))
+      })
     }
   }
 }

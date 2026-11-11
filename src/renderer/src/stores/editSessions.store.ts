@@ -52,6 +52,14 @@ export const useEditSessionsStore = defineStore('editSessions', {
           case 'upload-error':
             notify.error('Re-upload failed', `${name}: ${evt.error ?? 'unknown error'}`)
             break
+          case 'remote-changed':
+            notify.prompt('File changed on the server', `${name} was modified remotely since you opened it.`, [
+              { label: 'Overwrite', onClick: () =>
+                  void invoke<void>(INVOKE_CHANNELS.editForceReupload, evt.editId).catch((e: Error) => notify.error('Overwrite failed', e.message))
+              },
+              { label: 'Discard my edit', onClick: () => void this.close(evt.editId) }
+            ])
+            break
           case 'session-closed':
             notify.error('Session closed', `${name} — further changes won't be uploaded`)
             break
