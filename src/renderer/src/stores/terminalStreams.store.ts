@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
-import type { ClipboardTextResult, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
+import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract'
+import type { ClipboardTextResult, TerminalAckEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { terminalKeyAction } from '../utils/terminalKeys'
 
@@ -10,7 +10,10 @@ interface TerminalInstance {
   terminalId: string
   term: Terminal
   fit: FitAddon
+  unacked: number
 }
+
+const ACK_BATCH_BYTES = 100 * 1024
 
 /**
  * Live xterm.js instances, kept OUTSIDE Pinia's reactive state (a plain
@@ -78,7 +81,19 @@ function ensureSubscriptions(): void {
     return
   }
   dataUnsub = onEvent<TerminalDataEvent>(EVENT_CHANNELS.terminalData, (evt) => {
-    findByTerminalId(evt.terminalId)?.term.write(evt.data)
+    const inst = findByTerminalId(evt.terminalId)
+    if (!inst) {
+      return
+    }
+    const bytes = evt.data.length
+    inst.term.write(evt.data, () => {
+      inst.unacked += bytes
+      if (inst.unacked >= ACK_BATCH_BYTES) {
+        const ack: TerminalAckEvent = { terminalId: inst.terminalId, bytes: inst.unacked }
+        inst.unacked = 0
+        window.api.send(SEND_CHANNELS.terminalAck, ack)
+      }
+    })
   })
   exitUnsub = onEvent<TerminalExitEvent>(EVENT_CHANNELS.terminalExit, (evt) => {
     findByTerminalId(evt.terminalId)?.term.write('\r\n[Process exited]\r\n')
@@ -161,7 +176,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           }
           return true
         })
-        instances.set(sessionId, { terminalId, term, fit })
+        instances.set(sessionId, { terminalId, term, fit, unacked: 0 })
         this.knownSessionIds.push(sessionId)
         return terminalId
       })()

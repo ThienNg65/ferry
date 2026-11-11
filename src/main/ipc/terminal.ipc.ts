@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto'
+import { ipcMain } from 'electron'
 import { handle } from './envelope'
-import { INVOKE_CHANNELS } from '../../shared/contract'
-import type { TerminalOpenRequest, TerminalOpenResult } from '../../shared/contract'
+import { INVOKE_CHANNELS, SEND_CHANNELS } from '../../shared/contract'
+import type { TerminalAckEvent, TerminalOpenRequest, TerminalOpenResult } from '../../shared/contract'
 import { TerminalManager } from '../terminal/TerminalManager'
 
 /** Request payload for `terminal:write`. */
@@ -34,6 +35,10 @@ export function registerTerminalHandlers(): void {
   handle<void>(INVOKE_CHANNELS.terminalResize, (req) => {
     const request = req as TerminalResizeRequest
     TerminalManager.getInstance().resize(request.terminalId, request.cols, request.rows)
+  })
+
+  ipcMain.on(SEND_CHANNELS.terminalAck, (_event, payload: TerminalAckEvent) => {
+    TerminalManager.getInstance().ack(payload.terminalId, payload.bytes)
   })
 
   handle<void>(INVOKE_CHANNELS.terminalClose, (terminalId) => {

@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import type { ClientChannel } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { shellEscape } from '../ssh/shellEscape'
+import { FlowControl } from './FlowControl'
 import { OutputBatcher } from './OutputBatcher'
 import { EVENT_CHANNELS, type TerminalDataEvent, type TerminalExitEvent } from '../../shared/contract'
 
@@ -9,6 +10,7 @@ interface TerminalEntry {
   sessionId: string
   stream: ClientChannel
   exitCode: number | null
+  flow: FlowControl
 }
 
 /**
@@ -50,10 +52,17 @@ export class TerminalManager {
   async open(terminalId: string, sessionId: string, cols: number, rows: number): Promise<void> {
     const shell = SessionManager.getInstance().shell(sessionId)
     const stream = await shell.openShell({ cols, rows })
-    const entry: TerminalEntry = { sessionId, stream, exitCode: null }
+    const flow = new FlowControl(
+      () => stream.pause(),
+      () => stream.resume()
+    )
+    const entry: TerminalEntry = { sessionId, stream, exitCode: null, flow }
     this.terminals.set(terminalId, entry)
 
-    const batcher = new OutputBatcher((data) => this.broadcastData(terminalId, data))
+    const batcher = new OutputBatcher((data) => {
+      flow.sent(data.length)
+      this.broadcastData(terminalId, data)
+    })
     stream.on('data', (chunk: Buffer) => {
       batcher.push(chunk)
     })
@@ -78,6 +87,11 @@ export class TerminalManager {
   /** Sends keystrokes/input to a shell. */
   write(terminalId: string, data: string): void {
     this.terminals.get(terminalId)?.stream.write(data)
+  }
+
+  /** Credits bytes the renderer has finished rendering, unpausing the shell stream if it was throttled. */
+  ack(terminalId: string, bytes: number): void {
+    this.terminals.get(terminalId)?.flow.ack(bytes)
   }
 
   /** Resizes a shell's pseudo-terminal. */

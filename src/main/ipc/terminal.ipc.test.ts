@@ -6,6 +6,7 @@ const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
 vi.mock('electron', () => ({
   ipcMain: {
     removeHandler: vi.fn(),
+    on: vi.fn(),
     handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
       registered.set(channel, cb)
     })
