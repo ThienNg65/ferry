@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@xterm/xterm/css/xterm.css'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
+import { useUiStore } from '../../stores/ui.store'
 
 /**
  * `active` is true only when the Terminal dock tab is the one currently
@@ -14,6 +15,18 @@ const props = defineProps<{ active: boolean }>()
 
 const sessions = useSessionsStore()
 const terminalStreams = useTerminalStreamsStore()
+const ui = useUiStore()
+
+watch(
+  () => JSON.stringify(ui.terminalAppearance),
+  () => {
+    terminalStreams.applyAppearance()
+    const sessionId = sessions.activeSessionId
+    if (props.active && sessionId) {
+      void nextTick(() => fitAndResize(sessionId))
+    }
+  }
+)
 
 /** Session ids whose container `<div>` has already had `term.open()` called on it — never call it twice. */
 const attachedSessions = new Set<string>()
@@ -151,6 +164,7 @@ onBeforeUnmount(() => {
         :key="sessionId"
         v-show="sessionId === sessions.activeSessionId"
         class="h-full w-full px-1"
+        :style="{ backgroundColor: ui.terminalAppearance.theme.background }"
         :ref="(el) => attachContainer(sessionId, el as Element | null)"
       />
     </div>

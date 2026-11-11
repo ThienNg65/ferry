@@ -5,6 +5,7 @@ import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract
 import type { ClipboardTextResult, TerminalAckEvent, TerminalInputEvent, TerminalResizeEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { terminalKeyAction } from '../utils/terminalKeys'
+import { useUiStore } from './ui.store'
 
 interface TerminalInstance {
   terminalId: string
@@ -156,7 +157,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         // Deferred to first actual use — @xterm/xterm isn't parsed/evaluated
         // until a terminal is opened, keeping it off the cold-start path.
         const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
-        const term = new Terminal({ cursorBlink: true, scrollback: 5000 })
+        const term = new Terminal({ cursorBlink: true, scrollback: 5000, ...useUiStore().terminalAppearance })
         const fit = new FitAddon()
         term.loadAddon(fit)
         term.onData((data) => {
@@ -190,6 +191,17 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         return await openPromise
       } finally {
         pending.delete(sessionId)
+      }
+    },
+
+    applyAppearance(): void {
+      const { fontFamily, fontSize, lineHeight, theme } = useUiStore().terminalAppearance
+      for (const { term } of instances.values()) {
+        term.options.fontFamily = fontFamily
+        term.options.fontSize = fontSize
+        term.options.lineHeight = lineHeight
+        term.options.theme = { ...theme }
+        term.clearTextureAtlas()
       }
     },
 
