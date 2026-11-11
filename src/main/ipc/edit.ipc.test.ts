@@ -61,7 +61,7 @@ describe('edit.ipc', () => {
   it('edit:openRemote forwards sessionId, path and builtin', async () => {
     editSessionManagerMock.openRemote.mockResolvedValueOnce({ editId: 'e1', localPath: '/tmp/e1' })
     const result = await invoke('edit:openRemote', { sessionId: 'sess-1', path: '/remote/a.txt', builtin: true })
-    expect(editSessionManagerMock.openRemote).toHaveBeenCalledWith('sess-1', '/remote/a.txt', true)
+    expect(editSessionManagerMock.openRemote).toHaveBeenCalledWith('sess-1', '/remote/a.txt', true, false)
     expect(result).toEqual({ ok: true, data: { editId: 'e1', localPath: '/tmp/e1' } })
   })
 
