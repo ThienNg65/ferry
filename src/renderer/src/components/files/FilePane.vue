@@ -17,7 +17,9 @@ import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
 import { formatBytes, formatShortDate } from '../../utils/format'
-import { resolveConflicts, type ConflictChoice } from '../../utils/resolveConflicts'
+import type { TransferIntent } from '../../composables/useTransferIntents'
+import { useTransferIntents } from '../../composables/useTransferIntents'
+import { usePaneKeyboard } from '../../composables/usePaneKeyboard'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
@@ -26,17 +28,6 @@ import EditorDialog from './EditorDialog.vue'
 import ChmodDialog from './ChmodDialog.vue'
 import SyncDialog from './SyncDialog.vue'
 import CompareDialog from './CompareDialog.vue'
-
-interface TransferIntent {
-  sessionId: string
-  direction: 'upload' | 'download'
-  localPath: string
-  remotePath: string
-  isDir: boolean
-  targetName: string
-  sourceSize: number | null
-  sourceModifiedAt: string | null
-}
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -50,6 +41,14 @@ const ui = useUiStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
 const confirm = useConfirm()
+const {
+  transferConflict,
+  buildTransferIntent,
+  checkAndQueueTransfers,
+  enqueueIntents,
+  resolveTransferConflict,
+  transferEntry
+} = useTransferIntents()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
@@ -101,7 +100,6 @@ const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
-const transferConflict = ref<{ intents: TransferIntent[]; targets: FileEntry[]; conflicts: Array<{ intent: TransferIntent; target: FileEntry }> } | null>(null)
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
@@ -144,6 +142,19 @@ const unregisterPaneActions = registerPaneActions(props.side, {
   }
 })
 onBeforeUnmount(unregisterPaneActions)
+
+const onKeydown = usePaneKeyboard({
+  side: props.side,
+  store,
+  renamingPath,
+  filterText,
+  filteredEntries,
+  toolbarRef,
+  fileListRef,
+  onTransferSelected,
+  onOpen,
+  confirmDeleteEntries
+})
 
 void bookmarks.ensureLoaded()
 
@@ -274,62 +285,6 @@ async function submitMkdir(): Promise<void> {
   if (name) {
     await (newEntryKind.value === 'file' ? store.touch(name) : store.mkdir(name))
   }
-}
-
-function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string, targetDir?: string): TransferIntent | null {
-  if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
-    notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
-    return null
-  }
-  const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
-  if (sourceSide === 'local') {
-    const remoteTarget = `${(targetDir ?? remoteFs.currentPath).replace(/\/$/, '')}/${entry.name}`
-    return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name, ...source }
-  } else {
-    const localBase = targetDir ?? localFs.currentPath
-    const localDir = localBase.replace(/[/\\]$/, '')
-    const sep = localBase.includes('\\') ? '\\' : '/'
-    const localTarget = `${localDir}${sep}${entry.name}`
-    return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name, ...source }
-  }
-}
-
-async function checkAndQueueTransfers(intents: TransferIntent[], targetStore: typeof localFs | typeof remoteFs): Promise<void> {
-  const conflicts: Array<{ intent: TransferIntent; target: FileEntry }> = []
-  for (const intent of intents) {
-    const target = targetStore.entries.find((e) => e.name === intent.targetName)
-    if (target) {
-      conflicts.push({ intent, target })
-    }
-  }
-  if (conflicts.length > 0) {
-    transferConflict.value = { intents, targets: [...targetStore.entries], conflicts }
-    return
-  }
-  await enqueueIntents(intents)
-}
-
-async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
-  for (const intent of intents) {
-    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
-  }
-}
-
-async function resolveTransferConflict(choice: ConflictChoice): Promise<void> {
-  const conflict = transferConflict.value
-  if (!conflict) return
-  transferConflict.value = null
-  await enqueueIntents(resolveConflicts(conflict.intents, conflict.targets, choice))
-}
-
-/** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
-async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): Promise<void> {
-  const sessionId = sessions.activeSessionId
-  if (!sessionId) return
-  const intent = buildTransferIntent(sourceSide, entry, sessionId)
-  if (!intent) return
-  const targetStore = sourceSide === 'local' ? remoteFs : localFs
-  await checkAndQueueTransfers([intent], targetStore)
 }
 
 async function onTransfer(entry: FileEntry): Promise<void> {
@@ -607,138 +562,6 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
   } catch (e) {
     notify.error('Move failed', e instanceof Error ? e.message : String(e))
   }
-}
-
-async function onKeydown(event: KeyboardEvent): Promise<void> {
-  // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
-  // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
-  if (
-    event.target instanceof HTMLInputElement ||
-    event.target instanceof HTMLTextAreaElement ||
-    (event.target instanceof HTMLElement && event.target.isContentEditable)
-  ) {
-    return
-  }
-  // While a row is mid-rename, its own input owns keyboard input (it stops keydown propagation) —
-  // this guard is a second line of defense so a stray bubble never triggers delete/refresh.
-  if (renamingPath.value !== null) {
-    return
-  }
-  // F6 hops to the other pane (the Windows Explorer convention); Tab stays native so keyboard
-  // users can still reach the toolbar, the ⋯ menu and the dock.
-  if (event.key === 'F6' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
-    const other = props.side === 'local' ? 'remote' : 'local'
-    const el = document.querySelector<HTMLElement>(`[data-pane="${other}"]`)
-    if (el && !(other === 'local' && !ui.showLocalPane)) {
-      event.preventDefault()
-      el.focus()
-    }
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
-    event.preventDefault()
-    await store.load(store.currentPath, { forceRefresh: true })
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'h') {
-    event.preventDefault()
-    ui.toggleShowHidden()
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-    event.preventDefault()
-    toolbarRef.value?.focusFilter()
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
-    event.preventDefault()
-    store.selectAll(filteredEntries.value)
-    return
-  }
-  if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-    const [path] = store.selected
-    const row = [...document.querySelectorAll<HTMLElement>(`[data-pane="${props.side}"] [data-row-path]`)].find((el) => el.dataset.rowPath === path)
-    if (row) {
-      event.preventDefault()
-      const rect = row.getBoundingClientRect()
-      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 24, clientY: rect.bottom }))
-    }
-    return
-  }
-  if (event.key === 'F5') {
-    event.preventDefault()
-    await onTransferSelected()
-    return
-  }
-  if (event.key === 'F2') {
-    event.preventDefault()
-    if (store.selected.size === 1) {
-      const [path] = store.selected
-      renamingPath.value = path
-    }
-    return
-  }
-  if (event.key === 'Escape') {
-    if (filterText.value) {
-      event.preventDefault()
-      filterText.value = ''
-    } else if (store.selected.size > 0) {
-      event.preventDefault()
-      store.selectAll([])
-    }
-    return
-  }
-  if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-    event.preventDefault()
-    await (event.key === 'ArrowLeft' ? store.goBack() : store.goForward())
-    return
-  }
-  if (event.key === 'Backspace') {
-    event.preventDefault()
-    await store.goUp()
-    return
-  }
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    const list = filteredEntries.value
-    if (list.length === 0) return
-    event.preventDefault()
-    const selectedPaths = Array.from(store.selected)
-    const lastSelectedPath = selectedPaths[selectedPaths.length - 1]
-    const currentIdx = lastSelectedPath ? list.findIndex((e) => e.path === lastSelectedPath) : -1
-    const nextIdx =
-      event.key === 'ArrowDown'
-        ? Math.min(list.length - 1, currentIdx + 1)
-        : currentIdx <= 0
-          ? 0
-          : currentIdx - 1
-    const nextPath = list[nextIdx].path
-    if (event.shiftKey) {
-      store.selectRange(nextPath)
-    } else {
-      store.selectOnly(nextPath)
-    }
-    fileListRef.value?.scrollToIndex(nextIdx)
-    return
-  }
-  if (event.key === 'Enter') {
-    if (store.selected.size === 1) {
-      const [path] = store.selected
-      const entry = filteredEntries.value.find((e) => e.path === path)
-      if (entry) {
-        event.preventDefault()
-        onOpen(entry)
-      }
-    }
-    return
-  }
-  if (event.key !== 'Delete') {
-    return
-  }
-  if (store.selected.size === 0) {
-    return
-  }
-  event.preventDefault()
-  void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path)))
 }
 
 async function onRename(entry: FileEntry, newName: string): Promise<void> {
