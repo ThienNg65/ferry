@@ -861,6 +861,8 @@ export const INVOKE_CHANNELS = {
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',
+  fsLocalTouch: 'fs:local:touch',
+  fsRemoteTouch: 'fs:remote:touch',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
   fsRemoteDeleteMany: 'fs:remote:deleteMany',

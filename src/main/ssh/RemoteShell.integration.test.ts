@@ -172,6 +172,13 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
     expect(capped.truncated).toBe(true)
   })
 
+  it('touch() creates an empty file and refuses to overwrite an existing one', async () => {
+    const file = `${testDir}/touched.txt`
+    await shell.touch(file)
+    expect((await shell.stat(file)).size).toBe(0)
+    await expect(shell.touch(file)).rejects.toThrow()
+  })
+
   it('mkdirRecursive() creates nested missing parents in one call, and is idempotent', async () => {
     await shell.mkdirRecursive(`${testDir}/a/b/c`)
     const stats = await shell.stat(`${testDir}/a/b/c`)

@@ -26,6 +26,7 @@ const emit = defineEmits<{
   up: []
   refresh: []
   mkdir: []
+  touch: []
   'toggle-hidden': []
   'toggle-permissions': []
   'transfer-selected': []
@@ -37,7 +38,9 @@ const emit = defineEmits<{
 }>()
 
 const moreItems = computed<DropdownMenuItem[]>(() => {
-  const items: DropdownMenuItem[] = [{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => emit('mkdir') }]
+  const items: DropdownMenuItem[] = [{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => emit('mkdir') },
+    { label: 'New file', icon: 'i-lucide-file-plus', onSelect: () => emit('touch') }
+  ]
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
   }

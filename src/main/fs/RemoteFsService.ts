@@ -106,6 +106,11 @@ export async function mkdirRemote(sessionId: string, dirPath: string): Promise<v
   await SessionManager.getInstance().shell(sessionId).mkdir(dirPath)
 }
 
+/** Creates an empty remote file, failing if it already exists. */
+export async function touchRemote(sessionId: string, filePath: string): Promise<void> {
+  await SessionManager.getInstance().shell(sessionId).touch(filePath)
+}
+
 /** Renames/moves a remote path. */
 export async function renameRemote(sessionId: string, fromPath: string, toPath: string): Promise<void> {
   await SessionManager.getInstance().shell(sessionId).rename(fromPath, toPath)

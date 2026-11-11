@@ -416,6 +416,19 @@ export class RemoteShell {
     })
   }
 
+  async touch(remotePath: string): Promise<void> {
+    const sftp = await this.sftp()
+    return new Promise<void>((resolve, reject) => {
+      sftp.open(remotePath, 'wx', (openErr, handle) => {
+        if (openErr) {
+          reject(new SshError('SFTP', `Failed to create "${remotePath}": ${openErr.message}`))
+          return
+        }
+        sftp.close(handle, () => resolve())
+      })
+    })
+  }
+
   /** Sets a remote path's permissions. `mode` is an octal string (e.g. "0755" or "755"). */
   async chmod(remotePath: string, mode: string): Promise<void> {
     if (!/^[0-7]{3,4}$/.test(mode)) {

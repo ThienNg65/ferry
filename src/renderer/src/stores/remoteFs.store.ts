@@ -333,6 +333,15 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       await this.load(this.currentPath, { forceRefresh: true })
     },
 
+    async touch(name: string): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteTouch, sessionId, target)
+      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      await this.load(this.currentPath, { forceRefresh: true })
+    },
+
     /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
     async remove(entry: FileEntry): Promise<void> {
       const sessionId = this.activeSessionId()

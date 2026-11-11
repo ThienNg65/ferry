@@ -25,6 +25,10 @@ export function registerFsHandlers(): void {
   // this isn't currently exploitable. Do not "fix" this into a restricted sandbox —
   // that would break normal file-browsing.
   handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) => LocalFs.list(dirPath as string | undefined))
+  handle<void>(INVOKE_CHANNELS.fsLocalTouch, (filePath) => LocalFs.touch(filePath as string))
+  handle<void>(INVOKE_CHANNELS.fsRemoteTouch, (sessionId, filePath) =>
+    RemoteFs.touchRemote(sessionId as string, filePath as string)
+  )
   handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath) =>
     LocalFs.rename(fromPath as string, toPath as string)

@@ -97,6 +97,12 @@ export const useLocalFsStore = defineStore('localFs', {
       await this.load()
     },
 
+    async touch(name: string): Promise<void> {
+      const sep = this.currentPath.includes('\\') ? '\\' : '/'
+      await invoke<void>(INVOKE_CHANNELS.fsLocalTouch, `${this.currentPath}${sep}${name}`)
+      await this.load()
+    },
+
     /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
     async remove(entry: FileEntry): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.fsLocalDelete, entry.path, entry.isDir)

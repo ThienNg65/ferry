@@ -52,6 +52,7 @@ const store = props.side === 'local' ? localFs : remoteFs
 const toolbarRef = ref<InstanceType<typeof FileToolbar> | null>(null)
 const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
 const showNewFolder = ref(false)
+const newEntryKind = ref<'folder' | 'file'>('folder')
 const newFolderName = ref('')
 const isDropTarget = ref(false)
 const filterText = ref('')
@@ -237,6 +238,13 @@ function onSelect(path: string, event: MouseEvent): void {
 }
 
 function onMkdirClick(): void {
+  newEntryKind.value = 'folder'
+  newFolderName.value = ''
+  showNewFolder.value = true
+}
+
+function onTouchClick(): void {
+  newEntryKind.value = 'file'
   newFolderName.value = ''
   showNewFolder.value = true
 }
@@ -245,7 +253,7 @@ async function submitMkdir(): Promise<void> {
   const name = newFolderName.value.trim()
   showNewFolder.value = false
   if (name) {
-    await store.mkdir(name)
+    await (newEntryKind.value === 'file' ? store.touch(name) : store.mkdir(name))
   }
 }
 
@@ -772,6 +780,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @up="store.goUp"
         @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
+        @touch="onTouchClick"
         :show-hidden="ui.showHidden"
         @toggle-hidden="ui.toggleShowHidden()"
         @toggle-permissions="ui.togglePermissionsDisplay()"
@@ -786,7 +795,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         <UInput
           v-model="newFolderName"
           size="xs"
-          placeholder="New folder name"
+          :placeholder="newEntryKind === 'file' ? 'New file name' : 'New folder name'"
           class="flex-1"
           autofocus
           @keyup.enter="submitMkdir"
