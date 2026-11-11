@@ -2,11 +2,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { IpcResult } from '../../shared/contract'
 
 const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
+const sendHandlers = new Map<string, (...args: unknown[]) => void>()
 
 vi.mock('electron', () => ({
   ipcMain: {
     removeHandler: vi.fn(),
-    on: vi.fn(),
+    on: vi.fn((channel: string, cb: (...args: unknown[]) => void) => {
+      sendHandlers.set(channel, cb)
+    }),
     handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
       registered.set(channel, cb)
     })
@@ -21,7 +24,8 @@ const terminalManagerMock = {
   open: vi.fn(),
   write: vi.fn(),
   resize: vi.fn(),
-  close: vi.fn()
+  close: vi.fn(),
+  ack: vi.fn()
 }
 
 vi.mock('../terminal/TerminalManager', () => ({
@@ -39,6 +43,7 @@ async function invoke(channel: string, ...args: unknown[]): Promise<IpcResult<un
 describe('terminal.ipc', () => {
   beforeEach(async () => {
     registered.clear()
+    sendHandlers.clear()
     vi.clearAllMocks()
     const { registerTerminalHandlers } = await import('./terminal.ipc')
     registerTerminalHandlers()
@@ -59,27 +64,24 @@ describe('terminal.ipc', () => {
     })
   })
 
-  describe('terminal:write', () => {
-    it('forwards terminalId/data to TerminalManager.write', async () => {
-      const result = await invoke('terminal:write', { terminalId: 't1', data: 'ls -la\n' })
+  describe('terminal:input', () => {
+    it('forwards terminalId/data to TerminalManager.write', () => {
+      sendHandlers.get('terminal:input')!({}, { terminalId: 't1', data: 'ls -la\n' })
       expect(terminalManagerMock.write).toHaveBeenCalledWith('t1', 'ls -la\n')
-      expect(result).toEqual({ ok: true, data: undefined })
-    })
-
-    it('wraps a thrown error (e.g. unknown terminalId) into an error envelope', async () => {
-      terminalManagerMock.write.mockImplementationOnce(() => {
-        throw new Error('unknown terminal')
-      })
-      const result = await invoke('terminal:write', { terminalId: 'nope', data: 'x' })
-      expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'unknown terminal' })
     })
   })
 
   describe('terminal:resize', () => {
-    it('forwards terminalId/cols/rows to TerminalManager.resize', async () => {
-      const result = await invoke('terminal:resize', { terminalId: 't1', cols: 100, rows: 40 })
+    it('forwards terminalId/cols/rows to TerminalManager.resize', () => {
+      sendHandlers.get('terminal:resize')!({}, { terminalId: 't1', cols: 100, rows: 40 })
       expect(terminalManagerMock.resize).toHaveBeenCalledWith('t1', 100, 40)
-      expect(result).toEqual({ ok: true, data: undefined })
+    })
+  })
+
+  describe('terminal:ack', () => {
+    it('forwards terminalId/bytes to TerminalManager.ack', () => {
+      sendHandlers.get('terminal:ack')!({}, { terminalId: 't1', bytes: 1024 })
+      expect(terminalManagerMock.ack).toHaveBeenCalledWith('t1', 1024)
     })
   })
 

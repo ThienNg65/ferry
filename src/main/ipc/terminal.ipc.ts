@@ -2,21 +2,14 @@ import { randomUUID } from 'crypto'
 import { ipcMain } from 'electron'
 import { handle } from './envelope'
 import { INVOKE_CHANNELS, SEND_CHANNELS } from '../../shared/contract'
-import type { TerminalAckEvent, TerminalOpenRequest, TerminalOpenResult } from '../../shared/contract'
+import type {
+  TerminalAckEvent,
+  TerminalInputEvent,
+  TerminalOpenRequest,
+  TerminalOpenResult,
+  TerminalResizeEvent
+} from '../../shared/contract'
 import { TerminalManager } from '../terminal/TerminalManager'
-
-/** Request payload for `terminal:write`. */
-interface TerminalWriteRequest {
-  terminalId: string
-  data: string
-}
-
-/** Request payload for `terminal:resize`. */
-interface TerminalResizeRequest {
-  terminalId: string
-  cols: number
-  rows: number
-}
 
 /** Registers handlers for opening/driving/closing an interactive SSH shell (PTY). */
 export function registerTerminalHandlers(): void {
@@ -27,14 +20,12 @@ export function registerTerminalHandlers(): void {
     return { terminalId }
   })
 
-  handle<void>(INVOKE_CHANNELS.terminalWrite, (req) => {
-    const request = req as TerminalWriteRequest
-    TerminalManager.getInstance().write(request.terminalId, request.data)
+  ipcMain.on(SEND_CHANNELS.terminalInput, (_event, payload: TerminalInputEvent) => {
+    TerminalManager.getInstance().write(payload.terminalId, payload.data)
   })
 
-  handle<void>(INVOKE_CHANNELS.terminalResize, (req) => {
-    const request = req as TerminalResizeRequest
-    TerminalManager.getInstance().resize(request.terminalId, request.cols, request.rows)
+  ipcMain.on(SEND_CHANNELS.terminalResize, (_event, payload: TerminalResizeEvent) => {
+    TerminalManager.getInstance().resize(payload.terminalId, payload.cols, payload.rows)
   })
 
   ipcMain.on(SEND_CHANNELS.terminalAck, (_event, payload: TerminalAckEvent) => {

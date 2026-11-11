@@ -858,8 +858,6 @@ export const INVOKE_CHANNELS = {
   editList: 'edit:list',
   // terminal
   terminalOpen: 'terminal:open',
-  terminalWrite: 'terminal:write',
-  terminalResize: 'terminal:resize',
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
@@ -935,13 +933,28 @@ export const EVENT_CHANNELS = {
 
 /** Fire-and-forget channels the renderer sends to main via `ipcRenderer.send` (no reply, no envelope). */
 export const SEND_CHANNELS = {
-  terminalAck: 'terminal:ack'
+  terminalAck: 'terminal:ack',
+  terminalInput: 'terminal:input',
+  terminalResize: 'terminal:resize'
 } as const
 
 /** Payload for the `terminal:ack` channel — bytes the renderer has finished writing into xterm. */
 export interface TerminalAckEvent {
   terminalId: string
   bytes: number
+}
+
+/** Payload for the `terminal:input` channel — keystrokes/paste for the remote shell. */
+export interface TerminalInputEvent {
+  terminalId: string
+  data: string
+}
+
+/** Payload for the `terminal:resize` channel. */
+export interface TerminalResizeEvent {
+  terminalId: string
+  cols: number
+  rows: number
 }
 
 /** Union of every valid event channel string. */

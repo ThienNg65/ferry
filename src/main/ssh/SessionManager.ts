@@ -293,6 +293,8 @@ export class SessionManager {
       port,
       username,
       readyTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 4,
       tryKeyboard: true,
       hostVerifier
     }

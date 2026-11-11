@@ -92,11 +92,19 @@ watch(() => [props.active, sessions.activeSessionId] as const, () => void syncAc
   immediate: true
 })
 
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
+
 function onWindowResize(): void {
-  const sessionId = sessions.activeSessionId
-  if (props.active && sessionId) {
-    void fitAndResize(sessionId)
+  if (resizeTimer !== null) {
+    clearTimeout(resizeTimer)
   }
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null
+    const sessionId = sessions.activeSessionId
+    if (props.active && sessionId) {
+      void fitAndResize(sessionId)
+    }
+  }, 50)
 }
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -116,6 +124,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
   resizeObserver?.disconnect()
+  if (resizeTimer !== null) {
+    clearTimeout(resizeTimer)
+  }
 })
 </script>
 

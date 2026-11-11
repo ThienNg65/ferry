@@ -16,8 +16,6 @@ export class IpcError extends Error {
 
 /** Channels excluded from the global busy tracker — high-frequency (per-keystroke/resize) or semantically unrelated to "SSH/SFTP work is happening". */
 const QUIET_CHANNELS = new Set<string>([
-  INVOKE_CHANNELS.terminalWrite,
-  INVOKE_CHANNELS.terminalResize,
   INVOKE_CHANNELS.windowMinimize,
   INVOKE_CHANNELS.windowMaximizeToggle,
   INVOKE_CHANNELS.windowClose,

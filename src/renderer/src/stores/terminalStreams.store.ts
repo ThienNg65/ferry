@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract'
-import type { ClipboardTextResult, TerminalAckEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
+import type { ClipboardTextResult, TerminalAckEvent, TerminalInputEvent, TerminalResizeEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { terminalKeyAction } from '../utils/terminalKeys'
 
@@ -11,6 +11,8 @@ interface TerminalInstance {
   term: Terminal
   fit: FitAddon
   unacked: number
+  cols: number
+  rows: number
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -156,7 +158,8 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         const fit = new FitAddon()
         term.loadAddon(fit)
         term.onData((data) => {
-          void invoke<void>(INVOKE_CHANNELS.terminalWrite, { terminalId, data })
+          const input: TerminalInputEvent = { terminalId, data }
+          window.api.send(SEND_CHANNELS.terminalInput, input)
         })
         // Clipboard shortcuts (Ctrl+C copies only when a selection exists —
         // otherwise it stays a SIGINT; Ctrl+V/Ctrl+Shift+V/Shift+Insert paste).
@@ -176,7 +179,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           }
           return true
         })
-        instances.set(sessionId, { terminalId, term, fit, unacked: 0 })
+        instances.set(sessionId, { terminalId, term, fit, unacked: 0, cols: 0, rows: 0 })
         this.knownSessionIds.push(sessionId)
         return terminalId
       })()
@@ -215,7 +218,13 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       if (!inst) {
         return
       }
-      void invoke<void>(INVOKE_CHANNELS.terminalResize, { terminalId: inst.terminalId, cols, rows })
+      if (inst.cols === cols && inst.rows === rows) {
+        return
+      }
+      inst.cols = cols
+      inst.rows = rows
+      const size: TerminalResizeEvent = { terminalId: inst.terminalId, cols, rows }
+      window.api.send(SEND_CHANNELS.terminalResize, size)
     },
 
     /** Tears down a session's terminal entirely — called when its tab closes/disconnects. */
