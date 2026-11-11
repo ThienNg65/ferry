@@ -9,6 +9,7 @@ import { emptyHistory, recordVisit, stepBack, stepForward, type NavHistory } fro
 
 const CACHE_TTL_MS = 60_000
 const MAX_CACHE_ENTRIES = 100
+const MAX_CONCURRENT_PREFETCHES = 3
 
 /** In-flight prefetch deduplication tracker across sessions. */
 const inFlightPrefetches = new Set<string>()
@@ -269,7 +270,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       }
 
       const prefetchKey = `${sessionId}:${normalized}`
-      if (inFlightPrefetches.has(prefetchKey)) return
+      if (inFlightPrefetches.has(prefetchKey) || inFlightPrefetches.size >= MAX_CONCURRENT_PREFETCHES) return
       inFlightPrefetches.add(prefetchKey)
 
       try {

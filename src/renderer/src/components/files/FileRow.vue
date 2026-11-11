@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { renameSelectionEnd } from '../../utils/renameSelection'
 import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
@@ -209,9 +209,13 @@ function onMouseEnter(): void {
     if (hoverTimer) clearTimeout(hoverTimer)
     hoverTimer = setTimeout(() => {
       emit('hover-dir', props.entry.path)
-    }, 150)
+    }, 400)
   }
 }
+
+onBeforeUnmount(() => {
+  if (hoverTimer) clearTimeout(hoverTimer)
+})
 
 function onMouseLeave(): void {
   if (hoverTimer) {
