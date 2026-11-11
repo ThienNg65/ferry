@@ -137,7 +137,11 @@ jobs:
           shopt -s nullglob
           assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
           # Never move an existing release tag: release tags must be stable.
-          existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)
+          if existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null); then
+            : # Existing tag found.
+          else
+            existing_sha="" # A missing tag must not be mistaken for a commit SHA.
+          fi
           if [ -n "$existing_sha" ] && [ "$existing_sha" != "$VERIFIED_SHA" ]; then
             echo "::error::Public release tag $TAG already points at a different commit ($existing_sha)."
             exit 1
