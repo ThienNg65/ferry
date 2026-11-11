@@ -9,6 +9,26 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.16.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.16.0...ferry-v0.16.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* abort in-flight connection when the user cancels or closes the tab ([83e2831](https://github.com/ThienNg65/ferry/commit/83e2831e8b2c1e99c33dcfba4937b926eee729e9))
+* close proxy socket and early-cancel leaks, validate terminal send payloads ([4e364b6](https://github.com/ThienNg65/ferry/commit/4e364b6b34f7d48e4c9360fc92cde74b2296a6af))
+
+
+### Performance Improvements
+
+* add watermark flow control so shell floods no longer queue in IPC ([6f9b9a5](https://github.com/ThienNg65/ferry/commit/6f9b9a5f3b8d2bcb0d4b0be96df202af8727fbf1))
+* render terminal with WebGL and coalesce output into one IPC message per frame ([5d4fa7e](https://github.com/ThienNg65/ferry/commit/5d4fa7e5dbaec1413a41d7e90bf55018742ceb46))
+* send terminal input and resize fire-and-forget, debounce resize, add ssh keepalive ([1ae43a4](https://github.com/ThienNg65/ferry/commit/1ae43a43a39008177ffdb474ea2b9058de3e6181))
+
+
+### Documentation
+
+* document abortable connect and batched terminal output in PROJECT_MAP ([f246658](https://github.com/ThienNg65/ferry/commit/f246658013958bf6003b578204632a1050f704a9))
+
 ## [0.16.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.15.1...ferry-v0.16.0) (2026-11-10)
 
 
