@@ -349,8 +349,8 @@ export class SessionManager {
       port,
       username,
       readyTimeout: 0,
-      keepaliveInterval: 15_000,
-      keepaliveCountMax: 4,
+      keepaliveInterval: 10_000,
+      keepaliveCountMax: 3,
       tryKeyboard: true,
       hostVerifier
     }
