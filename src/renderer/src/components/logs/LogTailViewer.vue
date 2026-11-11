@@ -596,7 +596,7 @@ onUnmounted(() => {
     <div
       ref="scrollEl"
       tabindex="0"
-      class="min-h-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none"
+      class="min-h-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
       :class="fontSizeClass"
       @scroll="onScroll"
     >

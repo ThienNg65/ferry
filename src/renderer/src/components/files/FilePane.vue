@@ -550,6 +550,16 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     store.selectAll(filteredEntries.value)
     return
   }
+  if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+    const [path] = store.selected
+    const row = [...document.querySelectorAll<HTMLElement>(`[data-pane="${props.side}"] [data-row-path]`)].find((el) => el.dataset.rowPath === path)
+    if (row) {
+      event.preventDefault()
+      const rect = row.getBoundingClientRect()
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left + 24, clientY: rect.bottom }))
+    }
+    return
+  }
   if (event.key === 'F2') {
     event.preventDefault()
     if (store.selected.size === 1) {
@@ -683,7 +693,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
 
 <template>
   <div
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
+    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''

@@ -121,6 +121,24 @@ watch(
   }
 )
 
+function focusPane(): void {
+  document.querySelector<HTMLElement>(`[data-pane="${props.side}"]`)?.focus()
+}
+
+function onMenuCloseAutoFocus(e: Event): void {
+  e.preventDefault()
+  void nextTick(() => {
+    if (!props.renaming) {
+      focusPane()
+    }
+  })
+}
+
+function onRenameEscape(): void {
+  cancelRename()
+  focusPane()
+}
+
 function cancelRename(): void {
   draftName.value = props.entry.name
   emit('cancel-rename')
@@ -133,6 +151,7 @@ function submitRename(): void {
   } else {
     emit('cancel-rename')
   }
+  focusPane()
 }
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
@@ -183,17 +202,18 @@ function onMouseLeave(): void {
 </script>
 
 <template>
-  <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: (e: Event) => e.preventDefault() }">
+  <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: onMenuCloseAutoFocus }">
   <div
     class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
+    :data-row-path="entry.path"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     :class="[
       ui.density === 'compact' ? 'py-0.5' : 'py-1.5',
       selected
         ? active
-          ? 'bg-primary/20 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
-          : 'bg-accented text-highlighted'
+          ? 'bg-primary/25 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
+          : 'bg-elevated text-highlighted shadow-[inset_2px_0_0_var(--ui-border-accented)]'
         : 'text-default hover:bg-elevated/60'
     ]"
     :draggable="!renaming"
@@ -233,7 +253,7 @@ function onMouseLeave(): void {
       @dblclick.stop
       @keydown.stop
       @keyup.enter="submitRename"
-      @keyup.esc="cancelRename"
+      @keyup.esc="onRenameEscape"
       @blur="cancelRename"
     />
     <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
