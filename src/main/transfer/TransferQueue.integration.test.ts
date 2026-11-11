@@ -6,7 +6,7 @@
  * Electron process) — everything else is real. See RemoteShell.integration.test.ts
  * for the docker command that starts the required test server.
  */
-import { randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -251,6 +251,43 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, remoteFile)
 
     await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
+    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
+  })
+  it('retry resumes an interrupted upload from the existing .part and the bytes match', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const data = randomBytes(900_000)
+    const localFile = path.join(localDir, 'resume.bin')
+    await fs.writeFile(localFile, data)
+    const remoteFile = `${remoteDir}/resume.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    await fs.writeFile(path.join(localDir, 'prefix.bin'), data.subarray(0, 400_000))
+    await shell.exec(`: > ${remoteFile}.part`)
+    const sftp = await shell.sftp()
+    await new Promise<void>((resolve, reject) =>
+      sftp.fastPut(path.join(localDir, 'prefix.bin'), `${remoteFile}.part`, (e) => (e ? reject(e) : resolve()))
+    )
+    const transferId = 'resume-job'
+    ;(queue as unknown as { retryable: Map<string, unknown> }).retryable.set(transferId, {
+      transferId,
+      sessionId,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: remoteFile,
+      controller: new AbortController(),
+      isTree: false,
+      queuedAt: Date.now()
+    })
+
+    queue.retry(transferId)
+
+    await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
+    const tmp = path.join(localDir, 'back.bin')
+    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
+    expect(createHash('sha256').update(await fs.readFile(tmp)).digest('hex')).toBe(
+      createHash('sha256').update(data).digest('hex')
+    )
     expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
   })
 })

@@ -25,6 +25,7 @@ export interface TransferJob {
   isTree: boolean
   /** Epoch ms when queued — close enough to "started" for History's purposes; queueing delay is usually negligible. */
   queuedAt: number
+  resume?: boolean
 }
 
 /**
@@ -57,6 +58,7 @@ const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
 const PART_SUFFIX = '.part'
+const MAX_RETRYABLE = 200
 
 /**
  * Global rate limiter shared by every concurrent transfer, so a configured
@@ -120,6 +122,7 @@ export class TransferQueue {
   private static instance: TransferQueue | null = null
   private readonly pending: TransferJob[] = []
   private readonly active = new Map<string, TransferJob>()
+  private readonly retryable = new Map<string, TransferJob>()
   private readonly rateLimiter = new RateLimiter()
   /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect a transfer's own outcome (see `notifyTerminal`). */
   private readonly terminalListeners: Array<(job: TransferJob, evt: TransferEvent) => void> = []
@@ -176,12 +179,32 @@ export class TransferQueue {
       remotePath,
       controller: new AbortController(),
       isTree,
-      queuedAt: Date.now()
+      queuedAt: Date.now(),
+      resume: false
     }
     this.pending.push(job)
     this.broadcast({ transferId, kind, state: 'queued' })
     this.pump()
     return transferId
+  }
+
+  retry(transferId: string): void {
+    const old = this.retryable.get(transferId)
+    if (!old) {
+      throw new SshError('NOT_FOUND', 'Transfer cannot be retried')
+    }
+    this.retryable.delete(transferId)
+    this.pending.push({ ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true })
+    this.broadcast({ transferId, kind: old.kind, state: 'queued' })
+    this.pump()
+  }
+
+  private rememberRetryable(job: TransferJob): void {
+    this.retryable.delete(job.transferId)
+    this.retryable.set(job.transferId, job)
+    if (this.retryable.size > MAX_RETRYABLE) {
+      this.retryable.delete(this.retryable.keys().next().value as string)
+    }
   }
 
   /** Cancels a transfer, whether still queued or actively streaming. */
@@ -230,14 +253,14 @@ export class TransferQueue {
 
       const startedAt = Date.now()
       let lastEmit = 0
-      const emitProgress = (bytesTransferred: number): void => {
+      const emitProgress = (bytesTransferred: number, offset: number): void => {
         const now = Date.now()
         if (now - lastEmit < PROGRESS_THROTTLE_MS && bytesTransferred < totalBytes) {
           return
         }
         lastEmit = now
         const elapsedSec = (now - startedAt) / 1000
-        const bytesPerSec = elapsedSec > 0 ? Math.round(bytesTransferred / elapsedSec) : 0
+        const bytesPerSec = elapsedSec > 0 ? Math.round((bytesTransferred - offset) / elapsedSec) : 0
         const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
       }
@@ -248,6 +271,8 @@ export class TransferQueue {
         localPath: job.localPath,
         remotePath: job.remotePath,
         signal: job.controller.signal,
+        size: totalBytes,
+        resume: job.resume === true,
         onProgress: emitProgress
       })
 
@@ -258,6 +283,7 @@ export class TransferQueue {
       const cancelled = e instanceof SshError && e.code === 'CANCELLED'
       const message = e instanceof Error ? e.message : String(e)
       const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      this.rememberRetryable(job)
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }
@@ -274,13 +300,19 @@ export class TransferQueue {
     localPath: string
     remotePath: string
     signal: AbortSignal
-    onProgress: (bytesTransferred: number) => void
+    size: number
+    resume: boolean
+    onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
     const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
     const partPath = `${destPath}${PART_SUFFIX}`
+    const partSize = opts.resume
+      ? await (opts.kind === 'upload' ? opts.shell.stat(partPath) : stat(partPath)).then((s) => s.size, () => 0)
+      : 0
+    const offset = partSize <= opts.size ? partSize : 0
     try {
-      await this.streamFile(sftp, opts, partPath)
+      await this.streamFile(sftp, opts, partPath, offset)
     } catch (e) {
       if (e instanceof SshError && e.code === 'CANCELLED') {
         await this.removePart(opts, partPath)
@@ -304,14 +336,18 @@ export class TransferQueue {
 
   private async streamFile(
     sftp: SFTPWrapper,
-    opts: { kind: TransferKind; localPath: string; remotePath: string; signal: AbortSignal; onProgress: (bytesTransferred: number) => void },
-    partPath: string
+    opts: { kind: TransferKind; localPath: string; remotePath: string; signal: AbortSignal; onProgress: (bytesTransferred: number, offset: number) => void },
+    partPath: string,
+    offset: number
   ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      const readOpts = { start: offset }
       const readStream =
-        opts.kind === 'upload' ? createReadStream(opts.localPath) : sftp.createReadStream(opts.remotePath)
+        opts.kind === 'upload' ? createReadStream(opts.localPath, readOpts) : sftp.createReadStream(opts.remotePath, readOpts)
       const writeStream =
-        opts.kind === 'upload' ? sftp.createWriteStream(partPath) : createWriteStream(partPath)
+        opts.kind === 'upload'
+          ? sftp.createWriteStream(partPath, offset > 0 ? { flags: 'r+', start: offset } : undefined)
+          : createWriteStream(partPath, offset > 0 ? { flags: 'a' } : undefined)
 
       const throttle = createThrottleTransform(this.rateLimiter)
 
@@ -349,10 +385,10 @@ export class TransferQueue {
       }
       opts.signal.addEventListener('abort', onAbort, { once: true })
 
-      let bytesMoved = 0
+      let bytesMoved = offset
       readStream.on('data', (chunk: Buffer | string) => {
         bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
-        opts.onProgress(bytesMoved)
+        opts.onProgress(bytesMoved, offset)
       })
       readStream.on('error', (e: Error) => {
         destroyAll()
@@ -446,6 +482,8 @@ export class TransferQueue {
             localPath: joinLocal(job.localPath, file.relPath),
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
+            size: file.size,
+            resume: job.resume === true,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
               emitProgress()
@@ -464,6 +502,7 @@ export class TransferQueue {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
       const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      this.rememberRetryable(job)
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }

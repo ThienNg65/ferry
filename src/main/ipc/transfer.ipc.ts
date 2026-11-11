@@ -16,4 +16,8 @@ export function registerTransferHandlers(): void {
   handle<void>(INVOKE_CHANNELS.transferCancel, (transferId) => {
     TransferQueue.getInstance().cancel(transferId as string)
   })
+
+  handle<void>(INVOKE_CHANNELS.transferRetry, (transferId) => {
+    TransferQueue.getInstance().retry(transferId as string)
+  })
 }

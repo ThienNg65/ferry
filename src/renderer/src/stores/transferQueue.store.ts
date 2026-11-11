@@ -10,7 +10,6 @@ function basename(path: string): string {
 
 export interface TransferItemState {
   transferId: string
-  /** Carried along so a failed transfer can be re-enqueued from scratch without the caller re-supplying it — see `retry()`. */
   sessionId: string
   kind: TransferKind
   state: TransferState
@@ -124,14 +123,8 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       await invoke<void>(INVOKE_CHANNELS.transferCancel, transferId)
     },
 
-    /** Re-enqueues a failed (or cancelled) transfer from scratch as a fresh job — the old row is dropped in favor of the new one. */
     async retry(transferId: string): Promise<void> {
-      const item = this.items.get(transferId)
-      if (!item) {
-        return
-      }
-      this.items.delete(transferId)
-      await this.enqueue(item.sessionId, item.kind, item.localPath, item.remotePath, item.isDir)
+      await invoke<void>(INVOKE_CHANNELS.transferRetry, transferId)
     },
 
     /** Removes completed, failed, and cancelled transfers from the in-memory queue view. */

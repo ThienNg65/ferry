@@ -863,6 +863,7 @@ export const INVOKE_CHANNELS = {
   // transfers
   transferEnqueue: 'transfer:enqueue',
   transferCancel: 'transfer:cancel',
+  transferRetry: 'transfer:retry',
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
