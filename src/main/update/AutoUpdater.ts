@@ -55,10 +55,9 @@ export function getUpdateState(): UpdateState {
 /**
  * Wires electron-updater's GitHub-Releases-based update check.
  *
- * `electron-builder.yml`'s `publish.owner`/`publish.repo` point at the real
- * repo, and `.github/workflows/ci.yml`'s `auto-release` job publishes a real
- * GitHub Release (including `latest.yml`) on every push to `main` — so the
- * feed itself is real and live.
+ * `electron-builder.yml`'s `publish.owner`/`publish.repo` target the public
+ * ferry-release repository. The private source repository builds and uploads
+ * `latest.yml` and its matching installer to that public GitHub Releases feed.
  *
  * In dev (`app.isPackaged` is false), status is marked as 'disabled'.
  */
