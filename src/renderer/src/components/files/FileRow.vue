@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { renameSelectionEnd } from '../../utils/renameSelection'
 import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry } from '@shared/contract'
@@ -107,11 +108,14 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
 })
 
 const draftName = ref(props.entry.name)
+const renameInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
 watch(
   () => props.renaming,
-  (active) => {
+  async (active) => {
     if (active) {
       draftName.value = props.entry.name
+      await nextTick()
+      renameInput.value?.inputRef?.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
     }
   }
 )
@@ -235,6 +239,7 @@ function onMouseLeave(): void {
     />
     <UInput
       v-if="renaming"
+      ref="renameInput"
       v-model="draftName"
       size="xs"
       class="flex-1"
@@ -244,7 +249,7 @@ function onMouseLeave(): void {
       @keydown.stop
       @keyup.enter="submitRename"
       @keyup.esc="cancelRename"
-      @blur="submitRename"
+      @blur="cancelRename"
     />
     <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>
     <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted">{{ formatSize(entry.size, entry.isDir) }}</span>

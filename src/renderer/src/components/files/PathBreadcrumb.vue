@@ -58,7 +58,7 @@ async function copyCurrentPath(): Promise<void> {
       autofocus
       @keyup.enter="submit"
       @keyup.esc="cancelEdit"
-      @blur="submit"
+      @blur="cancelEdit"
     />
     <div v-else class="group flex items-center gap-1 text-xs">
       <div
