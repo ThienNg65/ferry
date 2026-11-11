@@ -28,6 +28,15 @@ function attachContainer(sessionId: string, el: Element | null): void {
   }
   inst.term.open(el as HTMLElement)
   attachedSessions.add(sessionId)
+  void import('@xterm/addon-webgl').then(({ WebglAddon }) => {
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      inst.term.loadAddon(webgl)
+    } catch {
+      return
+    }
+  })
   // Terminal convention: right-click copies the selection if there is one,
   // otherwise pastes. The listener lives exactly as long as the container div.
   el.addEventListener('contextmenu', (e) => {

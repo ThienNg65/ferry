@@ -75,6 +75,7 @@ describe('TerminalManager', () => {
     expect(stream!.write).toHaveBeenCalledWith("cd '/home/user/project'\n")
 
     stream!.emit('data', Buffer.from('hello'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
     expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: new Uint8Array(Buffer.from('hello')) }])
   })
 

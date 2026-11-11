@@ -137,7 +137,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         // Deferred to first actual use — @xterm/xterm isn't parsed/evaluated
         // until a terminal is opened, keeping it off the cold-start path.
         const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
-        const term = new Terminal({ cursorBlink: true, convertEol: true })
+        const term = new Terminal({ cursorBlink: true, scrollback: 5000 })
         const fit = new FitAddon()
         term.loadAddon(fit)
         term.onData((data) => {
