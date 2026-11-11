@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { useSessionsStore } from '../../stores/sessions.store'
+import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
+import { ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 
 const sessions = useSessionsStore()
 const ui = useUiStore()
+const sites = useSitesStore()
+
+function envBorder(siteId: string | null): string {
+  const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
+  return env ? ENVIRONMENT_TAB_BORDER[env] : 'border-transparent'
+}
 
 /** Hide `user@host` when the tab's label already is (or contains) the host, e.g. a site named after its IP. */
 function showHost(label: string | null | undefined, hostLabel: string | null | undefined): boolean {
@@ -22,12 +30,13 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
     <div
       v-for="tab in sessions.tabs"
       :key="tab.tabId"
-      class="group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-xs transition-colors"
-      :class="
+      class="group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors"
+      :class="[
+        envBorder(tab.siteId),
         tab.tabId === sessions.activeTabId
           ? 'bg-default font-medium text-highlighted'
           : 'text-muted hover:bg-elevated hover:text-default'
-      "
+      ]"
       :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
       @click="sessions.setActiveTab(tab.tabId)"
       @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"

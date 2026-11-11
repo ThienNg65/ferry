@@ -7,6 +7,7 @@ import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
+import { ENVIRONMENT_DOT } from '../../utils/environment'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
@@ -371,6 +372,12 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                       @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
                     />
                     <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
+                    <span
+                      v-if="site.environment"
+                      class="size-2 shrink-0 rounded-full"
+                      :class="ENVIRONMENT_DOT[site.environment]"
+                      :title="site.environment"
+                    />
                     <button
                       type="button"
                       class="min-w-0 flex-1 text-left rounded-xs focus-visible:outline-2 focus-visible:outline-primary"

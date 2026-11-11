@@ -120,6 +120,8 @@ export interface JumpHostInfo {
   hasPassphrase: boolean
 }
 
+export type SiteEnvironment = 'prod' | 'staging' | 'dev'
+
 /**
  * A saved connection profile. Never carries decrypted secrets — only booleans
  * indicating whether a secret is set, so the renderer can render form state
@@ -148,6 +150,7 @@ export interface Site {
   proxy?: ProxyInfo
   /** Free-text group/folder name for organizing the site list — undefined means ungrouped. */
   group?: string
+  environment?: SiteEnvironment
   createdAt: string
   updatedAt: string
 }
@@ -170,6 +173,7 @@ export interface SiteInput {
   proxyMode?: 'inherit' | 'none' | 'custom'
   proxy?: ProxyConfig
   group?: string
+  environment?: SiteEnvironment
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
