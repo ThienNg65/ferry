@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
 import { useOperationsStore } from './stores/operations.store'
 import { useEditSessionsStore } from './stores/editSessions.store'
-import { useUiStore } from './stores/ui.store'
+import { DEFAULT_LOCAL_PANE_WIDTH, useUiStore } from './stores/ui.store'
+import { clampLocalPaneWidth } from './utils/paneColumns'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
@@ -31,6 +32,13 @@ const updateStore = useUpdateStore()
 const ui = useUiStore()
 const isConnected = computed(() => sessions.status === 'connected')
 const isResizingPane = ref(false)
+const viewportWidth = ref(window.innerWidth)
+const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
+const onWindowResize = (): void => {
+  viewportWidth.value = window.innerWidth
+}
+window.addEventListener('resize', onWindowResize)
+onUnmounted(() => window.removeEventListener('resize', onWindowResize))
 // Gates the connected subtree's FIRST mount only, so FilePane/BottomDock stay off the
 // cold-start bundle-eval path until the user actually connects — v-show (not this flag) handles
 // every subsequent disconnect/reconnect, so the subtree (and TerminalView's xterm.js instances)
@@ -80,8 +88,20 @@ function onPaneResizerMouseDown() {
 
 function onPaneResizerMouseMove(e: MouseEvent) {
   if (!isResizingPane.value) return
-  const newWidth = (e.clientX / window.innerWidth) * 100
-  ui.setLocalPaneWidth(newWidth)
+  ui.setLocalPaneWidth(clampLocalPaneWidth((e.clientX / window.innerWidth) * 100, window.innerWidth))
+}
+
+function onPaneResizerKeyDown(e: KeyboardEvent): void {
+  const step = e.key === 'ArrowLeft' ? -2 : e.key === 'ArrowRight' ? 2 : 0
+  if (!step) return
+  e.preventDefault()
+  ui.setLocalPaneWidth(clampLocalPaneWidth(effectiveLocalWidth.value + step, window.innerWidth))
+  ui.saveLocalPaneWidth()
+}
+
+function resetPaneWidth(): void {
+  ui.setLocalPaneWidth(DEFAULT_LOCAL_PANE_WIDTH)
+  ui.saveLocalPaneWidth()
 }
 
 function onPaneResizerMouseUp() {
@@ -90,6 +110,7 @@ function onPaneResizerMouseUp() {
   document.body.style.userSelect = ''
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
   window.removeEventListener('mouseup', onPaneResizerMouseUp)
+  ui.saveLocalPaneWidth()
 }
 
 onMounted(() => {
@@ -150,7 +171,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           <div class="flex min-h-0 flex-1 relative">
             <FilePane 
               side="local" 
-              :style="ui.showLocalPane ? { width: `${ui.localPaneWidth}%` } : undefined"
+              :style="ui.showLocalPane ? { width: `${effectiveLocalWidth}%` } : undefined"
               :class="isResizingPane ? '!transition-none' : ''"
             />
             
@@ -159,9 +180,18 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
               class="relative w-0 z-50 shrink-0"
             >
               <div 
-                class="absolute top-0 bottom-0 -ml-1 w-2 cursor-col-resize hover:bg-primary/50 transition-colors"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize panes"
+                tabindex="0"
+                :aria-valuenow="Math.round(effectiveLocalWidth)"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                class="absolute top-0 bottom-0 -ml-1 w-2 cursor-col-resize outline-none transition-colors hover:bg-primary/50 focus-visible:bg-primary"
                 :class="isResizingPane ? 'bg-primary' : ''"
                 @mousedown.prevent="onPaneResizerMouseDown"
+                @keydown="onPaneResizerKeyDown"
+                @dblclick="resetPaneWidth"
               />
             </div>
             

@@ -248,6 +248,9 @@ export const useUiStore = defineStore('ui', {
 
     setLocalPaneWidth(percent: number): void {
       this.localPaneWidth = Math.max(10, Math.min(percent, 90))
+    },
+
+    saveLocalPaneWidth(): void {
       localStorage.setItem(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
     }
   }

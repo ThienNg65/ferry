@@ -10,7 +10,8 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { formatShortDate } from '../../utils/format'
+import { formatBytes, formatShortDate } from '../../utils/format'
+import { COLUMN_HIDE } from '../../utils/paneColumns'
 
 const props = defineProps<{
   entry: FileEntry
@@ -136,22 +137,6 @@ function submitRename(): void {
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
 
-function formatSize(size: number, isDir: boolean): string {
-  if (isDir) {
-    return ''
-  }
-  if (size < 1024) {
-    return `${size} B`
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)} KB`
-  }
-  if (size < 1024 * 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(1)} MB`
-  }
-  return `${(size / 1024 / 1024 / 1024).toFixed(1)} GB`
-}
-
 function formatFullDate(iso: string | null): string {
   if (!iso) {
     return ''
@@ -242,7 +227,7 @@ function onMouseLeave(): void {
       ref="renameInput"
       v-model="draftName"
       size="xs"
-      class="flex-1"
+      class="min-w-24 flex-1"
       autofocus
       @click.stop
       @dblclick.stop
@@ -251,10 +236,10 @@ function onMouseLeave(): void {
       @keyup.esc="cancelRename"
       @blur="cancelRename"
     />
-    <span v-else class="flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted">{{ formatSize(entry.size, entry.isDir) }}</span>
-    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
-    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end">
+    <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
+    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
+    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-dimmed">
           {{ technicalPermissions }}
@@ -262,7 +247,7 @@ function onMouseLeave(): void {
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>
       </UTooltip>
     </div>
-    <div v-else-if="side === 'remote'" class="w-36 shrink-0"></div>
+    <div v-else-if="side === 'remote'" class="w-36 shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
     <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
       <UTooltip v-if="transferIcon" :text="transferTooltip">
         <UButton

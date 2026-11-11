@@ -73,10 +73,11 @@ const emit = defineEmits<{
   'clear-filter': []
   'hover-dir': [path: string]
 }>()
+import { COLUMN_HIDE } from '../../utils/paneColumns'
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
+  <div class="@container flex min-h-0 flex-1 flex-col">
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
@@ -84,7 +85,7 @@ const emit = defineEmits<{
       <span class="size-4 shrink-0" />
       <button
         type="button"
-        class="flex-1 truncate text-left hover:text-highlighted"
+        class="min-w-24 flex-1 truncate text-left hover:text-highlighted"
         :class="sortColumn === 'name' ? 'text-highlighted' : ''"
         @click="emit('sort', 'name')"
       >
@@ -98,7 +99,7 @@ const emit = defineEmits<{
       <button
         type="button"
         class="w-20 shrink-0 text-right hover:text-highlighted"
-        :class="sortColumn === 'size' ? 'text-highlighted' : ''"
+        :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
         @click="emit('sort', 'size')"
       >
         Size
@@ -111,7 +112,7 @@ const emit = defineEmits<{
       <button
         type="button"
         class="w-32 shrink-0 text-right hover:text-highlighted"
-        :class="sortColumn === 'modified' ? 'text-highlighted' : ''"
+        :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
         @click="emit('sort', 'modified')"
       >
         Modified
@@ -121,7 +122,7 @@ const emit = defineEmits<{
           class="inline size-3 align-text-bottom"
         />
       </button>
-      <span v-if="side === 'remote'" class="w-36 shrink-0 text-right">Permissions</span>
+      <span v-if="side === 'remote'" class="w-36 shrink-0 text-right" :class="COLUMN_HIDE.remote.permissions">Permissions</span>
       <span class="w-14 shrink-0" />
     </div>
     <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
