@@ -1,11 +1,25 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor' | 'edits'
 
-// Module-scoped singletons (the useSettingsDialog.ts pattern) — deliberately
-// NOT ui.store.ts, which persists to localStorage; which dock tab is open is
-// ephemeral per-launch layout state, not a preference.
-const collapsed = ref(true)
+const COLLAPSED_KEY = 'ferry:dock:collapsed'
+
+function loadCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+const collapsed = ref(loadCollapsed())
+watch(collapsed, (value) => {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, String(value))
+  } catch {
+    return
+  }
+})
 const tab = ref<DockTab>('transfers')
 const isMaximized = ref(false)
 /**

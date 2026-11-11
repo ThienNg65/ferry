@@ -7,7 +7,7 @@ import { useOperationsStore } from '../../stores/operations.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
-import { clampDockHeight } from '../../stores/ui.store'
+import { MIN_DOCK_HEIGHT, clampDockHeight } from '../../stores/ui.store'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
@@ -83,6 +83,23 @@ function onResizeEnd(e: PointerEvent): void {
   liveHeight.value = ui.dockHeight
 }
 
+function setHeight(px: number): void {
+  isMaximized.value = false
+  ui.setDockHeight(px)
+  liveHeight.value = ui.dockHeight
+}
+
+function onResizeKey(e: KeyboardEvent): void {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault()
+    setHeight(clampDockHeight(ui.dockHeight + (e.key === 'ArrowUp' ? 16 : -16), window.innerHeight))
+  }
+}
+
+function resetHeight(): void {
+  setHeight(MIN_DOCK_HEIGHT)
+}
+
 function onWindowResize(): void {
   ui.setDockHeight(ui.dockHeight)
   liveHeight.value = ui.dockHeight
@@ -110,8 +127,16 @@ function basename(path: string): string {
   >
     <div
       v-if="!collapsed"
-      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 transition-colors"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize dock"
+      tabindex="0"
+      :aria-valuenow="liveHeight"
+      :aria-valuemin="MIN_DOCK_HEIGHT"
+      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
       :class="dragging ? 'bg-primary' : ''"
+      @keydown="onResizeKey"
+      @dblclick="resetHeight"
       @pointerdown="onResizeStart"
       @pointermove="onResizeMove"
       @pointerup="onResizeEnd"
@@ -153,7 +178,6 @@ function basename(path: string): string {
           size="xs"
           :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
-          :disabled="sessions.status !== 'connected'"
           @click="onTabClick('terminal')"
         />
         <UButton
@@ -161,7 +185,6 @@ function basename(path: string): string {
           size="xs"
           :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
-          :disabled="sessions.status !== 'connected'"
           @click="onTabClick('monitor')"
         />
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
