@@ -400,12 +400,23 @@ export interface TransferEvent {
 // Domain models — long-running operations (Activity dock tab)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Request payload for `fs:remote:admin` - recursive chmod and/or chown via exec. */
+export interface RemoteAdminRequest {
+  sessionId: string
+  path: string
+  mode?: string
+  owner?: string
+  group?: string
+  recursive?: boolean
+}
+
 export type OperationKind =
   | 'extract-remote'
   | 'compress-remote'
   | 'compress-local'
   | 'delete-remote'
   | 'delete-remote-batch'
+  | 'chmod-remote'
   | 'edit-download'
   | 'edit-reupload'
   | 'sync'
@@ -867,6 +878,7 @@ export const INVOKE_CHANNELS = {
   fsRemoteDelete: 'fs:remote:delete',
   fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',
+  fsRemoteAdmin: 'fs:remote:admin',
   fsLocalReadFile: 'fs:local:readFile',
   fsLocalWriteFile: 'fs:local:writeFile',
   fsRemoteReadFile: 'fs:remote:readFile',

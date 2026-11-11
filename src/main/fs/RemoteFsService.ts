@@ -5,6 +5,8 @@ import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
 import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+import { buildChmodCommand, buildChownCommand } from './permissionCommands'
+import type { RemoteAdminRequest } from '../../shared/contract'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
@@ -104,6 +106,23 @@ export async function listRemote(
 /** Creates a remote directory. */
 export async function mkdirRemote(sessionId: string, dirPath: string): Promise<void> {
   await SessionManager.getInstance().shell(sessionId).mkdir(dirPath)
+}
+
+export async function adminRemote(req: RemoteAdminRequest): Promise<void> {
+  const shell = SessionManager.getInstance().shell(req.sessionId)
+  const commands: string[] = []
+  if (req.mode) {
+    commands.push(buildChmodCommand(req.path, req.mode, Boolean(req.recursive)))
+  }
+  if (req.owner || req.group) {
+    commands.push(buildChownCommand(req.path, req.owner ?? '', req.group ?? '', Boolean(req.recursive)))
+  }
+  for (const command of commands) {
+    const result = await shell.exec(command)
+    if (result.code !== 0) {
+      throw new SshError('SSH_EXEC', result.stderr.trim() || `Command exited with code ${result.code}`)
+    }
+  }
 }
 
 /** Creates an empty remote file, failing if it already exists. */

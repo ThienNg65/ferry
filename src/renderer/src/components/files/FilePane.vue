@@ -764,9 +764,13 @@ function onOpenChmod(entry: FileEntry): void {
   chmodOpen.value = true
 }
 
-async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
+async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive: boolean; owner: string; group: string }): Promise<void> {
   try {
-    await remoteFs.chmod(entry, mode)
+    if (extras.recursive || extras.owner || extras.group) {
+      await remoteFs.admin(entry, { mode, ...extras })
+    } else {
+      await remoteFs.chmod(entry, mode)
+    }
   } catch (e) {
     notify.error('Could not change permissions', e instanceof Error ? e.message : String(e))
   }

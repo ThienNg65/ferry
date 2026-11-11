@@ -5,7 +5,8 @@ import {
   type DeleteManyRequest,
   type DeleteManyResult,
   type FileListResult,
-  type FileReadResult
+  type FileReadResult,
+  type RemoteAdminRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -97,6 +98,18 @@ export function registerFsHandlers(): void {
         }
         return result
       }
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsRemoteAdmin, (req) => {
+    const request = req as RemoteAdminRequest
+    return OperationRegistry.getInstance().run(
+      {
+        kind: 'chmod-remote',
+        label: `Changing permissions on ${path.posix.basename(request.path)}`,
+        sessionId: request.sessionId,
+        cancellable: false
+      },
+      () => RemoteFs.adminRemote(request)
     )
   })
   handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) =>

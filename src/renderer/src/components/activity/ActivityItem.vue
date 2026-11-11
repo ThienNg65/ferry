@@ -25,6 +25,7 @@ const KIND_ICONS: Record<OperationKind, string> = {
   'compress-local': 'i-lucide-archive',
   'delete-remote': 'i-lucide-trash-2',
   'delete-remote-batch': 'i-lucide-trash-2',
+  'chmod-remote': 'i-lucide-shield',
   'edit-download': 'i-lucide-file-pen',
   'edit-reupload': 'i-lucide-upload-cloud',
   sync: 'i-lucide-refresh-cw'

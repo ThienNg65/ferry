@@ -407,6 +407,14 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       }
     },
 
+    async admin(entry: FileEntry, options: { mode?: string; owner?: string; group?: string; recursive?: boolean }): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteAdmin, { sessionId, path: entry.path, ...options })
+      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      await this.load(this.currentPath, { forceRefresh: true })
+    },
+
     /** Plain click — selects exactly one entry. */
     selectOnly(path: string): void {
       const bucket = this.ensureBucket(this.activeSessionId())
