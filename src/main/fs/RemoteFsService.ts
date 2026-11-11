@@ -1,10 +1,14 @@
 import { randomBytes } from 'crypto'
+import { readFile as readLocalFile, writeFile as writeLocalFile } from 'fs/promises'
+import { shellEscape } from '../ssh/shellEscape'
 import { createReadStream, createWriteStream } from 'fs'
 import type { SFTPWrapper } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
 import type { FileEntry, FileListResult, FileReadResult } from '../../shared/contract'
+import { buildChmodCommand, buildChownCommand } from './permissionCommands'
+import type { RemoteAdminRequest } from '../../shared/contract'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
@@ -104,6 +108,28 @@ export async function listRemote(
 /** Creates a remote directory. */
 export async function mkdirRemote(sessionId: string, dirPath: string): Promise<void> {
   await SessionManager.getInstance().shell(sessionId).mkdir(dirPath)
+}
+
+export async function adminRemote(req: RemoteAdminRequest): Promise<void> {
+  const shell = SessionManager.getInstance().shell(req.sessionId)
+  const commands: string[] = []
+  if (req.mode) {
+    commands.push(buildChmodCommand(req.path, req.mode, Boolean(req.recursive)))
+  }
+  if (req.owner || req.group) {
+    commands.push(buildChownCommand(req.path, req.owner ?? '', req.group ?? '', Boolean(req.recursive)))
+  }
+  for (const command of commands) {
+    const result = await shell.exec(command)
+    if (result.code !== 0) {
+      throw new SshError('SSH_EXEC', result.stderr.trim() || `Command exited with code ${result.code}`)
+    }
+  }
+}
+
+/** Creates an empty remote file, failing if it already exists. */
+export async function touchRemote(sessionId: string, filePath: string): Promise<void> {
+  await SessionManager.getInstance().shell(sessionId).touch(filePath)
 }
 
 /** Renames/moves a remote path. */
@@ -238,6 +264,63 @@ async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: s
     throw e
   }
   await shell.unlink(backup).catch(() => undefined)
+}
+
+export async function commitRemoteFile(shell: RemoteShell, tempPath: string, target: string): Promise<void> {
+  const sftp = await shell.sftp()
+  const resolved = await resolveRemotePath(sftp, target)
+  const existing = await shell.stat(resolved).then((s) => s, () => null)
+  if (existing) {
+    await shell.chmod(tempPath, (existing.mode & 0o7777).toString(8).padStart(4, '0'))
+  }
+  if (!(await posixRename(sftp, tempPath, resolved))) {
+    await replaceRemoteFile(shell, tempPath, resolved, existing !== null)
+  }
+}
+
+async function sudoExec(shell: RemoteShell, command: string, input?: Buffer, prefix = ''): Promise<Buffer> {
+  const result = await shell.execWithStdin(`${prefix}sudo -n ${command}`, input)
+  if (result.code !== 0) {
+    const message = result.stderr.trim()
+    if (/password is required|a terminal is required|no tty present/i.test(message)) {
+      throw new SshError('SSH_EXEC', 'Passwordless sudo is required to edit as root')
+    }
+    throw new SshError('SSH_EXEC', message || `sudo exited with code ${result.code}`)
+  }
+  return result.stdout
+}
+
+export async function statRemoteSudo(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number } | null> {
+  try {
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const out = (await sudoExec(shell, `stat -c '%Y %s' -- ${shellEscape(remotePath)}`)).toString().trim()
+    const [mtime, size] = out.split(' ').map(Number)
+    return Number.isFinite(mtime) && Number.isFinite(size) ? { mtime, size } : null
+  } catch {
+    return null
+  }
+}
+
+export async function downloadForEditSudo(sessionId: string, remotePath: string, localPath: string): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const content = await sudoExec(shell, `cat -- ${shellEscape(remotePath)}`)
+  await writeLocalFile(localPath, content, { mode: 0o600 })
+}
+
+export async function uploadForEditSudo(sessionId: string, localPath: string, remotePath: string): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const data = await readLocalFile(localPath)
+  const target = shellEscape(remotePath)
+  const temp = shellEscape(`${remotePath}.ferry-tmp-${randomBytes(4).toString('hex')}`)
+  try {
+    await sudoExec(shell, `tee -- ${temp} > /dev/null`, data, 'umask 077; ')
+    await sudoExec(shell, `chmod --reference=${target} -- ${temp}`)
+    await sudoExec(shell, `chown --reference=${target} -- ${temp}`)
+    await sudoExec(shell, `mv -f -- ${temp} ${target}`)
+  } catch (e) {
+    await sudoExec(shell, `rm -f -- ${temp}`).catch(() => undefined)
+    throw e
+  }
 }
 
 export async function uploadForEdit(sessionId: string, localPath: string, remotePath: string): Promise<void> {

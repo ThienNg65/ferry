@@ -3,7 +3,7 @@ import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import { listRecursive, mkdirRecursive as mkdirLocalRecursive, remove as removeLocal } from '../fs/LocalFsService'
 import { TransferQueue } from '../transfer/TransferQueue'
-import type { SyncOptions, SyncPlan, SyncRunResult } from '../../shared/contract'
+import type { CompareRequest, CompareRow, CompareStatus, SyncOptions, SyncPlan, SyncRunResult } from '../../shared/contract'
 
 /**
  * A file/dir entry from either side's recursive tree walk — the shape
@@ -69,6 +69,41 @@ export function computePlan(sourceTree: TreeItem[], destTree: TreeItem[], delete
   }
 
   return { toTransfer, toDelete, totalBytes }
+}
+
+export function computeDiff(localTree: TreeItem[], remoteTree: TreeItem[]): CompareRow[] {
+  const local = new Map(localTree.filter((e) => !e.isDir).map((e) => [e.relPath, e]))
+  const remote = new Map(remoteTree.filter((e) => !e.isDir).map((e) => [e.relPath, e]))
+  const rows: CompareRow[] = []
+  for (const relPath of new Set([...local.keys(), ...remote.keys()])) {
+    const l = local.get(relPath)
+    const r = remote.get(relPath)
+    let status: CompareStatus
+    if (!r) {
+      status = 'localOnly'
+    } else if (!l) {
+      status = 'remoteOnly'
+    } else {
+      const delta = l.mtimeMs !== undefined && r.mtimeMs !== undefined ? l.mtimeMs - r.mtimeMs : 0
+      if (delta > MTIME_TOLERANCE_MS) {
+        status = 'localNewer'
+      } else if (delta < -MTIME_TOLERANCE_MS) {
+        status = 'remoteNewer'
+      } else {
+        status = l.size === r.size ? 'same' : 'sizeDiff'
+      }
+    }
+    rows.push({ relPath, status, localSize: l?.size, remoteSize: r?.size, localMtimeMs: l?.mtimeMs, remoteMtimeMs: r?.mtimeMs })
+  }
+  return rows.sort((a, b) => a.relPath.localeCompare(b.relPath))
+}
+
+export async function compareTrees(req: CompareRequest): Promise<CompareRow[]> {
+  const [localTree, remoteTree] = await Promise.all([
+    listLocalTreeOrEmpty(req.localPath),
+    listRemoteTreeOrEmpty(req.sessionId, req.remotePath)
+  ])
+  return computeDiff(localTree, remoteTree)
 }
 
 /**

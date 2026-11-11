@@ -13,6 +13,10 @@ import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
+import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
+import { getPaneActions } from '../../composables/usePaneActions'
+import { useLocalFsStore } from '../../stores/localFs.store'
+import { useRemoteFsStore } from '../../stores/remoteFs.store'
 
 const { isOpen: open } = useCommandPalette()
 const sessions = useSessionsStore()
@@ -23,6 +27,9 @@ const historyDialog = useHistoryDialog()
 const { openDock } = useDockState()
 const updateStore = useUpdateStore()
 const notify = useNotify()
+const shortcutsDialog = useShortcutsDialog()
+const localFs = useLocalFsStore()
+const remoteFs = useRemoteFsStore()
 
 function onKeydown(event: KeyboardEvent): void {
   // Terminal-first: while the xterm textarea is focused, Ctrl+K belongs to the
@@ -67,6 +74,7 @@ const groups = computed(() => {
       icon: 'i-lucide-panel-left',
       onSelect: () => run(() => ui.toggleLocalPane())
     },
+    { label: 'Keyboard shortcuts', icon: 'i-lucide-keyboard', onSelect: () => run(() => shortcutsDialog.open()) },
     { label: 'History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
     { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
     {
@@ -95,7 +103,26 @@ const groups = computed(() => {
     )
   }
 
+  const side = ui.activePane
+  const selection = side === 'local' ? localFs.selected : remoteFs.selected
+  const paneActions = getPaneActions(side)
+  const fileItems: { label: string; icon: string; onSelect: () => void }[] = []
+  if (paneActions && selection.size > 0) {
+    const count = selection.size
+    if (count === 1) {
+      fileItems.push({ label: 'Rename selected', icon: 'i-lucide-pencil', onSelect: () => run(paneActions.rename) })
+      fileItems.push({ label: 'Edit selected', icon: 'i-lucide-file-pen', onSelect: () => run(paneActions.edit) })
+    }
+    fileItems.push({
+      label: side === 'local' ? `Upload ${count} selected` : `Download ${count} selected`,
+      icon: side === 'local' ? 'i-lucide-upload' : 'i-lucide-download',
+      onSelect: () => run(paneActions.transfer)
+    })
+    fileItems.push({ label: `Delete ${count} selected`, icon: 'i-lucide-trash-2', onSelect: () => run(paneActions.remove) })
+  }
+
   return [
+    ...(fileItems.length > 0 ? [{ id: 'files', label: 'Selected files', items: fileItems }] : []),
     {
       id: 'actions',
       label: 'Actions',

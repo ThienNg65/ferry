@@ -2,7 +2,7 @@ import Store from 'electron-store'
 import { randomUUID } from 'crypto'
 import { safeStorage } from 'electron'
 import { SshError } from '../ssh/errors'
-import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteInput } from '../../shared/contract'
+import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteEnvironment, SiteInput } from '../../shared/contract'
 
 /** On-disk shape of a saved jump-host hop — secrets encrypted-at-rest like the top-level site. */
 interface StoredJumpHost {
@@ -46,6 +46,7 @@ interface StoredSite {
   proxyMode?: 'inherit' | 'none' | 'custom'
   proxy?: StoredProxy
   group?: string
+  environment?: SiteEnvironment
   createdAt: string
   updatedAt: string
 }
@@ -178,6 +179,7 @@ function toPublicSite(s: StoredSite): Site {
     proxyMode: s.proxyMode,
     proxy: s.proxy ? toPublicProxy(s.proxy) : undefined,
     group: s.group,
+    environment: s.environment,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt
   }
@@ -239,6 +241,7 @@ export class SiteStore {
       proxyMode: input.proxyMode,
       proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy) : undefined,
       group: input.group || undefined,
+      environment: input.environment,
       createdAt: now,
       updatedAt: now
     }
@@ -276,6 +279,7 @@ export class SiteStore {
       proxyMode: input.proxyMode,
       proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy, existing.proxy) : undefined,
       group: input.group || undefined,
+      environment: input.environment,
       updatedAt: new Date().toISOString()
     }
     sites[idx] = updated

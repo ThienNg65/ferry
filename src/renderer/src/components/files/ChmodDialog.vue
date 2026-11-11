@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { FileEntry } from '@shared/contract'
 import { formatMode, parseMode, toTechnical } from '../../utils/permissions'
 // Neither has been used elsewhere in the app yet, so neither is in the
@@ -14,7 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
-  submit: [entry: FileEntry, mode: string]
+  submit: [entry: FileEntry, mode: string, extras: { recursive: boolean; owner: string; group: string }]
 }>()
 
 const owner = reactive({ read: false, write: false, execute: false })
@@ -24,7 +24,13 @@ const other = reactive({ read: false, write: false, execute: false })
 watch(
   () => props.open,
   (isOpen) => {
-    if (!isOpen || !props.entry?.permissions) {
+    if (!isOpen) {
+      return
+    }
+    recursive.value = false
+    ownerName.value = ''
+    groupName.value = ''
+    if (!props.entry?.permissions) {
       return
     }
     const parsed = parseMode(props.entry.permissions)
@@ -34,12 +40,20 @@ watch(
   }
 )
 
+const recursive = ref(false)
+const ownerName = ref('')
+const groupName = ref('')
+
 const mode = computed(() => formatMode({ owner, group, other }))
 const technical = computed(() => toTechnical(mode.value))
 
 function submit(): void {
   if (props.entry) {
-    emit('submit', props.entry, mode.value)
+    emit('submit', props.entry, mode.value, {
+      recursive: recursive.value,
+      owner: ownerName.value.trim(),
+      group: groupName.value.trim()
+    })
   }
   emit('update:open', false)
 }
@@ -89,6 +103,20 @@ function submit(): void {
           <span>{{ technical }}</span>
           <span>{{ mode }}</span>
         </div>
+        <div class="flex gap-3">
+          <UFormField label="Owner" hint="Optional" class="flex-1">
+            <UInput v-model="ownerName" placeholder="e.g. deploy" class="w-full" />
+          </UFormField>
+          <UFormField label="Group" hint="Optional" class="flex-1">
+            <UInput v-model="groupName" placeholder="e.g. www-data" class="w-full" />
+          </UFormField>
+        </div>
+        <UCheckbox
+          v-if="entry?.isDir"
+          v-model="recursive"
+          label="Apply recursively"
+          description="Sets this exact mode on every file and folder inside."
+        />
       </div>
     </template>
     <template #footer>

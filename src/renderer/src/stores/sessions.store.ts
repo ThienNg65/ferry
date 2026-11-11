@@ -115,6 +115,9 @@ export const useSessionsStore = defineStore('sessions', {
     },
     pendingHostKeyMismatch(): PendingHostKeyMismatch | null {
       return this.activeTab.pendingHostKeyMismatch
+    },
+    restoredSiteTabs(): SessionTab[] {
+      return this.tabs.filter((t) => t.siteId !== null && t.status === null && !t.connecting && t.sessionId === null)
     }
   },
 
@@ -382,6 +385,18 @@ export const useSessionsStore = defineStore('sessions', {
         return
       }
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
+    },
+
+    async reconnectAll(): Promise<void> {
+      const sitesStore = useSitesStore()
+      for (const tab of [...this.restoredSiteTabs]) {
+        const site = sitesStore.sites.find((s) => s.id === tab.siteId)
+        if (!site) {
+          continue
+        }
+        this.setActiveTab(tab.tabId)
+        await this.connectToSite(site).catch(() => undefined)
+      }
     },
 
     async cancelConnect(tabId: string): Promise<void> {

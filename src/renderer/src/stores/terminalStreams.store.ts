@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
+import type { SearchAddon } from '@xterm/addon-search'
 import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract'
 import type { ClipboardTextResult, TerminalAckEvent, TerminalInputEvent, TerminalResizeEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
@@ -11,12 +12,14 @@ interface TerminalInstance {
   terminalId: string
   term: Terminal
   fit: FitAddon
+  search: SearchAddon
   unacked: number
   cols: number
   rows: number
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
+export const TERMINAL_SEARCH_EVENT = 'ferry:terminal-search'
 
 /**
  * Live xterm.js instances, kept OUTSIDE Pinia's reactive state (a plain
@@ -78,6 +81,7 @@ function findByTerminalId(terminalId: string): TerminalInstance | undefined {
 
 let dataUnsub: (() => void) | null = null
 let exitUnsub: (() => void) | null = null
+let onShellExited: ((sessionId: string) => void) | null = null
 
 function ensureSubscriptions(): void {
   if (dataUnsub) {
@@ -101,19 +105,50 @@ function ensureSubscriptions(): void {
     })
   })
   exitUnsub = onEvent<TerminalExitEvent>(EVENT_CHANNELS.terminalExit, (evt) => {
-    findByTerminalId(evt.terminalId)?.term.write('\r\n[Process exited]\r\n')
+    const entry = [...instances.entries()].find(([, inst]) => inst.terminalId === evt.terminalId)
+    if (!entry) {
+      return
+    }
+    entry[1].term.write('\r\n[Process exited]\r\n')
+    onShellExited?.(entry[0])
   })
 }
 
 interface TerminalStreamsState {
   /** Reactive mirror of `instances`' keys, so components can `v-for` over known sessions. */
   knownSessionIds: string[]
+  exitedSessionIds: string[]
 }
 
 export const useTerminalStreamsStore = defineStore('terminalStreams', {
-  state: (): TerminalStreamsState => ({ knownSessionIds: [] }),
+  state: (): TerminalStreamsState => ({ knownSessionIds: [], exitedSessionIds: [] }),
 
   actions: {
+    markExited(sessionId: string): void {
+      if (!this.exitedSessionIds.includes(sessionId)) {
+        this.exitedSessionIds.push(sessionId)
+      }
+    },
+
+    async restart(sessionId: string): Promise<void> {
+      const inst = instances.get(sessionId)
+      if (!inst) {
+        return
+      }
+      const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
+        sessionId,
+        cols: inst.term.cols,
+        rows: inst.term.rows
+      })
+      inst.terminalId = terminalId
+      inst.unacked = 0
+      inst.cols = inst.term.cols
+      inst.rows = inst.term.rows
+      this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
+      inst.term.write('\r\n[Shell restarted]\r\n')
+      inst.term.focus()
+    },
+
     /** Returns the cached instance for a session, if one has been opened. */
     getInstance(sessionId: string): TerminalInstance | undefined {
       return instances.get(sessionId)
@@ -147,6 +182,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           return pendingAfterDispose
         }
       }
+      onShellExited = (id) => this.markExited(id)
       ensureSubscriptions()
       const openPromise = (async (): Promise<string> => {
         const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
@@ -156,10 +192,16 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         })
         // Deferred to first actual use — @xterm/xterm isn't parsed/evaluated
         // until a terminal is opened, keeping it off the cold-start path.
-        const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
-        const term = new Terminal({ cursorBlink: true, scrollback: 5000, ...useUiStore().terminalAppearance })
+        const [{ Terminal }, { FitAddon }, { SearchAddon }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+          import('@xterm/addon-search')
+        ])
+        const term = new Terminal({ cursorBlink: true, scrollback: useUiStore().terminalScrollback, ...useUiStore().terminalAppearance })
         const fit = new FitAddon()
         term.loadAddon(fit)
+        const search = new SearchAddon()
+        term.loadAddon(search)
         term.onData((data) => {
           const input: TerminalInputEvent = { terminalId, data }
           window.api.send(SEND_CHANNELS.terminalInput, input)
@@ -169,6 +211,11 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         // Returning false stops xterm's own processing; preventDefault stops
         // Chromium's native paste from double-firing into the hidden textarea.
         term.attachCustomKeyEventHandler((ev) => {
+          if (ev.type === 'keydown' && ev.ctrlKey && ev.shiftKey && ev.key.toLowerCase() === 'f') {
+            ev.preventDefault()
+            window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))
+            return false
+          }
           const action = terminalKeyAction(ev, term.hasSelection())
           if (action === 'copy') {
             ev.preventDefault()
@@ -182,7 +229,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           }
           return true
         })
-        instances.set(sessionId, { terminalId, term, fit, unacked: 0, cols: 0, rows: 0 })
+        instances.set(sessionId, { terminalId, term, fit, search, unacked: 0, cols: 0, rows: 0 })
         this.knownSessionIds.push(sessionId)
         return terminalId
       })()
@@ -197,6 +244,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
     applyAppearance(): void {
       const { fontFamily, fontSize, lineHeight, theme } = useUiStore().terminalAppearance
       for (const { term } of instances.values()) {
+        term.options.scrollback = useUiStore().terminalScrollback
         term.options.fontFamily = fontFamily
         term.options.fontSize = fontSize
         term.options.lineHeight = lineHeight
@@ -253,6 +301,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       }
       instances.delete(sessionId)
       this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
+      this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
       const disposePromise = (async (): Promise<void> => {
         try {
           await invoke<void>(INVOKE_CHANNELS.terminalClose, inst.terminalId)

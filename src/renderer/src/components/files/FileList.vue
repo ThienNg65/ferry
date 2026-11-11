@@ -69,22 +69,115 @@ const emit = defineEmits<{
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
+  'edit-root': [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
   'hover-dir': [path: string]
+  'drop-on': [entry: FileEntry, event: DragEvent]
+  'select-many': [paths: string[]]
 }>()
 import { COLUMN_HIDE } from '../../utils/paneColumns'
+import { DEFAULT_COLUMN_WIDTHS, type ColumnKey } from '../../utils/columnPrefs'
+
+const band = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+const bandStyle = computed(() => {
+  const b = band.value
+  return b
+    ? { left: `${Math.min(b.x0, b.x1)}px`, top: `${Math.min(b.y0, b.y1)}px`, width: `${Math.abs(b.x1 - b.x0)}px`, height: `${Math.abs(b.y1 - b.y0)}px` }
+    : {}
+})
+
+function onBandStart(event: MouseEvent): void {
+  const el = scrollEl.value
+  if (!el || event.button !== 0) return
+  const target = event.target as HTMLElement
+  const onEmptySpace = target === el || target.parentElement === el
+  if (!onEmptySpace && !event.altKey) return
+  if (event.offsetX > el.clientWidth && target === el) return
+  event.preventDefault()
+  const rect = el.getBoundingClientRect()
+  const toLocal = (e: MouseEvent): { x: number; y: number } => ({
+    x: e.clientX - rect.left + el.scrollLeft,
+    y: e.clientY - rect.top + el.scrollTop
+  })
+  const start = toLocal(event)
+  const additive = event.ctrlKey || event.metaKey
+  const base = additive ? new Set(props.selected) : new Set<string>()
+  const onMove = (e: MouseEvent): void => {
+    const cur = toLocal(e)
+    band.value = { x0: start.x, y0: start.y, x1: cur.x, y1: cur.y }
+    const lo = Math.min(start.y, cur.y)
+    const hi = Math.max(start.y, cur.y)
+    const paths = new Set(base)
+    for (const item of rowVirtualizer.value.measurementsCache) {
+      if (item.end >= lo && item.start <= hi && props.entries[item.index]) {
+        paths.add(props.entries[item.index].path)
+      }
+    }
+    emit('select-many', [...paths])
+  }
+  const onUp = (): void => {
+    band.value = null
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+function ariaSort(column: SortColumn): 'ascending' | 'descending' | 'none' {
+  if (props.sortColumn !== column) {
+    return 'none'
+  }
+  return props.sortDirection === 'asc' ? 'ascending' : 'descending'
+}
+
+const columnVars = computed(() => ({
+  '--col-size': `${ui.columns.widths.size}px`,
+  '--col-modified': `${ui.columns.widths.modified}px`,
+  '--col-permissions': `${ui.columns.widths.permissions}px`
+}))
+
+const columnMenuItems = computed(() => {
+  const keys: { key: ColumnKey; label: string }[] = [
+    { key: 'size', label: 'Size' },
+    { key: 'modified', label: 'Modified' },
+    ...(props.side === 'remote' ? [{ key: 'permissions' as const, label: 'Permissions' }] : [])
+  ]
+  return keys.map(({ key, label }) => ({
+    type: 'checkbox' as const,
+    label,
+    checked: !ui.columns.hidden.includes(key),
+    onUpdateChecked: (checked: boolean) => ui.setColumnVisible(key, checked)
+  }))
+})
+
+function startResize(key: ColumnKey, event: PointerEvent): void {
+  const startX = event.clientX
+  const startWidth = ui.columns.widths[key] ?? DEFAULT_COLUMN_WIDTHS[key]
+  const onMove = (e: PointerEvent): void => ui.setColumnWidth(key, startWidth + (startX - e.clientX))
+  const onUp = (): void => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    ui.persistColumns()
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
 </script>
 
 <template>
-  <div class="@container flex min-h-0 flex-1 flex-col">
+  <div class="@container flex min-h-0 flex-1 flex-col" :style="columnVars">
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
+      role="row"
       class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
     >
       <span class="size-4 shrink-0" />
       <button
         type="button"
+        role="columnheader"
+        :aria-sort="ariaSort('name')"
         class="min-w-24 flex-1 truncate text-left hover:text-highlighted"
         :class="sortColumn === 'name' ? 'text-highlighted' : ''"
         @click="emit('sort', 'name')"
@@ -97,11 +190,15 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
         />
       </button>
       <button
+        v-if="!ui.columns.hidden.includes('size')"
         type="button"
-        class="w-20 shrink-0 text-right hover:text-highlighted"
+        role="columnheader"
+        :aria-sort="ariaSort('size')"
+        class="relative w-[var(--col-size)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
         @click="emit('sort', 'size')"
       >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('size', $event)" />
         Size
         <UIcon
           v-if="sortColumn === 'size'"
@@ -110,11 +207,15 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
         />
       </button>
       <button
+        v-if="!ui.columns.hidden.includes('modified')"
         type="button"
-        class="w-32 shrink-0 text-right hover:text-highlighted"
+        role="columnheader"
+        :aria-sort="ariaSort('modified')"
+        class="relative w-[var(--col-modified)] shrink-0 text-right hover:text-highlighted"
         :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
         @click="emit('sort', 'modified')"
       >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('modified', $event)" />
         Modified
         <UIcon
           v-if="sortColumn === 'modified'"
@@ -122,10 +223,25 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
           class="inline size-3 align-text-bottom"
         />
       </button>
-      <span v-if="side === 'remote'" class="w-36 shrink-0 text-right" :class="COLUMN_HIDE.remote.permissions">Permissions</span>
-      <span class="w-14 shrink-0" />
+      <span
+        v-if="side === 'remote' && !ui.columns.hidden.includes('permissions')"
+        class="relative w-[var(--col-permissions)] shrink-0 text-right"
+        :class="COLUMN_HIDE.remote.permissions"
+      >
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @pointerdown.stop.prevent="startResize('permissions', $event)" />
+        Permissions
+      </span>
+      <span class="flex w-14 shrink-0 justify-end">
+        <UDropdownMenu :items="columnMenuItems">
+          <UButton icon="i-lucide-columns-3" color="neutral" variant="ghost" size="xs" aria-label="Choose columns" />
+        </UDropdownMenu>
+      </span>
     </div>
-    <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+    <div class="h-0.5 shrink-0">
+      <UProgress v-if="loading && entries.length > 0" size="xs" />
+    </div>
+    <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
+      <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
         <p class="text-xs text-muted">Loading directory…</p>
@@ -139,11 +255,12 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
         <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
         <p class="text-xs text-muted">Empty folder</p>
       </div>
-      <div v-else class="relative w-full" :style="{ height: `${totalSize}px` }">
+      <div v-else role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
         <div
           v-for="virtualRow in virtualRows"
           :key="virtualRow.key as string | number"
           :ref="measureRow"
+          role="presentation"
           :data-index="virtualRow.index"
           class="absolute left-0 top-0 w-full"
           :style="{ transform: `translateY(${virtualRow.start}px)` }"
@@ -169,7 +286,9 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
             @start-rename="emit('start-rename', $event)"
             @chmod="emit('chmod', $event)"
             @edit="emit('edit', $event)"
+            @edit-root="emit('edit-root', $event)"
             @hover-dir="emit('hover-dir', $event)"
+            @drop-on="(entry, event) => emit('drop-on', entry, event)"
           />
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scanWinScpSessions } from './SessionImporter'
+import { parseSshConfig, scanWinScpSessions } from './SessionImporter'
 
 // `reg query "<key>"`'s echoed header line uses whatever alias was passed
 // (the code queries the short HKCU alias for the root), but every child
@@ -103,5 +103,45 @@ describe('scanWinScpSessions', () => {
     const candidates = await scanWinScpSessions(queryFn)
 
     expect(candidates.map((c) => c.name)).toEqual(['Work/db1'])
+  })
+})
+
+describe('parseSshConfig', () => {
+  const config = [
+    '# comment',
+    'Host bastion',
+    '  HostName bastion.example.com',
+    '  User jump',
+    '  IdentityFile ~/.ssh/bastion_key',
+    '',
+    'Host app db',
+    '  HostName=10.0.0.5',
+    '  Port 2222',
+    '  User deploy',
+    '  ProxyJump bastion',
+    '',
+    'Host *',
+    '  User ignored',
+    '',
+    'Host web-*.example.com',
+    '  User wild',
+    '',
+    'Host direct',
+    '  ProxyJump me@other.example.com:2200'
+  ].join('\n')
+
+  it('parses concrete hosts, skips wildcards, and expands ~ in IdentityFile', () => {
+    const out = parseSshConfig(config, '/home/me', 'me')
+    expect(out.map((c) => c.name)).toEqual(['bastion', 'app', 'db', 'direct'])
+    expect(out[0]).toMatchObject({ host: 'bastion.example.com', port: 22, username: 'jump' })
+    expect(out[0].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/bastion_key')
+  })
+
+  it('maps a multi-alias Host and ProxyJump onto a jump-host chain', () => {
+    const out = parseSshConfig(config, '/home/me', 'me')
+    expect(out[1]).toMatchObject({ host: '10.0.0.5', port: 2222, username: 'deploy' })
+    expect(out[1].jumpHosts).toHaveLength(1)
+    expect(out[1].jumpHosts?.[0]).toMatchObject({ host: 'bastion.example.com', username: 'jump', authMethod: 'privateKey' })
+    expect(out[3].jumpHosts?.[0]).toMatchObject({ host: 'other.example.com', port: 2200, username: 'me' })
   })
 })

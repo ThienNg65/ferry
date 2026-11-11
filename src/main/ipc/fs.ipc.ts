@@ -5,7 +5,8 @@ import {
   type DeleteManyRequest,
   type DeleteManyResult,
   type FileListResult,
-  type FileReadResult
+  type FileReadResult,
+  type RemoteAdminRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -25,6 +26,10 @@ export function registerFsHandlers(): void {
   // this isn't currently exploitable. Do not "fix" this into a restricted sandbox —
   // that would break normal file-browsing.
   handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) => LocalFs.list(dirPath as string | undefined))
+  handle<void>(INVOKE_CHANNELS.fsLocalTouch, (filePath) => LocalFs.touch(filePath as string))
+  handle<void>(INVOKE_CHANNELS.fsRemoteTouch, (sessionId, filePath) =>
+    RemoteFs.touchRemote(sessionId as string, filePath as string)
+  )
   handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath) =>
     LocalFs.rename(fromPath as string, toPath as string)
@@ -93,6 +98,18 @@ export function registerFsHandlers(): void {
         }
         return result
       }
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsRemoteAdmin, (req) => {
+    const request = req as RemoteAdminRequest
+    return OperationRegistry.getInstance().run(
+      {
+        kind: 'chmod-remote',
+        label: `Changing permissions on ${path.posix.basename(request.path)}`,
+        sessionId: request.sessionId,
+        cancellable: false
+      },
+      () => RemoteFs.adminRemote(request)
     )
   })
   handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) =>

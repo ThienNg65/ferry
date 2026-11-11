@@ -6,7 +6,7 @@
  * Electron process) — everything else is real. See RemoteShell.integration.test.ts
  * for the docker command that starts the required test server.
  */
-import { randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -219,5 +219,120 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     await expect(SessionManager.getInstance().shell(sessionId).stat(`${remoteDir}/file3.bin`)).rejects.toMatchObject({
       code: 'NOT_FOUND'
     })
+  })
+  it('an upload never exposes a half-written final file and cancel removes the .part', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'slow.bin')
+    await fs.writeFile(localFile, Buffer.alloc(1_000_000, 'x'))
+    const remoteFile = `${remoteDir}/slow.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(200)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      await waitFor(() => shell.stat(`${remoteFile}.part`).then(() => true, () => false))
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.cancel(id)
+      await waitFor(async () => !(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)))
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+  })
+
+  it('a finished upload leaves no .part behind', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'ok.txt')
+    await fs.writeFile(localFile, 'done')
+    const remoteFile = `${remoteDir}/ok.txt`
+    const shell = SessionManager.getInstance().shell(sessionId)
+
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, remoteFile)
+
+    await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
+    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
+  })
+  it('overwriting a remote file keeps its mode and writes through a symlink', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const realFile = `${remoteDir}/real.sh`
+    const link = `${remoteDir}/link.sh`
+    await shell.exec(`printf old > ${realFile} && chmod 755 ${realFile} && ln -s ${realFile} ${link}`)
+    const localFile = path.join(localDir, 'link.sh')
+    await fs.writeFile(localFile, 'new content')
+
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, link)
+
+    await waitFor(async () => (await shell.readFile(realFile, 1024)).content === 'new content')
+    expect((await shell.stat(realFile)).mode & 0o777).toBe(0o755)
+    expect((await shell.exec(`test -L ${link} && echo link`)).stdout.trim()).toBe('link')
+  })
+
+  it('retry resumes an interrupted upload from the existing .part and the bytes match', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const data = randomBytes(900_000)
+    const localFile = path.join(localDir, 'resume.bin')
+    await fs.writeFile(localFile, data)
+    const remoteFile = `${remoteDir}/resume.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    await fs.writeFile(path.join(localDir, 'prefix.bin'), data.subarray(0, 400_000))
+    await shell.exec(`: > ${remoteFile}.part`)
+    const sftp = await shell.sftp()
+    await new Promise<void>((resolve, reject) =>
+      sftp.fastPut(path.join(localDir, 'prefix.bin'), `${remoteFile}.part`, (e) => (e ? reject(e) : resolve()))
+    )
+    const transferId = 'resume-job'
+    ;(queue as unknown as { retryable: Map<string, unknown> }).retryable.set(transferId, {
+      transferId,
+      sessionId,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: remoteFile,
+      controller: new AbortController(),
+      isTree: false,
+      queuedAt: Date.now()
+    })
+
+    queue.retry(transferId)
+
+    await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
+    const tmp = path.join(localDir, 'back.bin')
+    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
+    expect(createHash('sha256').update(await fs.readFile(tmp)).digest('hex')).toBe(
+      createHash('sha256').update(data).digest('hex')
+    )
+    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
+  })
+  it('pause keeps the .part and resume finishes with identical bytes', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const data = randomBytes(1_000_000)
+    const localFile = path.join(localDir, 'pause.bin')
+    await fs.writeFile(localFile, data)
+    const remoteFile = `${remoteDir}/pause.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(300)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      await waitFor(() => shell.stat(`${remoteFile}.part`).then((st) => st.size > 0, () => false))
+      queue.pause(id)
+      await new Promise((r) => setTimeout(r, 500))
+      const pausedSize = (await shell.stat(`${remoteFile}.part`)).size
+      expect(pausedSize).toBeLessThan(data.length)
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.setBandwidthLimitKBps(null)
+      queue.retry(id)
+      await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+    const sftp = await shell.sftp()
+    const tmp = path.join(localDir, 'back.bin')
+    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
+    expect((await fs.readFile(tmp)).equals(data)).toBe(true)
   })
 })

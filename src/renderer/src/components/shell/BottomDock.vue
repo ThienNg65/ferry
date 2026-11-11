@@ -7,7 +7,8 @@ import { useOperationsStore } from '../../stores/operations.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
-import { clampDockHeight } from '../../stores/ui.store'
+import { MIN_DOCK_HEIGHT, clampDockHeight } from '../../stores/ui.store'
+import { onTablistKeydown } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import TerminalView from '../terminal/TerminalView.vue'
@@ -83,6 +84,23 @@ function onResizeEnd(e: PointerEvent): void {
   liveHeight.value = ui.dockHeight
 }
 
+function setHeight(px: number): void {
+  isMaximized.value = false
+  ui.setDockHeight(px)
+  liveHeight.value = ui.dockHeight
+}
+
+function onResizeKey(e: KeyboardEvent): void {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault()
+    setHeight(clampDockHeight(ui.dockHeight + (e.key === 'ArrowUp' ? 16 : -16), window.innerHeight))
+  }
+}
+
+function resetHeight(): void {
+  setHeight(MIN_DOCK_HEIGHT)
+}
+
 function onWindowResize(): void {
   ui.setDockHeight(ui.dockHeight)
   liveHeight.value = ui.dockHeight
@@ -110,8 +128,16 @@ function basename(path: string): string {
   >
     <div
       v-if="!collapsed"
-      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 transition-colors"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize dock"
+      tabindex="0"
+      :aria-valuenow="liveHeight"
+      :aria-valuemin="MIN_DOCK_HEIGHT"
+      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
       :class="dragging ? 'bg-primary' : ''"
+      @keydown="onResizeKey"
+      @dblclick="resetHeight"
       @pointerdown="onResizeStart"
       @pointermove="onResizeMove"
       @pointerup="onResizeEnd"
@@ -120,10 +146,12 @@ function basename(path: string): string {
       class="flex items-center justify-between bg-muted px-2 py-1 select-none"
       @dblclick.self="collapsed = !collapsed"
     >
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-1" role="tablist" aria-label="Dock panels" @keydown="onTablistKeydown($event)">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Transfers"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'transfers'"
             size="xs"
             :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
@@ -133,6 +161,8 @@ function basename(path: string): string {
         <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
           <UButton
             label="Activity"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'activity'"
             size="xs"
             :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
@@ -142,6 +172,8 @@ function basename(path: string): string {
         <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
           <UButton
             label="Log Tail"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'tail'"
             size="xs"
             :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
@@ -150,23 +182,27 @@ function basename(path: string): string {
         </UChip>
         <UButton
           label="Terminal"
+          role="tab"
+          :aria-selected="!collapsed && tab === 'terminal'"
           size="xs"
           :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
-          :disabled="sessions.status !== 'connected'"
           @click="onTabClick('terminal')"
         />
         <UButton
           label="Monitor"
+          role="tab"
+          :aria-selected="!collapsed && tab === 'monitor'"
           size="xs"
           :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
           :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
-          :disabled="sessions.status !== 'connected'"
           @click="onTabClick('monitor')"
         />
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
           <UButton
             label="Edits"
+            role="tab"
+            :aria-selected="!collapsed && tab === 'edits'"
             size="xs"
             :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
             :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
@@ -193,10 +229,13 @@ function basename(path: string): string {
       <template v-else-if="tab === 'tail'">
         <!-- Tail Tabs Header Bar -->
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
-          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
+          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
             <div
               v-for="openTail in tailStreams.tabs"
               :key="openTail.tailId"
+              role="tab"
+              :aria-selected="tailStreams.activeTailId === openTail.tailId"
+              :tabindex="tailStreams.activeTailId === openTail.tailId ? 0 : -1"
               class="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs cursor-pointer border transition-all"
               :class="
                 tailStreams.activeTailId === openTail.tailId
@@ -204,20 +243,22 @@ function basename(path: string): string {
                   : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
               "
               @click="tailStreams.activeTailId = openTail.tailId"
+              @keydown.enter.self="tailStreams.activeTailId = openTail.tailId"
+              @keydown.space.self.prevent="tailStreams.activeTailId = openTail.tailId"
               @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
             >
               <!-- Live status indicator dot -->
               <span
                 v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-emerald-500 shrink-0"
+                class="size-1.5 rounded-full bg-success shrink-0"
               />
               <span
                 v-else-if="tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-rose-500 shrink-0"
+                class="size-1.5 rounded-full bg-error shrink-0"
               />
               <span
                 v-else
-                class="size-1.5 rounded-full bg-neutral-400 shrink-0"
+                class="size-1.5 rounded-full bg-accented shrink-0"
               />
 
               <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
@@ -231,7 +272,7 @@ function basename(path: string): string {
               <!-- Unread badge if inactive tab has incoming lines -->
               <span
                 v-if="tailStreams.unreadMap[openTail.tailId] && tailStreams.activeTailId !== openTail.tailId"
-                class="rounded-full bg-primary/20 px-1 py-0.2 text-[9px] font-mono font-bold text-primary"
+                class="rounded-full bg-primary/20 px-1 py-0.2 text-2xs font-mono font-bold text-primary"
               >
                 +{{ tailStreams.unreadMap[openTail.tailId] }}
               </span>
@@ -283,7 +324,7 @@ function basename(path: string): string {
               <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
             </div>
             <p class="text-xs font-semibold text-default">No active log streams</p>
-            <p class="text-[11px] text-muted max-w-sm">
+            <p class="text-2xs text-muted max-w-sm">
               Right-click any log or text file in the Remote file pane and select <span class="font-medium text-default">"Tail this file live"</span> to stream real-time output.
             </p>
           </div>

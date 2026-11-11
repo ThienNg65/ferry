@@ -94,6 +94,15 @@ export async function mkdir(dirPath: string): Promise<void> {
   }
 }
 
+/** Creates an empty local file, failing if it already exists. */
+export async function touch(filePath: string): Promise<void> {
+  try {
+    await fs.writeFile(filePath, '', { flag: 'wx' })
+  } catch (e) {
+    throw new SshError('UNKNOWN', `Cannot create "${filePath}": ${(e as Error).message}`)
+  }
+}
+
 /** Renames/moves a local path. */
 export async function rename(fromPath: string, toPath: string): Promise<void> {
   try {

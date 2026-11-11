@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { renameSelectionEnd } from '../../utils/renameSelection'
 import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
@@ -10,7 +10,7 @@ import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { toFriendlyLabel, toTechnical } from '../../utils/permissions'
 import { isArchive, colorForFile, iconForFile } from '../../utils/fileTypes'
-import { formatBytes, formatShortDate } from '../../utils/format'
+import { formatBytes, formatDateTime, formatShortDate } from '../../utils/format'
 import { COLUMN_HIDE } from '../../utils/paneColumns'
 
 const props = defineProps<{
@@ -60,8 +60,28 @@ const emit = defineEmits<{
   'start-rename': [entry: FileEntry]
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
+  'edit-root': [entry: FileEntry]
   'hover-dir': [path: string]
+  'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
+
+const dropHover = ref(false)
+
+function onRowDragOver(event: DragEvent): void {
+  if (props.entry.isDir) {
+    event.preventDefault()
+    dropHover.value = true
+  }
+}
+
+function onRowDrop(event: DragEvent): void {
+  dropHover.value = false
+  if (props.entry.isDir) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('drop-on', props.entry, event)
+  }
+}
 
 const notify = useNotify()
 
@@ -92,6 +112,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
   }
   if (!props.entry.isDir) {
     items.push({ label: 'Edit', icon: 'i-lucide-file-pen', onSelect: () => emit('edit', props.entry) })
+    if (props.side === 'remote') {
+      items.push({ label: 'Edit as root', icon: 'i-lucide-shield-alert', onSelect: () => emit('edit-root', props.entry) })
+    }
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
@@ -157,13 +180,6 @@ function submitRename(): void {
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
 
-function formatFullDate(iso: string | null): string {
-  if (!iso) {
-    return ''
-  }
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
 const transferTooltip = computed(() => {
   const verb = props.side === 'local' ? 'Upload' : 'Download'
   return props.entry.isDir ? `${verb} folder` : `${verb} to ${props.side === 'local' ? 'remote' : 'local'}`
@@ -190,9 +206,13 @@ function onMouseEnter(): void {
     if (hoverTimer) clearTimeout(hoverTimer)
     hoverTimer = setTimeout(() => {
       emit('hover-dir', props.entry.path)
-    }, 150)
+    }, 400)
   }
 }
+
+onBeforeUnmount(() => {
+  if (hoverTimer) clearTimeout(hoverTimer)
+})
 
 function onMouseLeave(): void {
   if (hoverTimer) {
@@ -205,12 +225,15 @@ function onMouseLeave(): void {
 <template>
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: onMenuCloseAutoFocus }">
   <div
+    role="row"
+    :aria-selected="selected"
     class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
     :data-row-path="entry.path"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     :class="[
       ui.density === 'compact' ? 'py-0.5' : 'py-1.5',
+      dropHover ? 'ring-2 ring-primary ring-inset' : '',
       selected
         ? active
           ? 'bg-primary/25 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
@@ -222,6 +245,9 @@ function onMouseLeave(): void {
     @dblclick="emit('open', entry)"
     @dragstart="onDragStart"
     @dragend="clearDrag"
+    @dragover="onRowDragOver"
+    @dragleave="dropHover = false"
+    @drop="onRowDrop"
   >
     <UTooltip v-if="entry.isSymlink" :text="symlinkTooltip">
       <span class="relative inline-flex size-4 shrink-0">
@@ -258,9 +284,9 @@ function onMouseLeave(): void {
       @blur="cancelRename"
     />
     <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
-    <span class="w-20 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
-    <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
-    <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
+    <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
+    <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
           {{ technicalPermissions }}
@@ -268,7 +294,7 @@ function onMouseLeave(): void {
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>
       </UTooltip>
     </div>
-    <div v-else-if="side === 'remote'" class="w-36 shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
+    <div v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
     <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
       <UTooltip v-if="transferIcon" :text="transferTooltip">
         <UButton
@@ -277,7 +303,7 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           :aria-label="transferTooltip"
-          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           @click.stop="emit('transfer', entry)"
         />
       </UTooltip>
@@ -288,7 +314,7 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           aria-label="Delete"
-          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
           @click.stop="emit('remove', entry)"
         />
       </UTooltip>

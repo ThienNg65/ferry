@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../stores/settings.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
+import { formatDateTime, formatSpeed } from '../../utils/format'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
@@ -68,21 +69,8 @@ watch(
   }
 )
 
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec >= 1024 * 1024) {
-    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-  }
-  return `${Math.round(bytesPerSec / 1024)} KB/s`
-}
-
 function formatTime(iso: string | null): string {
-  if (!iso) return 'Never'
-  try {
-    const date = new Date(iso)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return iso
-  }
+  return iso ? formatDateTime(iso) : 'Never'
 }
 
 async function handleCheckUpdate(): Promise<void> {
@@ -240,7 +228,7 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <div v-else-if="update.isDownloaded" class="flex items-center justify-between rounded border border-green-500/20 bg-green-500/10 p-2.5 text-xs text-green-400">
+        <div v-else-if="update.isDownloaded" class="flex items-center justify-between rounded border border-success/20 bg-success/10 p-2.5 text-xs text-success">
           <span>Ferry v{{ update.availableVersion }} is ready to install</span>
           <UButton color="success" size="xs" icon="i-lucide-refresh-cw" @click="update.installNow">
             Restart & Install
@@ -259,14 +247,14 @@ async function save(): Promise<void> {
             >
               Check for updates
             </UButton>
-            <span v-if="update.lastCheckedAt" class="text-[11px] text-muted">
+            <span v-if="update.lastCheckedAt" class="text-2xs text-muted">
               Last checked: {{ formatTime(update.lastCheckedAt) }}
             </span>
           </div>
-          <span v-if="update.status === 'not-available'" class="text-[11px] text-muted">
+          <span v-if="update.status === 'not-available'" class="text-2xs text-muted">
             Latest version installed
           </span>
-          <span v-else-if="update.status === 'disabled'" class="text-[11px] text-muted">
+          <span v-else-if="update.status === 'disabled'" class="text-2xs text-muted">
             Dev mode
           </span>
         </div>

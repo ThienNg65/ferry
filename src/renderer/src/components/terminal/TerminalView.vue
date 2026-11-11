@@ -4,6 +4,8 @@ import '@xterm/xterm/css/xterm.css'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
 import { useUiStore } from '../../stores/ui.store'
+import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
+import LogSearchBar from '../logs/LogSearchBar.vue'
 
 /**
  * `active` is true only when the Terminal dock tab is the one currently
@@ -118,11 +120,85 @@ function onWindowResize(): void {
   }, 50)
 }
 
+const searchOpen = ref(false)
+const searchQuery = ref('')
+const caseSensitive = ref(false)
+const isRegex = ref(false)
+const matchCount = ref(0)
+const currentMatch = ref(0)
+let resultsSub: { dispose: () => void } | null = null
+
+const SEARCH_DECORATIONS = {
+  matchOverviewRuler: '#d29922',
+  activeMatchColorOverviewRuler: '#f2cc60',
+  matchBackground: '#5a4a1a',
+  activeMatchBackground: '#9e6a03'
+}
+
+function activeInstance(): ReturnType<typeof terminalStreams.getInstance> {
+  const sessionId = sessions.activeSessionId
+  return sessionId ? terminalStreams.getInstance(sessionId) : undefined
+}
+
+function runSearch(forward: boolean): void {
+  const inst = activeInstance()
+  if (!inst) {
+    return
+  }
+  if (!searchQuery.value) {
+    inst.search.clearDecorations()
+    matchCount.value = 0
+    currentMatch.value = 0
+    return
+  }
+  const options = { caseSensitive: caseSensitive.value, regex: isRegex.value, decorations: SEARCH_DECORATIONS }
+  if (forward) {
+    inst.search.findNext(searchQuery.value, options)
+  } else {
+    inst.search.findPrevious(searchQuery.value, options)
+  }
+}
+
+function openSearch(): void {
+  if (!props.active) {
+    return
+  }
+  const inst = activeInstance()
+  if (!inst) {
+    return
+  }
+  searchOpen.value = true
+  resultsSub?.dispose()
+  resultsSub = inst.search.onDidChangeResults(({ resultIndex, resultCount }) => {
+    matchCount.value = resultCount
+    currentMatch.value = resultIndex + 1
+  })
+  runSearch(true)
+}
+
+function closeSearch(): void {
+  searchOpen.value = false
+  resultsSub?.dispose()
+  resultsSub = null
+  activeInstance()?.search.clearDecorations()
+  const sessionId = sessions.activeSessionId
+  if (sessionId) {
+    terminalStreams.focus(sessionId)
+  }
+}
+
+watch([searchQuery, caseSensitive, isRegex], () => {
+  if (searchOpen.value) {
+    runSearch(true)
+  }
+})
+
 const containerRef = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
+  window.addEventListener(TERMINAL_SEARCH_EVENT, openSearch)
   
   resizeObserver = new ResizeObserver(() => {
     onWindowResize()
@@ -134,6 +210,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener(TERMINAL_SEARCH_EVENT, openSearch)
+  resultsSub?.dispose()
   resizeObserver?.disconnect()
   if (resizeTimer !== null) {
     clearTimeout(resizeTimer)
@@ -150,6 +228,26 @@ onBeforeUnmount(() => {
       {{ sessions.activeTab.hostLabel }}
     </div>
     <div ref="containerRef" class="relative min-h-0 flex-1">
+      <div
+        v-if="sessions.activeSessionId && terminalStreams.exitedSessionIds.includes(sessions.activeSessionId)"
+        class="absolute bottom-3 right-3 z-10"
+      >
+        <UButton icon="i-lucide-rotate-cw" size="sm" @click="terminalStreams.restart(sessions.activeSessionId)">
+          Restart shell
+        </UButton>
+      </div>
+      <div v-if="searchOpen" class="absolute right-3 top-1 z-10 rounded-md border border-muted bg-default shadow-md">
+        <LogSearchBar
+          v-model="searchQuery"
+          v-model:case-sensitive="caseSensitive"
+          v-model:is-regex="isRegex"
+          :match-count="matchCount"
+          :current-match="currentMatch"
+          @next="runSearch(true)"
+          @prev="runSearch(false)"
+          @close="closeSearch"
+        />
+      </div>
       <p v-if="!sessions.activeSessionId" class="px-3 py-6 text-center text-xs text-muted">
         No active site connection
       </p>

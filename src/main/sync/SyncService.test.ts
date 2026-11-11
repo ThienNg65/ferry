@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computePlan, type TreeItem } from './SyncService'
+import { computeDiff, computePlan, type TreeItem } from './SyncService'
 
 function file(relPath: string, size: number, mtimeMs?: number): TreeItem {
   return { relPath, isDir: false, size, mtimeMs }
@@ -72,5 +72,27 @@ describe('computePlan', () => {
       true
     )
     expect(plan.toDelete).toEqual([])
+  })
+})
+
+describe('computeDiff', () => {
+  it('classifies every status and ignores directories', () => {
+    const rows = computeDiff(
+      [dir('d'), file('same.txt', 5, 1000), file('l.txt', 5, 1000), file('ln.txt', 5, 10_000), file('rn.txt', 5, 1000), file('sz.txt', 6, 1000)],
+      [file('same.txt', 5, 1500), file('r.txt', 5, 1000), file('ln.txt', 5, 1000), file('rn.txt', 5, 10_000), file('sz.txt', 5, 1000)]
+    )
+    expect(Object.fromEntries(rows.map((r) => [r.relPath, r.status]))).toEqual({
+      'same.txt': 'same',
+      'l.txt': 'localOnly',
+      'r.txt': 'remoteOnly',
+      'ln.txt': 'localNewer',
+      'rn.txt': 'remoteNewer',
+      'sz.txt': 'sizeDiff'
+    })
+    expect(rows.map((r) => r.relPath)).toEqual([...rows.map((r) => r.relPath)].sort((a, b) => a.localeCompare(b)))
+  })
+
+  it('treats equal sizes with unknown mtimes as the same', () => {
+    expect(computeDiff([file('a', 1)], [file('a', 1)])[0].status).toBe('same')
   })
 })

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { AuthMethod, JumpHostConfig, KeyGenerateResult, ProxyConfig, ProxyType, Site, SiteInput } from '@shared/contract'
+import type { AuthMethod, JumpHostConfig, KeyGenerateResult, ProxyConfig, ProxyType, Site, SiteEnvironment, SiteInput } from '@shared/contract'
+import { ENVIRONMENT_OPTIONS } from '../../utils/environment'
 import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
 // Not yet used elsewhere in the app, so not in the auto-generated global
@@ -40,6 +41,7 @@ const form = reactive<SiteInput>({
   passphrase: '',
   group: ''
 })
+const environment = ref<SiteEnvironment | 'none'>('none')
 
 function emptyHop(): JumpHopForm {
   return { host: '', port: 22, username: '', authMethod: 'password', privateKeyPath: '', password: '', passphrase: '' }
@@ -105,6 +107,7 @@ function resetForm(site?: Site | null): void {
   form.password = ''
   form.passphrase = ''
   form.group = site?.group ?? ''
+  environment.value = site?.environment ?? 'none'
   useJumpHost.value = Boolean(site?.jumpHosts?.length)
   jumpHops.value = (site?.jumpHosts ?? []).map((hop) => ({
     host: hop.host,
@@ -246,7 +249,8 @@ async function save(): Promise<void> {
     jumpHosts,
     proxyMode: proxyMode.value,
     proxy,
-    group: (form.group ?? '').trim() || undefined
+    group: (form.group ?? '').trim() || undefined,
+    environment: environment.value === 'none' ? undefined : environment.value
   }
   try {
     if (props.site) {
@@ -281,6 +285,9 @@ async function save(): Promise<void> {
             <UInput v-model="form.group" list="ferry-site-groups" placeholder="e.g. Work" class="w-full" />
           </UFormField>
         </div>
+        <UFormField label="Environment" hint="Optional — colours the tab">
+          <USelect v-model="environment" :items="ENVIRONMENT_OPTIONS" class="w-full" />
+        </UFormField>
         <datalist id="ferry-site-groups">
           <option v-for="name in sites.groupNames" :key="name" :value="name" />
         </datalist>

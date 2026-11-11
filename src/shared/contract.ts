@@ -120,6 +120,8 @@ export interface JumpHostInfo {
   hasPassphrase: boolean
 }
 
+export type SiteEnvironment = 'prod' | 'staging' | 'dev'
+
 /**
  * A saved connection profile. Never carries decrypted secrets — only booleans
  * indicating whether a secret is set, so the renderer can render form state
@@ -148,6 +150,7 @@ export interface Site {
   proxy?: ProxyInfo
   /** Free-text group/folder name for organizing the site list — undefined means ungrouped. */
   group?: string
+  environment?: SiteEnvironment
   createdAt: string
   updatedAt: string
 }
@@ -170,6 +173,7 @@ export interface SiteInput {
   proxyMode?: 'inherit' | 'none' | 'custom'
   proxy?: ProxyConfig
   group?: string
+  environment?: SiteEnvironment
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
@@ -205,13 +209,14 @@ export interface KeyGenerateResult {
  * after import, same as any other password field.
  */
 export interface ImportedSessionCandidate {
-  source: 'winscp' | 'putty'
+  source: 'winscp' | 'putty' | 'sshconfig'
   name: string
   host: string
   port: number
   username: string
   privateKeyPath?: string
   remoteInitialPath?: string
+  jumpHosts?: JumpHostConfig[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,7 +365,7 @@ export interface FileReadResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TransferKind = 'upload' | 'download'
-export type TransferState = 'queued' | 'started' | 'progress' | 'done' | 'error' | 'cancelled'
+export type TransferState = 'queued' | 'started' | 'progress' | 'paused' | 'done' | 'error' | 'cancelled'
 
 /** Request payload for `transfer:enqueue`. */
 export interface TransferEnqueueRequest {
@@ -386,6 +391,8 @@ export interface TransferEvent {
   totalBytes?: number
   bytesPerSec?: number
   etaMs?: number
+  filesDone?: number
+  filesTotal?: number
   error?: string
 }
 
@@ -393,12 +400,23 @@ export interface TransferEvent {
 // Domain models — long-running operations (Activity dock tab)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Request payload for `fs:remote:admin` - recursive chmod and/or chown via exec. */
+export interface RemoteAdminRequest {
+  sessionId: string
+  path: string
+  mode?: string
+  owner?: string
+  group?: string
+  recursive?: boolean
+}
+
 export type OperationKind =
   | 'extract-remote'
   | 'compress-remote'
   | 'compress-local'
   | 'delete-remote'
   | 'delete-remote-batch'
+  | 'chmod-remote'
   | 'edit-download'
   | 'edit-reupload'
   | 'sync'
@@ -501,6 +519,23 @@ export interface SyncPlan {
   totalBytes: number
 }
 
+export type CompareStatus = 'same' | 'localOnly' | 'remoteOnly' | 'localNewer' | 'remoteNewer' | 'sizeDiff'
+
+export interface CompareRequest {
+  sessionId: string
+  localPath: string
+  remotePath: string
+}
+
+export interface CompareRow {
+  relPath: string
+  status: CompareStatus
+  localSize?: number
+  remoteSize?: number
+  localMtimeMs?: number
+  remoteMtimeMs?: number
+}
+
 export interface SyncRunResult {
   queuedTransferIds: string[]
   deletedCount: number
@@ -544,6 +579,7 @@ export interface EditOpenRemoteRequest {
   sessionId: string
   path: string
   builtin?: boolean
+  viaSudo?: boolean
 }
 
 export interface EditOpenExternalRequest {
@@ -834,6 +870,7 @@ export const INVOKE_CHANNELS = {
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
+  sitesImportJson: 'sites:import-json',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',
@@ -853,16 +890,21 @@ export const INVOKE_CHANNELS = {
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',
+  fsLocalTouch: 'fs:local:touch',
+  fsRemoteTouch: 'fs:remote:touch',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
   fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',
+  fsRemoteAdmin: 'fs:remote:admin',
   fsLocalReadFile: 'fs:local:readFile',
   fsLocalWriteFile: 'fs:local:writeFile',
   fsRemoteReadFile: 'fs:remote:readFile',
   // transfers
   transferEnqueue: 'transfer:enqueue',
   transferCancel: 'transfer:cancel',
+  transferRetry: 'transfer:retry',
+  transferPause: 'transfer:pause',
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
@@ -896,6 +938,7 @@ export const INVOKE_CHANNELS = {
   // one-way directory sync (mirror)
   syncPreview: 'sync:preview',
   syncRun: 'sync:run',
+  syncCompare: 'sync:compare',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',

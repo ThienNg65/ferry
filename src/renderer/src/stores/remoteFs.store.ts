@@ -5,9 +5,11 @@ import { invoke } from '../api'
 import { useSessionsStore } from './sessions.store'
 import { compareEntries, type SortColumn, type SortDirection } from '../utils/fileSort'
 import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
+import { emptyHistory, recordVisit, stepBack, stepForward, type NavHistory } from '../utils/navHistory'
 
 const CACHE_TTL_MS = 60_000
 const MAX_CACHE_ENTRIES = 100
+const MAX_CONCURRENT_PREFETCHES = 3
 
 /** In-flight prefetch deduplication tracker across sessions. */
 const inFlightPrefetches = new Set<string>()
@@ -54,6 +56,7 @@ interface PerSessionFs {
   sortColumn: SortColumn
   sortDirection: SortDirection
   dirCache: Map<string, DirCacheEntry>
+  history: NavHistory
 }
 
 function freshFsState(): PerSessionFs {
@@ -66,7 +69,8 @@ function freshFsState(): PerSessionFs {
     selectAnchor: null,
     sortColumn: 'name',
     sortDirection: 'asc',
-    dirCache: new Map()
+    dirCache: new Map(),
+    history: emptyHistory()
   }
 }
 
@@ -120,6 +124,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     sortDirection(): SortDirection {
       return this.current.sortDirection
     },
+    canGoBack(): boolean {
+      return this.current.history.back.length > 0
+    },
+    canGoForward(): boolean {
+      return this.current.history.fwd.length > 0
+    },
     /** True when `sessionId` has never been listed yet (no cached bucket). */
     needsLoad(state): (sessionId: string) => boolean {
       return (sessionId: string) => !state.bySession[sessionId]
@@ -142,7 +152,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       return this.bySession[sessionId]
     },
 
-    async load(dirPath?: string, options?: { forceRefresh?: boolean }): Promise<void> {
+    async load(dirPath?: string, options?: { forceRefresh?: boolean; skipHistory?: boolean }): Promise<void> {
       await this.loadForSession(this.activeSessionId(), dirPath, options)
     },
 
@@ -154,9 +164,15 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async loadForSession(
       sessionId: string,
       dirPath?: string,
-      options?: { forceRefresh?: boolean }
+      options?: { forceRefresh?: boolean; skipHistory?: boolean }
     ): Promise<void> {
       const entry = this.ensureBucket(sessionId)
+      const fromPath = entry.currentPath
+      const recordFrom = (newPath: string): void => {
+        if (dirPath !== undefined && !options?.skipHistory && fromPath && newPath !== fromPath) {
+          entry.history = recordVisit(entry.history, fromPath)
+        }
+      }
       const normalized = dirPath ? normalizeDirPath(dirPath) : ''
       const cached = normalized ? entry.dirCache.get(normalized) : undefined
       const isCacheValid = cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !options?.forceRefresh
@@ -166,6 +182,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
 
       if (isCacheValid) {
         // Fast-path: instantly display cached entries (0ms)
+        recordFrom(cached.path)
         entry.currentPath = cached.path
         entry.entries = [...cached.entries].sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
@@ -217,6 +234,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         // Store into in-memory SWR cache (both canonical and requested paths)
         setCache(entry, result.path, result.entries, dirPath)
 
+        recordFrom(result.path)
         entry.currentPath = result.path
         entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
@@ -252,7 +270,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       }
 
       const prefetchKey = `${sessionId}:${normalized}`
-      if (inFlightPrefetches.has(prefetchKey)) return
+      if (inFlightPrefetches.has(prefetchKey) || inFlightPrefetches.size >= MAX_CONCURRENT_PREFETCHES) return
       inFlightPrefetches.add(prefetchKey)
 
       try {
@@ -284,6 +302,24 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       await this.load(dirPath)
     },
 
+    async goBack(): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const step = stepBack(bucket.history, bucket.currentPath)
+      if (!step) return
+      await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (!bucket.error) bucket.history = step.next
+    },
+
+    async goForward(): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const step = stepForward(bucket.history, bucket.currentPath)
+      if (!step) return
+      await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (!bucket.error) bucket.history = step.next
+    },
+
     async goUp(): Promise<void> {
       const parent = this.currentPath.replace(/\/[^/]+\/?$/, '') || '/'
       await this.load(parent)
@@ -294,6 +330,15 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const bucket = this.ensureBucket(sessionId)
       const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
       await invoke<void>(INVOKE_CHANNELS.fsRemoteMkdir, sessionId, target)
+      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      await this.load(this.currentPath, { forceRefresh: true })
+    },
+
+    async touch(name: string): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteTouch, sessionId, target)
       bucket.dirCache.delete(normalizeDirPath(this.currentPath))
       await this.load(this.currentPath, { forceRefresh: true })
     },
@@ -362,6 +407,14 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       }
     },
 
+    async admin(entry: FileEntry, options: { mode?: string; owner?: string; group?: string; recursive?: boolean }): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      await invoke<void>(INVOKE_CHANNELS.fsRemoteAdmin, { sessionId, path: entry.path, ...options })
+      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      await this.load(this.currentPath, { forceRefresh: true })
+    },
+
     /** Plain click — selects exactly one entry. */
     selectOnly(path: string): void {
       const bucket = this.ensureBucket(this.activeSessionId())
@@ -387,6 +440,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     /** Ctrl/Cmd+A — selects every entry in `entries` (defaults to the full unfiltered listing). */
+    selectPaths(paths: string[]): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      bucket.selected = new Set(paths)
+      bucket.selectAnchor = paths[0] ?? null
+    },
+
     selectAll(entries?: FileEntry[]): void {
       const bucket = this.ensureBucket(this.activeSessionId())
       const result = selectAll(entries ?? bucket.entries)

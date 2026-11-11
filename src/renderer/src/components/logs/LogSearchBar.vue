@@ -104,10 +104,10 @@ function onKeydown(e: KeyboardEvent): void {
     </div>
 
     <!-- Match counter / status -->
-    <div class="flex items-center px-1 text-[11px] font-mono shrink-0 select-none">
+    <div class="flex items-center px-1 text-2xs font-mono shrink-0 select-none">
       <span
         v-if="regexError"
-        class="rounded px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500/20 font-medium truncate max-w-[160px]"
+        class="rounded px-1.5 py-0.5 bg-error/15 text-error ring-1 ring-error/20 font-medium truncate max-w-[160px]"
         :title="regexError"
       >
         Invalid regex
@@ -120,7 +120,7 @@ function onKeydown(e: KeyboardEvent): void {
       </span>
       <span
         v-else-if="modelValue.length > 0 && matchCount === 0"
-        class="rounded px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500/20 font-medium"
+        class="rounded px-1.5 py-0.5 bg-error/15 text-error ring-1 ring-error/20 font-medium"
       >
         No matches
       </span>
@@ -159,7 +159,7 @@ function onKeydown(e: KeyboardEvent): void {
         size="xs"
         :color="caseSensitive ? 'primary' : 'neutral'"
         :variant="caseSensitive ? 'soft' : 'ghost'"
-        class="font-mono text-[11px] px-1.5 min-w-6"
+        class="font-mono text-2xs px-1.5 min-w-6"
         @click="emit('update:caseSensitive', !caseSensitive)"
       />
     </UTooltip>
@@ -170,7 +170,7 @@ function onKeydown(e: KeyboardEvent): void {
         size="xs"
         :color="isRegex ? 'primary' : 'neutral'"
         :variant="isRegex ? 'soft' : 'ghost'"
-        class="font-mono text-[11px] px-1.5 min-w-6"
+        class="font-mono text-2xs px-1.5 min-w-6"
         @click="emit('update:isRegex', !isRegex)"
       />
     </UTooltip>

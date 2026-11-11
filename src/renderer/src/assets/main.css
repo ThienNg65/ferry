@@ -2,7 +2,7 @@
 @import "@nuxt/ui";
 
 @theme {
-  --font-sans: '-apple-system', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: -apple-system, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'SF Mono', Consolas, monospace;
   --text-meta: 0.75rem;
   --text-meta--line-height: 1rem;
@@ -11,6 +11,7 @@
 }
 
 @theme static {
+  --color-editor-surface: #282c34;
   --color-brand-50: #eff8ff;
   --color-brand-100: #dbeefe;
   --color-brand-200: #bfe2fe;

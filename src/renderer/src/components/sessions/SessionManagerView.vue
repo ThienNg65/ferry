@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
+import type { AppVersionResult, AuthMethod, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
+import { useConfirm } from '../../composables/useConfirm'
+import { ENVIRONMENT_DOT } from '../../utils/environment'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
+import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
@@ -60,8 +63,40 @@ const form = reactive<QuickConnectInput>({
   port: 22,
   username: '',
   authMethod: 'password',
-  password: ''
+  password: '',
+  privateKeyPath: '',
+  passphrase: ''
 })
+const quickAuthOptions: { label: string; value: AuthMethod }[] = [
+  { label: 'Password', value: 'password' },
+  { label: 'Private key', value: 'privateKey' },
+  { label: 'SSH agent', value: 'agent' }
+]
+const savePassword = ref(false)
+
+async function browseQuickKey(): Promise<void> {
+  const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
+  if (picked) {
+    form.privateKeyPath = picked
+  }
+}
+
+async function onSaveQuickAsSite(): Promise<void> {
+  if (!canQuickConnect.value) return
+  try {
+    await sites.createSite({
+      ...form,
+      name: `${form.username}@${form.host}`,
+      password: savePassword.value && form.authMethod === 'password' ? form.password : undefined,
+      passphrase: undefined,
+      privateKeyPath: form.authMethod === 'privateKey' ? form.privateKeyPath || undefined : undefined,
+      proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit'
+    })
+    notify.success('Site saved', `${form.username}@${form.host}`)
+  } catch (e) {
+    notify.error('Could not save site', e instanceof Error ? e.message : String(e))
+  }
+}
 
 const canQuickConnect = computed(() => {
   const port = Number(form.port)
@@ -114,23 +149,28 @@ function openEditDialog(site: Site): void {
   formOpen.value = true
 }
 
-const deleteTarget = ref<Site | null>(null)
-const deleting = ref(false)
+const confirm = useConfirm()
 
-async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) {
-    return
-  }
-  deleting.value = true
-  try {
-    await sites.deleteSite(deleteTarget.value.id)
-    deleteTarget.value = null
-  } finally {
-    deleting.value = false
-  }
+async function confirmDelete(site: Site): Promise<void> {
+  await confirm({
+    title: 'Delete site',
+    body: `Delete ${site.name}? This cannot be undone.`,
+    confirmLabel: 'Delete',
+    confirmColor: 'error',
+    destructive: true,
+    action: () => sites.deleteSite(site.id)
+  })
 }
 
 const duplicatingId = ref<string | null>(null)
+
+function siteMenuItems(site: Site): ContextMenuItem[] {
+  return [
+    { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => void onDuplicate(site) },
+    { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => openEditDialog(site) },
+    { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => void confirmDelete(site) }
+  ]
+}
 
 async function onDuplicate(site: Site): Promise<void> {
   duplicatingId.value = site.id
@@ -161,6 +201,19 @@ async function onExportSites(): Promise<void> {
     notify.success('Sites exported', 'Saved to ferry-sites-backup.json')
   } catch (e) {
     notify.error('Export failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function onImportSitesJson(): Promise<void> {
+  try {
+    const result = await invoke<{ imported: number; skipped: number } | null>(INVOKE_CHANNELS.sitesImportJson)
+    if (!result) {
+      return
+    }
+    await sites.fetchSites()
+    notify.success('Sites imported', `${result.imported} added, ${result.skipped} already saved`)
+  } catch (e) {
+    notify.error('Import failed', e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -277,9 +330,22 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
             </div>
           </div>
-          <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
-            {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
-          </UButton>
+          <div class="flex shrink-0 items-center gap-2">
+            <UButton
+              v-if="sessions.restoredSiteTabs.length > 1"
+              icon="i-lucide-plug-zap"
+              size="sm"
+              color="neutral"
+              variant="outline"
+              :disabled="sessions.connecting"
+              @click="sessions.reconnectAll()"
+            >
+              Reconnect all ({{ sessions.restoredSiteTabs.length }})
+            </UButton>
+            <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
+              {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
+            </UButton>
+          </div>
         </div>
       </UCard>
 
@@ -305,6 +371,16 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     color="neutral"
                     aria-label="Import sites"
                     @click="importOpen = true"
+                  />
+                </UTooltip>
+                <UTooltip text="Import sites backup">
+                  <UButton
+                    icon="i-lucide-upload"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    aria-label="Import sites backup"
+                    @click="onImportSitesJson"
                   />
                 </UTooltip>
                 <UTooltip text="Export sites backup">
@@ -355,13 +431,12 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             </div>
             <div class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5">
               <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
-                <div v-if="section.name" class="mt-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted first:mt-0">
+                <div v-if="section.name" class="mt-2 px-2 text-2xs font-medium uppercase tracking-wide text-muted first:mt-0">
                   {{ section.name }}
                 </div>
                 <ul class="flex flex-col gap-1">
+                  <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
                   <li
-                    v-for="site in section.sites"
-                    :key="site.id"
                     class="group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
                     :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
                   >
@@ -371,6 +446,12 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                       @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
                     />
                     <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
+                    <span
+                      v-if="site.environment"
+                      class="size-2 shrink-0 rounded-full"
+                      :class="ENVIRONMENT_DOT[site.environment]"
+                      :title="site.environment"
+                    />
                     <button
                       type="button"
                       class="min-w-0 flex-1 text-left rounded-xs focus-visible:outline-2 focus-visible:outline-primary"
@@ -379,43 +460,18 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                       <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
                       <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
                     </button>
-                    <template v-if="!selectMode">
-                      <UTooltip text="Duplicate site">
-                        <UButton
-                          icon="i-lucide-copy"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Duplicate site"
-                          :loading="duplicatingId === site.id"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="onDuplicate(site)"
-                        />
-                      </UTooltip>
-                      <UTooltip text="Edit site">
-                        <UButton
-                          icon="i-lucide-pencil"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Edit site"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="openEditDialog(site)"
-                        />
-                      </UTooltip>
-                      <UTooltip text="Delete site">
-                        <UButton
-                          icon="i-lucide-trash-2"
-                          color="neutral"
-                          variant="ghost"
-                          size="xs"
-                          aria-label="Delete site"
-                          class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                          @click="deleteTarget = site"
-                        />
-                      </UTooltip>
-                    </template>
+                    <UDropdownMenu v-if="!selectMode" :items="siteMenuItems(site)">
+                      <UButton
+                        icon="i-lucide-ellipsis"
+                        color="neutral"
+                        variant="ghost"
+                        size="xs"
+                        :aria-label="`Actions for ${site.name}`"
+                        :loading="duplicatingId === site.id"
+                      />
+                    </UDropdownMenu>
                   </li>
+                  </ContextMenu>
                 </ul>
               </div>
             </div>
@@ -439,9 +495,28 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             <UFormField label="Username">
               <UInput v-model="form.username" placeholder="e.g. root" class="w-full" />
             </UFormField>
-            <UFormField label="Password">
-              <UInput v-model="form.password" type="password" placeholder="Optional for agent auth" class="w-full" />
+            <UFormField label="Authentication">
+              <USelect v-model="form.authMethod" :items="quickAuthOptions" class="w-full" />
             </UFormField>
+            <UFormField v-if="form.authMethod === 'password'" label="Password">
+              <UInput v-model="form.password" type="password" class="w-full" />
+            </UFormField>
+            <template v-else-if="form.authMethod === 'privateKey'">
+              <UFormField label="Private key file">
+                <div class="flex gap-2">
+                  <UInput v-model="form.privateKeyPath" placeholder="Path to private key" class="w-full flex-1" />
+                  <UButton color="neutral" variant="outline" @click="browseQuickKey">Browse</UButton>
+                </div>
+              </UFormField>
+              <UFormField label="Passphrase">
+                <UInput v-model="form.passphrase" type="password" placeholder="Optional" class="w-full" />
+              </UFormField>
+            </template>
+            <UCheckbox
+              v-if="form.authMethod === 'password' && form.password"
+              v-model="savePassword"
+              label="Also save the password when saving as a site"
+            />
 
             <UCheckbox
               v-if="settings.defaultProxy"
@@ -458,42 +533,30 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           </form>
 
           <template #footer>
-            <UButton
-              type="submit"
-              form="ferry-quick-connect-form"
-              block
-              :disabled="!canQuickConnect"
-              :loading="sessions.connecting"
-              @click="onConnect"
-            >
-              Connect
-            </UButton>
+            <div class="flex gap-2">
+              <UButton
+                type="submit"
+                form="ferry-quick-connect-form"
+                class="flex-1 justify-center"
+                :disabled="!canQuickConnect"
+                :loading="sessions.connecting"
+                @click="onConnect"
+              >
+                Connect
+              </UButton>
+              <UButton color="neutral" variant="outline" icon="i-lucide-save" :disabled="!canQuickConnect" @click="onSaveQuickAsSite">
+                Save as site
+              </UButton>
+            </div>
           </template>
         </UCard>
       </div>
 
-      <p v-if="version" class="text-center text-[11px] text-muted">Ferry v{{ version }}</p>
+      <p v-if="version" class="text-center text-2xs text-muted">Ferry v{{ version }}</p>
     </div>
 
     <SiteFormDialog v-model:open="formOpen" :site="editingSite" />
     <ImportSessionsDialog v-model:open="importOpen" />
-
-    <UModal
-      :open="Boolean(deleteTarget)"
-      title="Delete site"
-      :ui="{ footer: 'justify-end' }"
-      @update:open="(v: boolean) => { if (!v) deleteTarget = null }"
-    >
-      <template #body>
-        <p class="text-sm text-default">
-          Delete <span class="font-medium">{{ deleteTarget?.name }}</span>? This cannot be undone.
-        </p>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="deleteTarget = null">Cancel</UButton>
-        <UButton color="error" :loading="deleting" @click="confirmDelete">Delete</UButton>
-      </template>
-    </UModal>
 
     <UModal
       :open="bulkDeleteOpen"

@@ -136,7 +136,7 @@ async function onOpenExternal(): Promise<void> {
     <template #body>
       <div 
         class="flex h-full flex-col overflow-hidden"
-        :class="ui.theme === 'dark' ? 'bg-[#282c34]' : 'bg-default'"
+        :class="ui.theme === 'dark' ? 'bg-editor-surface' : 'bg-default'"
         @keydown.ctrl.s.prevent="onSave" 
         @keydown.meta.s.prevent="onSave"
         @wheel="onWheel"

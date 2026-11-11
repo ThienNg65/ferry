@@ -12,6 +12,7 @@ import {
   type LogLevel
 } from '../../utils/logParser'
 import LogSearchBar from './LogSearchBar.vue'
+import { KEYWORD_CLASSES, buildKeywordRegex, splitByKeywords } from '../../utils/keywordHighlight'
 
 const props = defineProps<{ tailId: string }>()
 
@@ -55,7 +56,7 @@ const fontSizeClass = computed(() => {
     case 'lg':
       return 'text-[13px]'
     default:
-      return 'text-[11px]'
+      return 'text-2xs'
   }
 })
 
@@ -109,6 +110,22 @@ const levelCounts = computed(() => {
   }
   return { errors, warns, infos, debugs }
 })
+
+const keywords = ref<string[]>([])
+const keywordDraft = ref('')
+const keywordRegex = computed(() => buildKeywordRegex(keywords.value))
+
+function addKeyword(): void {
+  const value = keywordDraft.value.trim()
+  if (value && !keywords.value.includes(value) && keywords.value.length < KEYWORD_CLASSES.length) {
+    keywords.value = [...keywords.value, value]
+  }
+  keywordDraft.value = ''
+}
+
+function removeKeyword(index: number): void {
+  keywords.value = keywords.value.filter((_, i) => i !== index)
+}
 
 // Search Regex Builder
 const searchRegex = computed<RegExp | null>(() => {
@@ -402,14 +419,14 @@ onUnmounted(() => {
         <!-- Interactive Live / Paused status indicator -->
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[11px] transition-all cursor-pointer border select-none"
+          class="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-2xs transition-all cursor-pointer border select-none"
           :class="
             !ended && !error
               ? autoScroll
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold'
-                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300 font-semibold hover:bg-amber-500/20'
+                ? 'bg-success/10 border-success/30 text-success font-semibold'
+                : 'bg-warning/10 border-warning/30 text-warning font-semibold hover:bg-warning/20'
               : error
-                ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400 font-semibold'
+                ? 'bg-error/10 border-error/30 text-error font-semibold'
                 : 'bg-muted border-default text-muted'
           "
           :title="!ended && !error && !autoScroll ? 'Click to resume live following' : undefined"
@@ -418,14 +435,14 @@ onUnmounted(() => {
           <!-- Pulsing dot when live following -->
           <span v-if="!ended && !error && autoScroll" class="relative flex size-2">
             <span
-              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"
+              class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"
             />
-            <span class="relative inline-flex rounded-full size-2 bg-emerald-500" />
+            <span class="relative inline-flex rounded-full size-2 bg-success" />
           </span>
           <!-- Paused dot -->
-          <span v-else-if="!ended && !error && !autoScroll" class="inline-flex rounded-full size-2 bg-amber-500" />
-          <span v-else-if="error" class="inline-flex rounded-full size-2 bg-rose-500" />
-          <span v-else class="inline-flex rounded-full size-2 bg-neutral-400" />
+          <span v-else-if="!ended && !error && !autoScroll" class="inline-flex rounded-full size-2 bg-warning" />
+          <span v-else-if="error" class="inline-flex rounded-full size-2 bg-error" />
+          <span v-else class="inline-flex rounded-full size-2 bg-accented" />
 
           <span class="uppercase tracking-wider text-[10px]">
             {{
@@ -445,7 +462,7 @@ onUnmounted(() => {
         <div class="h-3.5 w-px bg-muted" />
 
         <!-- Line Count Summary -->
-        <span class="font-mono text-[11px] text-muted whitespace-nowrap">
+        <span class="font-mono text-2xs text-muted whitespace-nowrap">
           <span class="font-semibold text-default">{{ filteredLines.length.toLocaleString() }}</span>
           <span v-if="filteredLines.length !== lines.length" class="text-dimmed">
             / {{ lines.length.toLocaleString() }}
@@ -461,7 +478,7 @@ onUnmounted(() => {
             v-for="opt in filterOptions"
             :key="opt.id"
             type="button"
-            class="rounded px-2 py-0.5 text-[11px] font-mono transition-colors flex items-center gap-1 cursor-pointer"
+            class="rounded px-2 py-0.5 text-2xs font-mono transition-colors flex items-center gap-1 cursor-pointer"
             :class="
               levelFilter === opt.id
                 ? 'bg-default font-semibold text-default shadow-xs border border-default/30'
@@ -472,12 +489,12 @@ onUnmounted(() => {
             <span>{{ opt.label }}</span>
             <span
               v-if="opt.count > 0 && opt.id !== 'all'"
-              class="rounded-full px-1 text-[9px] font-bold leading-tight"
+              class="rounded-full px-1 text-2xs font-bold leading-tight"
               :class="
                 opt.id === 'error'
-                  ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300'
+                  ? 'bg-error/20 text-error'
                   : opt.id === 'warn'
-                    ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
+                    ? 'bg-warning/20 text-warning'
                     : 'bg-muted text-dimmed'
               "
             >
@@ -496,7 +513,7 @@ onUnmounted(() => {
             size="xs"
             color="neutral"
             variant="ghost"
-            class="font-mono text-[11px]"
+            class="font-mono text-2xs"
             @click="cycleFontSize"
           />
         </UTooltip>
@@ -599,6 +616,26 @@ onUnmounted(() => {
         @close="closeSearch"
       />
     </Transition>
+    <div v-if="searchOpen" class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-muted px-3 py-1">
+      <span class="text-xs text-muted">Highlight</span>
+      <span
+        v-for="(keyword, kIdx) in keywords"
+        :key="keyword"
+        class="inline-flex items-center gap-1 rounded-xs px-1.5 py-0.5 text-xs"
+        :class="KEYWORD_CLASSES[kIdx]"
+      >
+        {{ keyword }}
+        <button type="button" class="leading-none" :aria-label="`Remove ${keyword}`" @click="removeKeyword(kIdx)">×</button>
+      </span>
+      <UInput
+        v-if="keywords.length < KEYWORD_CLASSES.length"
+        v-model="keywordDraft"
+        size="xs"
+        placeholder="Add keyword, press Enter"
+        class="w-48"
+        @keyup.enter="addKeyword"
+      />
+    </div>
 
     <!-- Virtualized Log Line Viewer -->
     <div
@@ -656,7 +693,7 @@ onUnmounted(() => {
             <!-- Log Level Tag / Badge if not default -->
             <span
               v-if="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText"
-              class="inline-block rounded px-1 py-0.2 mr-1.5 text-[9px] font-bold leading-none align-middle select-none"
+              class="inline-block rounded px-1 py-0.2 mr-1.5 text-2xs font-bold leading-none align-middle select-none"
               :class="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeClass"
             >
               {{ getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText }}
@@ -677,8 +714,8 @@ onUnmounted(() => {
                   v-if="chunk.isMatch"
                   :class="
                     chunk.isActiveMatch
-                      ? 'bg-amber-400 text-neutral-950 font-bold rounded-xs px-0.5 shadow-sm ring-2 ring-primary'
-                      : 'bg-amber-300/80 dark:bg-amber-500/40 text-neutral-950 dark:text-neutral-100 rounded-xs px-0.5 ring-1 ring-amber-400/40'
+                      ? 'bg-warning text-inverted font-bold rounded-xs px-0.5 shadow-sm ring-2 ring-primary'
+                      : 'bg-warning/40 text-default rounded-xs px-0.5 ring-1 ring-warning/40'
                   "
                 >{{ chunk.text }}</mark>
                 <span v-else>{{ chunk.text }}</span>
@@ -691,7 +728,17 @@ onUnmounted(() => {
                 v-if="parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp"
                 class="text-muted text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block"
               >{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp }}</span>
-              <span>{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).rest }}</span>
+              <template
+                v-for="(chunk, kIdx) in splitByKeywords(parseTimestampPrefix(filteredLines[virtualRow.index].text).rest, keywordRegex)"
+                :key="kIdx"
+              >
+                <mark
+                  v-if="chunk.group !== null"
+                  class="rounded-xs px-0.5 text-inherit"
+                  :class="KEYWORD_CLASSES[chunk.group]"
+                >{{ chunk.text }}</mark>
+                <span v-else>{{ chunk.text }}</span>
+              </template>
             </template>
           </div>
         </div>
@@ -713,7 +760,7 @@ onUnmounted(() => {
     <div
       v-if="error"
       role="alert"
-      class="flex items-center gap-2 border-t border-muted bg-rose-500/10 px-3 py-1.5 text-xs text-error"
+      class="flex items-center gap-2 border-t border-muted bg-error/10 px-3 py-1.5 text-xs text-error"
     >
       <UIcon name="i-lucide-alert-circle" class="size-4 shrink-0 text-error" />
       <span class="truncate">{{ error }}</span>
@@ -722,7 +769,7 @@ onUnmounted(() => {
     <!-- Stream Ended Banner -->
     <div
       v-else-if="ended"
-      class="border-t border-muted bg-muted/20 px-3 py-1 text-[11px] text-muted text-center"
+      class="border-t border-muted bg-muted/20 px-3 py-1 text-2xs text-muted text-center"
     >
       Stream ended
     </div>

@@ -95,6 +95,26 @@ export class RemoteShell {
     })
   }
 
+  execWithStdin(command: string, input?: Buffer): Promise<{ stdout: Buffer; stderr: string; code: number | null }> {
+    return new Promise((resolve, reject) => {
+      this.client.exec(command, (execErr, stream) => {
+        if (execErr) {
+          reject(new SshError('SSH_EXEC', execErr.message))
+          return
+        }
+        const out: Buffer[] = []
+        let stderr = ''
+        stream.on('data', (chunk: Buffer) => out.push(chunk))
+        stream.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString()
+        })
+        stream.on('close', (code: number | null) => resolve({ stdout: Buffer.concat(out), stderr, code }))
+        stream.on('error', (e: Error) => reject(new SshError('SSH_EXEC', e.message)))
+        stream.end(input)
+      })
+    })
+  }
+
   private execOnce(command: string, opts: RemoteOptions): Promise<ExecResult> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
@@ -292,6 +312,19 @@ export class RemoteShell {
     })
   }
 
+  openShellAt(cwd: string, opts: { cols: number; rows: number }): Promise<ClientChannel> {
+    return new Promise((resolve, reject) => {
+      const command = `cd ${shellEscape(cwd)} 2>/dev/null; exec "$SHELL" -l`
+      this.client.exec(command, { pty: { term: 'xterm-256color', cols: opts.cols, rows: opts.rows } }, (err, stream) => {
+        if (err) {
+          reject(new SshError('SSH_EXEC', err.message))
+          return
+        }
+        resolve(stream)
+      })
+    })
+  }
+
   // ── SFTP ─────────────────────────────────────────────────────────────────────
 
   /** Lazily opens (and caches) the SFTP subsystem for this connection. */
@@ -412,6 +445,19 @@ export class RemoteShell {
           return
         }
         resolve()
+      })
+    })
+  }
+
+  async touch(remotePath: string): Promise<void> {
+    const sftp = await this.sftp()
+    return new Promise<void>((resolve, reject) => {
+      sftp.open(remotePath, 'wx', (openErr, handle) => {
+        if (openErr) {
+          reject(new SshError('SFTP', `Failed to create "${remotePath}": ${openErr.message}`))
+          return
+        }
+        sftp.close(handle, () => resolve())
       })
     })
   }

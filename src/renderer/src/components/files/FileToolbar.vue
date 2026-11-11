@@ -15,12 +15,19 @@ const props = defineProps<{
   canBookmark?: boolean
   /** Shows the "Sync this folder" button — only meaningful on the remote pane while connected. */
   showSync?: boolean
+  canGoBack?: boolean
+  showHidden?: boolean
+  canGoForward?: boolean
 }>()
 
 const emit = defineEmits<{
+  back: []
+  forward: []
   up: []
   refresh: []
   mkdir: []
+  touch: []
+  'toggle-hidden': []
   'toggle-permissions': []
   'transfer-selected': []
   'update:filterText': [value: string]
@@ -28,13 +35,20 @@ const emit = defineEmits<{
   'jump-bookmark': [path: string]
   'remove-bookmark': [id: string]
   'sync-folder': []
+  'compare-folder': []
 }>()
 
 const moreItems = computed<DropdownMenuItem[]>(() => {
-  const items: DropdownMenuItem[] = [{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => emit('mkdir') }]
+  const items: DropdownMenuItem[] = []
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
+    items.push({ label: 'Compare with local folder…', icon: 'i-lucide-columns-2', onSelect: () => emit('compare-folder') })
   }
+  items.push({
+    label: props.showHidden ? 'Hide hidden files (Ctrl+H)' : 'Show hidden files (Ctrl+H)',
+    icon: props.showHidden ? 'i-lucide-eye-off' : 'i-lucide-eye',
+    onSelect: () => emit('toggle-hidden')
+  })
   if (props.side === 'remote') {
     items.push({ label: 'Switch permissions display', icon: 'i-lucide-shield', onSelect: () => emit('toggle-permissions') })
   }
@@ -65,6 +79,12 @@ function onFilterInput(value: string | number): void {
 
 <template>
   <div class="flex shrink-0 items-center gap-1 pr-2">
+    <UTooltip text="Back (Alt+Left)">
+      <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
+    </UTooltip>
+    <UTooltip text="Forward (Alt+Right)">
+      <UButton icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
+    </UTooltip>
     <UTooltip text="Go up one level (Backspace)">
       <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
     </UTooltip>
@@ -78,6 +98,12 @@ function onFilterInput(value: string | number): void {
         :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
         @click="emit('refresh')"
       />
+    </UTooltip>
+    <UTooltip text="New folder">
+      <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
+    </UTooltip>
+    <UTooltip text="New file">
+      <UButton icon="i-lucide-file-plus" color="neutral" variant="ghost" size="xs" aria-label="New file" @click="emit('touch')" />
     </UTooltip>
     <UInput
       ref="filterInputRef"
