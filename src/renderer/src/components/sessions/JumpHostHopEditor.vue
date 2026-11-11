@@ -59,6 +59,7 @@ async function browsePrivateKey(): Promise<void> {
       <div class="flex items-center gap-1">
         <UTooltip text="Move earlier">
           <UButton
+            aria-label="Move earlier"
             icon="i-lucide-chevron-up"
             color="neutral"
             variant="ghost"
@@ -69,6 +70,7 @@ async function browsePrivateKey(): Promise<void> {
         </UTooltip>
         <UTooltip text="Move later">
           <UButton
+            aria-label="Move later"
             icon="i-lucide-chevron-down"
             color="neutral"
             variant="ghost"
@@ -78,7 +80,7 @@ async function browsePrivateKey(): Promise<void> {
           />
         </UTooltip>
         <UTooltip text="Remove this hop">
-          <UButton icon="i-lucide-x" color="error" variant="ghost" size="xs" @click="emit('remove')" />
+          <UButton aria-label="Remove this hop" icon="i-lucide-x" color="error" variant="ghost" size="xs" @click="emit('remove')" />
         </UTooltip>
       </div>
     </div>

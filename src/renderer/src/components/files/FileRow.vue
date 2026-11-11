@@ -262,7 +262,7 @@ function onMouseLeave(): void {
     <span class="w-32 shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatFullDate(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions" class="flex w-36 shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
-        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-dimmed">
+        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
           {{ technicalPermissions }}
         </span>
         <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>

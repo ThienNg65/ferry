@@ -36,6 +36,7 @@ const edits = computed(() => editSessions.edits)
         <span class="truncate text-dimmed">{{ sessionLabel(edit.sessionId) }}</span>
         <UTooltip text="Close edit">
           <UButton
+            aria-label="Close edit"
             icon="i-lucide-x"
             color="neutral"
             variant="ghost"

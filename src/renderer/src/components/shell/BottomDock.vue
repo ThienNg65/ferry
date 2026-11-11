@@ -251,6 +251,7 @@ function basename(path: string): string {
           <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2 flex items-center gap-1">
             <UTooltip text="Close other tabs">
               <UButton
+                aria-label="Close other tabs"
                 icon="i-lucide-list-x"
                 color="neutral"
                 variant="ghost"
@@ -260,6 +261,7 @@ function basename(path: string): string {
             </UTooltip>
             <UTooltip text="Close all tail tabs">
               <UButton
+                aria-label="Close all tail tabs"
                 icon="i-lucide-x-circle"
                 color="neutral"
                 variant="ghost"

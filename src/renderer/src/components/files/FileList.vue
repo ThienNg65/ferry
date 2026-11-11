@@ -128,16 +128,16 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
     <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-        <p class="text-xs text-dimmed">Loading directory…</p>
+        <p class="text-xs text-muted">Loading directory…</p>
       </div>
       <div v-else-if="entries.length === 0 && filtered" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
         <UIcon name="i-lucide-search-x" class="size-5 text-dimmed" />
-        <p class="text-xs text-dimmed">No files match the current filter</p>
+        <p class="text-xs text-muted">No files match the current filter</p>
         <UButton size="xs" color="neutral" variant="soft" @click="emit('clear-filter')">Clear filter</UButton>
       </div>
       <div v-else-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
-        <p class="text-xs text-dimmed">Empty folder</p>
+        <p class="text-xs text-muted">Empty folder</p>
       </div>
       <div v-else class="relative w-full" :style="{ height: `${totalSize}px` }">
         <div

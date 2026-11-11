@@ -91,7 +91,7 @@ const statusIcon = computed(() => {
         <span class="truncate">{{ label }}</span>
       </span>
       <UTooltip v-if="cancellable && running" text="Cancel">
-        <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
+        <UButton aria-label="Cancel" icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
       </UTooltip>
       <UIcon v-if="statusIcon" :name="statusIcon.name" class="size-3.5 shrink-0" :class="statusIcon.class" />
     </div>

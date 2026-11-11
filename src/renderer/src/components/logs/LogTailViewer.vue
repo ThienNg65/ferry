@@ -491,6 +491,7 @@ onUnmounted(() => {
       <div class="flex items-center gap-1 shrink-0 ml-2">
         <UTooltip :text="`Font size: ${fontSize.toUpperCase()} (Click to cycle)`">
           <UButton
+            :aria-label="`Font size: ${fontSize.toUpperCase()} (Click to cycle)`"
             icon="i-lucide-type"
             size="xs"
             color="neutral"
@@ -502,6 +503,7 @@ onUnmounted(() => {
 
         <UTooltip :text="wrapLines ? 'Disable line wrap' : 'Wrap long lines'">
           <UButton
+            :aria-label="wrapLines ? 'Disable line wrap' : 'Wrap long lines'"
             icon="i-lucide-wrap-text"
             size="xs"
             :color="wrapLines ? 'primary' : 'neutral'"
@@ -512,6 +514,7 @@ onUnmounted(() => {
 
         <UTooltip :text="autoScroll ? 'Following output (auto-scroll)' : 'Resume auto-scroll'">
           <UButton
+            :aria-label="autoScroll ? 'Following output (auto-scroll)' : 'Resume auto-scroll'"
             icon="i-lucide-arrow-down-to-line"
             size="xs"
             :color="autoScroll ? 'primary' : 'neutral'"
@@ -522,6 +525,7 @@ onUnmounted(() => {
 
         <UTooltip text="Export log to file">
           <UButton
+            aria-label="Export log to file"
             icon="i-lucide-download"
             size="xs"
             color="neutral"
@@ -532,6 +536,7 @@ onUnmounted(() => {
 
         <UTooltip text="Copy lines (Ctrl+C)">
           <UButton
+            aria-label="Copy lines (Ctrl+C)"
             icon="i-lucide-copy"
             size="xs"
             color="neutral"
@@ -542,6 +547,7 @@ onUnmounted(() => {
 
         <UTooltip text="Clear log view">
           <UButton
+            aria-label="Clear log view"
             icon="i-lucide-trash-2"
             size="xs"
             color="neutral"
@@ -552,6 +558,7 @@ onUnmounted(() => {
 
         <UTooltip text="Find & Filter in log (Ctrl+F)">
           <UButton
+            aria-label="Find & Filter in log (Ctrl+F)"
             icon="i-lucide-search"
             size="xs"
             :color="searchOpen ? 'primary' : 'neutral'"
@@ -564,6 +571,7 @@ onUnmounted(() => {
 
         <UTooltip :text="isMaximized ? 'Restore dock height' : 'Maximize log viewer'">
           <UButton
+            :aria-label="isMaximized ? 'Restore dock height' : 'Maximize log viewer'"
             :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
             size="xs"
             :color="isMaximized ? 'primary' : 'neutral'"
@@ -632,7 +640,7 @@ onUnmounted(() => {
 
           <!-- Line number gutter with vertical divider -->
           <div
-            class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-[10px] tabular-nums text-neutral-400 dark:text-neutral-500 border-r border-default/20"
+            class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-[10px] tabular-nums text-muted border-r border-default/20"
           >
             {{ filteredLines[virtualRow.index].originalIndex + 1 }}
           </div>
@@ -681,7 +689,7 @@ onUnmounted(() => {
             <template v-else>
               <span
                 v-if="parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp"
-                class="text-neutral-400 dark:text-neutral-500 text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block"
+                class="text-muted text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block"
               >{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).timestamp }}</span>
               <span>{{ parseTimestampPrefix(filteredLines[virtualRow.index].text).rest }}</span>
             </template>
@@ -727,7 +735,7 @@ onUnmounted(() => {
         class="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md ring-1 ring-primary/40 bg-primary text-primary-foreground transition-all hover:scale-105 active:scale-95 cursor-pointer"
         @click="scrollToBottom"
       >
-        <UIcon name="i-lucide-arrow-down" class="size-3.5 animate-bounce" />
+        <UIcon name="i-lucide-arrow-down" class="size-3.5" />
         <span>{{ newLinesCount > 0 ? `Jump to latest (+${newLinesCount})` : 'Jump to latest' }}</span>
       </button>
     </Transition>
