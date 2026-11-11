@@ -4,6 +4,7 @@ import type { FileEntry, FileListResult } from '@shared/contract'
 import { invoke } from '../api'
 import { compareEntries, type SortColumn, type SortDirection } from '../utils/fileSort'
 import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
+import { emptyHistory, recordVisit, stepBack, stepForward, type NavHistory } from '../utils/navHistory'
 
 interface LocalFsState {
   currentPath: string
@@ -14,6 +15,7 @@ interface LocalFsState {
   selectAnchor: string | null
   sortColumn: SortColumn
   sortDirection: SortDirection
+  history: NavHistory
 }
 
 export const useLocalFsStore = defineStore('localFs', {
@@ -25,15 +27,25 @@ export const useLocalFsStore = defineStore('localFs', {
     selected: new Set(),
     selectAnchor: null,
     sortColumn: 'name',
-    sortDirection: 'asc'
+    sortDirection: 'asc',
+    history: emptyHistory()
   }),
 
+  getters: {
+    canGoBack: (state): boolean => state.history.back.length > 0,
+    canGoForward: (state): boolean => state.history.fwd.length > 0
+  },
+
   actions: {
-    async load(dirPath?: string): Promise<void> {
+    async load(dirPath?: string, options?: { skipHistory?: boolean }): Promise<void> {
       this.loading = true
       this.error = null
       try {
+        const from = this.currentPath
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, dirPath ?? this.currentPath)
+        if (dirPath !== undefined && !options?.skipHistory && from && result.path !== from) {
+          this.history = recordVisit(this.history, from)
+        }
         this.currentPath = result.path
         this.entries = result.entries.sort(compareEntries(this.sortColumn, this.sortDirection))
         this.selected = new Set()
@@ -54,6 +66,20 @@ export const useLocalFsStore = defineStore('localFs', {
         this.sortDirection = 'asc'
       }
       this.entries = [...this.entries].sort(compareEntries(this.sortColumn, this.sortDirection))
+    },
+
+    async goBack(): Promise<void> {
+      const step = stepBack(this.history, this.currentPath)
+      if (!step) return
+      await this.load(step.target, { skipHistory: true })
+      if (!this.error) this.history = step.next
+    },
+
+    async goForward(): Promise<void> {
+      const step = stepForward(this.history, this.currentPath)
+      if (!step) return
+      await this.load(step.target, { skipHistory: true })
+      if (!this.error) this.history = step.next
     },
 
     async openDir(dirPath: string): Promise<void> {

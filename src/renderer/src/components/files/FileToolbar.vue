@@ -15,9 +15,13 @@ const props = defineProps<{
   canBookmark?: boolean
   /** Shows the "Sync this folder" button — only meaningful on the remote pane while connected. */
   showSync?: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
 }>()
 
 const emit = defineEmits<{
+  back: []
+  forward: []
   up: []
   refresh: []
   mkdir: []
@@ -65,6 +69,12 @@ function onFilterInput(value: string | number): void {
 
 <template>
   <div class="flex shrink-0 items-center gap-1 pr-2">
+    <UTooltip text="Back (Alt+Left)">
+      <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
+    </UTooltip>
+    <UTooltip text="Forward (Alt+Right)">
+      <UButton icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
+    </UTooltip>
     <UTooltip text="Go up one level (Backspace)">
       <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
     </UTooltip>

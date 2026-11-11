@@ -5,6 +5,7 @@ import { invoke } from '../api'
 import { useSessionsStore } from './sessions.store'
 import { compareEntries, type SortColumn, type SortDirection } from '../utils/fileSort'
 import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
+import { emptyHistory, recordVisit, stepBack, stepForward, type NavHistory } from '../utils/navHistory'
 
 const CACHE_TTL_MS = 60_000
 const MAX_CACHE_ENTRIES = 100
@@ -54,6 +55,7 @@ interface PerSessionFs {
   sortColumn: SortColumn
   sortDirection: SortDirection
   dirCache: Map<string, DirCacheEntry>
+  history: NavHistory
 }
 
 function freshFsState(): PerSessionFs {
@@ -66,7 +68,8 @@ function freshFsState(): PerSessionFs {
     selectAnchor: null,
     sortColumn: 'name',
     sortDirection: 'asc',
-    dirCache: new Map()
+    dirCache: new Map(),
+    history: emptyHistory()
   }
 }
 
@@ -120,6 +123,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     sortDirection(): SortDirection {
       return this.current.sortDirection
     },
+    canGoBack(): boolean {
+      return this.current.history.back.length > 0
+    },
+    canGoForward(): boolean {
+      return this.current.history.fwd.length > 0
+    },
     /** True when `sessionId` has never been listed yet (no cached bucket). */
     needsLoad(state): (sessionId: string) => boolean {
       return (sessionId: string) => !state.bySession[sessionId]
@@ -142,7 +151,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       return this.bySession[sessionId]
     },
 
-    async load(dirPath?: string, options?: { forceRefresh?: boolean }): Promise<void> {
+    async load(dirPath?: string, options?: { forceRefresh?: boolean; skipHistory?: boolean }): Promise<void> {
       await this.loadForSession(this.activeSessionId(), dirPath, options)
     },
 
@@ -154,9 +163,15 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async loadForSession(
       sessionId: string,
       dirPath?: string,
-      options?: { forceRefresh?: boolean }
+      options?: { forceRefresh?: boolean; skipHistory?: boolean }
     ): Promise<void> {
       const entry = this.ensureBucket(sessionId)
+      const fromPath = entry.currentPath
+      const recordFrom = (newPath: string): void => {
+        if (dirPath !== undefined && !options?.skipHistory && fromPath && newPath !== fromPath) {
+          entry.history = recordVisit(entry.history, fromPath)
+        }
+      }
       const normalized = dirPath ? normalizeDirPath(dirPath) : ''
       const cached = normalized ? entry.dirCache.get(normalized) : undefined
       const isCacheValid = cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !options?.forceRefresh
@@ -166,6 +181,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
 
       if (isCacheValid) {
         // Fast-path: instantly display cached entries (0ms)
+        recordFrom(cached.path)
         entry.currentPath = cached.path
         entry.entries = [...cached.entries].sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
@@ -217,6 +233,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         // Store into in-memory SWR cache (both canonical and requested paths)
         setCache(entry, result.path, result.entries, dirPath)
 
+        recordFrom(result.path)
         entry.currentPath = result.path
         entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
         entry.selected = new Set()
@@ -282,6 +299,24 @@ export const useRemoteFsStore = defineStore('remoteFs', {
 
     async openDir(dirPath: string): Promise<void> {
       await this.load(dirPath)
+    },
+
+    async goBack(): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const step = stepBack(bucket.history, bucket.currentPath)
+      if (!step) return
+      await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (!bucket.error) bucket.history = step.next
+    },
+
+    async goForward(): Promise<void> {
+      const sessionId = this.activeSessionId()
+      const bucket = this.ensureBucket(sessionId)
+      const step = stepForward(bucket.history, bucket.currentPath)
+      if (!step) return
+      await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (!bucket.error) bucket.history = step.next
     },
 
     async goUp(): Promise<void> {

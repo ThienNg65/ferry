@@ -590,6 +590,11 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     }
     return
   }
+  if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    event.preventDefault()
+    await (event.key === 'ArrowLeft' ? store.goBack() : store.goForward())
+    return
+  }
   if (event.key === 'Backspace') {
     event.preventDefault()
     await store.goUp()
@@ -754,6 +759,10 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :bookmarks="currentBookmarks"
         :can-bookmark="canBookmark"
         :show-sync="showTail"
+        :can-go-back="store.canGoBack"
+        :can-go-forward="store.canGoForward"
+        @back="store.goBack"
+        @forward="store.goForward"
         @up="store.goUp"
         @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
