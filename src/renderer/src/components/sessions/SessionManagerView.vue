@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { AppVersionResult, QuickConnectInput, Site } from '@shared/contract'
+import type { AppVersionResult, AuthMethod, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
@@ -61,8 +61,40 @@ const form = reactive<QuickConnectInput>({
   port: 22,
   username: '',
   authMethod: 'password',
-  password: ''
+  password: '',
+  privateKeyPath: '',
+  passphrase: ''
 })
+const quickAuthOptions: { label: string; value: AuthMethod }[] = [
+  { label: 'Password', value: 'password' },
+  { label: 'Private key', value: 'privateKey' },
+  { label: 'SSH agent', value: 'agent' }
+]
+const savePassword = ref(false)
+
+async function browseQuickKey(): Promise<void> {
+  const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
+  if (picked) {
+    form.privateKeyPath = picked
+  }
+}
+
+async function onSaveQuickAsSite(): Promise<void> {
+  if (!canQuickConnect.value) return
+  try {
+    await sites.createSite({
+      ...form,
+      name: `${form.username}@${form.host}`,
+      password: savePassword.value && form.authMethod === 'password' ? form.password : undefined,
+      passphrase: undefined,
+      privateKeyPath: form.authMethod === 'privateKey' ? form.privateKeyPath || undefined : undefined,
+      proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit'
+    })
+    notify.success('Site saved', `${form.username}@${form.host}`)
+  } catch (e) {
+    notify.error('Could not save site', e instanceof Error ? e.message : String(e))
+  }
+}
 
 const canQuickConnect = computed(() => {
   const port = Number(form.port)
@@ -482,9 +514,28 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             <UFormField label="Username">
               <UInput v-model="form.username" placeholder="e.g. root" class="w-full" />
             </UFormField>
-            <UFormField label="Password">
-              <UInput v-model="form.password" type="password" placeholder="Optional for agent auth" class="w-full" />
+            <UFormField label="Authentication">
+              <USelect v-model="form.authMethod" :items="quickAuthOptions" class="w-full" />
             </UFormField>
+            <UFormField v-if="form.authMethod === 'password'" label="Password">
+              <UInput v-model="form.password" type="password" class="w-full" />
+            </UFormField>
+            <template v-else-if="form.authMethod === 'privateKey'">
+              <UFormField label="Private key file">
+                <div class="flex gap-2">
+                  <UInput v-model="form.privateKeyPath" placeholder="Path to private key" class="w-full flex-1" />
+                  <UButton color="neutral" variant="outline" @click="browseQuickKey">Browse</UButton>
+                </div>
+              </UFormField>
+              <UFormField label="Passphrase">
+                <UInput v-model="form.passphrase" type="password" placeholder="Optional" class="w-full" />
+              </UFormField>
+            </template>
+            <UCheckbox
+              v-if="form.authMethod === 'password' && form.password"
+              v-model="savePassword"
+              label="Also save the password when saving as a site"
+            />
 
             <UCheckbox
               v-if="settings.defaultProxy"
@@ -501,16 +552,21 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           </form>
 
           <template #footer>
-            <UButton
-              type="submit"
-              form="ferry-quick-connect-form"
-              block
-              :disabled="!canQuickConnect"
-              :loading="sessions.connecting"
-              @click="onConnect"
-            >
-              Connect
-            </UButton>
+            <div class="flex gap-2">
+              <UButton
+                type="submit"
+                form="ferry-quick-connect-form"
+                class="flex-1 justify-center"
+                :disabled="!canQuickConnect"
+                :loading="sessions.connecting"
+                @click="onConnect"
+              >
+                Connect
+              </UButton>
+              <UButton color="neutral" variant="outline" icon="i-lucide-save" :disabled="!canQuickConnect" @click="onSaveQuickAsSite">
+                Save as site
+              </UButton>
+            </div>
           </template>
         </UCard>
       </div>
