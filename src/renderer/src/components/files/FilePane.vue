@@ -879,6 +879,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :sort-column="store.sortColumn"
         :sort-direction="store.sortDirection"
         @select="onSelect"
+        @select-many="(paths: string[]) => store.selectPaths(paths)"
         @open="onOpen"
         @remove="onRemoveEntry"
         @transfer="onTransfer"

@@ -432,6 +432,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     /** Ctrl/Cmd+A — selects every entry in `entries` (defaults to the full unfiltered listing). */
+    selectPaths(paths: string[]): void {
+      const bucket = this.ensureBucket(this.activeSessionId())
+      bucket.selected = new Set(paths)
+      bucket.selectAnchor = paths[0] ?? null
+    },
+
     selectAll(entries?: FileEntry[]): void {
       const bucket = this.ensureBucket(this.activeSessionId())
       const result = selectAll(entries ?? bucket.entries)

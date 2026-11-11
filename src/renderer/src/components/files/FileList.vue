@@ -73,9 +73,56 @@ const emit = defineEmits<{
   'clear-filter': []
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
+  'select-many': [paths: string[]]
 }>()
 import { COLUMN_HIDE } from '../../utils/paneColumns'
 import { DEFAULT_COLUMN_WIDTHS, type ColumnKey } from '../../utils/columnPrefs'
+
+const band = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+const bandStyle = computed(() => {
+  const b = band.value
+  return b
+    ? { left: `${Math.min(b.x0, b.x1)}px`, top: `${Math.min(b.y0, b.y1)}px`, width: `${Math.abs(b.x1 - b.x0)}px`, height: `${Math.abs(b.y1 - b.y0)}px` }
+    : {}
+})
+
+function onBandStart(event: MouseEvent): void {
+  const el = scrollEl.value
+  if (!el || event.button !== 0) return
+  const target = event.target as HTMLElement
+  const onEmptySpace = target === el || target.parentElement === el
+  if (!onEmptySpace && !event.altKey) return
+  if (event.offsetX > el.clientWidth && target === el) return
+  event.preventDefault()
+  const rect = el.getBoundingClientRect()
+  const toLocal = (e: MouseEvent): { x: number; y: number } => ({
+    x: e.clientX - rect.left + el.scrollLeft,
+    y: e.clientY - rect.top + el.scrollTop
+  })
+  const start = toLocal(event)
+  const additive = event.ctrlKey || event.metaKey
+  const base = additive ? new Set(props.selected) : new Set<string>()
+  const onMove = (e: MouseEvent): void => {
+    const cur = toLocal(e)
+    band.value = { x0: start.x, y0: start.y, x1: cur.x, y1: cur.y }
+    const lo = Math.min(start.y, cur.y)
+    const hi = Math.max(start.y, cur.y)
+    const paths = new Set(base)
+    for (const item of rowVirtualizer.value.measurementsCache) {
+      if (item.end >= lo && item.start <= hi && props.entries[item.index]) {
+        paths.add(props.entries[item.index].path)
+      }
+    }
+    emit('select-many', [...paths])
+  }
+  const onUp = (): void => {
+    band.value = null
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
 
 const columnVars = computed(() => ({
   '--col-size': `${ui.columns.widths.size}px`,
@@ -175,7 +222,8 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         </UDropdownMenu>
       </span>
     </div>
-    <div ref="scrollEl" class="flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+    <div ref="scrollEl" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
+      <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
       <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
         <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
         <p class="text-xs text-muted">Loading directory…</p>
