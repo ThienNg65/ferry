@@ -109,4 +109,11 @@ flowchart LR
     F --> G["Publish GitHub Release\n& Client Auto-Update"]
 ```
 
+## Development Rules
 
+### Git Commit Attribution
+- Never include AI attribution in Git commit messages.
+- Do not append `Co-Authored-By`, `Generated with`, or any AI-related trailers.
+- Commit messages must contain only the conventional commit subject and an optional description.
+- Before committing, verify that the commit message contains no AI attribution.
+- This rule applies to all agents, subagents, and automated commits.
