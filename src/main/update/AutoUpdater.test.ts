@@ -93,4 +93,19 @@ describe('AutoUpdater', () => {
     await installUpdateNow()
     expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
+
+  it('configures the updater before a manual check that runs ahead of startup init', async () => {
+    vi.resetModules()
+    appMock.isPackaged = true
+    autoUpdaterMock.autoInstallOnAppQuit = true
+    autoUpdaterMock.checkForUpdates.mockResolvedValue({ updateInfo: { version: '0.15.0' } })
+
+    const { checkForUpdates } = await import('./AutoUpdater')
+    const result = await checkForUpdates(true)
+
+    expect(autoUpdaterMock.autoInstallOnAppQuit).toBe(false)
+    expect(autoUpdaterListeners.has('update-downloaded')).toBe(true)
+    expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledOnce()
+    expect(result.status).toBe('checking')
+  })
 })

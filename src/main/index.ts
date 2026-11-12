@@ -140,7 +140,7 @@ function createWindow(): BrowserWindow {
         // A corrupted known_hosts.json must not crash the app at startup —
         // it'll surface (and can be dealt with) when the user next connects.
       }
-    }, 0)
+    }, 200)
     setTimeout(() => void import('ssh2').catch(() => {}), 1000)
     setTimeout(() => void initAutoUpdater(), 5000)
   })
@@ -153,6 +153,14 @@ function createWindow(): BrowserWindow {
   }
   win.on('maximize', broadcastWindowState)
   win.on('unmaximize', broadcastWindowState)
+
+  const showIfHidden = (): void => {
+    if (!win.isDestroyed() && !win.isVisible()) {
+      win.show()
+    }
+  }
+  win.webContents.once('did-fail-load', showIfHidden)
+  win.webContents.once('render-process-gone', showIfHidden)
 
   const devUrl = IS_DEV ? process.env['ELECTRON_RENDERER_URL'] : undefined
   if (devUrl) {
