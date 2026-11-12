@@ -74,7 +74,7 @@ export async function initAutoUpdater(): Promise<void> {
 
   const autoUpdater = await getAutoUpdater()
   autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = false
 
   autoUpdater.on('checking-for-update', () => {
     updateState({ status: 'checking', error: undefined })
@@ -146,6 +146,8 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
     return { status: 'disabled', error: 'Updates are disabled in development mode' }
   }
 
+  await initAutoUpdater()
+
   if (currentState.status === 'checking' || currentState.status === 'downloading') {
     return { status: currentState.status, version: currentState.availableVersion }
   }
@@ -178,6 +180,7 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
 export async function installUpdateNow(): Promise<void> {
+  await initAutoUpdater()
   const autoUpdater = await getAutoUpdater()
-  autoUpdater.quitAndInstall()
+  autoUpdater.quitAndInstall(true, true)
 }
