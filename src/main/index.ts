@@ -129,11 +129,11 @@ function createWindow(): BrowserWindow {
       try {
         initHistoryRecorder()
         TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
-        void initAutoUpdater()
       } catch (err) {
         console.error('Post ready-to-show setup failed:', err)
       }
-      void import('ssh2').catch(() => {})
+    }, 0)
+    setTimeout(() => {
       try {
         KnownHostsStore.getInstance()
       } catch {
@@ -141,6 +141,8 @@ function createWindow(): BrowserWindow {
         // it'll surface (and can be dealt with) when the user next connects.
       }
     }, 0)
+    setTimeout(() => void import('ssh2').catch(() => {}), 1000)
+    setTimeout(() => void initAutoUpdater(), 5000)
   })
 
   const broadcastWindowState = (): void => {
@@ -158,8 +160,6 @@ function createWindow(): BrowserWindow {
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
-  readyToShowTime = performance.now()
-  win.show()
 
   return win
 }
@@ -252,6 +252,21 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 app.commandLine.appendSwitch('disable-extensions')
 app.commandLine.appendSwitch('disable-default-apps')
 app.commandLine.appendSwitch('process-per-site')
+
+if (!IS_DEV && !app.requestSingleInstanceLock()) {
+  app.exit(0)
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 app.whenReady().then(() => {
   appReadyTime = performance.now()

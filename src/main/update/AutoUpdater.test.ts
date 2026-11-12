@@ -91,6 +91,6 @@ describe('AutoUpdater', () => {
   it('delegates installUpdateNow to electron-updater quitAndInstall', async () => {
     const { installUpdateNow } = await import('./AutoUpdater')
     await installUpdateNow()
-    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledOnce()
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 })
