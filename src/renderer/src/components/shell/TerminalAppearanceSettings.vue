@@ -14,6 +14,7 @@ import {
   resolveTheme
 } from '../../utils/terminalAppearance'
 import { isFontInstalled } from '../../utils/fontInstalled'
+import SettingsRow from './SettingsRow.vue'
 
 const ui = useUiStore()
 const terminalStreams = useTerminalStreamsStore()
@@ -66,9 +67,9 @@ function onLineHeight(value: number | null | undefined): void {
 </script>
 
 <template>
-  <div class="mt-4 flex flex-col gap-3">
+  <div class="flex flex-col gap-3">
     <div class="flex items-center justify-between">
-      <div class="text-sm font-medium text-highlighted">Terminal appearance</div>
+      <h2 class="text-base font-semibold text-highlighted">Terminal</h2>
       <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-rotate-ccw" @click="ui.resetTerminalAppearance()">
         Reset
       </UButton>
@@ -116,44 +117,43 @@ function onLineHeight(value: number | null | undefined): void {
       </label>
     </div>
 
-    <div class="flex flex-col gap-1.5">
-      <label for="terminal-font" class="text-xs text-muted">Font</label>
-      <USelect
-        id="terminal-font"
-        :model-value="ui.terminalFont"
-        :items="fontItems"
-        class="w-full"
-        @update:model-value="(v: string) => ui.setTerminalFont(v)"
-      />
-      <UInput
-        v-if="ui.terminalFont === CUSTOM_FONT_ID"
-        :model-value="ui.terminalFontCustom"
-        aria-label="Custom font name"
-        placeholder="Installed font name, e.g. Hack"
-        class="w-full"
-        @update:model-value="(v: string) => ui.setTerminalFontCustom(v)"
-      />
-      <p v-if="fontHint" class="flex items-start gap-1.5 text-xs text-warning" role="status">
-        <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-3.5 shrink-0" />
-        {{ fontHint }}
-      </p>
-    </div>
-
-    <div class="flex gap-3">
-      <div class="flex flex-1 flex-col gap-1.5">
-        <label for="terminal-font-size" class="text-xs text-muted">Size (px)</label>
+    <div>
+      <SettingsRow label="Font" for-id="terminal-font" stacked>
+        <div class="flex flex-col gap-1.5">
+          <USelect
+            id="terminal-font"
+            :model-value="ui.terminalFont"
+            :items="fontItems"
+            class="w-full"
+            @update:model-value="(v: string) => ui.setTerminalFont(v)"
+          />
+          <UInput
+            v-if="ui.terminalFont === CUSTOM_FONT_ID"
+            :model-value="ui.terminalFontCustom"
+            aria-label="Custom font name"
+            placeholder="Installed font name, e.g. Hack"
+            class="w-full"
+            @update:model-value="(v: string) => ui.setTerminalFontCustom(v)"
+          />
+          <p v-if="fontHint" class="flex items-start gap-1.5 text-xs text-warning" role="status">
+            <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-3.5 shrink-0" />
+            {{ fontHint }}
+          </p>
+        </div>
+      </SettingsRow>
+      <SettingsRow label="Size (px)" for-id="terminal-font-size">
         <UInputNumber
           id="terminal-font-size"
           :model-value="sizeDraft"
           :min="MIN_FONT_SIZE"
           :max="MAX_FONT_SIZE"
           :step="1"
+          class="w-32"
           @update:model-value="onSize"
           @blur="sizeDraft = ui.terminalFontSize"
         />
-      </div>
-      <div class="flex flex-1 flex-col gap-1.5">
-        <label for="terminal-line-height" class="text-xs text-muted">Line height</label>
+      </SettingsRow>
+      <SettingsRow label="Line height" for-id="terminal-line-height">
         <UInputNumber
           id="terminal-line-height"
           :model-value="lineHeightDraft"
@@ -161,20 +161,20 @@ function onLineHeight(value: number | null | undefined): void {
           :max="MAX_LINE_HEIGHT"
           :step="0.05"
           :format-options="{ minimumFractionDigits: 2, maximumFractionDigits: 2 }"
+          class="w-32"
           @update:model-value="onLineHeight"
           @blur="lineHeightDraft = ui.terminalLineHeight"
         />
-      </div>
-    </div>
-    <div class="flex flex-col gap-1.5">
-      <label for="terminal-scrollback" class="text-xs text-muted">Scrollback (lines)</label>
-      <USelect
-        id="terminal-scrollback"
-        :model-value="ui.terminalScrollback"
-        :items="SCROLLBACK_OPTIONS"
-        class="w-32"
-        @update:model-value="(v: number) => { ui.setTerminalScrollback(v); terminalStreams.applyAppearance() }"
-      />
+      </SettingsRow>
+      <SettingsRow label="Scrollback (lines)" for-id="terminal-scrollback">
+        <USelect
+          id="terminal-scrollback"
+          :model-value="ui.terminalScrollback"
+          :items="SCROLLBACK_OPTIONS"
+          class="w-32"
+          @update:model-value="(v: number) => { ui.setTerminalScrollback(v); terminalStreams.applyAppearance() }"
+        />
+      </SettingsRow>
     </div>
   </div>
 </template>

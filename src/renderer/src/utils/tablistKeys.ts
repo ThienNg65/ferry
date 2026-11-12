@@ -1,5 +1,7 @@
-export function onTablistKeydown(event: KeyboardEvent, activate = false): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+export function onTablistKeydown(event: KeyboardEvent, activate = false, vertical = false): void {
+  const prevKey = vertical ? 'ArrowUp' : 'ArrowLeft'
+  const nextKey = vertical ? 'ArrowDown' : 'ArrowRight'
+  if (event.key !== prevKey && event.key !== nextKey) {
     return
   }
   const list = event.currentTarget as HTMLElement
@@ -9,7 +11,7 @@ export function onTablistKeydown(event: KeyboardEvent, activate = false): void {
     return
   }
   event.preventDefault()
-  const step = event.key === 'ArrowRight' ? 1 : -1
+  const step = event.key === nextKey ? 1 : -1
   const next = tabs[(current + step + tabs.length) % tabs.length]
   next.focus()
   if (activate) {
