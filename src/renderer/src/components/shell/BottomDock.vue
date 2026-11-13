@@ -146,8 +146,8 @@ function sessionLabel(sessionId: string): string | null {
 
 <template>
   <div
-    class="flex flex-col overflow-hidden border-t border-default"
-    :class="isFullHeight ? 'min-h-0 flex-1' : 'shrink-0'"
+    class="ferry-dock-shell flex flex-col overflow-hidden border-t border-default"
+    :class="[isFullHeight ? 'min-h-0 flex-1' : 'shrink-0', dragging || isMaximized ? '' : 'ferry-dock-expandable']"
     :style="isFullHeight ? undefined : { height: `${dockHeightPx}px` }"
   >
     <div
@@ -173,6 +173,7 @@ function sessionLabel(sessionId: string): string | null {
       <div class="flex items-center gap-1" role="tablist" aria-label="Dock panels" @keydown="onTablistKeydown($event)">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Transfers"
             role="tab"
             :aria-selected="!collapsed && tab === 'transfers'"
@@ -184,6 +185,7 @@ function sessionLabel(sessionId: string): string | null {
         </UChip>
         <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Activity"
             role="tab"
             :aria-selected="!collapsed && tab === 'activity'"
@@ -195,6 +197,7 @@ function sessionLabel(sessionId: string): string | null {
         </UChip>
         <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Log Tail"
             role="tab"
             :aria-selected="!collapsed && tab === 'tail'"
@@ -205,7 +208,8 @@ function sessionLabel(sessionId: string): string | null {
           />
         </UChip>
         <UButton
-          label="Terminal"
+          class="ferry-dock-tab"
+            label="Terminal"
           role="tab"
           :aria-selected="!collapsed && tab === 'terminal'"
           size="xs"
@@ -214,7 +218,8 @@ function sessionLabel(sessionId: string): string | null {
           @click="onTabClick('terminal')"
         />
         <UButton
-          label="Monitor"
+          class="ferry-dock-tab"
+            label="Monitor"
           role="tab"
           :aria-selected="!collapsed && tab === 'monitor'"
           size="xs"
@@ -224,6 +229,7 @@ function sessionLabel(sessionId: string): string | null {
         />
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Edits"
             role="tab"
             :aria-selected="!collapsed && tab === 'edits'"
@@ -247,11 +253,12 @@ function sessionLabel(sessionId: string): string | null {
     </div>
     <Transition name="dock-fade">
       <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
-        <TransferQueue v-if="tab === 'transfers'" />
+        <Transition name="dock-panel" mode="out-in">
+          <TransferQueue v-if="tab === 'transfers'" />
         <ActivityPanel v-else-if="tab === 'activity'" />
         <MonitorPanel v-else-if="tab === 'monitor'" />
         <OpenEditsPanel v-else-if="tab === 'edits'" />
-        <template v-else-if="tab === 'tail'">
+          <div v-else-if="tab === 'tail'" class="flex min-h-0 flex-1 flex-col">
           <!-- Tail Tabs Header Bar -->
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
           <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
@@ -364,7 +371,8 @@ function sessionLabel(sessionId: string): string | null {
             </p>
           </div>
         </div>
-        </template>
+          </div>
+        </Transition>
       </div>
     </Transition>
     <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">

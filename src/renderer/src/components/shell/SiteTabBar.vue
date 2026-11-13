@@ -27,15 +27,15 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 
 <template>
   <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
-  <div class="flex items-end gap-1 overflow-x-auto bg-muted px-2 pt-1 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
-    <div class="contents" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+  <div class="relative flex items-end gap-1 overflow-x-auto bg-muted px-2 pt-1 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
+    <TransitionGroup name="site-tab" tag="div" class="contents" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
     <div
       v-for="tab in sessions.tabs"
       :key="tab.tabId"
       role="tab"
       :aria-selected="tab.tabId === sessions.activeTabId"
       :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
-      class="group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors"
+      class="ferry-site-tab group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors"
       :class="[
         envBorder(tab.siteId),
         tab.tabId === sessions.activeTabId
@@ -86,7 +86,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         </button>
       </UTooltip>
     </div>
-    </div>
+    </TransitionGroup>
     <UTooltip text="New tab">
       <UButton
         icon="i-lucide-plus"
