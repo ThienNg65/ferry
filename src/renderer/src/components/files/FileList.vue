@@ -167,7 +167,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
 </script>
 
 <template>
-  <div class="@container flex min-h-0 flex-1 flex-col" :style="columnVars">
+  <div class="@container flex min-h-0 flex-1 flex-col overflow-hidden" :style="columnVars">
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       role="row"

@@ -57,11 +57,14 @@ const dragging = ref(false)
 const liveHeight = ref(ui.dockHeight)
 let dragStartY = 0
 let dragStartHeight = 0
+let dragRaf: number | null = null
+let latestPointerY = 0
 
 function onResizeStart(e: PointerEvent): void {
   isMaximized.value = false
   dragging.value = true
   dragStartY = e.clientY
+  latestPointerY = e.clientY
   dragStartHeight = ui.dockHeight
   ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
 }
@@ -70,16 +73,29 @@ function onResizeMove(e: PointerEvent): void {
   if (!dragging.value) {
     return
   }
-  // Dragging the handle up should make the dock taller.
-  liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - e.clientY), window.innerHeight)
+  latestPointerY = e.clientY
+  if (dragRaf !== null) {
+    return
+  }
+  dragRaf = requestAnimationFrame(() => {
+    dragRaf = null
+    if (!dragging.value) return
+    // Dragging the handle up should make the dock taller.
+    liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
+  })
 }
 
 function onResizeEnd(e: PointerEvent): void {
   if (!dragging.value) {
     return
   }
+  if (dragRaf !== null) {
+    cancelAnimationFrame(dragRaf)
+    dragRaf = null
+  }
   dragging.value = false
   ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+  liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
   ui.setDockHeight(liveHeight.value)
   liveHeight.value = ui.dockHeight
 }
@@ -107,27 +123,35 @@ function onWindowResize(): void {
 }
 
 onMounted(() => window.addEventListener('resize', onWindowResize))
-onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
-
-const dockHeightPx = computed(() => {
-  if (collapsed.value) return COLLAPSED_HEIGHT
-  if (isMaximized.value) return Math.min(Math.round(window.innerHeight * 0.85), window.innerHeight - 80)
-  return liveHeight.value
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
+  if (dragRaf !== null) {
+    cancelAnimationFrame(dragRaf)
+    dragRaf = null
+  }
 })
+
+const isFullHeight = computed(() => !collapsed.value && isMaximized.value)
+const dockHeightPx = computed(() => (collapsed.value ? COLLAPSED_HEIGHT : liveHeight.value))
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
+}
+
+function sessionLabel(sessionId: string): string | null {
+  const tab = sessions.tabs.find((t) => t.sessionId === sessionId)
+  return tab?.label ?? tab?.hostLabel ?? null
 }
 </script>
 
 <template>
   <div
-    class="flex shrink-0 flex-col overflow-hidden border-t border-default"
-    :class="dragging ? '' : 'transition-[height] duration-200 ease-in-out'"
-    :style="{ height: `${dockHeightPx}px` }"
+    class="flex flex-col overflow-hidden border-t border-default"
+    :class="isFullHeight ? 'min-h-0 flex-1' : 'shrink-0'"
+    :style="isFullHeight ? undefined : { height: `${dockHeightPx}px` }"
   >
     <div
-      v-if="!collapsed"
+      v-if="!collapsed && !isMaximized"
       role="separator"
       aria-orientation="horizontal"
       aria-label="Resize dock"
@@ -221,13 +245,14 @@ function basename(path: string): string {
         />
       </UTooltip>
     </div>
-    <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
-      <TransferQueue v-if="tab === 'transfers'" />
-      <ActivityPanel v-else-if="tab === 'activity'" />
-      <MonitorPanel v-else-if="tab === 'monitor'" />
-      <OpenEditsPanel v-else-if="tab === 'edits'" />
-      <template v-else-if="tab === 'tail'">
-        <!-- Tail Tabs Header Bar -->
+    <Transition name="dock-fade">
+      <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
+        <TransferQueue v-if="tab === 'transfers'" />
+        <ActivityPanel v-else-if="tab === 'activity'" />
+        <MonitorPanel v-else-if="tab === 'monitor'" />
+        <OpenEditsPanel v-else-if="tab === 'edits'" />
+        <template v-else-if="tab === 'tail'">
+          <!-- Tail Tabs Header Bar -->
         <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
           <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
             <div
@@ -250,15 +275,18 @@ function basename(path: string): string {
               <!-- Live status indicator dot -->
               <span
                 v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-success shrink-0"
-              />
+                class="relative flex size-2 shrink-0"
+              >
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60" />
+                <span class="relative inline-flex size-2 rounded-full bg-success" />
+              </span>
               <span
                 v-else-if="tailStreams.errorMap[openTail.tailId]"
-                class="size-1.5 rounded-full bg-error shrink-0"
+                class="size-2 rounded-full bg-error shrink-0"
               />
               <span
                 v-else
-                class="size-1.5 rounded-full bg-accented shrink-0"
+                class="size-2 rounded-full bg-warning shrink-0"
               />
 
               <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
@@ -268,6 +296,13 @@ function basename(path: string): string {
                   {{ basename(openTail.remotePath) }}
                 </span>
               </UTooltip>
+
+              <span
+                v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
+                class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-dimmed"
+              >
+                {{ sessionLabel(openTail.sessionId) }}
+              </span>
 
               <!-- Unread badge if inactive tab has incoming lines -->
               <span
@@ -329,8 +364,9 @@ function basename(path: string): string {
             </p>
           </div>
         </div>
-      </template>
-    </div>
+        </template>
+      </div>
+    </Transition>
     <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TerminalView v-if="terminalEverShown" :active="terminalActive" />
     </div>

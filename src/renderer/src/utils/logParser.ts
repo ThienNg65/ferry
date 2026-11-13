@@ -1,3 +1,5 @@
+import { splitByKeywords } from './keywordHighlight'
+
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'default'
 
 export interface LogLevelStyles {
@@ -15,7 +17,7 @@ export interface LineMatchChunk {
 }
 
 const TIMESTAMP_REGEX =
-  /^(\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{2}\/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\/\d{4}:\d{2}:\d{2}:\d{2}(?:\s+[+-]\d{4})?|\d{2}:\d{2}:\d{2}(?:\.\d+)?)\]?)\s*/i
+  /^(\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:[.,]\d+)?|\d{2}\/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\/\d{4}:\d{2}:\d{2}:\d{2}(?:\s+[+-]\d{4})?|\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\]?)\s*/i
 
 /**
  * Extracts a leading timestamp from a log line if present.
@@ -34,10 +36,16 @@ export function parseTimestampPrefix(line: string): { timestamp: string | null; 
   }
 }
 
+const LEADING_ERROR_REGEX = /^\[?(?:FATAL|CRITICAL|CRIT|EMERG|EMERGENCY|ERROR|ERR|SEVERE)\]?(?:\b|\]|:)/i
+const LEADING_WARN_REGEX = /^\[?(?:WARN|WARNING|WRN)\]?(?:\b|\]|:)/i
+const LEADING_INFO_REGEX = /^\[?(?:INFO|INF|NOTICE)\]?(?:\b|\]|:)/i
+const LEADING_DEBUG_REGEX = /^\[?(?:DEBUG|DBG|TRACE|TRC|VERBOSE|FINE|FINER|FINEST)\]?(?:\b|\]|:)/i
+
 const ERROR_REGEX =
   /(?:^|\s|\[)(?:FATAL|CRITICAL|CRIT|EMERG|EMERGENCY|ERROR|ERR|SEVERE|EXCEPTION|FAILED|FAIL)(?:\b|\]|:)/i
 const ERROR_STRUCTURED_REGEX = /(?:^|\s)level=["']?(?:fatal|error|err|critical)["']?/i
 const ERROR_JSON_REGEX = /"level"\s*:\s*(?:"(?:fatal|error|err|critical)"|50|60)/i
+const ERROR_JSON_KEY_REGEX = /^\s*\{\s*"error"\s*:/
 const ERROR_STACK_REGEX =
   /^\s*(?:at\s+[\w$./]+|Caused by:|Traceback \(most recent call last\):|File\s+".*",\s+line\s+\d+|[A-Za-z0-9_.]*(?:Error|Exception):)/
 
@@ -46,7 +54,7 @@ const WARN_STRUCTURED_REGEX = /(?:^|\s)level=["']?(?:warn|warning)["']?/i
 const WARN_JSON_REGEX = /"level"\s*:\s*(?:"(?:warn|warning)"|40)/i
 const NOTICE_PREFIX_REGEX = /^⚠\s/
 
-const INFO_REGEX = /(?:^|\s|\[)(?:INFO|INF|INFORMATION|NOTICE|STATUS)(?:\b|\]|:)/i
+const INFO_REGEX = /(?:^|\s|\[)(?:INFO|INF|NOTICE)(?:\b|\]|:)/i
 const INFO_STRUCTURED_REGEX = /(?:^|\s)level=["']?(?:info|notice)["']?/i
 const INFO_JSON_REGEX = /"level"\s*:\s*(?:"(?:info|notice)"|30)/i
 
@@ -56,39 +64,32 @@ const DEBUG_JSON_REGEX = /"level"\s*:\s*(?:"(?:debug|trace|verbose)"|10|20)/i
 
 /**
  * Classifies a raw log line into a LogLevel.
- * Prioritizes errors, then warnings, debug, info, or default.
+ * Authoritative level tokens (structured fields, JSON level, or leading token after timestamp)
+ * take precedence over heuristic keywords in the message body.
  */
 export function parseLogLevel(line: string): LogLevel {
-  if (
-    ERROR_REGEX.test(line) ||
-    ERROR_STRUCTURED_REGEX.test(line) ||
-    ERROR_JSON_REGEX.test(line) ||
-    ERROR_STACK_REGEX.test(line)
-  ) {
-    return 'error'
-  }
-  if (
-    WARN_REGEX.test(line) ||
-    WARN_STRUCTURED_REGEX.test(line) ||
-    WARN_JSON_REGEX.test(line) ||
-    NOTICE_PREFIX_REGEX.test(line)
-  ) {
-    return 'warn'
-  }
-  if (
-    DEBUG_REGEX.test(line) ||
-    DEBUG_STRUCTURED_REGEX.test(line) ||
-    DEBUG_JSON_REGEX.test(line)
-  ) {
-    return 'debug'
-  }
-  if (
-    INFO_REGEX.test(line) ||
-    INFO_STRUCTURED_REGEX.test(line) ||
-    INFO_JSON_REGEX.test(line)
-  ) {
-    return 'info'
-  }
+  // 1. Authoritative structured / JSON level fields
+  if (ERROR_STRUCTURED_REGEX.test(line) || ERROR_JSON_REGEX.test(line)) return 'error'
+  if (WARN_STRUCTURED_REGEX.test(line) || WARN_JSON_REGEX.test(line) || NOTICE_PREFIX_REGEX.test(line)) return 'warn'
+  if (DEBUG_STRUCTURED_REGEX.test(line) || DEBUG_JSON_REGEX.test(line)) return 'debug'
+  if (INFO_STRUCTURED_REGEX.test(line) || INFO_JSON_REGEX.test(line)) return 'info'
+
+  // 2. Authoritative leading level token after optional timestamp (e.g. "2026-11-13 07:05:16,436 WARN ...")
+  const { rest } = parseTimestampPrefix(line)
+  if (LEADING_ERROR_REGEX.test(rest)) return 'error'
+  if (LEADING_WARN_REGEX.test(rest)) return 'warn'
+  if (LEADING_DEBUG_REGEX.test(rest)) return 'debug'
+  if (LEADING_INFO_REGEX.test(rest)) return 'info'
+
+  // 3. JSON error payload without an explicit "level" field
+  if (ERROR_JSON_KEY_REGEX.test(line)) return 'error'
+  if (line.trimStart().startsWith('{')) return 'default'
+
+  // 4. Fallback heuristics for unstructured lines and stack traces
+  if (ERROR_REGEX.test(line) || ERROR_STACK_REGEX.test(line)) return 'error'
+  if (WARN_REGEX.test(line)) return 'warn'
+  if (DEBUG_REGEX.test(line)) return 'debug'
+  if (INFO_REGEX.test(line)) return 'info'
   return 'default'
 }
 
@@ -204,4 +205,163 @@ export function splitLineMatches(
   }
 
   return chunks.length > 0 ? chunks : [{ text: line, isMatch: false, isActiveMatch: false }]
+}
+
+export interface ExtractedJsonPayload {
+  prefix: string
+  data: unknown
+  rawJson: string
+}
+
+/**
+ * Detects and parses a JSON object/array payload at the start of a line or as a trailing suffix.
+ */
+export function extractJsonPayload(line: string): ExtractedJsonPayload | null {
+  const trimmed = line.trimEnd()
+  if (!trimmed) return null
+
+  const braceIdx = trimmed.indexOf('{')
+  const bracketIdx = trimmed.indexOf('[')
+  const candidates: number[] = []
+  if (braceIdx !== -1) candidates.push(braceIdx)
+  // Only treat '[' as JSON array if it's at the start (after optional whitespace) or follows ': ' / '= '
+  if (
+    bracketIdx !== -1 &&
+    (trimmed.slice(0, bracketIdx).trim() === '' || /[:=]\s*$/.test(trimmed.slice(0, bracketIdx)))
+  ) {
+    candidates.push(bracketIdx)
+  }
+  candidates.sort((a, b) => a - b)
+
+  for (const idx of candidates) {
+    const rawJson = trimmed.slice(idx)
+    if (rawJson.length < 2) continue
+    try {
+      const data: unknown = JSON.parse(rawJson)
+      if (data !== null && typeof data === 'object') {
+        return {
+          prefix: trimmed.slice(0, idx).trimEnd(),
+          data,
+          rawJson
+        }
+      }
+    } catch {
+      // Not valid JSON from this index; try next candidate
+    }
+  }
+  return null
+}
+
+export interface LogTextToken {
+  text: string
+  isMatch: boolean
+  isActiveMatch: boolean
+  keywordGroup: number | null
+}
+
+export interface TokenizedLogLine {
+  timestamp: string | null
+  timestampTokens: LogTextToken[]
+  restTokens: LogTextToken[]
+}
+
+interface MatchRange {
+  start: number
+  end: number
+  isActive: boolean
+}
+
+function findMatchRanges(
+  line: string,
+  regex: RegExp | null,
+  lineGlobalMatchStart: number,
+  activeGlobalMatchIndex: number
+): MatchRange[] {
+  if (!regex || !line) return []
+  const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`
+  const re = new RegExp(regex.source, flags)
+  const ranges: MatchRange[] = []
+  let matchCount = 0
+  let match: RegExpExecArray | null
+  while ((match = re.exec(line)) !== null) {
+    if (match[0].length === 0) {
+      re.lastIndex++
+      continue
+    }
+    ranges.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      isActive: lineGlobalMatchStart >= 0 && lineGlobalMatchStart + matchCount === activeGlobalMatchIndex
+    })
+    matchCount++
+  }
+  return ranges
+}
+
+function tokenizeSlice(
+  line: string,
+  sliceStart: number,
+  sliceEnd: number,
+  ranges: MatchRange[],
+  keywordRegex: RegExp | null
+): LogTextToken[] {
+  if (sliceEnd <= sliceStart) return []
+  const tokens: LogTextToken[] = []
+  let cursor = sliceStart
+
+  const pushPlain = (text: string): void => {
+    if (!text) return
+    for (const kw of splitByKeywords(text, keywordRegex)) {
+      tokens.push({
+        text: kw.text,
+        isMatch: false,
+        isActiveMatch: false,
+        keywordGroup: kw.group
+      })
+    }
+  }
+
+  for (const r of ranges) {
+    if (r.end <= cursor) continue
+    if (r.start >= sliceEnd) break
+    const matchStart = Math.max(r.start, cursor)
+    const matchEnd = Math.min(r.end, sliceEnd)
+    if (matchStart > cursor) {
+      pushPlain(line.slice(cursor, matchStart))
+    }
+    tokens.push({
+      text: line.slice(matchStart, matchEnd),
+      isMatch: true,
+      isActiveMatch: r.isActive,
+      keywordGroup: null
+    })
+    cursor = matchEnd
+  }
+
+  if (cursor < sliceEnd) {
+    pushPlain(line.slice(cursor, sliceEnd))
+  }
+  return tokens
+}
+
+/**
+ * Tokenizes a log line into timestamp and body tokens, composing search matches and keyword highlights.
+ */
+export function tokenizeLogLine(
+  line: string,
+  searchRegex: RegExp | null,
+  keywordRegex: RegExp | null,
+  lineGlobalMatchStart = -1,
+  activeGlobalMatchIndex = -1
+): TokenizedLogLine {
+  const { timestamp, rest } = parseTimestampPrefix(line)
+  const ranges = findMatchRanges(line, searchRegex, lineGlobalMatchStart, activeGlobalMatchIndex)
+  const tsEnd = timestamp ? line.indexOf(timestamp) + timestamp.length : 0
+  const restStart = line.length - rest.length
+
+  return {
+    timestamp,
+    timestampTokens: timestamp ? tokenizeSlice(line, 0, tsEnd, ranges, null) : [],
+    restTokens: tokenizeSlice(line, restStart, line.length, ranges, keywordRegex)
+  }
 }

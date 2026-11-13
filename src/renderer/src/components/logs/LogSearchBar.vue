@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
+import { KEYWORD_CLASSES } from '../../utils/keywordHighlight'
 
 const props = defineProps<{
   modelValue: string
@@ -9,6 +10,7 @@ const props = defineProps<{
   isRegex: boolean
   filterOnly?: boolean
   regexError?: string | null
+  keywords?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -16,11 +18,25 @@ const emit = defineEmits<{
   'update:caseSensitive': [value: boolean]
   'update:isRegex': [value: boolean]
   'update:filterOnly': [value: boolean]
+  addKeyword: [keyword: string]
+  removeKeyword: [index: number]
+  clearKeywords: []
   next: []
   prev: []
   close: []
 }>()
 
+const keywordDraft = ref('')
+
+function submitKeyword(): void {
+  const value = keywordDraft.value.trim()
+  if (value) {
+    emit('addKeyword', value)
+  }
+  keywordDraft.value = ''
+}
+
+const rootRef = ref<HTMLDivElement | null>(null)
 const inputRef = ref<{ inputRef?: HTMLInputElement } | HTMLInputElement | null>(null)
 
 function focusInput(): void {
@@ -41,8 +57,13 @@ function clearQuery(): void {
   focusInput()
 }
 
+function contains(target: EventTarget | null): boolean {
+  return target instanceof Node && (rootRef.value?.contains(target) ?? false)
+}
+
 defineExpose({
-  focusInput
+  focusInput,
+  contains
 })
 
 onMounted(() => {
@@ -78,8 +99,10 @@ function onKeydown(e: KeyboardEvent): void {
 
 <template>
   <div
-    class="flex items-center gap-1.5 border-b border-muted bg-muted/80 px-2 py-1 text-xs backdrop-blur-sm transition-all"
+    ref="rootRef"
+    class="flex flex-col gap-1.5 border-b border-muted bg-muted/70 px-2.5 py-1.5 text-xs backdrop-blur-sm"
   >
+    <div class="flex items-center gap-1.5">
     <div class="relative flex min-w-[220px] max-w-sm flex-1 items-center">
       <UInput
         ref="inputRef"
@@ -200,5 +223,47 @@ function onKeydown(e: KeyboardEvent): void {
         @click="emit('close')"
       />
     </UTooltip>
+    </div>
+
+    <!-- Keyword Highlight Chips Row -->
+    <div v-if="keywords" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
+      <span class="inline-flex items-center gap-1 text-2xs font-medium text-muted select-none">
+        <UIcon name="i-lucide-highlighter" class="size-3" />
+        Highlight
+      </span>
+      <span
+        v-for="(keyword, kIdx) in (keywords ?? [])"
+        :key="keyword"
+        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs font-medium"
+        :class="KEYWORD_CLASSES[kIdx % KEYWORD_CLASSES.length]"
+      >
+        {{ keyword }}
+        <button
+          type="button"
+          class="leading-none opacity-70 hover:opacity-100 cursor-pointer"
+          :aria-label="`Remove ${keyword}`"
+          @click="emit('removeKeyword', kIdx)"
+        >
+          ×
+        </button>
+      </span>
+      <UInput
+        v-if="(keywords?.length ?? 0) < KEYWORD_CLASSES.length"
+        v-model="keywordDraft"
+        size="xs"
+        placeholder="Add keyword, press Enter…"
+        class="w-44"
+        @keyup.enter="submitKeyword"
+        @keydown.escape.stop="emit('close')"
+      />
+      <UButton
+        v-if="(keywords?.length ?? 0) > 0"
+        label="Clear"
+        size="xs"
+        color="neutral"
+        variant="ghost"
+        @click="emit('clearKeywords')"
+      />
+    </div>
   </div>
 </template>

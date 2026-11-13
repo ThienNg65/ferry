@@ -27,19 +27,19 @@ FTP/FTPS/SCP.
 
 **Dual-pane file browser** — local and remote side by side, with sort, multi-select, and per-file permissions.
 
-![Dual-pane file browser](public/ferry_overview.jpg)
+![Dual-pane file browser](public/files.jpg)
 
 **One-way folder sync** — mirror a local folder to (or from) a remote one.
 
-![Sync folders dialog](public/sync-folder-function.jpg)
+![Sync folders dialog](public/sync.jpg)
 
 **Built-in resource monitor** — live CPU, memory, disk usage, and a top-processes table for the connected server.
 
-![Resource monitor](public/resource-monitoring-built-in.jpg)
+![Resource monitor](public/monitor.jpg)
 
 | **Flexible connections** — password, private key, or SSH agent auth, with jump-host and proxy support. | **Customizable** — accent color, transfer bandwidth cap, and default proxy settings. |
 |---|---|
-| ![Add site dialog](public/connectivity.jpg) | ![Settings dialog](public/customization.jpg) |
+| ![Add site dialog](public/connection.jpg) | ![Settings dialog](public/settings.jpg) |
 
 ## Installation
 

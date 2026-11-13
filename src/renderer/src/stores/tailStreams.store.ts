@@ -14,6 +14,10 @@ interface TailStartResult {
   tailId: string
 }
 
+export const MAX_TAIL_LINES = 5000
+// Coalesce SSH events into roughly 20 updates/second, including background windows.
+const TAIL_FLUSH_MS = 50
+
 /** Tracks which remote files currently have an open `tail -F` tab in the dock. */
 export const useTailStreamsStore = defineStore('tailStreams', () => {
   const tabs = ref<OpenTail[]>([])
@@ -24,6 +28,10 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
   const endedMap = ref<Record<string, boolean>>({})
   const errorMap = ref<Record<string, string | undefined>>({})
   const unreadMap = ref<Record<string, number>>({})
+  const pinnedLinesMap = ref<Record<string, number[]>>({})
+  const startedAtMap = ref<Record<string, number>>({})
+  const droppedCountMap = ref<Record<string, number>>({})
+  const receivedCountMap = ref<Record<string, number>>({})
 
   // Reset unread count whenever active tab changes
   watch(activeTailId, (newId) => {
@@ -32,17 +40,16 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     }
   })
 
-  // Buffers for batching
+  // Unlike rAF, timers continue draining pending events while the window is hidden.
   const buffers = new Map<string, string[]>()
-  const rafHandles = new Map<string, number>()
-  const MAX_LINES = 5000
+  const flushHandles = new Map<string, ReturnType<typeof setTimeout>>()
 
   function scheduleFlush(tailId: string): void {
-    if (rafHandles.has(tailId)) {
+    if (flushHandles.has(tailId)) {
       return
     }
-    const handle = requestAnimationFrame(() => {
-      rafHandles.delete(tailId)
+    const handle = setTimeout(() => {
+      flushHandles.delete(tailId)
       const buffer = buffers.get(tailId)
       if (!buffer || buffer.length === 0) {
         return
@@ -52,9 +59,27 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
       const next = current.concat(buffer)
       buffers.set(tailId, [])
 
+      const dropped = next.length > MAX_TAIL_LINES ? next.length - MAX_TAIL_LINES : 0
       linesMap.value = {
         ...linesMap.value,
-        [tailId]: next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next
+        [tailId]: dropped > 0 ? next.slice(dropped) : next
+      }
+      receivedCountMap.value = {
+        ...receivedCountMap.value,
+        [tailId]: (receivedCountMap.value[tailId] || 0) + addedCount
+      }
+
+      if (dropped > 0) {
+        droppedCountMap.value = {
+          ...droppedCountMap.value,
+          [tailId]: (droppedCountMap.value[tailId] || 0) + dropped
+        }
+        if (pinnedLinesMap.value[tailId]?.length) {
+          pinnedLinesMap.value = {
+            ...pinnedLinesMap.value,
+            [tailId]: pinnedLinesMap.value[tailId].map((idx) => idx - dropped).filter((idx) => idx >= 0)
+          }
+        }
       }
 
       if (activeTailId.value !== tailId) {
@@ -63,8 +88,8 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
           [tailId]: (unreadMap.value[tailId] || 0) + addedCount
         }
       }
-    })
-    rafHandles.set(tailId, handle)
+    }, TAIL_FLUSH_MS)
+    flushHandles.set(tailId, handle)
   }
 
   // Setup global listeners once
@@ -95,38 +120,19 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     }
   })
 
-  async function open(sessionId: string, remotePath: string): Promise<void> {
-    const existing = tabs.value.find((t) => t.sessionId === sessionId && t.remotePath === remotePath)
-    if (existing) {
-      activeTailId.value = existing.tailId
-      unreadMap.value = { ...unreadMap.value, [existing.tailId]: 0 }
-      return
-    }
-    const result = await invoke<TailStartResult>(INVOKE_CHANNELS.tailStart, { sessionId, remotePath })
-
-    linesMap.value = { ...linesMap.value, [result.tailId]: [] }
-    endedMap.value[result.tailId] = false
-    errorMap.value[result.tailId] = undefined
-    unreadMap.value = { ...unreadMap.value, [result.tailId]: 0 }
-    buffers.set(result.tailId, [])
-
-    tabs.value.push({ tailId: result.tailId, sessionId, remotePath })
-    activeTailId.value = result.tailId
-  }
-
-  function clear(tailId: string): void {
+  function initTailState(tailId: string): void {
     linesMap.value = { ...linesMap.value, [tailId]: [] }
-    buffers.set(tailId, [])
+    endedMap.value[tailId] = false
+    errorMap.value[tailId] = undefined
     unreadMap.value = { ...unreadMap.value, [tailId]: 0 }
+    pinnedLinesMap.value = { ...pinnedLinesMap.value, [tailId]: [] }
+    startedAtMap.value = { ...startedAtMap.value, [tailId]: Date.now() }
+    droppedCountMap.value = { ...droppedCountMap.value, [tailId]: 0 }
+    receivedCountMap.value = { ...receivedCountMap.value, [tailId]: 0 }
+    buffers.set(tailId, [])
   }
 
-  async function close(tailId: string): Promise<void> {
-    await invoke<void>(INVOKE_CHANNELS.tailStop, tailId)
-    tabs.value = tabs.value.filter((t) => t.tailId !== tailId)
-    if (activeTailId.value === tailId) {
-      activeTailId.value = tabs.value[0]?.tailId ?? null
-    }
-
+  function cleanupTailState(tailId: string): void {
     const newLinesMap = { ...linesMap.value }
     delete newLinesMap[tailId]
     linesMap.value = newLinesMap
@@ -138,12 +144,103 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     delete newUnreadMap[tailId]
     unreadMap.value = newUnreadMap
 
+    const newPinnedMap = { ...pinnedLinesMap.value }
+    delete newPinnedMap[tailId]
+    pinnedLinesMap.value = newPinnedMap
+
+    const newStartedMap = { ...startedAtMap.value }
+    delete newStartedMap[tailId]
+    startedAtMap.value = newStartedMap
+
+    const newDroppedMap = { ...droppedCountMap.value }
+    delete newDroppedMap[tailId]
+    droppedCountMap.value = newDroppedMap
+
+    const newReceivedMap = { ...receivedCountMap.value }
+    delete newReceivedMap[tailId]
+    receivedCountMap.value = newReceivedMap
+
     buffers.delete(tailId)
-    const handle = rafHandles.get(tailId)
+    const handle = flushHandles.get(tailId)
     if (handle !== undefined) {
-      cancelAnimationFrame(handle)
-      rafHandles.delete(tailId)
+      clearTimeout(handle)
+      flushHandles.delete(tailId)
     }
+  }
+
+  async function open(sessionId: string, remotePath: string): Promise<void> {
+    const existing = tabs.value.find((t) => t.sessionId === sessionId && t.remotePath === remotePath)
+    if (existing) {
+      activeTailId.value = existing.tailId
+      unreadMap.value = { ...unreadMap.value, [existing.tailId]: 0 }
+      return
+    }
+    const result = await invoke<TailStartResult>(INVOKE_CHANNELS.tailStart, { sessionId, remotePath })
+    initTailState(result.tailId)
+
+    tabs.value.push({ tailId: result.tailId, sessionId, remotePath })
+    activeTailId.value = result.tailId
+  }
+
+  async function restart(tailId: string): Promise<void> {
+    const tab = tabs.value.find((t) => t.tailId === tailId)
+    if (!tab) return
+    if (!endedMap.value[tailId]) {
+      try {
+        await invoke<void>(INVOKE_CHANNELS.tailStop, tailId)
+      } catch {
+        // Stream may have already ended
+      }
+    }
+    const result = await invoke<TailStartResult>(INVOKE_CHANNELS.tailStart, {
+      sessionId: tab.sessionId,
+      remotePath: tab.remotePath
+    })
+    const currentIndex = tabs.value.findIndex((t) => t.tailId === tailId)
+    if (currentIndex === -1) {
+      // Tab was closed while tailStart was in-flight; stop the new stream to avoid leaking it.
+      await invoke<void>(INVOKE_CHANNELS.tailStop, result.tailId).catch(() => {})
+      return
+    }
+    initTailState(result.tailId)
+    const nextTabs = [...tabs.value]
+    nextTabs[currentIndex] = { tailId: result.tailId, sessionId: tab.sessionId, remotePath: tab.remotePath }
+    tabs.value = nextTabs
+    if (activeTailId.value === tailId) {
+      activeTailId.value = result.tailId
+    }
+    cleanupTailState(tailId)
+  }
+
+  function clear(tailId: string): void {
+    linesMap.value = { ...linesMap.value, [tailId]: [] }
+    buffers.set(tailId, [])
+    unreadMap.value = { ...unreadMap.value, [tailId]: 0 }
+    pinnedLinesMap.value = { ...pinnedLinesMap.value, [tailId]: [] }
+    droppedCountMap.value = { ...droppedCountMap.value, [tailId]: 0 }
+    receivedCountMap.value = { ...receivedCountMap.value, [tailId]: 0 }
+  }
+
+  function togglePin(tailId: string, originalIndex: number): void {
+    const current = pinnedLinesMap.value[tailId] || []
+    const exists = current.includes(originalIndex)
+    pinnedLinesMap.value = {
+      ...pinnedLinesMap.value,
+      [tailId]: exists ? current.filter((i) => i !== originalIndex) : [...current, originalIndex]
+    }
+  }
+
+  function clearPins(tailId: string): void {
+    pinnedLinesMap.value = { ...pinnedLinesMap.value, [tailId]: [] }
+  }
+
+  async function close(tailId: string): Promise<void> {
+    await invoke<void>(INVOKE_CHANNELS.tailStop, tailId)
+    tabs.value = tabs.value.filter((t) => t.tailId !== tailId)
+    if (activeTailId.value === tailId) {
+      activeTailId.value = tabs.value[0]?.tailId ?? null
+    }
+    cleanupTailState(tailId)
   }
 
   async function closeAll(): Promise<void> {
@@ -176,8 +273,15 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     endedMap,
     errorMap,
     unreadMap,
+    pinnedLinesMap,
+    startedAtMap,
+    droppedCountMap,
+    receivedCountMap,
     open,
+    restart,
     clear,
+    togglePin,
+    clearPins,
     close,
     closeAll,
     closeOthers,

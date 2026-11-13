@@ -12,6 +12,7 @@ import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
 import { useShortcutsDialog } from './composables/useShortcutsDialog'
+import { useDockState } from './composables/useDockState'
 import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
@@ -61,6 +62,8 @@ watch(
   { immediate: true }
 )
 const { isBusy } = useGlobalActivity()
+const { collapsed: dockCollapsed, isMaximized: dockMaximized } = useDockState()
+const isDockFullHeight = computed(() => !dockCollapsed.value && dockMaximized.value)
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const shortcutsDialog = useShortcutsDialog()
@@ -209,7 +212,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           <SessionManagerView v-if="!isConnected" key="picker" />
         </Transition>
         <div v-if="hasConnectedOnce" v-show="isConnected" class="flex h-full flex-col">
-          <div class="flex min-h-0 flex-1 relative">
+          <div v-show="!isDockFullHeight" class="flex min-h-0 flex-1 relative">
             <FilePane 
               side="local" 
               :style="ui.showLocalPane ? { width: `${effectiveLocalWidth}%` } : undefined"

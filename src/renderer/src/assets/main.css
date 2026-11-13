@@ -87,6 +87,48 @@ body {
   opacity: 0;
 }
 
+/* GPU-composited panel/overlay transitions (transform + opacity only, no layout thrash) */
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+}
+.slide-right-enter-from,
+.slide-right-leave-to {
+  opacity: 0;
+  transform: translateX(24px);
+}
+
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: opacity 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.slide-down-enter-from,
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+}
+
+.dock-fade-enter-active,
+.dock-fade-leave-active {
+  transition: opacity 0.14s ease-out, transform 0.14s ease-out;
+}
+.dock-fade-enter-from,
+.dock-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
