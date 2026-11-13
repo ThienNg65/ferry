@@ -239,9 +239,9 @@ async function copyText(label: string, value: string): Promise<void> {
             </span>
             <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">
               <div
-                class="h-full rounded-full"
+                class="h-full w-full origin-left transform-gpu rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none"
                 :class="barToneClass(ramPercent(sortedProcesses[virtualRow.index].rssBytes))"
-                :style="{ width: `${Math.min(100, ramPercent(sortedProcesses[virtualRow.index].rssBytes))}%` }"
+                :style="{ transform: `scaleX(${ramPercent(sortedProcesses[virtualRow.index].rssBytes) / 100})` }"
               />
             </div>
           </div>
@@ -257,9 +257,9 @@ async function copyText(label: string, value: string): Promise<void> {
             <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">
               <div
                 v-if="sortedProcesses[virtualRow.index].cpuPct !== null"
-                class="h-full rounded-full"
+                class="h-full w-full origin-left transform-gpu rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none"
                 :class="barToneClass(sortedProcesses[virtualRow.index].cpuPct ?? 0)"
-                :style="{ width: `${Math.min(100, sortedProcesses[virtualRow.index].cpuPct ?? 0)}%` }"
+                :style="{ transform: `scaleX(${Math.min(100, Math.max(0, sortedProcesses[virtualRow.index].cpuPct ?? 0)) / 100})` }"
               />
             </div>
           </div>

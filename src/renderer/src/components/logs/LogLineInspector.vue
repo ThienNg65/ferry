@@ -105,7 +105,7 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
 <template>
   <aside
     aria-label="Log line inspector"
-    class="flex w-80 lg:w-96 shrink-0 flex-col border-l border-muted bg-default min-h-0 overflow-hidden"
+    class="absolute inset-y-0 right-0 z-30 flex w-80 max-w-[90%] flex-col overflow-hidden border-l border-muted bg-default shadow-xl lg:w-96"
   >
     <!-- Inspector Header -->
     <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted/30 px-2.5 select-none">

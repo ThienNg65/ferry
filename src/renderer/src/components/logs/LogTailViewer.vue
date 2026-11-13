@@ -8,10 +8,9 @@ import { useDockState } from '../../composables/useDockState'
 import {
   extractJsonPayload,
   getLogLevelStyles,
-  parseLogLevel,
-  tokenizeLogLine,
-  type LogLevel
+  tokenizeLogLine
 } from '../../utils/logParser'
+import { reconcileTailLines, type TailLineCache } from '../../utils/tailLineCache'
 import LogSearchBar from './LogSearchBar.vue'
 import LogLineInspector from './LogLineInspector.vue'
 import { KEYWORD_CLASSES, buildKeywordRegex } from '../../utils/keywordHighlight'
@@ -121,20 +120,19 @@ watch(pinnedCount, (count) => {
   }
 })
 
-// Parsed Lines Cache with Line Numbers
-interface ParsedItem {
-  originalIndex: number
-  text: string
-  level: LogLevel
-}
-
-const parsedLines = computed<ParsedItem[]>(() =>
-  lines.value.map((text, idx) => ({
-    originalIndex: idx,
-    text,
-    level: parseLogLevel(text)
-  }))
-)
+// Reuse parsed entries across updates instead of reclassifying the entire 5,000-line window.
+let parsedCache: TailLineCache | null = null
+let cachedTailId: string | null = null
+const parsedLines = computed(() => {
+  const tailId = props.tailId
+  parsedCache = reconcileTailLines(
+    lines.value,
+    tailStreams.droppedCountMap[tailId] || 0,
+    cachedTailId === tailId ? parsedCache : null
+  )
+  cachedTailId = tailId
+  return parsedCache.items
+})
 
 // Counts per level
 const levelCounts = computed(() => {
@@ -170,7 +168,7 @@ const searchRegex = computed<RegExp | null>(() => {
 })
 
 // Filtered Lines according to selected level, pins, and search filter mode
-const filteredLines = computed<ParsedItem[]>(() => {
+const filteredLines = computed(() => {
   let all = parsedLines.value
   switch (levelFilter.value) {
     case 'error':
@@ -311,8 +309,8 @@ const rowVirtualizer = useVirtualizer(
     count: filteredLines.value.length,
     getScrollElement: () => scrollEl.value,
     estimateSize: () => rowEstimateSize.value,
-    overscan: 25,
-    getItemKey: (index: number) => filteredLines.value[index]?.originalIndex ?? index
+    overscan: 12,
+    getItemKey: (index: number) => filteredLines.value[index]?.sequence ?? index
   }))
 )
 
@@ -324,6 +322,13 @@ function measureRow(el: Element | ComponentPublicInstance | null): void {
     rowVirtualizer.value.measureElement(el)
   }
 }
+
+// Wrapped lines and font changes invalidate TanStack's cached measurements.
+watch([fontSize, wrapLines], async () => {
+  await nextTick()
+  rowVirtualizer.value.measure()
+  if (autoScroll.value) scrollToBottom()
+})
 
 // Selected Line & Inspector
 const selectedFilteredIndex = computed(() =>
@@ -337,6 +342,7 @@ const selectedItem = computed(() =>
 
 function selectLine(originalIndex: number): void {
   selectedOriginalIndex.value = selectedOriginalIndex.value === originalIndex ? null : originalIndex
+  if (selectedOriginalIndex.value !== null) autoScroll.value = false
 }
 
 function stepSelectedLine(delta: -1 | 1): void {
@@ -385,14 +391,22 @@ function toggleAutoScroll(): void {
   }
 }
 
-watch(lines, (nextLines, prevLines) => {
-  const added = nextLines.length - (prevLines?.length || 0)
-  if (autoScroll.value) {
-    void nextTick(scrollToBottom)
-  } else if (added > 0) {
-    newLinesCount.value += added
+// The rolling buffer length stays capped; count actual arrivals rather than growth.
+watch(
+  () => tailStreams.receivedCountMap[props.tailId] || 0,
+  (received, previous = 0) => {
+    const added = received - previous
+    if (added < 0) {
+      newLinesCount.value = 0
+    } else if (added > 0 && autoScroll.value) {
+      void nextTick(() => {
+        if (autoScroll.value) scrollToBottom()
+      })
+    } else if (added > 0) {
+      newLinesCount.value += added
+    }
   }
-})
+)
 
 watch(
   () => tailStreams.droppedCountMap[props.tailId] || 0,
@@ -410,6 +424,7 @@ function onClear(): void {
   tailStreams.clear(props.tailId)
   newLinesCount.value = 0
   selectedOriginalIndex.value = null
+  rowVirtualizer.value.measure()
 }
 
 async function onRestart(): Promise<void> {

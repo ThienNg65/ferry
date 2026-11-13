@@ -15,6 +15,8 @@ interface TailStartResult {
 }
 
 export const MAX_TAIL_LINES = 5000
+// Coalesce SSH events into roughly 20 updates/second, including background windows.
+const TAIL_FLUSH_MS = 50
 
 /** Tracks which remote files currently have an open `tail -F` tab in the dock. */
 export const useTailStreamsStore = defineStore('tailStreams', () => {
@@ -29,6 +31,7 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
   const pinnedLinesMap = ref<Record<string, number[]>>({})
   const startedAtMap = ref<Record<string, number>>({})
   const droppedCountMap = ref<Record<string, number>>({})
+  const receivedCountMap = ref<Record<string, number>>({})
 
   // Reset unread count whenever active tab changes
   watch(activeTailId, (newId) => {
@@ -37,16 +40,16 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     }
   })
 
-  // Buffers for batching
+  // Unlike rAF, timers continue draining pending events while the window is hidden.
   const buffers = new Map<string, string[]>()
-  const rafHandles = new Map<string, number>()
+  const flushHandles = new Map<string, ReturnType<typeof setTimeout>>()
 
   function scheduleFlush(tailId: string): void {
-    if (rafHandles.has(tailId)) {
+    if (flushHandles.has(tailId)) {
       return
     }
-    const handle = requestAnimationFrame(() => {
-      rafHandles.delete(tailId)
+    const handle = setTimeout(() => {
+      flushHandles.delete(tailId)
       const buffer = buffers.get(tailId)
       if (!buffer || buffer.length === 0) {
         return
@@ -60,6 +63,10 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
       linesMap.value = {
         ...linesMap.value,
         [tailId]: dropped > 0 ? next.slice(dropped) : next
+      }
+      receivedCountMap.value = {
+        ...receivedCountMap.value,
+        [tailId]: (receivedCountMap.value[tailId] || 0) + addedCount
       }
 
       if (dropped > 0) {
@@ -81,8 +88,8 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
           [tailId]: (unreadMap.value[tailId] || 0) + addedCount
         }
       }
-    })
-    rafHandles.set(tailId, handle)
+    }, TAIL_FLUSH_MS)
+    flushHandles.set(tailId, handle)
   }
 
   // Setup global listeners once
@@ -121,6 +128,7 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     pinnedLinesMap.value = { ...pinnedLinesMap.value, [tailId]: [] }
     startedAtMap.value = { ...startedAtMap.value, [tailId]: Date.now() }
     droppedCountMap.value = { ...droppedCountMap.value, [tailId]: 0 }
+    receivedCountMap.value = { ...receivedCountMap.value, [tailId]: 0 }
     buffers.set(tailId, [])
   }
 
@@ -148,11 +156,15 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     delete newDroppedMap[tailId]
     droppedCountMap.value = newDroppedMap
 
+    const newReceivedMap = { ...receivedCountMap.value }
+    delete newReceivedMap[tailId]
+    receivedCountMap.value = newReceivedMap
+
     buffers.delete(tailId)
-    const handle = rafHandles.get(tailId)
+    const handle = flushHandles.get(tailId)
     if (handle !== undefined) {
-      cancelAnimationFrame(handle)
-      rafHandles.delete(tailId)
+      clearTimeout(handle)
+      flushHandles.delete(tailId)
     }
   }
 
@@ -206,6 +218,7 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     unreadMap.value = { ...unreadMap.value, [tailId]: 0 }
     pinnedLinesMap.value = { ...pinnedLinesMap.value, [tailId]: [] }
     droppedCountMap.value = { ...droppedCountMap.value, [tailId]: 0 }
+    receivedCountMap.value = { ...receivedCountMap.value, [tailId]: 0 }
   }
 
   function togglePin(tailId: string, originalIndex: number): void {
@@ -263,6 +276,7 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
     pinnedLinesMap,
     startedAtMap,
     droppedCountMap,
+    receivedCountMap,
     open,
     restart,
     clear,

@@ -100,7 +100,7 @@ function onKeydown(e: KeyboardEvent): void {
 <template>
   <div
     ref="rootRef"
-    class="flex flex-col gap-1.5 border-b border-muted bg-muted/70 px-2.5 py-1.5 text-xs backdrop-blur-sm transition-all"
+    class="flex flex-col gap-1.5 border-b border-muted bg-muted/70 px-2.5 py-1.5 text-xs backdrop-blur-sm"
   >
     <div class="flex items-center gap-1.5">
     <div class="relative flex min-w-[220px] max-w-sm flex-1 items-center">

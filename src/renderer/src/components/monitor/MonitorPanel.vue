@@ -119,11 +119,11 @@ const memoryBreakdown = computed(() =>
   monitor.latest ? computeMemoryBreakdown(monitor.latest.memory) : null
 )
 
-const cpuSamples = computed(() => monitor.history.filter((s) => s.cpu !== null))
+const cpuSamples = computed(() => monitor.history.filter((s) => s.cpuPct !== null))
 
 const cpuSparkline = computed(() =>
   buildSparklineGeometry(
-    cpuSamples.value.map((s) => s.cpu?.aggregatePct ?? 0),
+    cpuSamples.value.map((s) => s.cpuPct ?? 0),
     SPARKLINE_W,
     SPARKLINE_H
   )
@@ -407,9 +407,9 @@ const sampleAgeLabel = computed(() => {
               >
                 <div class="h-3.5 w-1.5 overflow-hidden rounded-xs bg-elevated">
                   <div
-                    class="w-full transition-[height,margin] duration-300"
+                    class="h-full w-full origin-bottom transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none"
                     :class="toneBgClass(usageTone(pct))"
-                    :style="{ height: `${Math.max(8, pct)}%`, marginTop: `${100 - Math.max(8, pct)}%` }"
+                    :style="{ transform: `scaleY(${Math.min(1, Math.max(0.08, pct / 100))})` }"
                   />
                 </div>
               </UTooltip>

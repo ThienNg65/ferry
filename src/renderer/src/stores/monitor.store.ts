@@ -19,10 +19,16 @@ function loadIntervalMs(): number {
   }
 }
 
+/** Only lightweight points are needed for CPU history, not past process snapshots. */
+interface MonitorHistoryPoint {
+  timestamp: number
+  cpuPct: number | null
+}
+
 /** Per-session monitor state — mirrors remoteFs.store.ts's bySession keying so each open tab tracks its own server independently. */
 interface PerSessionMonitor {
   latest: MonitorSample | null
-  history: MonitorSample[]
+  history: MonitorHistoryPoint[]
   status: MonitorStatus | 'idle'
   statusMessage: string | null
   paused: boolean
@@ -89,7 +95,7 @@ export const useMonitorStore = defineStore('monitor', {
         bucket.latest = sample
         bucket.status = 'started'
         bucket.statusMessage = null
-        bucket.history.push(sample)
+        bucket.history.push({ timestamp: sample.timestamp, cpuPct: sample.cpu?.aggregatePct ?? null })
         if (bucket.history.length > HISTORY_LENGTH) {
           bucket.history.shift()
         }
