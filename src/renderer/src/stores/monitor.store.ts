@@ -64,7 +64,7 @@ export const useMonitorStore = defineStore('monitor', {
     latest(): MonitorSample | null {
       return this.current.latest
     },
-    history(): MonitorSample[] {
+    history(): MonitorHistoryPoint[] {
       return this.current.history
     },
     status(): MonitorStatus | 'idle' {
