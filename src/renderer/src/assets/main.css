@@ -172,7 +172,10 @@ body {
   opacity: 0;
   transform: translate3d(0, 5px, 0) scale(0.97);
 }
-.site-tab-leave-active {
+/* Keep departing tabs out of the flex layout so TransitionGroup can
+   smoothly translate the remaining tabs into their new positions. The extra
+   specificity must win over .ferry-site-tab { position: relative } below. */
+.ferry-site-tab.site-tab-leave-active {
   position: absolute;
   pointer-events: none;
 }
