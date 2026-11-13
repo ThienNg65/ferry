@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { MAX_TAIL_LINES, useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useNotify } from '../../composables/useNotify'
-import { useDockState } from '../../composables/useDockState'
 import {
   extractJsonPayload,
   getLogLevelStyles,
@@ -13,14 +12,16 @@ import {
 import { reconcileTailLines, type TailLineCache } from '../../utils/tailLineCache'
 import LogSearchBar from './LogSearchBar.vue'
 import LogLineInspector from './LogLineInspector.vue'
+import LogRail from './LogRail.vue'
+import { tailControls } from '../../composables/useTailControls'
 import { KEYWORD_CLASSES, buildKeywordRegex } from '../../utils/keywordHighlight'
 
-const props = defineProps<{ tailId: string }>()
+const props = withDefaults(defineProps<{ tailId: string; active?: boolean }>(), { active: true })
+const isActive = computed(() => props.active)
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
 const notify = useNotify()
-const { isMaximized, toggleMaximize } = useDockState()
 
 const lines = computed(() => tailStreams.linesMap[props.tailId] || [])
 const ended = computed(() => tailStreams.endedMap[props.tailId] || false)
@@ -35,6 +36,7 @@ const sessionLabel = computed(() => {
 const bufferPct = computed(() => Math.min(100, Math.round((lines.value.length / MAX_TAIL_LINES) * 100)))
 
 // UI & Controls State
+const rootEl = ref<HTMLDivElement | null>(null)
 const scrollEl = ref<HTMLDivElement | null>(null)
 const searchBarRef = ref<InstanceType<typeof LogSearchBar> | null>(null)
 const autoScroll = ref(true)
@@ -51,10 +53,9 @@ type TailFontSize = 'sm' | 'md' | 'lg'
 const fontSize = ref<TailFontSize>((localStorage.getItem(FONT_SIZE_KEY) as TailFontSize) || 'md')
 const wrapLines = ref(localStorage.getItem(WRAP_LINES_KEY) === 'true')
 
-function cycleFontSize(): void {
-  const next: Record<TailFontSize, TailFontSize> = { sm: 'md', md: 'lg', lg: 'sm' }
-  fontSize.value = next[fontSize.value]
-  localStorage.setItem(FONT_SIZE_KEY, fontSize.value)
+function setFontSize(size: TailFontSize): void {
+  fontSize.value = size
+  localStorage.setItem(FONT_SIZE_KEY, size)
 }
 
 function toggleWrap(): void {
@@ -85,7 +86,6 @@ const rowEstimateSize = computed(() => {
 })
 
 // Search & Keyword Highlight State
-const searchOpen = ref(false)
 const searchQuery = ref('')
 const caseSensitive = ref(false)
 const isRegex = ref(false)
@@ -125,6 +125,8 @@ let parsedCache: TailLineCache | null = null
 let cachedTailId: string | null = null
 const parsedLines = computed(() => {
   const tailId = props.tailId
+  // Hidden tabs skip re-parsing (and don't track the line buffer); they catch up on activation.
+  if (!isActive.value && parsedCache && cachedTailId === tailId) return parsedCache.items
   parsedCache = reconcileTailLines(
     lines.value,
     tailStreams.droppedCountMap[tailId] || 0,
@@ -291,17 +293,33 @@ function prevMatch(): void {
   jumpToActiveMatch()
 }
 
-function toggleSearch(): void {
-  searchOpen.value = !searchOpen.value
-  if (searchOpen.value) {
-    void nextTick(() => searchBarRef.value?.focusInput())
-  }
-}
-
 function closeSearch(): void {
-  searchOpen.value = false
+  if (searchQuery.value) {
+    searchQuery.value = ''
+    return
+  }
   scrollEl.value?.focus()
 }
+
+// Pulse rail: lit cells for search matches, plus the visible window as a thumb.
+const matchedIndices = computed(() => new Set(searchIndex.value.matches.map((m) => m.filteredIndex)))
+const thumb = ref({ top: 0, height: 1 })
+
+function updateThumb(): void {
+  const el = scrollEl.value
+  if (!el || el.scrollHeight === 0) return
+  thumb.value = { top: el.scrollTop / el.scrollHeight, height: el.clientHeight / el.scrollHeight }
+}
+
+function jumpToIndex(index: number): void {
+  autoScroll.value = false
+  rowVirtualizer.value.scrollToIndex(index, { align: 'center' })
+}
+
+// Lines per second, sampled once a second from the arrival counter.
+const linesPerSec = ref(0)
+let rateTimer: ReturnType<typeof setInterval> | undefined
+let lastReceived = 0
 
 // TanStack Virtualizer for 60fps rendering
 const rowVirtualizer = useVirtualizer(
@@ -363,6 +381,7 @@ function isNearBottom(): boolean {
 }
 
 function onScroll(): void {
+  updateThumb()
   const near = isNearBottom()
   if (near) {
     autoScroll.value = true
@@ -500,11 +519,6 @@ function onViewerKeydown(e: KeyboardEvent): void {
       selectedOriginalIndex.value = null
       return
     }
-    if (searchOpen.value) {
-      e.preventDefault()
-      closeSearch()
-      return
-    }
   }
   if (e.target instanceof HTMLElement && e.target.closest('button, input, textarea')) {
     return
@@ -531,6 +545,8 @@ function onViewerKeydown(e: KeyboardEvent): void {
 }
 
 function onWindowKeydown(e: KeyboardEvent): void {
+  // Inactive tail tabs stay mounted (v-show); only the visible viewer may claim Ctrl+F.
+  if (!rootEl.value || rootEl.value.getClientRects().length === 0) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
     const inSearchBar = searchBarRef.value?.contains(e.target) ?? false
     if (
@@ -548,153 +564,113 @@ function onWindowKeydown(e: KeyboardEvent): void {
       (el && (el.contains(document.activeElement) || document.activeElement === document.body))
     ) {
       e.preventDefault()
-      searchOpen.value = true
-      void nextTick(() => searchBarRef.value?.focusInput())
+      searchBarRef.value?.focusInput()
     }
   }
 }
 
+watch(totalSize, () => void nextTick(updateThumb))
+
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown)
-  void nextTick(scrollToBottom)
+  void nextTick(() => {
+    scrollToBottom()
+    updateThumb()
+  })
+  lastReceived = tailStreams.receivedCountMap[props.tailId] || 0
+  rateTimer = setInterval(() => {
+    const received = tailStreams.receivedCountMap[props.tailId] || 0
+    linesPerSec.value = Math.max(0, received - lastReceived)
+    lastReceived = received
+  }, 1000)
 })
+
+function releaseControls(): void {
+  if (tailControls.value?.tailId === props.tailId) tailControls.value = null
+}
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  clearInterval(rateTimer)
+  releaseControls()
+})
+
+// Overflow menu: rarely used actions live here instead of a row of icon buttons.
+const menuItems = computed(() => [
+  (['sm', 'md', 'lg'] as const).map((size) => ({
+    label: `Text size: ${{ sm: 'small', md: 'medium', lg: 'large' }[size]}`,
+    icon: fontSize.value === size ? 'i-lucide-check' : 'i-lucide-type',
+    onSelect: () => setFontSize(size)
+  })),
+  [
+    {
+      label: wrapLines.value ? 'Turn off line wrap' : 'Wrap long lines',
+      icon: 'i-lucide-wrap-text',
+      onSelect: toggleWrap
+    },
+    { label: 'Copy visible lines', icon: 'i-lucide-copy', onSelect: onCopyAll },
+    { label: 'Copy file path', icon: 'i-lucide-link', onSelect: onCopyPath },
+    { label: 'Export to file', icon: 'i-lucide-download', onSelect: onExport }
+  ],
+  [{ label: 'Clear log view', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: onClear }]
+])
+
+// Only the visible viewer owns the dock's control strip.
+watchEffect(() => {
+  if (!isActive.value) {
+    releaseControls()
+    return
+  }
+  tailControls.value = {
+    tailId: props.tailId,
+    ended: ended.value,
+    error: error.value,
+    autoScroll: autoScroll.value,
+    newLinesCount: newLinesCount.value,
+    linesPerSec: linesPerSec.value,
+    visibleCount: filteredLines.value.length,
+    totalCount: lines.value.length,
+    bufferPct: bufferPct.value,
+    maxLines: MAX_TAIL_LINES,
+    restarting: restarting.value,
+    menuItems: menuItems.value,
+    toggleAutoScroll,
+    restart: () => void onRestart()
+  }
 })
 </script>
 
 <template>
-  <div class="relative flex h-full flex-col overflow-hidden bg-default">
-    <!-- Tier 1: Stream Context & Health Strip -->
-    <div
-      v-if="currentTab"
-      class="flex h-7 shrink-0 items-center justify-between gap-2 border-b border-muted bg-muted/20 px-2.5 text-2xs select-none"
+  <div ref="rootEl" class="relative flex h-full flex-col overflow-hidden bg-default">
+    <!-- Row 2: find + level filters, always visible -->
+    <LogSearchBar
+      ref="searchBarRef"
+      v-model="searchQuery"
+      v-model:case-sensitive="caseSensitive"
+      v-model:is-regex="isRegex"
+      v-model:filter-only="filterOnly"
+      :match-count="searchIndex.matchCount"
+      :current-match="searchIndex.matchCount > 0 ? activeMatchIndex + 1 : 0"
+      :regex-error="regexError"
+      :keywords="keywords"
+      @add-keyword="addKeyword"
+      @remove-keyword="removeKeyword"
+      @clear-keywords="clearKeywords"
+      @next="nextMatch"
+      @prev="prevMatch"
+      @close="closeSearch"
     >
-      <div class="flex items-center gap-2 min-w-0">
-        <span
-          v-if="sessionLabel"
-          class="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-default shrink-0"
-        >
-          <UIcon name="i-lucide-server" class="size-2.5 text-muted" />
-          {{ sessionLabel }}
-        </span>
-        <UTooltip :text="`Click to copy: ${currentTab.remotePath}`">
-          <button
-            type="button"
-            class="flex items-center gap-1 min-w-0 truncate font-mono text-muted hover:text-default transition-colors cursor-pointer"
-            @click="onCopyPath"
-          >
-            <span class="truncate">{{ currentTab.remotePath }}</span>
-            <UIcon name="i-lucide-copy" class="size-2.5 shrink-0 opacity-60" />
-          </button>
-        </UTooltip>
-      </div>
-
-      <div class="flex items-center gap-2.5 shrink-0">
-        <UTooltip :text="`Rolling buffer: ${lines.length.toLocaleString()} / ${MAX_TAIL_LINES.toLocaleString()} lines (${bufferPct}%)`">
-          <div class="flex items-center gap-1.5 font-mono text-[10px] text-muted tabular-nums">
-            <span>{{ lines.length.toLocaleString() }} / {{ MAX_TAIL_LINES.toLocaleString() }}</span>
-            <div class="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
-              <div
-                class="h-full rounded-full transition-all duration-300"
-                :class="bufferPct >= 90 ? 'bg-warning' : 'bg-primary/70'"
-                :style="{ width: `${bufferPct}%` }"
-              />
-            </div>
-          </div>
-        </UTooltip>
-
-        <UButton
-          v-if="ended || error"
-          label="Restart"
-          icon="i-lucide-rotate-cw"
-          size="xs"
-          color="primary"
-          variant="soft"
-          :loading="restarting"
-          @click="onRestart"
-        />
-      </div>
-    </div>
-
-    <!-- Tier 2: Action & Filter Toolbar -->
-    <div
-      class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted/40 px-2 text-xs select-none"
-    >
-      <!-- Left: Status Indicator, Line Count, and Filter Pills -->
-      <div class="flex items-center gap-2 overflow-x-auto scrollbar-none py-1">
-        <UTooltip
-          :text="
-            !ended && !error
-              ? autoScroll
-                ? 'Click to pause auto-scroll (Space)'
-                : 'Click to resume live following (Space)'
-              : undefined
-          "
-        >
-          <button
-            type="button"
-            class="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-2xs transition-all cursor-pointer border select-none"
-            :class="
-              !ended && !error
-                ? autoScroll
-                  ? 'bg-success/10 border-success/30 text-success font-semibold hover:bg-success/15'
-                  : 'bg-warning/10 border-warning/30 text-warning font-semibold hover:bg-warning/20'
-                : error
-                  ? 'bg-error/10 border-error/30 text-error font-semibold'
-                  : 'bg-muted border-default text-muted'
-            "
-            @click="toggleAutoScroll"
-          >
-            <span v-if="!ended && !error && autoScroll" class="relative flex size-2">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
-              <span class="relative inline-flex rounded-full size-2 bg-success" />
-            </span>
-            <span v-else-if="!ended && !error && !autoScroll" class="inline-flex rounded-full size-2 bg-warning" />
-            <span v-else-if="error" class="inline-flex rounded-full size-2 bg-error" />
-            <span v-else class="inline-flex rounded-full size-2 bg-accented" />
-
-            <span class="uppercase tracking-wider text-[10px]">
-              {{
-                !ended && !error
-                  ? autoScroll
-                    ? 'Live'
-                    : newLinesCount > 0
-                      ? `Paused (+${newLinesCount})`
-                      : 'Paused'
-                  : error
-                    ? 'Error'
-                    : 'Ended'
-              }}
-            </span>
-          </button>
-        </UTooltip>
-
-        <div class="h-3.5 w-px bg-muted" />
-
-        <!-- Line Count Summary -->
-        <span class="font-mono text-2xs text-muted whitespace-nowrap tabular-nums">
-          <span class="font-semibold text-default">{{ filteredLines.length.toLocaleString() }}</span>
-          <span v-if="filteredLines.length !== lines.length" class="text-dimmed">
-            / {{ lines.length.toLocaleString() }}
-          </span>
-          lines
-        </span>
-
-        <div class="h-3.5 w-px bg-muted" />
-
-        <!-- Log Level Filters -->
-        <div class="flex items-center rounded-md bg-muted/60 p-0.5 text-xs">
+      <div class="ml-auto flex shrink-0 items-center gap-2 overflow-x-auto scrollbar-none">
+        <div class="flex items-center rounded-md bg-muted/60 p-0.5">
           <button
             v-for="opt in filterOptions"
             :key="opt.id"
             type="button"
-            class="rounded px-2 py-0.5 text-2xs font-mono transition-colors flex items-center gap-1 cursor-pointer"
+            class="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 font-mono text-2xs transition-colors"
             :class="
               levelFilter === opt.id
-                ? 'bg-default font-semibold text-default shadow-xs border border-default/30'
-                : 'text-muted hover:text-default hover:bg-muted/40'
+                ? 'border border-default/30 bg-default font-semibold text-default shadow-xs'
+                : 'text-muted hover:bg-muted/40 hover:text-default'
             "
             @click="levelFilter = opt.id"
           >
@@ -715,150 +691,31 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- Pinned Lines Filter Pill -->
         <button
           v-if="pinnedCount > 0"
           type="button"
-          class="flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-2xs border transition-colors cursor-pointer"
+          class="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-2xs transition-colors"
           :class="
             pinnedOnly
-              ? 'bg-primary/15 border-primary/40 text-primary font-semibold'
-              : 'bg-muted/50 border-muted text-muted hover:text-default'
+              ? 'border-primary/40 bg-primary/15 font-semibold text-primary'
+              : 'border-muted bg-muted/50 text-muted hover:text-default'
           "
           @click="pinnedOnly = !pinnedOnly"
         >
           <UIcon name="i-lucide-bookmark" class="size-3" />
-          <span>Pinned</span>
           <span class="font-bold tabular-nums">{{ pinnedCount }}</span>
         </button>
       </div>
-
-      <!-- Right: Grouped Action Buttons -->
-      <div class="flex items-center gap-1 shrink-0 ml-2">
-        <UTooltip :text="`Font size: ${fontSize.toUpperCase()} (Click to cycle)`">
-          <UButton
-            :aria-label="`Font size: ${fontSize.toUpperCase()} (Click to cycle)`"
-            icon="i-lucide-type"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="cycleFontSize"
-          />
-        </UTooltip>
-
-        <UTooltip :text="wrapLines ? 'Disable line wrap' : 'Wrap long lines'">
-          <UButton
-            :aria-label="wrapLines ? 'Disable line wrap' : 'Wrap long lines'"
-            icon="i-lucide-wrap-text"
-            size="xs"
-            :color="wrapLines ? 'primary' : 'neutral'"
-            :variant="wrapLines ? 'soft' : 'ghost'"
-            @click="toggleWrap"
-          />
-        </UTooltip>
-
-        <UTooltip :text="autoScroll ? 'Following output (auto-scroll)' : 'Jump to latest (End)'">
-          <UButton
-            :aria-label="autoScroll ? 'Following output (auto-scroll)' : 'Jump to latest (End)'"
-            icon="i-lucide-arrow-down-to-line"
-            size="xs"
-            :color="autoScroll ? 'primary' : 'neutral'"
-            :variant="autoScroll ? 'soft' : 'ghost'"
-            @click="scrollToBottom"
-          />
-        </UTooltip>
-
-        <div class="h-3.5 w-px bg-muted mx-0.5" />
-
-        <UTooltip text="Find & Highlight (Ctrl+F)">
-          <UButton
-            aria-label="Find & Highlight (Ctrl+F)"
-            icon="i-lucide-search"
-            size="xs"
-            :color="searchOpen || keywords.length > 0 ? 'primary' : 'neutral'"
-            :variant="searchOpen || keywords.length > 0 ? 'soft' : 'ghost'"
-            @click="toggleSearch"
-          />
-        </UTooltip>
-
-        <UTooltip text="Copy visible lines">
-          <UButton
-            aria-label="Copy visible lines"
-            icon="i-lucide-copy"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="onCopyAll"
-          />
-        </UTooltip>
-
-        <UTooltip text="Export log to file">
-          <UButton
-            aria-label="Export log to file"
-            icon="i-lucide-download"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="onExport"
-          />
-        </UTooltip>
-
-        <UTooltip text="Clear log view">
-          <UButton
-            aria-label="Clear log view"
-            icon="i-lucide-trash-2"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            @click="onClear"
-          />
-        </UTooltip>
-
-        <div class="h-3.5 w-px bg-muted mx-0.5" />
-
-        <UTooltip :text="isMaximized ? 'Restore dock height' : 'Maximize log viewer'">
-          <UButton
-            :aria-label="isMaximized ? 'Restore dock height' : 'Maximize log viewer'"
-            :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
-            size="xs"
-            :color="isMaximized ? 'primary' : 'neutral'"
-            :variant="isMaximized ? 'soft' : 'ghost'"
-            @click="toggleMaximize"
-          />
-        </UTooltip>
-      </div>
-    </div>
-
-    <!-- Collapsible Unified Search & Keyword Highlight Bar -->
-    <Transition name="slide-down">
-      <LogSearchBar
-        v-if="searchOpen"
-        ref="searchBarRef"
-        v-model="searchQuery"
-        v-model:case-sensitive="caseSensitive"
-        v-model:is-regex="isRegex"
-        v-model:filter-only="filterOnly"
-        :match-count="searchIndex.matchCount"
-        :current-match="searchIndex.matchCount > 0 ? activeMatchIndex + 1 : 0"
-        :regex-error="regexError"
-        :keywords="keywords"
-        @add-keyword="addKeyword"
-        @remove-keyword="removeKeyword"
-        @clear-keywords="clearKeywords"
-        @next="nextMatch"
-        @prev="prevMatch"
-        @close="closeSearch"
-      />
-    </Transition>
+    </LogSearchBar>
 
     <!-- Tier 3: Main Split Body (Virtualized Stream + Slide-over Inspector) -->
     <div class="relative flex min-h-0 flex-1 overflow-hidden">
-      <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div class="relative flex min-h-0 flex-1 overflow-hidden">
         <!-- Virtualized Log Line Viewer -->
         <div
           ref="scrollEl"
           tabindex="0"
-          class="relative min-h-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          class="relative min-h-0 min-w-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
           :class="fontSizeClass"
           @scroll="onScroll"
           @keydown="onViewerKeydown"
@@ -916,8 +773,14 @@ onUnmounted(() => {
               <!-- Log Level Badge -->
               <span
                 v-if="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText"
-                class="inline-block rounded px-1 py-0.2 mr-1.5 text-2xs font-bold leading-none align-middle select-none"
-                :class="getLogLevelStyles(filteredLines[virtualRow.index].level).badgeClass"
+                class="rounded px-1 py-0.2 mr-1.5 text-2xs font-bold leading-none align-middle select-none"
+                :class="[
+                  getLogLevelStyles(filteredLines[virtualRow.index].level).badgeClass,
+                  // Only errors and warnings carry a permanent badge; info/debug reveal it on hover.
+                  ['error', 'warn'].includes(filteredLines[virtualRow.index].level)
+                    ? 'inline-block'
+                    : 'hidden group-hover:inline-block'
+                ]"
               >
                 {{ getLogLevelStyles(filteredLines[virtualRow.index].level).badgeText }}
               </span>
@@ -1026,6 +889,15 @@ onUnmounted(() => {
           </p>
         </div>
         </div>
+
+        <LogRail
+          :items="filteredLines"
+          :matched-indices="matchedIndices"
+          :pinned="pinnedSet"
+          :thumb-top="thumb.top"
+          :thumb-height="thumb.height"
+          @jump="jumpToIndex"
+        />
 
         <!-- Floating Jump to Latest Button -->
         <Transition name="slide-up">

@@ -11,6 +11,7 @@ import { MIN_DOCK_HEIGHT, clampDockHeight } from '../../stores/ui.store'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
+import LogTailControls from '../logs/LogTailControls.vue'
 import TerminalView from '../terminal/TerminalView.vue'
 import ActivityPanel from '../activity/ActivityPanel.vue'
 import MonitorPanel from '../monitor/MonitorPanel.vue'
@@ -25,7 +26,7 @@ const editSessions = useEditSessionsStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
-const { collapsed, tab, terminalEverShown, isMaximized, openDock } = useDockState()
+const { collapsed, tab, terminalEverShown, isMaximized, openDock, toggleMaximize } = useDockState()
 const terminalActive = computed(() => !collapsed.value && tab.value === 'terminal')
 
 // The dock starts collapsed; a newly queued transfer opens it on Transfers.
@@ -120,6 +121,7 @@ function resetHeight(): void {
 function onWindowResize(): void {
   ui.setDockHeight(ui.dockHeight)
   liveHeight.value = ui.dockHeight
+  if (isMaximized.value) measureMax()
 }
 
 onMounted(() => window.addEventListener('resize', onWindowResize))
@@ -131,8 +133,40 @@ onBeforeUnmount(() => {
   }
 })
 
-const isFullHeight = computed(() => !collapsed.value && isMaximized.value)
-const dockHeightPx = computed(() => (collapsed.value ? COLLAPSED_HEIGHT : liveHeight.value))
+// Maximize animates to a measured pixel height (everything the dock and its growing siblings share),
+// so it eases like a normal resize instead of snapping to `flex: 1`.
+const dockEl = ref<HTMLElement | null>(null)
+const maxPx = ref(0)
+
+function measureMax(): void {
+  const el = dockEl.value
+  const parent = el?.parentElement
+  if (!el || !parent) return
+  let available = el.offsetHeight
+  for (const child of Array.from(parent.children)) {
+    if (child !== el && Number.parseFloat(getComputedStyle(child).flexGrow) > 0) {
+      available += (child as HTMLElement).offsetHeight
+    }
+  }
+  maxPx.value = available
+}
+
+watch(isMaximized, (on) => {
+  if (on) measureMax()
+}, { flush: 'pre' })
+
+function onDockKeydown(e: KeyboardEvent): void {
+  // Esc restores a maximized dock; the terminal keeps Esc for the shell.
+  if (e.key !== 'Escape' || e.defaultPrevented || !isMaximized.value || tab.value === 'terminal') return
+  if (e.target instanceof HTMLElement && e.target.closest('input, textarea')) return
+  isMaximized.value = false
+}
+
+const dockHeightPx = computed(() => {
+  if (collapsed.value) return COLLAPSED_HEIGHT
+  if (isMaximized.value) return maxPx.value || Math.round(window.innerHeight * 0.8)
+  return liveHeight.value
+})
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -146,9 +180,11 @@ function sessionLabel(sessionId: string): string | null {
 
 <template>
   <div
-    class="ferry-dock-shell flex flex-col overflow-hidden border-t border-default"
-    :class="[isFullHeight ? 'min-h-0 flex-1' : 'shrink-0', dragging || isMaximized ? '' : 'ferry-dock-expandable']"
-    :style="isFullHeight ? undefined : { height: `${dockHeightPx}px` }"
+    ref="dockEl"
+    class="ferry-dock-shell flex shrink-0 flex-col overflow-hidden border-t border-default"
+    :class="dragging ? '' : 'ferry-dock-expandable'"
+    :style="{ height: `${dockHeightPx}px` }"
+    @keydown="onDockKeydown"
   >
     <div
       v-if="!collapsed && !isMaximized"
@@ -240,16 +276,29 @@ function sessionLabel(sessionId: string): string | null {
           />
         </UChip>
       </div>
-      <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
-        <UButton
-          :icon="collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          :aria-label="collapsed ? 'Expand dock' : 'Collapse dock'"
-          @click="collapsed = !collapsed"
-        />
-      </UTooltip>
+      <div class="flex items-center gap-0.5">
+        <UTooltip :text="isMaximized ? 'Restore dock size (Esc)' : 'Maximize dock'">
+          <UButton
+            :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
+            :color="isMaximized ? 'primary' : 'neutral'"
+            :variant="isMaximized ? 'soft' : 'ghost'"
+            size="xs"
+            :aria-label="isMaximized ? 'Restore dock size' : 'Maximize dock'"
+            :aria-pressed="isMaximized"
+            @click="toggleMaximize"
+          />
+        </UTooltip>
+        <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
+          <UButton
+            :icon="collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :aria-label="collapsed ? 'Expand dock' : 'Collapse dock'"
+            @click="collapsed = !collapsed"
+          />
+        </UTooltip>
+      </div>
     </div>
     <!-- Terminal uses v-show; removing the other flex pane immediately avoids
          briefly splitting the available height while xterm is being fitted. -->
@@ -333,6 +382,9 @@ function sessionLabel(sessionId: string): string | null {
               </div>
             </div>
 
+            <!-- Status and actions of the visible tail, published by LogTailViewer. -->
+            <LogTailControls class="pl-2" />
+
             <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2 flex items-center gap-1">
               <UTooltip text="Close other tabs">
                 <UButton
@@ -358,12 +410,15 @@ function sessionLabel(sessionId: string): string | null {
           </div>
 
           <div class="min-h-0 flex-1">
+            <!-- All viewers stay mounted so scroll, filters and search survive switching tail tabs. -->
             <LogTailViewer
-              v-if="tailStreams.activeTailId"
-              :key="tailStreams.activeTailId"
-              :tail-id="tailStreams.activeTailId"
+              v-for="openTail in tailStreams.tabs"
+              v-show="tailStreams.activeTailId === openTail.tailId"
+              :key="openTail.tailId"
+              :tail-id="openTail.tailId"
+              :active="tailStreams.activeTailId === openTail.tailId"
             />
-            <div v-else class="flex h-full flex-col items-center justify-center gap-2 px-3 py-6 text-center select-none">
+            <div v-if="!tailStreams.activeTailId" class="flex h-full flex-col items-center justify-center gap-2 px-3 py-6 text-center select-none">
               <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/20">
                 <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
               </div>

@@ -212,7 +212,8 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           <SessionManagerView v-if="!isConnected" key="picker" />
         </Transition>
         <div v-if="hasConnectedOnce" v-show="isConnected" class="flex h-full flex-col">
-          <div v-show="!isDockFullHeight" class="flex min-h-0 flex-1 relative">
+          <!-- Not v-show: the dock animates to full height and squeezes this area, so it must stay laid out. -->
+          <div :inert="isDockFullHeight" class="flex min-h-0 flex-1 relative">
             <FilePane 
               side="local" 
               :style="ui.showLocalPane ? { width: `${effectiveLocalWidth}%` } : undefined"

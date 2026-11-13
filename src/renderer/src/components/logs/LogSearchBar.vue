@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { KEYWORD_CLASSES } from '../../utils/keywordHighlight'
 
 const props = defineProps<{
@@ -66,9 +66,8 @@ defineExpose({
   contains
 })
 
-onMounted(() => {
-  focusInput()
-})
+// The bar is always visible now; the keyword row only shows once opened or populated.
+const highlightOpen = ref(false)
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Enter') {
@@ -210,23 +209,23 @@ function onKeydown(e: KeyboardEvent): void {
       />
     </UTooltip>
 
-    <div class="h-4 w-px bg-muted mx-0.5" />
-
-    <!-- Close button -->
-    <UTooltip text="Close (Esc)">
+    <UTooltip text="Highlight keywords">
       <UButton
-        aria-label="Close (Esc)"
-        icon="i-lucide-x"
-        color="neutral"
-        variant="ghost"
+        aria-label="Highlight keywords"
+        icon="i-lucide-highlighter"
         size="xs"
-        @click="emit('close')"
+        :color="highlightOpen || (keywords?.length ?? 0) > 0 ? 'primary' : 'neutral'"
+        :variant="highlightOpen || (keywords?.length ?? 0) > 0 ? 'soft' : 'ghost'"
+        class="px-1.5"
+        @click="highlightOpen = !highlightOpen"
       />
     </UTooltip>
+
+    <slot />
     </div>
 
     <!-- Keyword Highlight Chips Row -->
-    <div v-if="keywords" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
+    <div v-if="highlightOpen || (keywords?.length ?? 0) > 0" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
       <span class="inline-flex items-center gap-1 text-2xs font-medium text-muted select-none">
         <UIcon name="i-lucide-highlighter" class="size-3" />
         Highlight
