@@ -142,13 +142,13 @@ function measureMax(): void {
   const el = dockEl.value
   const parent = el?.parentElement
   if (!el || !parent) return
-  let available = el.offsetHeight
+  let available = parent.clientHeight
   for (const child of Array.from(parent.children)) {
-    if (child !== el && Number.parseFloat(getComputedStyle(child).flexGrow) > 0) {
-      available += (child as HTMLElement).offsetHeight
+    if (child !== el && !(Number.parseFloat(getComputedStyle(child).flexGrow) > 0)) {
+      available -= (child as HTMLElement).offsetHeight
     }
   }
-  maxPx.value = available
+  maxPx.value = Math.max(0, available)
 }
 
 watch(isMaximized, (on) => {
