@@ -18,6 +18,11 @@ import {
   type IpcResult
 } from '../../../shared/contract'
 
+declare const __FERRY_APP_VERSION__: string | undefined
+
+const BUNDLED_APP_VERSION =
+  typeof __FERRY_APP_VERSION__ === 'string' && __FERRY_APP_VERSION__.length > 0 ? __FERRY_APP_VERSION__ : '0.0.0'
+
 const SIDECAR_EXTENSION_ID = 'js.ferry.sidecar'
 const SIDECAR_READY_EVENT = 'sidecar:ready'
 const RPC_INVOKE_EVENT = 'rpc_invoke'
@@ -75,7 +80,7 @@ function createDefaultTransport(): NeutralinoTransport {
     readClipboardText: () => clipboard.readText(),
     getKnownPath: (name) => nlOs.getPath(name),
     logDebug: (message) => debug.log(message),
-    getAppVersion: () => (window as unknown as { NL_APPVERSION?: string }).NL_APPVERSION || '0.22.0'
+    getAppVersion: () => (window as unknown as { NL_APPVERSION?: string }).NL_APPVERSION || BUNDLED_APP_VERSION
   }
 }
 

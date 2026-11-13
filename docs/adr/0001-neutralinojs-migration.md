@@ -28,9 +28,10 @@ Migrate Ferry's desktop shell to **Neutralinojs (`WebView2`)** paired with a **b
    - Reads and writes Chromium's `%APPDATA%\Ferry\Local State` (`os_crypt.encrypted_key`) via Windows DPAPI and `v10` AES-256-GCM ciphertexts, preserving saved passwords, passphrases, jump-host secrets, proxy credentials, bookmarks, settings, history, and `known_hosts.json` across both upgrade and rollback.
    - The NSIS installer cleans legacy Electron runtime binaries (`Ferry.exe`, `*.pak`, `locales/`, `resources/`) during in-place upgrade without touching `%APPDATA%\Ferry`.
 6. **Sidecar Auto-Updater (`src/main/update/SidecarUpdater.ts`):**
-   - Checks `latest-neutralino.yml` (fallback `latest.yml`) on the GitHub Releases feed, downloads the installer with streaming progress events, enforces SHA-512 verification prior to launch, and executes `quitAndInstall` via detached `/S` process spawn.
-7. **External OS Drag-and-Drop Fallback (`FilePane.vue`, `fs:local:stage-drop`):**
-   - Stages external OS files/folders dropped onto WebView2 (when host file paths are hidden) into a validated temporary directory via `LocalFsService.stageDroppedEntries` (up to `100 MB` limit, path-traversal guarded).
+   - Strictly checks `latest-neutralino.yml` (never `latest.yml`, preventing Electron installer selection) on the GitHub Releases feed, downloads the validated `Ferry-Neutralino-Setup-*.exe` installer with streaming progress events, enforces SHA-512 verification prior to launch, and executes `quitAndInstall` via detached `/S` process spawn. Both `nodeHost.ts` and `neutralinoApi.ts` inject `__FERRY_APP_VERSION__` from `package.json` at Vite build time, and `release-please-config.json` keeps `neutralino.config.json` synchronized across releases.
+7. **External OS Drag-and-Drop Staging (`FilePane.vue`, `fs:local:stage-drop`, `LocalFsService.ts`):**
+   - Stages external OS files/folders dropped onto WebView2 (when host file paths are hidden) into a validated `ferry-drop-*` temporary directory via `LocalFsService.stageDroppedEntries` (capped at `16 MB` to bound memory/Base64 IPC overhead; larger transfers use the Local pane).
+   - `TransferQueue` and sidecar startup/shutdown automatically remove `ferry-drop-*` temporary directories after upload completion/cancellation and sweep stale directories on launch.
 
 ## Measured Results (Windows x64)
 
@@ -45,6 +46,6 @@ Migrate Ferry's desktop shell to **Neutralinojs (`WebView2`)** paired with a **b
 
 ## Consequences
 
-- CI (`windows-latest`) executes `typecheck`, `test`, `build`, `build:neutralino`, `package:neutralino`, and `smoke:neutralino` (which exercises NSIS silent upgrade over a simulated Electron install directory and verifies DPAPI/sidecar RPC channels on the installed binaries).
-- OS-level *drag-out* from inside the app remains unsupported on Neutralino/WebView2 (`system:startDrag` no-op); in-app Local ↔ Remote drag and external OS drag-*in* (`fs:local:stage-drop`) are both supported.
+- CI (`windows-latest`) executes `typecheck`, `test`, `build`, `build:neutralino`, `package:neutralino`, and `smoke:neutralino` (which exercises NSIS silent upgrade over a simulated Electron install directory, verifies DPAPI/sidecar RPC channels, and runs a live in-process `ssh2` SSH/SFTP/Transfer/Tail/PTY end-to-end flow against the installed binaries). Release workflow `.github/workflows/release.yml` publishes `Ferry-Neutralino-Setup-*.exe`, `Ferry-Neutralino-*-win-x64.zip`, and `latest-neutralino.yml` alongside Electron release assets.
+- OS-level *drag-out* from inside the app (`system:startDrag` -> OS Explorer/Finder) is an accepted WebView2 platform limitation and intentionally a no-op under Neutralino (`neutralinoApi.ts`); users download files via in-app Remote -> Local pane drag, the Download toolbar action, or the Local pane's Explorer integration. In-app Local <-> Remote drag and external OS drag-*in* (`fs:local:stage-drop`, up to `16 MB`) are both supported.
 - Windows-specific DPAPI secret protection assumes Windows x64 as the primary distribution target; non-Windows keychain adapters remain future work if macOS/Linux builds are added.

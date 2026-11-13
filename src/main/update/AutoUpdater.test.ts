@@ -194,4 +194,40 @@ describe('SidecarUpdater', () => {
     await expect(updater.checkForUpdates()).rejects.toThrow(/SHA-512 verification failed/)
     expect(() => updater.quitAndInstall()).toThrow(/No verified update installer/)
   })
+
+  it('does not fall back to latest.yml when latest-neutralino.yml is absent', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/latest.yml')) {
+        return new Response('version: 0.99.0\npath: Ferry-Setup-0.99.0.exe\nsha512: abc\n', { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    }) as unknown as typeof fetch
+
+    const updater = new SidecarUpdater({
+      feedUrl: 'https://example.invalid/releases',
+      downloadDir: tmpDir,
+      fetchImpl: fetchMock
+    })
+
+    await expect(updater.checkForUpdates()).rejects.toThrow(/No Neutralino update manifest \(latest-neutralino\.yml\)/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String((fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(
+      /\/latest-neutralino\.yml$/
+    )
+  })
+
+  it('rejects Electron installer filenames inside latest-neutralino.yml', async () => {
+    const payload = Buffer.from('electron-installer')
+    const sha512 = createHash('sha512').update(payload).digest('base64')
+    const yaml = `version: 0.23.0\npath: Ferry-Setup-0.23.0.exe\nsha512: ${sha512}\n`
+
+    const updater = new SidecarUpdater({
+      feedUrl: 'https://example.invalid/releases',
+      downloadDir: tmpDir,
+      fetchImpl: fakeFetchFor(yaml, payload)
+    })
+
+    await expect(updater.checkForUpdates()).rejects.toThrow(/Refusing non-Neutralino installer/)
+  })
 })

@@ -16,6 +16,13 @@ const sidecarDistDir = join(protoDir, 'extensions', 'js.ferry.sidecar')
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
 const version = String(pkg.version || '0.0.0')
 
+const nlConfigPath = join(rootDir, 'neutralino.config.json')
+const nlConfig = JSON.parse(readFileSync(nlConfigPath, 'utf8'))
+if (nlConfig.version !== version) {
+  nlConfig.version = version
+  writeFileSync(nlConfigPath, JSON.stringify(nlConfig, null, 2) + '\n', 'utf8')
+}
+
 const rendererIndex = join(rootDir, 'out', 'renderer', 'index.html')
 const sidecarBundle = join(rootDir, 'out', 'sidecar', 'index.cjs')
 if (!existsSync(rendererIndex) || !existsSync(sidecarBundle)) {

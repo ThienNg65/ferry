@@ -8,6 +8,7 @@ import { AppSettingsStore } from '../main/app/AppSettingsStore'
 import { TransferQueue } from '../main/transfer/TransferQueue'
 import { KnownHostsStore } from '../main/ssh/KnownHostsStore'
 import { initAutoUpdater } from '../main/update/AutoUpdater'
+import { cleanupAllStagedDrops } from '../main/fs/LocalFsService'
 import { host } from '../main/host/host'
 import { createNodeHost } from './nodeHost'
 import { serve, type WriteLine } from './protocol'
@@ -20,6 +21,7 @@ export function initSidecarServices(): void {
   } catch (e) {
     console.error('sidecar: known_hosts.json unreadable at startup:', e)
   }
+  void cleanupAllStagedDrops().catch(() => undefined)
   if (host().isPackaged) {
     setTimeout(() => void initAutoUpdater(), 5000).unref?.()
   }
@@ -28,6 +30,7 @@ export function initSidecarServices(): void {
 export async function shutdownSidecarServices(): Promise<void> {
   HistoryStore.getInstance().flush()
   await EditSessionManager.getInstance().disposeAll()
+  await cleanupAllStagedDrops().catch(() => undefined)
 }
 
 export function startSidecar(input: Readable, write: WriteLine, exit: (code: number) => void): void {

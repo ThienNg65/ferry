@@ -9,7 +9,7 @@ import { SessionManager } from '../ssh/SessionManager'
 import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
 import { commitRemoteFile } from '../fs/RemoteFsService'
-import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
+import { cleanupStagedDropPath, listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { runConcurrent } from '../util/concurrency'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
 
@@ -239,6 +239,9 @@ export class TransferQueue {
       const evt: TransferEvent = { transferId, kind: pausedJob.kind, state: 'cancelled' }
       this.broadcast(evt)
       this.notifyTerminal(pausedJob, evt)
+      if (pausedJob.kind === 'upload') {
+        void cleanupStagedDropPath(pausedJob.localPath).catch(() => undefined)
+      }
       if (!pausedJob.isTree) {
         const remote = pausedJob.kind === 'upload'
         const part = `${remote ? pausedJob.remotePath : pausedJob.localPath}${PART_SUFFIX}`
@@ -257,6 +260,9 @@ export class TransferQueue {
       const evt: TransferEvent = { transferId: job.transferId, kind: job.kind, state: 'cancelled' }
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
+      if (job.kind === 'upload') {
+        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
+      }
     }
   }
 
@@ -316,6 +322,9 @@ export class TransferQueue {
         onProgress: emitProgress
       })
 
+      if (kind === 'upload') {
+        await cleanupStagedDropPath(job.localPath).catch(() => undefined)
+      }
       const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: 1, filesTotal: 1 }
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
@@ -330,6 +339,9 @@ export class TransferQueue {
         this.paused.add(transferId)
         this.broadcast({ transferId, kind, state: 'paused' })
         return
+      }
+      if (cancelled && kind === 'upload') {
+        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
       const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.broadcast(evt)
@@ -546,6 +558,9 @@ export class TransferQueue {
         }
       )
 
+      if (kind === 'upload') {
+        await cleanupStagedDropPath(job.localPath).catch(() => undefined)
+      }
       const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length }
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
@@ -560,6 +575,9 @@ export class TransferQueue {
         this.paused.add(transferId)
         this.broadcast({ transferId, kind, state: 'paused' })
         return
+      }
+      if (cancelled && kind === 'upload') {
+        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
       const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
       this.broadcast(evt)

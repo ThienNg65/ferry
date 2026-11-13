@@ -80,6 +80,17 @@ jobs:
             sleep 15
           done
 
+      # Build and package Neutralino desktop shell + Node sidecar alongside Electron.
+      - name: Build and Package Neutralino
+        shell: bash
+        run: |
+          npm run build:neutralino
+          npm run package:neutralino
+
+      - name: Smoke test Neutralino package
+        shell: bash
+        run: npm run smoke:neutralino
+
       # Dormant SignPath stage: active only when the organization ID is configured.
       - name: Upload unsigned installer for signing
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
@@ -87,7 +98,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unsigned-installer
-          path: dist/Ferry-Setup-*.exe
+          path: |
+            dist/Ferry-Setup-*.exe
+            dist/Ferry-Neutralino-Setup-*.exe
 
       - name: Submit signing request to SignPath
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
@@ -111,8 +124,14 @@ jobs:
           shopt -s nullglob
           installers=(dist/Ferry-Setup-*.exe)
           blockmaps=(dist/*.blockmap)
+          nl_installers=(dist/Ferry-Neutralino-Setup-*.exe)
+          nl_zips=(dist/Ferry-Neutralino-*-win-x64.zip)
           if [ "${#installers[@]}" -ne 1 ] || [ "${#blockmaps[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
-            echo "::error::Expected one installer, one blockmap and a nonempty latest.yml."
+            echo "::error::Expected one Electron installer, one blockmap and a nonempty latest.yml."
+            exit 1
+          fi
+          if [ "${#nl_installers[@]}" -ne 1 ] || [ "${#nl_zips[@]}" -ne 1 ] || [ ! -s dist/latest-neutralino.yml ]; then
+            echo "::error::Expected one Neutralino installer, one portable zip and a nonempty latest-neutralino.yml."
             exit 1
           fi
 
@@ -135,7 +154,7 @@ jobs:
           NOTES_FILE: ${{ steps.public-release.outputs.notes_file }}
         run: |
           shopt -s nullglob
-          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
+          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml dist/Ferry-Neutralino-Setup-*.exe dist/Ferry-Neutralino-*-win-x64.zip dist/latest-neutralino.yml)
           # Never move an existing release tag: release tags must be stable.
           if existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null); then
             : # Existing tag found.
@@ -165,5 +184,5 @@ jobs:
           LEGACY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
+          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml dist/Ferry-Neutralino-Setup-*.exe dist/Ferry-Neutralino-*-win-x64.zip dist/latest-neutralino.yml)
           GH_TOKEN="$LEGACY_TOKEN" gh release upload "$TAG" "${assets[@]}" --repo "${{ github.repository }}" --clobber

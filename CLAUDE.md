@@ -47,7 +47,9 @@ container isn't running. `vitest.config.ts` sets `fileParallelism: false` — th
   Electron behind `src/main/host/host.ts` (`electronHost` for Electron vs `createNodeHost` in
   `src/sidecar/wsExtension.ts` + DPAPI `src/main/host/dpapiKey.ts` for Neutralino). The renderer
   automatically falls back to `src/renderer/src/bridge/neutralinoApi.ts` when `window.api` is not
-  injected by Electron's preload script.
+  injected by Electron's preload script. On Neutralino/WebView2, `system:startDrag` (native OS
+  drag-out) is an accepted platform no-op, while external OS drag-in stages up to 16 MB via
+  `fs:local:stage-drop` with automatic post-upload cleanup.
 - **Three-process Electron split**: `src/main` (Node context — SSH/SFTP, filesystem, transfer
   queue, tail, terminal, archive, sites, IPC handlers), `src/preload` (the only renderer↔main
   bridge — a `contextBridge` whitelist derived from `src/shared/contract.ts`), `src/renderer`

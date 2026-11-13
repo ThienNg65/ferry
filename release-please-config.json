@@ -5,7 +5,12 @@
       "release-type": "node",
       "package-name": "ferry",
       "extra-files": [
-        "VERSION"
+        "VERSION",
+        {
+          "type": "json",
+          "path": "neutralino.config.json",
+          "jsonpath": "$.version"
+        }
       ],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },

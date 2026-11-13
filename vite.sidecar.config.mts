@@ -1,4 +1,7 @@
+import { readFileSync } from 'fs'
 import { defineConfig, type Plugin } from 'vite'
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version?: string }
 
 const externalNativeAddons: Plugin = {
   name: 'external-native-addons',
@@ -12,6 +15,9 @@ const externalNativeAddons: Plugin = {
 }
 
 export default defineConfig({
+  define: {
+    __FERRY_APP_VERSION__: JSON.stringify(String(pkg.version || '0.0.0'))
+  },
   plugins: [externalNativeAddons],
   publicDir: false,
   ssr: {

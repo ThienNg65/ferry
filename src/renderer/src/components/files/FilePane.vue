@@ -480,7 +480,7 @@ function onDragLeave(): void {
   isDropTarget.value = false
 }
 
-const MAX_STAGE_DROP_BYTES = 100 * 1024 * 1024
+const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
 
 interface MinimalFsEntry {
   isFile: boolean
@@ -502,7 +502,7 @@ async function collectDroppedEntry(
     })
     state.totalBytes += file.size
     if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
-      throw new Error('Dropped files exceed 100 MB WebView drop limit. Use the Local pane for larger transfers.')
+      throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
     }
     out.push({
       relativePath: relPath,
@@ -568,7 +568,7 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
     } else {
       state.totalBytes += file.size
       if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
-        throw new Error('Dropped files exceed 100 MB WebView drop limit. Use the Local pane for larger transfers.')
+        throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
       }
       stageInputs.push({
         relativePath: file.name,
