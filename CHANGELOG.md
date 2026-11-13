@@ -9,6 +9,24 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.21.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.20.0...ferry-v0.21.0) (2026-11-13)
+
+
+### Features
+
+* Enhancements of monitoring and logs tailing ([d63aef7](https://github.com/ThienNg65/ferry/commit/d63aef7551dffda73d9900b91183ae0068fdf0b0))
+
+
+### Bug Fixes
+
+* align monitor history getter with compact CPU samples ([47870b9](https://github.com/ThienNg65/ferry/commit/47870b993103c01e2549298596540c55aeb37a4a))
+* keep terminal search compatible with optional log highlight keywords ([a14a674](https://github.com/ThienNg65/ferry/commit/a14a674cb80e2523816099a0091388de861c119d))
+
+
+### Performance Improvements
+
+* smooth live monitoring and log tail interactions ([b1de68a](https://github.com/ThienNg65/ferry/commit/b1de68ae0ad39aa2a071c5748c8da5cd9dd46b12))
+
 ## [0.20.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.19.2...ferry-v0.20.0) (2026-11-12)
 
 
