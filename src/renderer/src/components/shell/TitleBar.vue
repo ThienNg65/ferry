@@ -11,6 +11,7 @@ import { useUpdateStore } from '../../stores/update.store'
 import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
+import { isNeutralinoRuntime, registerTitleBarDragRegion } from '../../bridge/neutralinoApi'
 
 const { isBusy, label: activityLabel } = useGlobalActivity()
 const ui = useUiStore()
@@ -27,10 +28,13 @@ function showActivity(): void {
     openDock('activity')
   }
 }
+const titleBarRef = ref<HTMLElement | null>(null)
 const isMaximized = ref(false)
 let unsubscribe: (() => void) | null = null
+let disposeDragRegion: (() => void) | null = null
 
 onMounted(async () => {
+  disposeDragRegion = registerTitleBarDragRegion(titleBarRef.value)
   unsubscribe = onEvent<WindowStateEvent>(EVENT_CHANNELS.windowStateChange, (evt) => {
     isMaximized.value = evt.isMaximized
   })
@@ -39,8 +43,20 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposeDragRegion?.()
   unsubscribe?.()
 })
+
+function onTitleBarDblClick(event: MouseEvent): void {
+  if (!isNeutralinoRuntime()) {
+    return
+  }
+  const target = event.target as HTMLElement | null
+  if (target?.closest('button, a, input, [role="button"]')) {
+    return
+  }
+  toggleMaximize()
+}
 
 function minimize(): void {
   void invoke(INVOKE_CHANNELS.windowMinimize)
@@ -55,10 +71,12 @@ function close(): void {
 
 <template>
   <div
+    ref="titleBarRef"
     class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center bg-muted"
     style="-webkit-app-region: drag"
+    @dblclick="onTitleBarDblClick"
   >
-    <div class="flex items-center" style="-webkit-app-region: no-drag">
+    <div class="flex items-center" style="-webkit-app-region: no-drag" @pointerdown.stop>
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
         <button
           type="button"
@@ -98,6 +116,7 @@ function close(): void {
           class="flex items-center"
           :class="sessions.status === 'connected' ? 'cursor-pointer' : 'cursor-default'"
           style="-webkit-app-region: no-drag"
+          @pointerdown.stop
           @click="showActivity"
         >
           <span class="size-2 rounded-full bg-primary animate-pulse" />
@@ -110,6 +129,7 @@ function close(): void {
           aria-label="Restart to update"
           class="flex items-center gap-1 rounded bg-success/20 px-1.5 py-0.5 text-2xs font-medium text-success transition-colors hover:bg-success/30"
           style="-webkit-app-region: no-drag"
+          @pointerdown.stop
           @click="updateStore.installNow()"
         >
           <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
@@ -122,6 +142,7 @@ function close(): void {
           aria-label="Open command palette"
           class="flex items-center gap-1.5 rounded-md border border-default bg-default/70 px-2 py-0.5 text-2xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
           style="-webkit-app-region: no-drag"
+          @pointerdown.stop
           @click="commandPalette.open()"
         >
           <UIcon name="i-lucide-search" class="size-3" />
@@ -130,7 +151,7 @@ function close(): void {
         </button>
       </UTooltip>
     </div>
-    <div class="flex h-full items-stretch justify-self-end" style="-webkit-app-region: no-drag">
+    <div class="flex h-full items-stretch justify-self-end" style="-webkit-app-region: no-drag" @pointerdown.stop>
       <UTooltip text="Minimize">
         <button
           type="button"

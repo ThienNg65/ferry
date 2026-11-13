@@ -9,28 +9,13 @@ const isProfiling =
 let appReadyTime = 0
 let readyToShowTime = 0
 
-import { app, BrowserWindow, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, session, shell } from 'electron'
 import path from 'path'
-import { registerSitesHandlers } from './ipc/sites.ipc'
-import { registerSettingsHandlers } from './ipc/settings.ipc'
-import { registerSessionHandlers } from './ipc/session.ipc'
 import { registerDialogHandlers } from './ipc/dialog.ipc'
-import { registerKeysHandlers } from './ipc/keys.ipc'
-import { registerBookmarksHandlers } from './ipc/bookmarks.ipc'
-import { registerHistoryHandlers } from './ipc/history.ipc'
+import { registerSidecarHandlers } from './ipc/registerSidecar'
 import { initHistoryRecorder } from './history/HistoryRecorder'
 import { HistoryStore } from './history/HistoryStore'
-import { registerEditHandlers } from './ipc/edit.ipc'
 import { EditSessionManager } from './edit/EditSessionManager'
-import { registerSyncHandlers } from './ipc/sync.ipc'
-import { registerFsHandlers } from './ipc/fs.ipc'
-import { registerTransferHandlers } from './ipc/transfer.ipc'
-import { registerTailHandlers } from './ipc/tail.ipc'
-import { registerTerminalHandlers } from './ipc/terminal.ipc'
-import { registerUnzipHandlers } from './ipc/unzip.ipc'
-import { registerArchiveHandlers } from './ipc/archive.ipc'
-import { registerOperationsHandlers } from './ipc/operations.ipc'
-import { registerMonitorHandlers } from './ipc/monitor.ipc'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerWindowHandlers } from './ipc/window.ipc'
 import { registerUpdateHandlers } from './ipc/update.ipc'
@@ -39,7 +24,11 @@ import { AppSettingsStore } from './app/AppSettingsStore'
 import { TransferQueue } from './transfer/TransferQueue'
 import { KnownHostsStore } from './ssh/KnownHostsStore'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, type WindowStateEvent, type ProfileReportPayload } from '../shared/contract'
-import { handle } from './ipc/envelope'
+import { handle, handlers, sendHandlers } from './ipc/envelope'
+import { setHost } from './host/host'
+import { electronHost } from './host/electronHost'
+
+setHost(electronHost)
 
 /** Development mode flag — set by electron-vite. */
 const IS_DEV = !app.isPackaged
@@ -222,23 +211,8 @@ function registerProfileHandler(): void {
 
 /** Registers all IPC channel handlers for the lifetime of the application. */
 function registerAllHandlers(): void {
-  registerSitesHandlers()
-  registerSettingsHandlers()
-  registerSessionHandlers()
+  registerSidecarHandlers()
   registerDialogHandlers()
-  registerKeysHandlers()
-  registerBookmarksHandlers()
-  registerHistoryHandlers()
-  registerEditHandlers()
-  registerSyncHandlers()
-  registerFsHandlers()
-  registerTransferHandlers()
-  registerTailHandlers()
-  registerTerminalHandlers()
-  registerUnzipHandlers()
-  registerArchiveHandlers()
-  registerOperationsHandlers()
-  registerMonitorHandlers()
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)
   registerUpdateHandlers()
@@ -302,6 +276,14 @@ app.whenReady().then(() => {
   })
 
   registerAllHandlers()
+  for (const [channel, handler] of handlers) {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, handler)
+  }
+  for (const [channel, handler] of sendHandlers) {
+    ipcMain.removeAllListeners(channel)
+    ipcMain.on(channel, handler)
+  }
   mainWindow = createWindow()
 
   app.on('activate', () => {

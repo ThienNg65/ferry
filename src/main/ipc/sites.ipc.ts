@@ -1,5 +1,5 @@
-import { dialog, BrowserWindow } from 'electron'
 import { readFile } from 'fs/promises'
+import { host } from '../host/host'
 import { handle } from './envelope'
 import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
 import { SiteStore } from '../sites/SiteStore'
@@ -38,14 +38,15 @@ export function registerSitesHandlers(): void {
     return SiteStore.getInstance().exportSites()
   })
 
-  handle<{ imported: number; skipped: number } | null>(INVOKE_CHANNELS.sitesImportJson, async () => {
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const options = { properties: ['openFile' as const], filters: [{ name: 'Ferry sites backup', extensions: ['json'] }] }
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) {
+  handle<{ imported: number; skipped: number } | null>(INVOKE_CHANNELS.sitesImportJson, async (filePathArg?: unknown) => {
+    const filePath =
+      typeof filePathArg === 'string' && filePathArg.length > 0
+        ? filePathArg
+        : await host().pickOpenFile({ filters: [{ name: 'Ferry sites backup', extensions: ['json'] }] })
+    if (!filePath) {
       return null
     }
-    const incoming = parseSitesBackup(await readFile(result.filePaths[0], 'utf-8'))
+    const incoming = parseSitesBackup(await readFile(filePath, 'utf-8'))
     const store = SiteStore.getInstance()
     const key = (host: string, port: number, username: string): string => `${host.toLowerCase()}:${port}:${username.toLowerCase()}`
     const existing = new Set(store.list().map((s) => key(s.host, s.port, s.username)))

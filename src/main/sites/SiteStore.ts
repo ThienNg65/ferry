@@ -1,6 +1,7 @@
-import Store from 'electron-store'
+import Conf from 'conf'
 import { randomUUID } from 'crypto'
-import { safeStorage } from 'electron'
+import { host } from '../host/host'
+import { decrypt, encrypt } from '../host/secrets'
 import { SshError } from '../ssh/errors'
 import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteEnvironment, SiteInput } from '../../shared/contract'
 
@@ -58,32 +59,6 @@ function storedJumpHosts(s: Pick<StoredSite, 'jumpHosts' | 'jumpHost'>): StoredJ
 
 interface StoreSchema {
   sites: StoredSite[]
-}
-
-function encrypt(plaintext: string | undefined): string | undefined {
-  if (!plaintext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine')
-  }
-  return safeStorage.encryptString(plaintext).toString('base64')
-}
-
-function decrypt(ciphertext: string | undefined): string | undefined {
-  if (!ciphertext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
-  }
-  try {
-    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
-  } catch (e) {
-    // Most likely this secret was encrypted under a different OS user/DPAPI key (e.g. the
-    // profile was copied to another machine/user) — a raw native error here is unreadable.
-    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
-  }
 }
 
 /**
@@ -193,11 +168,11 @@ function toPublicSite(s: StoredSite): Site {
  */
 export class SiteStore {
   private static instance: SiteStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'sites', defaults: { sites: [] } })
+      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'sites', defaults: { sites: [] } })
     }
     return this._store
   }

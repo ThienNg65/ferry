@@ -41,3 +41,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build Neutralino & Sidecar
+        run: npm run build:neutralino

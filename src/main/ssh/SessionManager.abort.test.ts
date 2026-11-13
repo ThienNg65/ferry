@@ -1,8 +1,7 @@
 import net from 'node:net'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] }, app: { getPath: () => '.' } }))
-vi.mock('electron-store', () => ({
+vi.mock('conf', () => ({
   default: class {
     get(): unknown {
       return undefined

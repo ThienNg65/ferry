@@ -17,44 +17,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 const disks = new Map<string, Record<string, unknown>>()
 
-vi.mock('electron-store', () => {
-  class FakeStore {
+vi.mock('conf', () => {
+  class FakeConf {
     private readonly name: string
-    constructor(opts: { name: string; defaults: Record<string, unknown> }) {
-      this.name = opts.name
+    constructor(opts: { configName: string; defaults: Record<string, unknown> }) {
+      this.name = opts.configName
       if (!disks.has(this.name)) {
         disks.set(this.name, { ...opts.defaults })
       }
     }
     get(key: string): unknown {
-      // Deep-clone on read/write, mirroring real electron-store/conf's
-      // read-from-disk semantics — nothing here currently depends on it (unlike
-      // HistoryStore's in-place array mutation), but it keeps this fake honest.
       return JSON.parse(JSON.stringify(disks.get(this.name)![key]))
     }
     set(key: string, value: unknown): void {
       disks.get(this.name)![key] = JSON.parse(JSON.stringify(value))
     }
   }
-  return { default: FakeStore }
+  return { default: FakeConf }
 })
 
-vi.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: vi.fn(() => true),
-    encryptString: (plaintext: string) => Buffer.from(`ENC:${plaintext}`),
-    decryptString: (buf: Buffer) => {
-      const text = buf.toString()
-      if (!text.startsWith('ENC:')) {
-        throw new Error('bad ciphertext')
-      }
-      return text.replace(/^ENC:/, '')
-    }
-  }
-}))
-
+const { testHost } = await import('../host/testHost.setup')
 const { AppSettingsStore } = await import('./AppSettingsStore')
-const { safeStorage } = await import('electron')
 
 describe('AppSettingsStore', () => {
   beforeEach(() => {
@@ -148,16 +131,24 @@ describe('AppSettingsStore', () => {
 
   it('throws when encryption is unavailable and a proxy password is set', () => {
     const store = new AppSettingsStore()
-    vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValueOnce(false)
-    expect(() => store.setDefaultProxy({ type: 'http', host: 'h', port: 1, password: 'p' })).toThrow(
-      /OS credential encryption is unavailable/
-    )
+    const spy = vi.spyOn(testHost, 'isEncryptionAvailable').mockReturnValueOnce(false)
+    try {
+      expect(() => store.setDefaultProxy({ type: 'http', host: 'h', port: 1, password: 'p' })).toThrow(
+        /OS credential encryption is unavailable/
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('throws when encryption is unavailable and a saved proxy password needs decrypting', () => {
     const store = new AppSettingsStore()
     store.setDefaultProxy({ type: 'http', host: 'h', port: 1, password: 'p' })
-    vi.mocked(safeStorage.isEncryptionAvailable).mockReturnValueOnce(false)
-    expect(() => store.getDecryptedDefaultProxy()).toThrow(/saved secrets cannot be decrypted/)
+    const spy = vi.spyOn(testHost, 'isEncryptionAvailable').mockReturnValueOnce(false)
+    try {
+      expect(() => store.getDecryptedDefaultProxy()).toThrow(/saved secrets cannot be decrypted/)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

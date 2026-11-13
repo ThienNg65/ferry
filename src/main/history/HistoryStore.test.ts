@@ -15,17 +15,17 @@ import type { HistoryEntry } from '../../shared/contract'
  */
 const disks = new Map<string, Record<string, unknown>>()
 
-vi.mock('electron-store', () => {
-  class FakeStore {
+vi.mock('conf', () => {
+  class FakeConf {
     private readonly name: string
-    constructor(opts: { name: string; defaults: Record<string, unknown> }) {
-      this.name = opts.name
+    constructor(opts: { configName: string; defaults: Record<string, unknown> }) {
+      this.name = opts.configName
       if (!disks.has(this.name)) {
         disks.set(this.name, { ...opts.defaults })
       }
     }
     get(key: string): unknown {
-      // Deep-clone on read, mirroring real electron-store/conf's read-from-disk
+      // Deep-clone on read, mirroring real conf's read-from-disk
       // semantics: a fresh instance's in-memory entries must not be the same
       // object reference as the shared "disk", or mutating them (as
       // HistoryStore.record() does, via its `entries` array) would silently
@@ -36,7 +36,7 @@ vi.mock('electron-store', () => {
       disks.get(this.name)![key] = JSON.parse(JSON.stringify(value))
     }
   }
-  return { default: FakeStore }
+  return { default: FakeConf }
 })
 
 const { HistoryStore } = await import('./HistoryStore')

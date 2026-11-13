@@ -4,20 +4,14 @@ import { EVENT_CHANNELS } from '../../shared/contract'
 import type { ExecLinesOptions, ExecResult } from '../ssh/RemoteShell'
 import { sanitizeHistoryLines } from './TailManager'
 
-// TailManager broadcasts via BrowserWindow.getAllWindows() — vitest runs
-// outside a real Electron process, so mock only that (same pattern as
-// OperationRegistry.test.ts).
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
 const sent: Array<{ channel: string; evt: unknown }> = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (channel: string, evt: unknown) => sent.push({ channel, evt }) }
-      }
-    ]
-  }
-}))
+setHost({
+  ...testHost,
+  broadcast: (channel, evt) => sent.push({ channel, evt })
+})
 
 type ExecLinesImpl = (command: string, opts: ExecLinesOptions) => Promise<number | null>
 

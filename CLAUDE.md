@@ -20,8 +20,12 @@ just this file) whenever you add a convention or hit a new gotcha worth remember
 npm install --registry=https://registry.npmjs.org   # always pass --registry explicitly on this machine
 npm run dev          # electron-vite dev, hot reload
 npm run typecheck    # vue-tsc --build + tsc --build tsconfig.node.json, no emit — run before every build
-npm run build        # electron-vite build -> out/
-npm run package       # build + electron-builder -> dist/*.exe (NSIS) + dist/win-unpacked/
+npm run build            # electron-vite build -> out/
+npm run build:renderer   # Vite renderer build for Neutralino -> out/renderer/
+npm run build:sidecar    # bundle standalone Node sidecar -> out/sidecar/index.cjs
+npm run build:neutralino # build both renderer and sidecar targets for Neutralino
+npm run package:neutralino # assemble Neutralino + sidecar zip (+ NSIS exe if makensis on PATH)
+npm run package          # build + electron-builder -> dist/*.exe (NSIS) + dist/win-unpacked/
 npm test              # vitest run (single pass)
 npm run test:watch    # vitest watch mode
 ```
@@ -39,6 +43,11 @@ container isn't running. `vitest.config.ts` sets `fileParallelism: false` — th
 
 ## Architecture
 
+- **Dual desktop host support (Electron + Neutralinojs sidecar)**: `src/main` logic is decoupled from
+  Electron behind `src/main/host/host.ts` (`electronHost` for Electron vs `createNodeHost` in
+  `src/sidecar/wsExtension.ts` + DPAPI `src/main/host/dpapiKey.ts` for Neutralino). The renderer
+  automatically falls back to `src/renderer/src/bridge/neutralinoApi.ts` when `window.api` is not
+  injected by Electron's preload script.
 - **Three-process Electron split**: `src/main` (Node context — SSH/SFTP, filesystem, transfer
   queue, tail, terminal, archive, sites, IPC handlers), `src/preload` (the only renderer↔main
   bridge — a `contextBridge` whitelist derived from `src/shared/contract.ts`), `src/renderer`

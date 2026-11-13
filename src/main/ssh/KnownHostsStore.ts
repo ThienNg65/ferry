@@ -1,5 +1,6 @@
-import Store from 'electron-store'
+import Conf from 'conf'
 import { createHash } from 'crypto'
+import { host } from '../host/host'
 
 interface StoreSchema {
   /** `"host:port"` -> the OpenSSH-style `SHA256:...` fingerprint last trusted for it. */
@@ -46,11 +47,11 @@ export function evaluateHostKey(
  */
 export class KnownHostsStore {
   private static instance: KnownHostsStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'known_hosts', defaults: { hosts: {} } })
+      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'known_hosts', defaults: { hosts: {} } })
     }
     return this._store
   }

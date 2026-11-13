@@ -3,7 +3,7 @@ import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
 import { readFile } from 'fs/promises'
 import * as net from 'net'
-import { BrowserWindow } from 'electron'
+import { host as getHost } from '../host/host'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
 import { friendlyConnectError } from './friendlyConnectError'
@@ -219,11 +219,7 @@ export class SessionManager {
       const requestId = randomUUID()
       this.pendingHostKeys.set(requestId, { sessionId, resolve })
       const payload: HostKeyPromptEvent = { requestId, sessionId, host, port, fingerprint }
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send(EVENT_CHANNELS.hostKeyPrompt, payload)
-        }
-      }
+      getHost().broadcast(EVENT_CHANNELS.hostKeyPrompt, payload)
     })
   }
 
@@ -239,11 +235,7 @@ export class SessionManager {
       const requestId = randomUUID()
       this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed()) {
-          win.webContents.send(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
-        }
-      }
+      getHost().broadcast(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
     }).finally(() => this.resumeConnectTimer(sessionId))
   }
 
@@ -755,19 +747,11 @@ export class SessionManager {
 
   private broadcastStatus(sessionId: string, status: SessionStatus, message?: string): void {
     const payload: SessionStatusEvent = { sessionId, status, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.sessionStatus, payload)
-      }
-    }
+    getHost().broadcast(EVENT_CHANNELS.sessionStatus, payload)
   }
 
   private broadcastProgress(sessionId: string, message: string): void {
     const payload = { sessionId, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.sessionProgress, payload)
-      }
-    }
+    getHost().broadcast(EVENT_CHANNELS.sessionProgress, payload)
   }
 }

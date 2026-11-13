@@ -11,9 +11,7 @@
  * host:port rather than relying on ambient state.
  */
 import { Client } from 'ssh2'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 const HOST = '127.0.0.1'
 const PORT = 2299

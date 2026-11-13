@@ -485,10 +485,15 @@ async function onOsDrop(event: DragEvent): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId || !event.dataTransfer) return
   const intents: TransferIntent[] = []
+  let sawUnresolvedOsFile = false
   for (const item of event.dataTransfer.items) {
     if (item.kind !== 'file') continue
     const file = item.getAsFile()
     const localPath = file ? window.api.getPathForFile(file) : ''
+    if (file && !localPath) {
+      sawUnresolvedOsFile = true
+      continue
+    }
     if (!file || !localPath) continue
     const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
     const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir, size: file.size, modifiedAt: new Date(file.lastModified).toISOString() }, sessionId)
@@ -496,6 +501,8 @@ async function onOsDrop(event: DragEvent): Promise<void> {
   }
   if (intents.length > 0) {
     await checkAndQueueTransfers(intents, remoteFs)
+  } else if (sawUnresolvedOsFile) {
+    notify.error('External file drop unavailable', 'Use the Local pane to drag or transfer files.')
   }
 }
 
@@ -536,9 +543,14 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
     if (isOsFileDrag(event) && event.dataTransfer) {
       const intents: TransferIntent[] = []
       let moved = false
+      let sawUnresolvedOsFile = false
       for (const item of event.dataTransfer.items) {
         const file = item.kind === 'file' ? item.getAsFile() : null
         const localPath = file ? window.api.getPathForFile(file) : ''
+        if (file && !localPath) {
+          sawUnresolvedOsFile = true
+          continue
+        }
         if (!file || !localPath) continue
         if (props.side === 'local') {
           await moveInto(folder, localPath, file.name)
@@ -551,6 +563,9 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
       }
       if (intents.length > 0) await enqueueIntents(intents)
       if (moved) await store.load(store.currentPath, { forceRefresh: true })
+      if (intents.length === 0 && !moved && sawUnresolvedOsFile) {
+        notify.error('External file drop unavailable', 'Use the Local pane to drag or transfer files.')
+      }
       return
     }
     const payload = getDragPayload()

@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto'
-import { ipcMain } from 'electron'
-import { handle } from './envelope'
+import { handle, onSend } from './envelope'
 import { INVOKE_CHANNELS, SEND_CHANNELS } from '../../shared/contract'
 import type {
   TerminalAckEvent,
@@ -20,14 +19,14 @@ export function registerTerminalHandlers(): void {
     return { terminalId }
   })
 
-  ipcMain.on(SEND_CHANNELS.terminalInput, (_event, payload: TerminalInputEvent) => {
+  onSend<TerminalInputEvent>(SEND_CHANNELS.terminalInput, (_event, payload) => {
     if (typeof payload?.terminalId !== 'string' || typeof payload.data !== 'string') {
       return
     }
     TerminalManager.getInstance().write(payload.terminalId, payload.data)
   })
 
-  ipcMain.on(SEND_CHANNELS.terminalResize, (_event, payload: TerminalResizeEvent) => {
+  onSend<TerminalResizeEvent>(SEND_CHANNELS.terminalResize, (_event, payload) => {
     if (
       typeof payload?.terminalId !== 'string' ||
       !Number.isInteger(payload.cols) ||
@@ -40,7 +39,7 @@ export function registerTerminalHandlers(): void {
     TerminalManager.getInstance().resize(payload.terminalId, payload.cols, payload.rows)
   })
 
-  ipcMain.on(SEND_CHANNELS.terminalAck, (_event, payload: TerminalAckEvent) => {
+  onSend<TerminalAckEvent>(SEND_CHANNELS.terminalAck, (_event, payload) => {
     if (typeof payload?.terminalId !== 'string' || !Number.isFinite(payload.bytes) || payload.bytes < 0) {
       return
     }
