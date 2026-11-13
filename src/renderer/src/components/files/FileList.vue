@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, type ComponentPublicInstance } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { FileEntry } from '@shared/contract'
 import type { SortColumn, SortDirection } from '../../utils/fileSort'
@@ -8,6 +8,7 @@ import FileRow from './FileRow.vue'
 
 const props = defineProps<{
   entries: FileEntry[]
+  directoryPath: string
   selected: Set<string>
   side: 'local' | 'remote'
   active: boolean
@@ -40,6 +41,41 @@ const rowVirtualizer = useVirtualizer(
 )
 const virtualRows = computed(() => rowVirtualizer.value.getVirtualItems())
 const totalSize = computed(() => rowVirtualizer.value.getTotalSize())
+
+// Animate the viewport once after a successful directory change, never each
+// virtualized row. Cached directories are instantaneous; slow remote navigation
+// waits for loading to finish, avoiding a misleading animation of the old list.
+let lastRenderedDirectory = ''
+let directoryAnimation: Animation | null = null
+watch(
+  () => [props.directoryPath, props.loading] as const,
+  ([path, loading]) => {
+    if (!path || loading || path === lastRenderedDirectory) return
+
+    const previousDirectory = lastRenderedDirectory
+    lastRenderedDirectory = path
+    const viewport = scrollEl.value
+    if (!viewport) return
+
+    viewport.scrollTop = 0
+    directoryAnimation?.cancel()
+    directoryAnimation = null
+
+    if (!previousDirectory || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+      return
+    }
+
+    directoryAnimation = viewport.animate(
+      [
+        { opacity: 0.65, transform: 'translate3d(0, 6px, 0)' },
+        { opacity: 1, transform: 'translate3d(0, 0, 0)' }
+      ],
+      { duration: 170, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
+    )
+  },
+  { flush: 'post', immediate: true }
+)
+onBeforeUnmount(() => directoryAnimation?.cancel())
 
 /** Function ref for each row wrapper — feeds real heights back to the virtualizer. */
 function measureRow(el: Element | ComponentPublicInstance | null): void {

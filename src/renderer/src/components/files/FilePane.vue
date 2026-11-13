@@ -702,31 +702,36 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @compare-folder="compareDialogOpen = true"
         />
       </div>
-      <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
-        <UInput
-          v-model="newFolderName"
-          size="xs"
-          :placeholder="newEntryKind === 'file' ? 'New file name' : 'New folder name'"
-          class="flex-1"
-          autofocus
-          @keyup.enter="submitMkdir"
-          @keyup.esc="showNewFolder = false"
-        />
-        <UButton size="xs" @click="submitMkdir">Create</UButton>
-      </div>
-      <div v-if="store.error" role="alert" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
-        <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
-        <button
-          type="button"
-          class="shrink-0 font-medium hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
-          @click="store.load(store.currentPath, { forceRefresh: true })"
-        >
-          Retry
-        </button>
-      </div>
+      <Transition name="slide-down">
+        <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
+          <UInput
+            v-model="newFolderName"
+            size="xs"
+            :placeholder="newEntryKind === 'file' ? 'New file name' : 'New folder name'"
+            class="flex-1"
+            autofocus
+            @keyup.enter="submitMkdir"
+            @keyup.esc="showNewFolder = false"
+          />
+          <UButton size="xs" @click="submitMkdir">Create</UButton>
+        </div>
+      </Transition>
+      <Transition name="slide-down">
+        <div v-if="store.error" role="alert" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
+          <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
+          <button
+            type="button"
+            class="shrink-0 font-medium hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+            @click="store.load(store.currentPath, { forceRefresh: true })"
+          >
+            Retry
+          </button>
+        </div>
+      </Transition>
       <FileList
         ref="fileListRef"
         :entries="filteredEntries"
+        :directory-path="store.currentPath"
         :selected="store.selected"
         :side="side"
         :active="ui.activePane === side"

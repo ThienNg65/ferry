@@ -146,8 +146,8 @@ function sessionLabel(sessionId: string): string | null {
 
 <template>
   <div
-    class="flex flex-col overflow-hidden border-t border-default"
-    :class="isFullHeight ? 'min-h-0 flex-1' : 'shrink-0'"
+    class="ferry-dock-shell flex flex-col overflow-hidden border-t border-default"
+    :class="[isFullHeight ? 'min-h-0 flex-1' : 'shrink-0', dragging || isMaximized ? '' : 'ferry-dock-expandable']"
     :style="isFullHeight ? undefined : { height: `${dockHeightPx}px` }"
   >
     <div
@@ -173,6 +173,7 @@ function sessionLabel(sessionId: string): string | null {
       <div class="flex items-center gap-1" role="tablist" aria-label="Dock panels" @keydown="onTablistKeydown($event)">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Transfers"
             role="tab"
             :aria-selected="!collapsed && tab === 'transfers'"
@@ -184,6 +185,7 @@ function sessionLabel(sessionId: string): string | null {
         </UChip>
         <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Activity"
             role="tab"
             :aria-selected="!collapsed && tab === 'activity'"
@@ -195,6 +197,7 @@ function sessionLabel(sessionId: string): string | null {
         </UChip>
         <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Log Tail"
             role="tab"
             :aria-selected="!collapsed && tab === 'tail'"
@@ -205,7 +208,8 @@ function sessionLabel(sessionId: string): string | null {
           />
         </UChip>
         <UButton
-          label="Terminal"
+          class="ferry-dock-tab"
+            label="Terminal"
           role="tab"
           :aria-selected="!collapsed && tab === 'terminal'"
           size="xs"
@@ -214,7 +218,8 @@ function sessionLabel(sessionId: string): string | null {
           @click="onTabClick('terminal')"
         />
         <UButton
-          label="Monitor"
+          class="ferry-dock-tab"
+            label="Monitor"
           role="tab"
           :aria-selected="!collapsed && tab === 'monitor'"
           size="xs"
@@ -224,6 +229,7 @@ function sessionLabel(sessionId: string): string | null {
         />
         <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
           <UButton
+            class="ferry-dock-tab"
             label="Edits"
             role="tab"
             :aria-selected="!collapsed && tab === 'edits'"
@@ -245,126 +251,130 @@ function sessionLabel(sessionId: string): string | null {
         />
       </UTooltip>
     </div>
-    <Transition name="dock-fade">
+    <!-- Terminal uses v-show; removing the other flex pane immediately avoids
+         briefly splitting the available height while xterm is being fitted. -->
+    <Transition name="dock-fade" :css="tab !== 'terminal'">
       <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
-        <TransferQueue v-if="tab === 'transfers'" />
-        <ActivityPanel v-else-if="tab === 'activity'" />
-        <MonitorPanel v-else-if="tab === 'monitor'" />
-        <OpenEditsPanel v-else-if="tab === 'edits'" />
-        <template v-else-if="tab === 'tail'">
-          <!-- Tail Tabs Header Bar -->
-        <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
-          <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
-            <div
-              v-for="openTail in tailStreams.tabs"
-              :key="openTail.tailId"
-              role="tab"
-              :aria-selected="tailStreams.activeTailId === openTail.tailId"
-              :tabindex="tailStreams.activeTailId === openTail.tailId ? 0 : -1"
-              class="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs cursor-pointer border transition-all"
-              :class="
-                tailStreams.activeTailId === openTail.tailId
-                  ? 'bg-default border-default text-default font-medium shadow-xs ring-1 ring-primary/20'
-                  : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
-              "
-              @click="tailStreams.activeTailId = openTail.tailId"
-              @keydown.enter.self="tailStreams.activeTailId = openTail.tailId"
-              @keydown.space.self.prevent="tailStreams.activeTailId = openTail.tailId"
-              @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
-            >
-              <!-- Live status indicator dot -->
-              <span
-                v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
-                class="relative flex size-2 shrink-0"
+        <Transition name="dock-panel" mode="out-in">
+          <TransferQueue v-if="tab === 'transfers'" />
+          <ActivityPanel v-else-if="tab === 'activity'" />
+          <MonitorPanel v-else-if="tab === 'monitor'" />
+          <OpenEditsPanel v-else-if="tab === 'edits'" />
+          <div v-else-if="tab === 'tail'" class="flex min-h-0 flex-1 flex-col">
+            <!-- Tail Tabs Header Bar -->
+          <div v-if="tailStreams.tabs.length > 0" class="flex items-center justify-between border-b border-muted bg-muted/30 px-2 py-1">
+            <div class="flex items-center gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
+              <div
+                v-for="openTail in tailStreams.tabs"
+                :key="openTail.tailId"
+                role="tab"
+                :aria-selected="tailStreams.activeTailId === openTail.tailId"
+                :tabindex="tailStreams.activeTailId === openTail.tailId ? 0 : -1"
+                class="group flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs cursor-pointer border transition-all"
+                :class="
+                  tailStreams.activeTailId === openTail.tailId
+                    ? 'bg-default border-default text-default font-medium shadow-xs ring-1 ring-primary/20'
+                    : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
+                "
+                @click="tailStreams.activeTailId = openTail.tailId"
+                @keydown.enter.self="tailStreams.activeTailId = openTail.tailId"
+                @keydown.space.self.prevent="tailStreams.activeTailId = openTail.tailId"
+                @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
               >
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60" />
-                <span class="relative inline-flex size-2 rounded-full bg-success" />
-              </span>
-              <span
-                v-else-if="tailStreams.errorMap[openTail.tailId]"
-                class="size-2 rounded-full bg-error shrink-0"
-              />
-              <span
-                v-else
-                class="size-2 rounded-full bg-warning shrink-0"
-              />
-
-              <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
-
-              <UTooltip :text="`${openTail.remotePath} (${(tailStreams.linesMap[openTail.tailId]?.length || 0).toLocaleString()} lines)`">
-                <span class="max-w-[150px] truncate select-none">
-                  {{ basename(openTail.remotePath) }}
-                </span>
-              </UTooltip>
-
-              <span
-                v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
-                class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-dimmed"
-              >
-                {{ sessionLabel(openTail.sessionId) }}
-              </span>
-
-              <!-- Unread badge if inactive tab has incoming lines -->
-              <span
-                v-if="tailStreams.unreadMap[openTail.tailId] && tailStreams.activeTailId !== openTail.tailId"
-                class="rounded-full bg-primary/20 px-1 py-0.2 text-2xs font-mono font-bold text-primary"
-              >
-                +{{ tailStreams.unreadMap[openTail.tailId] }}
-              </span>
-
-              <UTooltip text="Close tab (Middle-click)">
-                <button
-                  type="button"
-                  class="rounded p-0.5 text-muted opacity-60 hover:opacity-100 hover:bg-muted transition-opacity cursor-pointer"
-                  @click.stop="tailStreams.close(openTail.tailId)"
+                <!-- Live status indicator dot -->
+                <span
+                  v-if="!tailStreams.endedMap[openTail.tailId] && !tailStreams.errorMap[openTail.tailId]"
+                  class="relative flex size-2 shrink-0"
                 >
-                  <UIcon name="i-lucide-x" class="size-3" />
-                </button>
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60" />
+                  <span class="relative inline-flex size-2 rounded-full bg-success" />
+                </span>
+                <span
+                  v-else-if="tailStreams.errorMap[openTail.tailId]"
+                  class="size-2 rounded-full bg-error shrink-0"
+                />
+                <span
+                  v-else
+                  class="size-2 rounded-full bg-warning shrink-0"
+                />
+
+                <UIcon name="i-lucide-file-text" class="size-3.5 shrink-0 opacity-70 group-hover:opacity-100" />
+
+                <UTooltip :text="`${openTail.remotePath} (${(tailStreams.linesMap[openTail.tailId]?.length || 0).toLocaleString()} lines)`">
+                  <span class="max-w-[150px] truncate select-none">
+                    {{ basename(openTail.remotePath) }}
+                  </span>
+                </UTooltip>
+
+                <span
+                  v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
+                  class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-dimmed"
+                >
+                  {{ sessionLabel(openTail.sessionId) }}
+                </span>
+
+                <!-- Unread badge if inactive tab has incoming lines -->
+                <span
+                  v-if="tailStreams.unreadMap[openTail.tailId] && tailStreams.activeTailId !== openTail.tailId"
+                  class="rounded-full bg-primary/20 px-1 py-0.2 text-2xs font-mono font-bold text-primary"
+                >
+                  +{{ tailStreams.unreadMap[openTail.tailId] }}
+                </span>
+
+                <UTooltip text="Close tab (Middle-click)">
+                  <button
+                    type="button"
+                    class="rounded p-0.5 text-muted opacity-60 hover:opacity-100 hover:bg-muted transition-opacity cursor-pointer"
+                    @click.stop="tailStreams.close(openTail.tailId)"
+                  >
+                    <UIcon name="i-lucide-x" class="size-3" />
+                  </button>
+                </UTooltip>
+              </div>
+            </div>
+
+            <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2 flex items-center gap-1">
+              <UTooltip text="Close other tabs">
+                <UButton
+                  aria-label="Close other tabs"
+                  icon="i-lucide-list-x"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  @click="tailStreams.activeTailId && tailStreams.closeOthers(tailStreams.activeTailId)"
+                />
+              </UTooltip>
+              <UTooltip text="Close all tail tabs">
+                <UButton
+                  aria-label="Close all tail tabs"
+                  icon="i-lucide-x-circle"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  @click="tailStreams.closeAll()"
+                />
               </UTooltip>
             </div>
           </div>
 
-          <div v-if="tailStreams.tabs.length > 1" class="shrink-0 pl-2 flex items-center gap-1">
-            <UTooltip text="Close other tabs">
-              <UButton
-                aria-label="Close other tabs"
-                icon="i-lucide-list-x"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                @click="tailStreams.activeTailId && tailStreams.closeOthers(tailStreams.activeTailId)"
-              />
-            </UTooltip>
-            <UTooltip text="Close all tail tabs">
-              <UButton
-                aria-label="Close all tail tabs"
-                icon="i-lucide-x-circle"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                @click="tailStreams.closeAll()"
-              />
-            </UTooltip>
-          </div>
-        </div>
-
-        <div class="min-h-0 flex-1">
-          <LogTailViewer
-            v-if="tailStreams.activeTailId"
-            :key="tailStreams.activeTailId"
-            :tail-id="tailStreams.activeTailId"
-          />
-          <div v-else class="flex h-full flex-col items-center justify-center gap-2 px-3 py-6 text-center select-none">
-            <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/20">
-              <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
+          <div class="min-h-0 flex-1">
+            <LogTailViewer
+              v-if="tailStreams.activeTailId"
+              :key="tailStreams.activeTailId"
+              :tail-id="tailStreams.activeTailId"
+            />
+            <div v-else class="flex h-full flex-col items-center justify-center gap-2 px-3 py-6 text-center select-none">
+              <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/20">
+                <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
+              </div>
+              <p class="text-xs font-semibold text-default">No active log streams</p>
+              <p class="text-2xs text-muted max-w-sm">
+                Right-click any log or text file in the Remote file pane and select <span class="font-medium text-default">"Tail this file live"</span> to stream real-time output.
+              </p>
             </div>
-            <p class="text-xs font-semibold text-default">No active log streams</p>
-            <p class="text-2xs text-muted max-w-sm">
-              Right-click any log or text file in the Remote file pane and select <span class="font-medium text-default">"Tail this file live"</span> to stream real-time output.
-            </p>
           </div>
-        </div>
-        </template>
+          </div>
+        </Transition>
       </div>
     </Transition>
     <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">

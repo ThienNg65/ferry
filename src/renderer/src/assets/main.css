@@ -26,6 +26,12 @@
 }
 
 :root {
+  /* Interaction motion: shared, restrained timings for desktop affordances. */
+  --ferry-motion-fast: 120ms;
+  --ferry-motion-standard: 170ms;
+  --ferry-motion-panel: 210ms;
+  --ferry-motion-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ferry-motion-ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
   --ui-radius: 0.5rem;
   --ui-primary: var(--ui-color-primary-600);
 }
@@ -79,7 +85,7 @@ body {
    title-bar busy indicator both reuse this rather than popping in/out. */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--ferry-motion-fast) ease-out;
 }
 
 .fade-enter-from,
@@ -90,7 +96,7 @@ body {
 /* GPU-composited panel/overlay transitions (transform + opacity only, no layout thrash) */
 .slide-right-enter-active,
 .slide-right-leave-active {
-  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized), transform var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized);
   will-change: transform, opacity;
 }
 .slide-right-enter-from,
@@ -101,7 +107,7 @@ body {
 
 .slide-down-enter-active,
 .slide-down-leave-active {
-  transition: opacity 0.14s cubic-bezier(0.16, 1, 0.3, 1), transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized), transform var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized);
 }
 .slide-down-enter-from,
 .slide-down-leave-to {
@@ -111,7 +117,7 @@ body {
 
 .slide-up-enter-active,
 .slide-up-leave-active {
-  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized), transform var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized);
 }
 .slide-up-enter-from,
 .slide-up-leave-to {
@@ -127,6 +133,81 @@ body {
 .dock-fade-leave-to {
   opacity: 0;
   transform: translateY(4px);
+}
+
+
+/* The dock must change layout height once to give file panes their space back.
+   Disable the easing during pointer-resize and maximize: never animate every drag frame. */
+.ferry-dock-shell.ferry-dock-expandable {
+  transition: height var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized);
+}
+
+/* Subtle, composited content changes. Never key/remount TerminalView or FilePane. */
+.dock-panel-enter-active,
+.dock-panel-leave-active {
+  transition: opacity var(--ferry-motion-standard) var(--ferry-motion-ease-out),
+              transform var(--ferry-motion-standard) var(--ferry-motion-ease-out);
+}
+.dock-panel-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+}
+.dock-panel-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -4px, 0);
+}
+.dock-panel-leave-active {
+  pointer-events: none;
+}
+
+/* Site tab insertion/removal and reorder without animating layout properties. */
+.site-tab-enter-active,
+.site-tab-leave-active,
+.site-tab-move {
+  transition: opacity var(--ferry-motion-standard) var(--ferry-motion-ease-out),
+              transform var(--ferry-motion-standard) var(--ferry-motion-ease-out);
+}
+.site-tab-enter-from,
+.site-tab-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 5px, 0) scale(0.97);
+}
+/* Keep departing tabs out of the flex layout so TransitionGroup can
+   smoothly translate the remaining tabs into their new positions. The extra
+   specificity must win over .ferry-site-tab { position: relative } below. */
+.ferry-site-tab.site-tab-leave-active {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Active indicators use transforms, not width/position animations. */
+.ferry-site-tab,
+.ferry-dock-tab {
+  position: relative;
+}
+.ferry-site-tab::after,
+.ferry-dock-tab::after {
+  content: '';
+  position: absolute;
+  height: 2px;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--ui-primary);
+  pointer-events: none;
+  transform: scaleX(0);
+  transition: transform var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized);
+}
+.ferry-site-tab[aria-selected='true']::after,
+.ferry-dock-tab[aria-selected='true']::after {
+  transform: scaleX(1);
+}
+.ferry-dock-tab {
+  transition: transform var(--ferry-motion-fast) ease-out;
+}
+.ferry-dock-tab:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 @media (prefers-reduced-motion: reduce) {
