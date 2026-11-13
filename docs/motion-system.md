@@ -17,7 +17,7 @@ Defined in `src/renderer/src/assets/main.css`:
 ## Interactions
 
 - **Dock expand/collapse:** animate the shell's height only on deliberate toggle, not during pointer-resize or full-height/maximize. Dock panel content fades and translates a few pixels.
-- **Terminal:** never re-key or unmount `TerminalView`; it keeps xterm instances and scrollback alive. Dock transitions must not interfere with terminal focus or fitting.
+- **Terminal:** never re-key or unmount `TerminalView`; it keeps xterm instances and scrollback alive. Dock transitions must not interfere with terminal focus or fitting. Switching to Terminal skips the non-terminal exit fade so overlapping flex panes never squeeze xterm during its initial fit.
 - **Folder navigation:** animate the `FileList` scroll viewport after the directory actually loads (or displays cache). No animation for refresh, sort, selection, per-row rendering, or initial mount. Reset scroll to the top on directory navigation.
 - **Site tabs:** entering/exiting tabs fade and settle; existing tabs use FLIP-style `TransitionGroup` move transforms. Active underline uses transform.
 - **Inline folder creation / error feedback:** shared `slide-down` transition.

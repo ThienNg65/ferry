@@ -251,7 +251,9 @@ function sessionLabel(sessionId: string): string | null {
         />
       </UTooltip>
     </div>
-    <Transition name="dock-fade">
+    <!-- Terminal uses v-show; removing the other flex pane immediately avoids
+         briefly splitting the available height while xterm is being fitted. -->
+    <Transition name="dock-fade" :css="tab !== 'terminal'">
       <div v-if="!collapsed && tab !== 'terminal'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
         <Transition name="dock-panel" mode="out-in">
           <TransferQueue v-if="tab === 'transfers'" />
