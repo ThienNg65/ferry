@@ -7,6 +7,8 @@ import { EditSessionManager } from '../main/edit/EditSessionManager'
 import { AppSettingsStore } from '../main/app/AppSettingsStore'
 import { TransferQueue } from '../main/transfer/TransferQueue'
 import { KnownHostsStore } from '../main/ssh/KnownHostsStore'
+import { initAutoUpdater } from '../main/update/AutoUpdater'
+import { host } from '../main/host/host'
 import { createNodeHost } from './nodeHost'
 import { serve, type WriteLine } from './protocol'
 
@@ -17,6 +19,9 @@ export function initSidecarServices(): void {
     KnownHostsStore.getInstance()
   } catch (e) {
     console.error('sidecar: known_hosts.json unreadable at startup:', e)
+  }
+  if (host().isPackaged) {
+    setTimeout(() => void initAutoUpdater(), 5000).unref?.()
   }
 }
 

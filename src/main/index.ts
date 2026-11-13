@@ -18,7 +18,6 @@ import { HistoryStore } from './history/HistoryStore'
 import { EditSessionManager } from './edit/EditSessionManager'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerWindowHandlers } from './ipc/window.ipc'
-import { registerUpdateHandlers } from './ipc/update.ipc'
 import { initAutoUpdater } from './update/AutoUpdater'
 import { AppSettingsStore } from './app/AppSettingsStore'
 import { TransferQueue } from './transfer/TransferQueue'
@@ -215,7 +214,6 @@ function registerAllHandlers(): void {
   registerDialogHandlers()
   registerSystemHandlers()
   registerWindowHandlers(() => mainWindow)
-  registerUpdateHandlers()
   registerProfileHandler()
 }
 

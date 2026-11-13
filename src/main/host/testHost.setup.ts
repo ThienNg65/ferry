@@ -14,6 +14,8 @@ export const testHost: Host = {
     return text.slice('ENC:'.length)
   },
   dataDir: join(tmpdir(), 'ferry-vitest'),
+  isPackaged: false,
+  appVersion: '0.14.11',
   openPath: async () => '',
   pickOpenFile: async () => null
 }

@@ -8,6 +8,8 @@ export interface Host {
   encrypt(plaintext: string): string
   decrypt(ciphertext: string): string
   readonly dataDir: string
+  readonly isPackaged?: boolean
+  readonly appVersion?: string
   openPath(path: string): Promise<string>
   pickOpenFile(options?: OpenFileOptions): Promise<string | null>
 }

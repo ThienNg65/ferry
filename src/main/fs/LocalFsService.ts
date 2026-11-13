@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
-import type { FileEntry, FileListResult, FileReadResult, IpcErrorCode } from '../../shared/contract'
+import type { FileEntry, FileListResult, FileReadResult, IpcErrorCode, StageDropRequest } from '../../shared/contract'
 
 function isRootOrEmpty(p: string): boolean {
   const trimmed = (p ?? '').trim()
@@ -202,4 +202,79 @@ export async function mkdirRecursive(dirPath: string): Promise<void> {
   } catch (e) {
     throw new SshError('UNKNOWN', `Cannot create "${dirPath}": ${(e as Error).message}`)
   }
+}
+
+const MAX_STAGE_DROP_BYTES = 100 * 1024 * 1024
+
+/**
+ * Stages files/folders dropped from the OS into a temporary local directory when
+ * the host runtime (e.g. Neutralino/WebView2) does not expose host filesystem paths
+ * on DOM `File` objects, returning top-level `FileEntry` records with real local paths.
+ */
+export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEntry[]> {
+  const entries = Array.isArray(req?.entries) ? req.entries : []
+  if (entries.length === 0) {
+    return []
+  }
+
+  let totalBytes = 0
+  const normalized: Array<{ segments: string[]; isDir: boolean; data?: Uint8Array; modifiedAt?: string }> = []
+  for (const item of entries) {
+    const rawRel = String(item.relativePath ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    if (!rawRel || /^[a-zA-Z]:/.test(rawRel)) {
+      throw new SshError('VALIDATION', `Invalid dropped relative path "${item.relativePath}"`)
+    }
+    const segments = rawRel.split('/').filter(Boolean)
+    if (segments.length === 0 || segments.some((s) => s === '.' || s === '..')) {
+      throw new SshError('VALIDATION', `Unsafe dropped relative path "${item.relativePath}"`)
+    }
+    const bytes = item.data ? Buffer.from(item.data) : Buffer.alloc(0)
+    totalBytes += bytes.length
+    if (totalBytes > MAX_STAGE_DROP_BYTES) {
+      throw new SshError('VALIDATION', 'Dropped files exceed the 100 MB in-memory staging limit')
+    }
+    normalized.push({
+      segments,
+      isDir: Boolean(item.isDir),
+      data: item.isDir ? undefined : bytes,
+      modifiedAt: item.modifiedAt
+    })
+  }
+
+  const stageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-drop-'))
+  const topLevelOrder: string[] = []
+  const topLevelMeta = new Map<string, { modifiedAt?: string }>()
+
+  for (const item of normalized) {
+    const targetPath = path.resolve(stageRoot, ...item.segments)
+    if (!targetPath.startsWith(stageRoot + path.sep)) {
+      throw new SshError('VALIDATION', `Escaped staging root for "${item.segments.join('/')}"`)
+    }
+    const topName = item.segments[0]
+    if (!topLevelMeta.has(topName)) {
+      topLevelOrder.push(topName)
+      topLevelMeta.set(topName, { modifiedAt: item.segments.length === 1 ? item.modifiedAt : undefined })
+    }
+    if (item.isDir) {
+      await fs.mkdir(targetPath, { recursive: true })
+    } else {
+      await fs.mkdir(path.dirname(targetPath), { recursive: true })
+      await fs.writeFile(targetPath, item.data ?? Buffer.alloc(0))
+    }
+  }
+
+  const out: FileEntry[] = []
+  for (const name of topLevelOrder) {
+    const fullPath = path.join(stageRoot, name)
+    const stats = await fs.stat(fullPath)
+    out.push({
+      name,
+      path: fullPath,
+      isDir: stats.isDirectory(),
+      size: stats.isDirectory() ? 0 : stats.size,
+      modifiedAt: topLevelMeta.get(name)?.modifiedAt ?? stats.mtime.toISOString(),
+      isSymlink: false
+    })
+  }
+  return out
 }

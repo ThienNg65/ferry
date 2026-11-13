@@ -14,14 +14,21 @@
     "writeToLogFile": true
   },
   "nativeAllowList": [
-    "app.*",
-    "os.*",
-    "window.*",
-    "events.*",
-    "extensions.*",
-    "clipboard.*",
-    "filesystem.*",
-    "debug.*"
+    "app.broadcast",
+    "app.exit",
+    "window.minimize",
+    "window.maximize",
+    "window.unmaximize",
+    "window.isMaximized",
+    "window.move",
+    "os.showOpenDialog",
+    "os.showFolderDialog",
+    "os.showSaveDialog",
+    "os.getPath",
+    "clipboard.readText",
+    "extensions.dispatch",
+    "extensions.getStats",
+    "debug.log"
   ],
   "modes": {
     "window": {

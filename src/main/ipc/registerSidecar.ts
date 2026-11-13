@@ -14,6 +14,7 @@ import { registerUnzipHandlers } from './unzip.ipc'
 import { registerArchiveHandlers } from './archive.ipc'
 import { registerOperationsHandlers } from './operations.ipc'
 import { registerMonitorHandlers } from './monitor.ipc'
+import { registerUpdateHandlers } from './update.ipc'
 
 export function registerSidecarHandlers(): void {
   registerSitesHandlers()
@@ -32,4 +33,5 @@ export function registerSidecarHandlers(): void {
   registerArchiveHandlers()
   registerOperationsHandlers()
   registerMonitorHandlers()
+  registerUpdateHandlers()
 }

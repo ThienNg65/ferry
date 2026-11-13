@@ -1,6 +1,8 @@
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, SEND_CHANNELS, ok } from '../../../shared/contract'
-import { createNeutralinoApi, decodeB64Deep, type NeutralinoTransport } from './neutralinoApi'
+import { createNeutralinoApi, decodeB64Deep, encodeB64Deep, type NeutralinoTransport } from './neutralinoApi'
 
 function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar']): {
   transport: NeutralinoTransport
@@ -213,5 +215,46 @@ describe('neutralinoApi', () => {
     expect(out.b[0]).toBe(true)
     expect(Array.from(out.b[1])).toEqual([97, 98, 99])
     expect(out.c).toEqual({ __b64: 123 })
+  })
+
+  it('encodeB64Deep encodes nested Uint8Arrays into { __b64 } markers', () => {
+    const encoded = encodeB64Deep({ entries: [{ relativePath: 'a.bin', data: new Uint8Array([1, 2, 255]) }] })
+    expect(encoded).toEqual({
+      entries: [{ relativePath: 'a.bin', data: { __b64: Buffer.from([1, 2, 255]).toString('base64') } }]
+    })
+  })
+
+  it('times out when sidecar never becomes ready or fails to reply within rpcTimeoutMs', async () => {
+    vi.useFakeTimers()
+    try {
+      const { transport: coldTransport, emit: emitCold } = createFakeTransport([])
+      const coldApi = createNeutralinoApi(coldTransport, { readyTimeoutMs: 500, rpcTimeoutMs: 500 })
+      const readyPromise = coldApi.invoke(INVOKE_CHANNELS.settingsGet)
+      const readyAssertion = expect(readyPromise).rejects.toThrow('Sidecar did not become ready within 500ms')
+      await vi.advanceTimersByTimeAsync(500)
+      await readyAssertion
+
+      // Subsequent call succeeds once sidecar announces readiness, while slow RPC replies time out.
+      emitCold('sidecar:ready', { extensionId: 'js.ferry.sidecar' })
+      const slowCall = coldApi.invoke(INVOKE_CHANNELS.settingsGet)
+      const rpcAssertion = expect(slowCall).rejects.toThrow('Sidecar RPC timed out after 500ms: settings:get')
+      await vi.advanceTimersByTimeAsync(500)
+      await rpcAssertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restricts neutralino.config.json nativeAllowList to explicit methods without shell execution or filesystem wildcards', () => {
+    const configPath = join(process.cwd(), 'neutralino.config.json')
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as { nativeAllowList: string[] }
+    expect(config.nativeAllowList.length).toBeGreaterThan(0)
+    for (const entry of config.nativeAllowList) {
+      expect(entry).not.toContain('*')
+      expect(entry).not.toMatch(/^filesystem\./)
+    }
+    expect(config.nativeAllowList).not.toContain('os.execCommand')
+    expect(config.nativeAllowList).not.toContain('os.spawnProcess')
+    expect(config.nativeAllowList).not.toContain('app.killProcess')
   })
 })

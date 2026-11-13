@@ -104,6 +104,29 @@ export function decodeB64Deep(value: unknown): unknown {
   return value
 }
 
+/** Encodes Uint8Arrays into `{ __b64 }` markers before JSON serialization over Neutralino WebSocket RPC. */
+export function encodeB64Deep(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    let binary = ''
+    const chunkSize = 0x8000
+    for (let i = 0; i < value.length; i += chunkSize) {
+      binary += String.fromCharCode(...value.subarray(i, i + chunkSize))
+    }
+    return { __b64: btoa(binary) }
+  }
+  if (Array.isArray(value)) {
+    return value.map(encodeB64Deep)
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = encodeB64Deep(val)
+    }
+    return out
+  }
+  return value
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
@@ -122,15 +145,35 @@ async function runHostCall<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   }
 }
 
-export function createNeutralinoApi(transport: NeutralinoTransport = createDefaultTransport()): Window['api'] {
+export interface NeutralinoApiOptions {
+  readyTimeoutMs?: number
+  rpcTimeoutMs?: number
+}
+
+const DEFAULT_READY_TIMEOUT_MS = 15_000
+const DEFAULT_RPC_TIMEOUT_MS = 120_000
+
+export function createNeutralinoApi(
+  transport: NeutralinoTransport = createDefaultTransport(),
+  options: NeutralinoApiOptions = {}
+): Window['api'] {
+  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS
+  const rpcTimeoutMs = options.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
   const apiStartTime = performance.now()
   const apiTimeOrigin = performance.timeOrigin
 
   let nextRequestId = 1
-  const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
+  const pending = new Map<
+    string,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >()
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   let sidecarReady = false
-  const readyWaiters: Array<() => void> = []
+  const readyWaiters: Array<{
+    resolve: () => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }> = []
 
   const markReady = (): void => {
     if (sidecarReady) {
@@ -138,7 +181,11 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
     }
     sidecarReady = true
     while (readyWaiters.length > 0) {
-      readyWaiters.shift()?.()
+      const waiter = readyWaiters.shift()
+      if (waiter) {
+        clearTimeout(waiter.timer)
+        waiter.resolve()
+      }
     }
   }
 
@@ -154,9 +201,18 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
 
   const failAllPending = (reason: string): void => {
     sidecarReady = false
+    const errObj = new Error(reason)
+    while (readyWaiters.length > 0) {
+      const waiter = readyWaiters.shift()
+      if (waiter) {
+        clearTimeout(waiter.timer)
+        waiter.reject(errObj)
+      }
+    }
     for (const [id, entry] of pending) {
       pending.delete(id)
-      entry.reject(new Error(reason))
+      clearTimeout(entry.timer)
+      entry.reject(errObj)
     }
   }
 
@@ -193,6 +249,7 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
       return
     }
     pending.delete(id)
+    clearTimeout(entry.timer)
     entry.resolve(decodeB64Deep(result))
   })
 
@@ -220,8 +277,19 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
     } catch {
       // Transport not ready yet; fall through to wait for the ready event.
     }
-    await new Promise<void>((resolve) => {
-      readyWaiters.push(resolve)
+    await new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const idx = readyWaiters.indexOf(waiter)
+          if (idx !== -1) {
+            readyWaiters.splice(idx, 1)
+          }
+          reject(new Error(`Sidecar did not become ready within ${readyTimeoutMs}ms`))
+        }, readyTimeoutMs)
+      }
+      readyWaiters.push(waiter)
     })
   }
 
@@ -268,12 +336,6 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
       case INVOKE_CHANNELS.systemStartDrag:
         // OS-level drag-out is not supported in Neutralino/WebView2; in-app pane drag uses HTML5 drag events.
         return ok(undefined)
-      case INVOKE_CHANNELS.updateCheck:
-        return ok({ status: 'disabled' as const })
-      case INVOKE_CHANNELS.updateGetStatus:
-        return ok({ status: 'disabled' as const, currentVersion: transport.getAppVersion() })
-      case INVOKE_CHANNELS.updateInstallNow:
-        return ok(undefined)
       case INVOKE_CHANNELS.profileReport:
         return runHostCall(() => transport.logDebug(JSON.stringify(args[0] ?? {})))
       default:
@@ -306,9 +368,23 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
     await ensureSidecarReady()
     const id = `nl-${nextRequestId++}`
     return new Promise<unknown>((resolve, reject) => {
-      pending.set(id, { resolve, reject })
-      transport.dispatchExtension(SIDECAR_EXTENSION_ID, RPC_INVOKE_EVENT, { id, channel, args }).catch((error) => {
+      const timer = setTimeout(() => {
         if (pending.delete(id)) {
+          reject(new Error(`Sidecar RPC timed out after ${rpcTimeoutMs}ms: ${channel}`))
+        }
+      }, rpcTimeoutMs)
+      pending.set(id, { resolve, reject, timer })
+      transport
+        .dispatchExtension(SIDECAR_EXTENSION_ID, RPC_INVOKE_EVENT, {
+          id,
+          channel,
+          args: encodeB64Deep(args)
+        })
+        .catch((error) => {
+        const entry = pending.get(id)
+        if (entry) {
+          pending.delete(id)
+          clearTimeout(entry.timer)
           reject(new Error(errorMessage(error)))
         }
       })
@@ -319,12 +395,16 @@ export function createNeutralinoApi(transport: NeutralinoTransport = createDefau
     if (!ALLOWED_SEND_CHANNELS.has(channel)) {
       throw new Error(`Blocked send on non-whitelisted channel: ${channel}`)
     }
-    void ensureSidecarReady().then(() =>
-      transport.dispatchExtension(SIDECAR_EXTENSION_ID, RPC_SEND_EVENT, {
-        channel,
-        payload: args[0]
+    void ensureSidecarReady()
+      .then(() =>
+        transport.dispatchExtension(SIDECAR_EXTENSION_ID, RPC_SEND_EVENT, {
+          channel,
+          payload: encodeB64Deep(args[0])
+        })
+      )
+      .catch(() => {
+        // Best-effort fire-and-forget; errors are surfaced through invoke/status channels.
       })
-    )
   }
 
   const on = (channel: string, listener: (...args: unknown[]) => void): (() => void) => {

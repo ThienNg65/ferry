@@ -360,6 +360,19 @@ export interface FileReadResult {
   size: number
 }
 
+/** One external OS file/folder dropped onto the webview when host filesystem paths aren't exposed directly. */
+export interface StageDropEntryInput {
+  relativePath: string
+  isDir: boolean
+  data?: Uint8Array
+  modifiedAt?: string
+}
+
+/** Request payload for `fs:local:stage-drop`. */
+export interface StageDropRequest {
+  entries: StageDropEntryInput[]
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -887,6 +900,7 @@ export const INVOKE_CHANNELS = {
   fsLocalMkdir: 'fs:local:mkdir',
   fsLocalRename: 'fs:local:rename',
   fsLocalDelete: 'fs:local:delete',
+  fsLocalStageDrop: 'fs:local:stage-drop',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',
@@ -979,9 +993,6 @@ export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
   INVOKE_CHANNELS.windowMaximizeToggle,
   INVOKE_CHANNELS.windowClose,
   INVOKE_CHANNELS.windowIsMaximized,
-  INVOKE_CHANNELS.updateCheck,
-  INVOKE_CHANNELS.updateGetStatus,
-  INVOKE_CHANNELS.updateInstallNow,
   INVOKE_CHANNELS.profileReport
 ]
 

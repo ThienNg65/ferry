@@ -1,4 +1,5 @@
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, copyFileSync, statSync } from 'fs'
+import { createHash } from 'crypto'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, copyFileSync, statSync, writeFileSync } from 'fs'
 import { execFileSync, spawnSync } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -62,17 +63,46 @@ await new Promise((resolveZip, rejectZip) => {
   void archive.finalize()
 })
 
-const hasMakensis = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['makensis'], {
-  stdio: 'ignore'
-}).status === 0
+function findMakensis() {
+  const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['makensis'], { encoding: 'utf8' })
+  if (probe.status === 0 && probe.stdout) {
+    const first = probe.stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean)
+    if (first && existsSync(first)) return first
+  }
+  const candidates = [
+    join(process.env.ProgramFiles || 'C:\\Program Files', 'NSIS', 'makensis.exe'),
+    join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'NSIS', 'makensis.exe')
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  const nsisCacheDir = join(process.env.LOCALAPPDATA || '', 'electron-builder', 'Cache', 'nsis')
+  if (existsSync(nsisCacheDir)) {
+    for (const dir of readdirSync(nsisCacheDir)) {
+      for (const rel of ['Bin\\makensis.exe', 'makensis.exe']) {
+        const p = join(nsisCacheDir, dir, rel)
+        if (existsSync(p)) return p
+      }
+    }
+  }
+  return null
+}
 
+const makensisBin = findMakensis()
 let installerPath = null
-if (hasMakensis) {
-  execFileSync('makensis', [`/DVERSION=${version}`, join(rootDir, 'build', 'neutralino-installer.nsi')], {
+if (makensisBin) {
+  execFileSync(makensisBin, [`/DVERSION=${version}`, join(rootDir, 'build', 'neutralino-installer.nsi')], {
     cwd: rootDir,
     stdio: 'inherit'
   })
   installerPath = join(distDir, `Ferry-Neutralino-Setup-${version}.exe`)
+  if (existsSync(installerPath)) {
+    const installerBuf = readFileSync(installerPath)
+    const sha512 = createHash('sha512').update(installerBuf).digest('base64')
+    const exeName = `Ferry-Neutralino-Setup-${version}.exe`
+    const latestYml = `version: ${version}\nfiles:\n  - url: ${exeName}\n    sha512: ${sha512}\n    size: ${installerBuf.length}\npath: ${exeName}\nsha512: ${sha512}\nreleaseDate: '${new Date().toISOString()}'\n`
+    writeFileSync(join(distDir, 'latest-neutralino.yml'), latestYml, 'utf8')
+  }
 }
 
 const files = [
@@ -95,8 +125,12 @@ console.log(`Compressed ZIP: ${zipPath} -> ${zipBytes} bytes (${(zipBytes / (102
 if (installerPath && existsSync(installerPath)) {
   const exeBytes = statSync(installerPath).size
   console.log(`NSIS Installer: ${installerPath} -> ${exeBytes} bytes (${(exeBytes / (1024 * 1024)).toFixed(2)} MB)`)
+  console.log(`Update Manifest: ${join(distDir, 'latest-neutralino.yml')}`)
+  if (exeBytes > MAX_COMPRESSED_BYTES) {
+    throw new Error(`NSIS installer (${exeBytes} bytes) exceeds ${MAX_COMPRESSED_BYTES} byte limit.`)
+  }
 } else {
-  console.log('NSIS Installer: skipped (makensis not found on PATH)')
+  console.log('NSIS Installer: skipped (makensis not found)')
 }
 
 if (zipBytes > MAX_COMPRESSED_BYTES) {

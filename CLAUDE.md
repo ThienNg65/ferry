@@ -87,11 +87,8 @@ real-2FA prompt flow, in more depth than belongs here.
 
 ## Design docs and plans (historical, not authoritative for current state)
 
-`.claude/architecture/` holds the original backend/frontend design docs written before
-implementation began; `.claude/plan/` holds every approved feature-round implementation plan in
-sequence. Both are useful for *why* something was built a certain way, but the code and
-PROJECT_MAP.md are the source of truth for current behavior — plans describe intent at the time,
-not necessarily what shipped.
+- Architecture Decision Records live in [docs/adr/](docs/adr/) — notably [ADR-0001: Neutralinojs + Node.js Sidecar Host Migration](docs/adr/0001-neutralinojs-migration.md).
+- `.claude/architecture/` holds the original backend/frontend design docs written before implementation began; `.claude/plan/` holds every approved feature-round implementation plan in sequence. Both are useful for *why* something was built a certain way, but the code and PROJECT_MAP.md are the source of truth for current behavior — plans describe intent at the time, not necessarily what shipped.
 
 ## CI/CD & Release Workflow (Release Please)
 

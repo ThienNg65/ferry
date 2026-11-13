@@ -18,6 +18,8 @@ export function createNodeHost(
     encrypt: (plaintext) => box.encrypt(plaintext),
     decrypt: (ciphertext) => box.decrypt(ciphertext),
     dataDir,
+    isPackaged: process.argv.includes('--nl-mode') || process.env['FERRY_PACKAGED'] === '1',
+    appVersion: process.env['FERRY_APP_VERSION'] || '0.22.0',
     openPath: async (p) => {
       if (!existsSync(p)) {
         return `Could not open ${p}: not found`

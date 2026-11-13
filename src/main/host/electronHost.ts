@@ -15,6 +15,12 @@ export const electronHost: Host = {
   get dataDir() {
     return app.getPath('userData')
   },
+  get isPackaged() {
+    return app.isPackaged
+  },
+  get appVersion() {
+    return app.getVersion()
+  },
   openPath: (p) => shell.openPath(p),
   async pickOpenFile(options) {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]

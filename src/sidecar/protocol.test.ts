@@ -2,7 +2,7 @@ import { PassThrough } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handle, handlers, onSend, sendHandlers } from '../main/ipc/envelope'
 import { SshError } from '../main/ssh/errors'
-import { encodeLine, serve, type SidecarHooks } from './protocol'
+import { decodeB64Deep, encodeLine, serve, type SidecarHooks } from './protocol'
 
 function harness(): { input: PassThrough; out: unknown[]; hooks: SidecarHooks & { init: ReturnType<typeof vi.fn>; shutdown: ReturnType<typeof vi.fn> } } {
   const input = new PassThrough()
@@ -114,5 +114,11 @@ describe('encodeLine', () => {
 
   it('emits a single line', () => {
     expect(encodeLine({ text: 'a\nb' })).not.toContain('\n')
+  })
+
+  it('decodes nested { __b64 } markers back into Buffers', () => {
+    const decoded = decodeB64Deep({ entries: [{ data: { __b64: '/wAb' } }] }) as { entries: [{ data: Buffer }] }
+    expect(Buffer.isBuffer(decoded.entries[0].data)).toBe(true)
+    expect(Array.from(decoded.entries[0].data)).toEqual([0xff, 0x00, 0x1b])
   })
 })

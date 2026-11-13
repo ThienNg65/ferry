@@ -16,6 +16,7 @@
     "build:renderer": "vite build --config vite.renderer.config.mts",
     "build:neutralino": "npm run build:renderer && npm run build:sidecar",
     "package:neutralino": "npm run build:neutralino && node scripts/pack-neutralino.mjs",
+    "smoke:neutralino": "node scripts/smoke-neutralino-package.mjs",
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder",
     "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
