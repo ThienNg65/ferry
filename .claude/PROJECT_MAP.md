@@ -319,3 +319,17 @@ filename.
 | Fix/extend the Terminal's keyboard shortcuts (copy/paste/focus) | `renderer/src/utils/terminalKeys.ts` (pure `terminalKeyAction` decision table), `renderer/src/stores/terminalStreams.store.ts` (`attachCustomKeyEventHandler` wiring, `focus()`/`copyOrPaste()` actions), `renderer/src/components/terminal/TerminalView.vue` (`syncActiveTerminal`'s focus call, right-click listener), `main/ipc/system.ipc.ts` (`system:clipboardReadText`) |
 | Change file-row selection/hover styling, chrome-vs-content zoning, or per-file-type colors | `renderer/src/components/files/FileRow.vue` (selection classes), `renderer/src/utils/fileTypes.ts` (`colorForFile`), `renderer/src/assets/main.css` + `electron.vite.config.ts` (the `brand` primary color), `.claude/PROJECT_MAP.md`'s Conventions if you change the underlying pattern |
 | Change CI/CD or Release automation | `.github/workflows/ci.yml` (CI verification), `.github/workflows/release.yml` (Release Please automation), `release-please-config.json`, `.release-please-manifest.json`, `CLAUDE.md` |
+
+## UX round P2/P3 conventions (branch feat/ux-feedback-p2-p3)
+
+- **Transfers write to `<dest>.part` and rename on success** (`TransferQueue.runFile`; remote commit via `commitRemoteFile` in `RemoteFsService`). Error keeps the `.part`; cancel removes it. Retry and Resume (`transfer:retry`, `transfer:pause`) run in main: only a retry/resume continues from the `.part` offset, a fresh enqueue always truncates. `TransferState` has `'paused'`; `TransferEvent` carries `filesDone`/`filesTotal`.
+- **`useConfirm()`** (`composables/useConfirm.ts` + `components/shell/ConfirmDialog.vue`, Nuxt UI `useOverlay`) is the shared confirm dialog: `action` runs with a spinner and shows its error inline; `secondaryLabel`/`secondaryAction` add a third button. Bulk site delete and the host-key/2FA prompts are deliberately NOT migrated.
+- **`formatDateTime` / `formatSpeed`** in `utils/format.ts` are the only date and speed formatters.
+- **`RemoteShell.openShellAt(cwd)`** starts the terminal with `exec "cd … ; exec $SHELL -l"` so the cd is not in shell history; `TerminalManager` falls back to `openShell` + a space-prefixed cd if the exec channel is refused or closes within 1.5s with no output.
+- **Edit as root**: `EditSessionManager.openRemote(..., viaSudo)` reads with `sudo -n cat`, saves via `tee` to a temp path then `chmod/chown --reference` and `mv` (GNU userland). Passwordless sudo only.
+- `sites:import-json` shows its own open dialog in main (the renderer never passes a path). `parseSitesBackup` validates everything and drops secrets.
+- `fs:remote:admin` (recursive chmod/chown) goes through `OperationRegistry` kind `chmod-remote`; validators in `main/fs/permissionCommands.ts`.
+- Pane keyboard handling lives in `composables/usePaneKeyboard.ts`, transfer-intent/conflict logic in `composables/useTransferIntents.ts`; `usePaneActions.ts` lets the command palette drive the active pane's selection actions.
+- UI prefs added to `ui.store`: `showHidden`, `columns` (widths + hidden, `utils/columnPrefs.ts`), `terminalScrollback`; dock `collapsed` persists via `useDockState`.
+- Gotcha: the integration container's `~/.bash_history` persists across runs — clear it before asserting on shell history.
+- Gotcha: `.claude/` is gitignored, so edits to this file and the plans are local only.
