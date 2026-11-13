@@ -9,6 +9,25 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.22.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.21.0...ferry-v0.22.0) (2026-11-13)
+
+
+### Features
+
+* introduce consistent responsive motion for dock and files ([30c4572](https://github.com/ThienNg65/ferry/commit/30c457279ee467ee3e467b8fa451dc7b5f04bc52))
+* polished motion for dock, folders, and tabs ([1c2ec68](https://github.com/ThienNg65/ferry/commit/1c2ec68046755183036fe27d47095d1a8021a408))
+
+
+### Bug Fixes
+
+* avoid terminal layout squeeze during dock transitions ([18312dd](https://github.com/ThienNg65/ferry/commit/18312dd786a5e03ed306bfe1125a71ed30b4c9a7))
+* preserve smooth site-tab exit layout ([23f8a3d](https://github.com/ThienNg65/ferry/commit/23f8a3df3c0cc742cd2388d816eec7e9a40d83e9))
+
+
+### Documentation
+
+* document motion invariants and align template formatting ([68d8192](https://github.com/ThienNg65/ferry/commit/68d8192559499c251197cd16a86d9a6be0942640))
+
 ## [0.21.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.20.0...ferry-v0.21.0) (2026-11-13)
 
 
