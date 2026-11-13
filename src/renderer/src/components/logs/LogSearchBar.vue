@@ -10,7 +10,7 @@ const props = defineProps<{
   isRegex: boolean
   filterOnly?: boolean
   regexError?: string | null
-  keywords: string[]
+  keywords?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -226,13 +226,13 @@ function onKeydown(e: KeyboardEvent): void {
     </div>
 
     <!-- Keyword Highlight Chips Row -->
-    <div class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
+    <div v-if="keywords" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
       <span class="inline-flex items-center gap-1 text-2xs font-medium text-muted select-none">
         <UIcon name="i-lucide-highlighter" class="size-3" />
         Highlight
       </span>
       <span
-        v-for="(keyword, kIdx) in keywords"
+        v-for="(keyword, kIdx) in (keywords ?? [])"
         :key="keyword"
         class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-2xs font-medium"
         :class="KEYWORD_CLASSES[kIdx % KEYWORD_CLASSES.length]"
@@ -248,7 +248,7 @@ function onKeydown(e: KeyboardEvent): void {
         </button>
       </span>
       <UInput
-        v-if="keywords.length < KEYWORD_CLASSES.length"
+        v-if="(keywords?.length ?? 0) < KEYWORD_CLASSES.length"
         v-model="keywordDraft"
         size="xs"
         placeholder="Add keyword, press Enter…"
@@ -257,7 +257,7 @@ function onKeydown(e: KeyboardEvent): void {
         @keydown.escape.stop="emit('close')"
       />
       <UButton
-        v-if="keywords.length > 0"
+        v-if="(keywords?.length ?? 0) > 0"
         label="Clear"
         size="xs"
         color="neutral"
