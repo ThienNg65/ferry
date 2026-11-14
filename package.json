@@ -18,6 +18,7 @@
     "package": "npm run build && node scripts/pack-neutralino.mjs",
     "package:neutralino": "npm run package",
     "smoke:neutralino": "node scripts/smoke-neutralino-package.mjs",
+    "e2e:migration": "node scripts/e2e-electron-migration.mjs",
     "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

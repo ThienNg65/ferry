@@ -27,21 +27,106 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-!macro BackupIfExists REL_PATH
-  IfFileExists "$INSTDIR\${REL_PATH}" 0 +2
-    Rename "$INSTDIR\${REL_PATH}" "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
+!macro BackupFile REL_PATH
+  ${If} ${FileExists} "$INSTDIR\${REL_PATH}"
+    ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
+      ; Preserve pre-existing backup from an interrupted run; remove only the partial file in $INSTDIR.
+      ClearErrors
+      Delete "$INSTDIR\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_install
+      ${EndIf}
+    ${Else}
+      ClearErrors
+      Rename "$INSTDIR\${REL_PATH}" "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_install
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 !macroend
 
-!macro RestoreIfExists REL_PATH
-  IfFileExists "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}" 0 +3
+!macro BackupDir REL_PATH
+  ${If} ${FileExists} "$INSTDIR\${REL_PATH}\*.*"
+    ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}\*.*"
+      ClearErrors
+      RMDir /r "$INSTDIR\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_install
+      ${EndIf}
+    ${Else}
+      ClearErrors
+      Rename "$INSTDIR\${REL_PATH}" "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_install
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro RestoreFile REL_PATH
+  ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
     Delete "$INSTDIR\${REL_PATH}"
     Rename "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}" "$INSTDIR\${REL_PATH}"
+  ${EndIf}
 !macroend
 
-!macro RestoreDirIfExists REL_PATH
-  IfFileExists "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}\*.*" 0 +3
+!macro RestoreDir REL_PATH
+  ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}\*.*"
     RMDir /r "$INSTDIR\${REL_PATH}"
     Rename "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}" "$INSTDIR\${REL_PATH}"
+  ${EndIf}
+!macroend
+
+!macro DiscoverFromUninstallHive ROOT_KEY
+  StrCpy $1 0
+  ${Do}
+    EnumRegKey $2 ${ROOT_KEY} "Software\Microsoft\Windows\CurrentVersion\Uninstall" $1
+    ${If} $2 == ""
+      ${Break}
+    ${EndIf}
+    ReadRegStr $3 ${ROOT_KEY} "Software\Microsoft\Windows\CurrentVersion\Uninstall\$2" "UninstallString"
+    ${If} $3 != ""
+      ${WordFind} $3 "\Uninstall Ferry.exe" "+1{" $4
+      ${If} $4 != $3
+        StrCpy $5 $4 1
+        ${If} $5 == '"'
+          StrCpy $4 $4 "" 1
+        ${EndIf}
+        ${If} $4 != ""
+        ${AndIf} ${FileExists} "$4\Ferry.exe"
+          StrCpy $INSTDIR $4
+          ${Break}
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    IntOp $1 $1 + 1
+  ${Loop}
+!macroend
+
+!macro CleanLegacyUninstallHive ROOT_KEY
+  StrCpy $0 0
+  ${Do}
+    EnumRegKey $1 ${ROOT_KEY} "Software\Microsoft\Windows\CurrentVersion\Uninstall" $0
+    ${If} $1 == ""
+      ${Break}
+    ${EndIf}
+    ${If} $1 != "Ferry"
+      ReadRegStr $2 ${ROOT_KEY} "Software\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
+      ${If} $2 != ""
+        ${WordFind} $2 "$INSTDIR\Uninstall Ferry.exe" "+1{" $3
+        ${If} $3 != $2
+          DeleteRegKey ${ROOT_KEY} "Software\Microsoft\Windows\CurrentVersion\Uninstall\$1"
+          ${Continue}
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    IntOp $0 $0 + 1
+  ${Loop}
+  ReadRegStr $2 ${ROOT_KEY} "Software\0e7a35ae-8c4b-54d6-9132-a1274e415706" "InstallLocation"
+  ${If} $2 == "$INSTDIR"
+    DeleteRegKey ${ROOT_KEY} "Software\0e7a35ae-8c4b-54d6-9132-a1274e415706"
+  ${EndIf}
 !macroend
 
 Function .onInit
@@ -63,131 +148,119 @@ Function .onInit
     ${EndIf}
   ${EndIf}
 
-  ; Fallback: scan HKCU Uninstall entries for UninstallString containing "\Uninstall Ferry.exe".
   ${If} $0 == ""
   ${AndIf} $INSTDIR == "$LOCALAPPDATA\Programs\Ferry"
-    StrCpy $1 0
-    ${Do}
-      EnumRegKey $2 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall" $1
-      ${If} $2 == ""
-        ${Break}
-      ${EndIf}
-      ReadRegStr $3 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$2" "UninstallString"
-      ${If} $3 != ""
-        ${WordFind} $3 "\Uninstall Ferry.exe" "+1{" $4
-        ${If} $4 != $3
-          ; Strip optional leading quote from UninstallString
-          StrCpy $5 $4 1
-          ${If} $5 == '"'
-            StrCpy $4 $4 "" 1
-          ${EndIf}
-          ${If} $4 != ""
-          ${AndIf} ${FileExists} "$4\Ferry.exe"
-            StrCpy $INSTDIR $4
-            ${Break}
-          ${EndIf}
-        ${EndIf}
-      ${EndIf}
-      IntOp $1 $1 + 1
-    ${Loop}
+    !insertmacro DiscoverFromUninstallHive HKCU
+  ${EndIf}
+
+  ${If} $0 == ""
+  ${AndIf} $INSTDIR == "$LOCALAPPDATA\Programs\Ferry"
+    !insertmacro DiscoverFromUninstallHive HKLM
   ${EndIf}
 FunctionEnd
 
 Section "Ferry" SecMain
+  CreateDirectory "$INSTDIR"
   SetOutPath "$INSTDIR"
+
+  ; Preflight writeability check (catches protected per-machine Program Files installs when run without elevation).
+  ClearErrors
+  FileOpen $9 "$INSTDIR\.ferry-write-probe" w
+  ${If} ${Errors}
+    Abort "Cannot write to $INSTDIR. If Ferry was installed for all users, please re-run the installer as Administrator."
+  ${EndIf}
+  FileClose $9
+  Delete "$INSTDIR\.ferry-write-probe"
 
   ; Wait for any running Ferry (Electron or Neutralino + sidecar) processes in $INSTDIR to exit; force-stop if still lingering.
   System::Call 'kernel32::SetEnvironmentVariable(t "FERRY_INSTDIR", t "$INSTDIR")'
   nsExec::Exec "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command $\"$$dir = [IO.Path]::GetFullPath($$env:FERRY_INSTDIR).TrimEnd('\'); for ($$i = 0; $$i -lt 25; $$i++) { $$procs = Get-CimInstance Win32_Process -Filter 'Name=''Ferry.exe'' OR Name=''ferry-win_x64.exe'' OR Name=''node.exe''' | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) }; if (-not $$procs) { break }; if ($$i -ge 15) { $$procs | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Milliseconds 200 }$\""
   Pop $0
 
-  ; Transactional backup: stage existing Electron/Neutralino runtime files before copying new files, preserving %APPDATA%\Ferry.
-  RMDir /r "$INSTDIR\_ferry_upgrade_backup"
+  ; Crash-safe transactional backup: preserve any pre-existing _ferry_upgrade_backup from an interrupted run.
   CreateDirectory "$INSTDIR\_ferry_upgrade_backup"
 
-  !insertmacro BackupIfExists "Ferry.exe"
-  !insertmacro BackupIfExists "Uninstall Ferry.exe"
-  !insertmacro BackupIfExists "ferry-win_x64.exe"
-  !insertmacro BackupIfExists "resources.neu"
-  !insertmacro BackupIfExists "chrome_100_percent.pak"
-  !insertmacro BackupIfExists "chrome_200_percent.pak"
-  !insertmacro BackupIfExists "resources.pak"
-  !insertmacro BackupIfExists "icudtl.dat"
-  !insertmacro BackupIfExists "snapshot_blob.bin"
-  !insertmacro BackupIfExists "v8_context_snapshot.bin"
-  !insertmacro BackupIfExists "ffmpeg.dll"
-  !insertmacro BackupIfExists "libEGL.dll"
-  !insertmacro BackupIfExists "libGLESv2.dll"
-  !insertmacro BackupIfExists "vk_swiftshader.dll"
-  !insertmacro BackupIfExists "vk_swiftshader_icd.json"
-  !insertmacro BackupIfExists "vulkan-1.dll"
-  !insertmacro BackupIfExists "d3dcompiler_47.dll"
-  !insertmacro BackupIfExists "LICENSES.chromium.html"
-  !insertmacro BackupIfExists "LICENSE.electron.txt"
-  IfFileExists "$INSTDIR\locales\*.*" 0 +2
-    Rename "$INSTDIR\locales" "$INSTDIR\_ferry_upgrade_backup\locales"
-  IfFileExists "$INSTDIR\resources\*.*" 0 +2
-    Rename "$INSTDIR\resources" "$INSTDIR\_ferry_upgrade_backup\resources"
-  IfFileExists "$INSTDIR\extensions\*.*" 0 +2
-    Rename "$INSTDIR\extensions" "$INSTDIR\_ferry_upgrade_backup\extensions"
+  !insertmacro BackupFile "Ferry.exe"
+  !insertmacro BackupFile "Uninstall Ferry.exe"
+  !insertmacro BackupFile "ferry-win_x64.exe"
+  !insertmacro BackupFile "resources.neu"
+  !insertmacro BackupFile "chrome_100_percent.pak"
+  !insertmacro BackupFile "chrome_200_percent.pak"
+  !insertmacro BackupFile "resources.pak"
+  !insertmacro BackupFile "icudtl.dat"
+  !insertmacro BackupFile "snapshot_blob.bin"
+  !insertmacro BackupFile "v8_context_snapshot.bin"
+  !insertmacro BackupFile "ffmpeg.dll"
+  !insertmacro BackupFile "libEGL.dll"
+  !insertmacro BackupFile "libGLESv2.dll"
+  !insertmacro BackupFile "vk_swiftshader.dll"
+  !insertmacro BackupFile "vk_swiftshader_icd.json"
+  !insertmacro BackupFile "vulkan-1.dll"
+  !insertmacro BackupFile "d3dcompiler_47.dll"
+  !insertmacro BackupFile "LICENSES.chromium.html"
+  !insertmacro BackupFile "LICENSE.electron.txt"
+  !insertmacro BackupDir "locales"
+  !insertmacro BackupDir "resources"
+  !insertmacro BackupDir "extensions"
 
   ClearErrors
   File /r "..\dist\ferry-neutralino-win_x64\*.*"
   ${If} ${Errors}
-    ; Rollback partial install and restore previous runnable installation.
-    Delete "$INSTDIR\ferry-win_x64.exe"
-    Delete "$INSTDIR\resources.neu"
-    RMDir /r "$INSTDIR\extensions"
-
-    !insertmacro RestoreIfExists "Ferry.exe"
-    !insertmacro RestoreIfExists "Uninstall Ferry.exe"
-    !insertmacro RestoreIfExists "ferry-win_x64.exe"
-    !insertmacro RestoreIfExists "resources.neu"
-    !insertmacro RestoreIfExists "chrome_100_percent.pak"
-    !insertmacro RestoreIfExists "chrome_200_percent.pak"
-    !insertmacro RestoreIfExists "resources.pak"
-    !insertmacro RestoreIfExists "icudtl.dat"
-    !insertmacro RestoreIfExists "snapshot_blob.bin"
-    !insertmacro RestoreIfExists "v8_context_snapshot.bin"
-    !insertmacro RestoreIfExists "ffmpeg.dll"
-    !insertmacro RestoreIfExists "libEGL.dll"
-    !insertmacro RestoreIfExists "libGLESv2.dll"
-    !insertmacro RestoreIfExists "vk_swiftshader.dll"
-    !insertmacro RestoreIfExists "vk_swiftshader_icd.json"
-    !insertmacro RestoreIfExists "vulkan-1.dll"
-    !insertmacro RestoreIfExists "d3dcompiler_47.dll"
-    !insertmacro RestoreIfExists "LICENSES.chromium.html"
-    !insertmacro RestoreIfExists "LICENSE.electron.txt"
-    !insertmacro RestoreDirIfExists "locales"
-    !insertmacro RestoreDirIfExists "resources"
-    !insertmacro RestoreDirIfExists "extensions"
-    RMDir /r "$INSTDIR\_ferry_upgrade_backup"
-    Abort "Ferry installation failed; previous installation was restored and user data was preserved."
+    Goto rollback_install
   ${EndIf}
 
-  ; Commit phase: only update registry/shortcuts and discard backup after new files are safely written.
+  ; Post-copy validation before committing or discarding backup.
+  ${IfNot} ${FileExists} "$INSTDIR\ferry-win_x64.exe"
+  ${OrIfNot} ${FileExists} "$INSTDIR\resources.neu"
+  ${OrIfNot} ${FileExists} "$INSTDIR\extensions\js.ferry.sidecar\node.exe"
+  ${OrIfNot} ${FileExists} "$INSTDIR\extensions\js.ferry.sidecar\index.cjs"
+    Goto rollback_install
+  ${EndIf}
+
+  nsExec::Exec '"$INSTDIR\extensions\js.ferry.sidecar\node.exe" --version'
+  Pop $0
+  ${If} $0 != 0
+    Goto rollback_install
+  ${EndIf}
+
+  Goto commit_install
+
+rollback_install:
+  Delete "$INSTDIR\ferry-win_x64.exe"
+  Delete "$INSTDIR\resources.neu"
+  RMDir /r "$INSTDIR\extensions"
+
+  !insertmacro RestoreFile "Ferry.exe"
+  !insertmacro RestoreFile "Uninstall Ferry.exe"
+  !insertmacro RestoreFile "ferry-win_x64.exe"
+  !insertmacro RestoreFile "resources.neu"
+  !insertmacro RestoreFile "chrome_100_percent.pak"
+  !insertmacro RestoreFile "chrome_200_percent.pak"
+  !insertmacro RestoreFile "resources.pak"
+  !insertmacro RestoreFile "icudtl.dat"
+  !insertmacro RestoreFile "snapshot_blob.bin"
+  !insertmacro RestoreFile "v8_context_snapshot.bin"
+  !insertmacro RestoreFile "ffmpeg.dll"
+  !insertmacro RestoreFile "libEGL.dll"
+  !insertmacro RestoreFile "libGLESv2.dll"
+  !insertmacro RestoreFile "vk_swiftshader.dll"
+  !insertmacro RestoreFile "vk_swiftshader_icd.json"
+  !insertmacro RestoreFile "vulkan-1.dll"
+  !insertmacro RestoreFile "d3dcompiler_47.dll"
+  !insertmacro RestoreFile "LICENSES.chromium.html"
+  !insertmacro RestoreFile "LICENSE.electron.txt"
+  !insertmacro RestoreDir "locales"
+  !insertmacro RestoreDir "resources"
+  !insertmacro RestoreDir "extensions"
+  RMDir /r "$INSTDIR\_ferry_upgrade_backup"
+  Abort "Ferry installation failed; previous installation was restored and user data was preserved."
+
+commit_install:
+  ; Only discard backup and update registry/shortcuts after post-copy validation succeeds.
   RMDir /r "$INSTDIR\_ferry_upgrade_backup"
 
-  ; Remove legacy Electron Uninstall registry entries (keyed by electron-builder UUID/appId) so Installed Apps has one Ferry entry.
-  StrCpy $0 0
-  ${Do}
-    EnumRegKey $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall" $0
-    ${If} $1 == ""
-      ${Break}
-    ${EndIf}
-    ${If} $1 != "Ferry"
-      ReadRegStr $2 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
-      ${If} $2 != ""
-        ${WordFind} $2 "$INSTDIR\Uninstall Ferry.exe" "+1{" $3
-        ${If} $3 != $2
-          DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\$1"
-          ${Continue}
-        ${EndIf}
-      ${EndIf}
-    ${EndIf}
-    IntOp $0 $0 + 1
-  ${Loop}
-  DeleteRegKey HKCU "Software\0e7a35ae-8c4b-54d6-9132-a1274e415706"
+  !insertmacro CleanLegacyUninstallHive HKCU
+  !insertmacro CleanLegacyUninstallHive HKLM
 
   WriteRegStr HKCU "Software\Ferry" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "DisplayName" "Ferry"
