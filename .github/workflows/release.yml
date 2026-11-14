@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to recover (e.g. ferry-v0.23.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +17,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -26,7 +33,7 @@ jobs:
 
   publish-assets:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
     runs-on: windows-latest
     permissions:
       contents: write
@@ -35,9 +42,24 @@ jobs:
       PUBLIC_REPO: ThienNg65/ferry-release
       GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
     steps:
+      # Manual recovery publishes the existing tag; normal pushes use Release Please output.
+      - name: Resolve release target
+        id: target
+        shell: bash
+        env:
+          MANUAL_TAG: ${{ inputs.tag_name }}
+          AUTOMATIC_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          tag="${MANUAL_TAG:-$AUTOMATIC_TAG}"
+          if [[ ! "$tag" =~ ^ferry-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid Ferry release tag: $tag"
+            exit 1
+          fi
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#ferry-v}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ steps.target.outputs.tag_name }}
 
       - name: Verify public publishing access
         shell: bash
@@ -79,6 +101,21 @@ jobs:
             attempt=$((attempt + 1))
             sleep 15
           done
+
+      - name: Install and verify NSIS compiler
+        shell: pwsh
+        run: |
+          choco install nsis.install --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $compiler)) {
+            $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe'
+          }
+          if (-not (Test-Path $compiler)) { throw 'makensis.exe not found after installing NSIS' }
+          & $compiler /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis.exe failed its version check' }
+          "FERRY_MAKENSIS=$compiler" >> $env:GITHUB_ENV
+          "FERRY_REQUIRE_NSIS=1" >> $env:GITHUB_ENV
 
       # Build and package Neutralino desktop shell + Node sidecar alongside Electron.
       - name: Build and Package Neutralino
@@ -141,15 +178,15 @@ jobs:
         env:
           SOURCE_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
-          RELEASE_VERSION: ${{ needs.release-please.outputs.version }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
         run: node .github/scripts/publish-public-release.mjs
 
       - name: Publish signed-commit-backed public GitHub Release
         shell: bash
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
-          VERSION: ${{ needs.release-please.outputs.version }}
+          TAG: ${{ steps.target.outputs.tag_name }}
+          VERSION: ${{ steps.target.outputs.version }}
           VERIFIED_SHA: ${{ steps.public-release.outputs.commit_sha }}
           NOTES_FILE: ${{ steps.public-release.outputs.notes_file }}
         run: |
@@ -180,7 +217,7 @@ jobs:
         if: vars.PUBLISH_LEGACY_FERRY != 'false'
         shell: bash
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ steps.target.outputs.tag_name }}
           LEGACY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
