@@ -46,7 +46,14 @@ describe('AppSettingsStore', () => {
 
   it('defaults to empty tabs, unlimited bandwidth, and no default proxy', () => {
     const store = new AppSettingsStore()
-    expect(store.get()).toEqual({ openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: undefined, autoCheckUpdates: true })
+    expect(store.get()).toEqual({
+      openTabSiteIds: [],
+      bandwidthLimitKBps: null,
+      defaultProxy: undefined,
+      autoCheckUpdates: true,
+      historyRetentionDays: 90,
+      termsAcceptance: null
+    })
   })
 
   it('round-trips open tab site ids through a fresh instance (same underlying store)', () => {
@@ -150,5 +157,21 @@ describe('AppSettingsStore', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('persists historyRetentionDays (including null for unlimited), termsAcceptance, and resets cleanly', () => {
+    const store = new AppSettingsStore()
+    store.setHistoryRetentionDays(30)
+    const acceptance = store.acceptTerms('1.0')
+    expect(acceptance.version).toBe('1.0')
+    expect(new AppSettingsStore().get().historyRetentionDays).toBe(30)
+    expect(new AppSettingsStore().get().termsAcceptance?.version).toBe('1.0')
+
+    store.setHistoryRetentionDays(null)
+    expect(new AppSettingsStore().get().historyRetentionDays).toBeNull()
+
+    store.reset()
+    expect(new AppSettingsStore().get().historyRetentionDays).toBe(90)
+    expect(new AppSettingsStore().get().termsAcceptance).toBeNull()
   })
 })

@@ -18,8 +18,14 @@ export class IpcError extends Error {
 const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.windowMinimize,
   INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowFullScreenToggle,
   INVOKE_CHANNELS.windowClose,
+  INVOKE_CHANNELS.windowShow,
+  INVOKE_CHANNELS.windowSetTitle,
   INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.windowGetState,
+  INVOKE_CHANNELS.windowSyncTheme,
+  INVOKE_CHANNELS.windowGetDisplays,
   INVOKE_CHANNELS.updateGetStatus
 ])
 

@@ -1,13 +1,60 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted, ref } from 'vue'
+import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
+import type { WindowStateEvent, WindowStateResult } from '@shared/contract'
+import { invoke, onEvent } from '../../api'
+import { useCommandPalette } from '../../composables/useCommandPalette'
+import { useDockState } from '../../composables/useDockState'
+import { useGlobalActivity } from '../../composables/useGlobalActivity'
+import { useHistoryDialog } from '../../composables/useHistoryDialog'
+import { useSettingsDialog } from '../../composables/useSettingsDialog'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
+import { useUpdateStore } from '../../stores/update.store'
 import { ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
 const sessions = useSessionsStore()
 const ui = useUiStore()
 const sites = useSitesStore()
+const updateStore = useUpdateStore()
+const settingsDialog = useSettingsDialog()
+const historyDialog = useHistoryDialog()
+const commandPalette = useCommandPalette()
+const { isBusy, label: activityLabel } = useGlobalActivity()
+const { openDock } = useDockState()
+
+const isFullScreen = ref(false)
+let unsubscribeWindowState: (() => void) | null = null
+
+onMounted(async () => {
+  unsubscribeWindowState = onEvent<WindowStateEvent>(EVENT_CHANNELS.windowStateChange, (evt) => {
+    if (typeof evt.isFullScreen === 'boolean') {
+      isFullScreen.value = evt.isFullScreen
+    }
+  })
+  try {
+    const state = await invoke<WindowStateResult>(INVOKE_CHANNELS.windowGetState)
+    isFullScreen.value = state.isFullScreen
+  } catch {
+    // Ignore in non-window test environments.
+  }
+})
+
+onUnmounted(() => {
+  unsubscribeWindowState?.()
+})
+
+function showActivity(): void {
+  if (sessions.status === 'connected') {
+    openDock('activity')
+  }
+}
+
+function exitFullScreen(): void {
+  void invoke(INVOKE_CHANNELS.windowFullScreenToggle)
+}
 
 function envBorder(siteId: string | null): string {
   const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
@@ -27,88 +74,165 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 
 <template>
   <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
-  <div class="relative flex items-end gap-1 overflow-x-auto bg-muted px-2 pt-1 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
-    <TransitionGroup name="site-tab" tag="div" class="contents" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
-    <div
-      v-for="tab in sessions.tabs"
-      :key="tab.tabId"
-      role="tab"
-      :aria-selected="tab.tabId === sessions.activeTabId"
-      :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
-      class="ferry-site-tab group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors"
-      :class="[
-        envBorder(tab.siteId),
-        tab.tabId === sessions.activeTabId
-          ? 'bg-default font-medium text-highlighted'
-          : 'text-muted hover:bg-elevated hover:text-default'
-      ]"
-      :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
-      @click="sessions.setActiveTab(tab.tabId)"
-      @keydown.enter.self="sessions.setActiveTab(tab.tabId)"
-      @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
-      @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
-    >
-      <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
-      <UIcon
-        v-else-if="tab.status === 'error'"
-        name="i-lucide-circle-alert"
-        class="size-3.5 shrink-0 text-error"
-      />
-      <span
-        v-else-if="tab.status === 'connected'"
-        class="size-2 shrink-0 rounded-full bg-success"
-      />
-      <UIcon
-        v-else-if="tab.siteId"
-        name="i-lucide-server"
-        class="size-3 shrink-0 text-muted"
-      />
-      <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
-      <span
-        v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
-        class="min-w-0 truncate font-normal text-muted"
-      >
-        {{ tab.hostLabel }}
-      </span>
-      <UTooltip text="Close tab (Middle-click)">
-        <button
-          type="button"
-          aria-label="Close tab"
-          class="ml-0.5 shrink-0 rounded p-0.5 transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
-          :class="
+  <div class="relative flex items-end justify-between gap-2 bg-muted px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
+    <div class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
+      <TransitionGroup name="site-tab" tag="div" class="contents" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+        <div
+          v-for="tab in sessions.tabs"
+          :key="tab.tabId"
+          role="tab"
+          :aria-selected="tab.tabId === sessions.activeTabId"
+          :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
+          class="ferry-site-tab group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1 text-xs transition-colors"
+          :class="[
+            envBorder(tab.siteId),
             tab.tabId === sessions.activeTabId
-              ? 'opacity-70 hover:opacity-100'
-              : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
-          "
-          @click="onCloseTab($event, tab.tabId)"
+              ? 'bg-default font-medium text-highlighted'
+              : 'text-muted hover:bg-elevated hover:text-default'
+          ]"
+          :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
+          @click="sessions.setActiveTab(tab.tabId)"
+          @keydown.enter.self="sessions.setActiveTab(tab.tabId)"
+          @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
+          @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
-          <UIcon name="i-lucide-x" class="size-3" />
-        </button>
+          <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
+          <UIcon
+            v-else-if="tab.status === 'error'"
+            name="i-lucide-circle-alert"
+            class="size-3.5 shrink-0 text-error"
+          />
+          <span
+            v-else-if="tab.status === 'connected'"
+            class="size-2 shrink-0 rounded-full bg-success"
+          />
+          <UIcon
+            v-else-if="tab.siteId"
+            name="i-lucide-server"
+            class="size-3 shrink-0 text-muted"
+          />
+          <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
+          <span
+            v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
+            class="min-w-0 truncate font-normal text-muted"
+          >
+            {{ tab.hostLabel }}
+          </span>
+          <UTooltip text="Close tab (Middle-click)">
+            <button
+              type="button"
+              aria-label="Close tab"
+              class="ml-0.5 shrink-0 rounded p-0.5 transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
+              :class="
+                tab.tabId === sessions.activeTabId
+                  ? 'opacity-70 hover:opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+              "
+              @click="onCloseTab($event, tab.tabId)"
+            >
+              <UIcon name="i-lucide-x" class="size-3" />
+            </button>
+          </UTooltip>
+        </div>
+      </TransitionGroup>
+      <UTooltip text="New tab">
+        <UButton
+          icon="i-lucide-plus"
+          class="mb-0.5 shrink-0"
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          aria-label="New tab"
+          @click="sessions.openNewTab()"
+        />
       </UTooltip>
     </div>
-    </TransitionGroup>
-    <UTooltip text="New tab">
-      <UButton
-        icon="i-lucide-plus"
-        class="mb-1"
-        size="xs"
-        variant="ghost"
-        color="neutral"
-        aria-label="New tab"
-        @click="sessions.openNewTab()"
-      />
-    </UTooltip>
-    <div class="flex-1"></div>
-    <UTooltip :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
-      <UButton
-        class="mb-1"
-        size="xs"
-        variant="ghost"
-        color="neutral"
-        :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
-        :aria-label="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'"
-        @click="ui.toggleLocalPane()"
-      />
-    </UTooltip>
+
+    <div class="flex shrink-0 items-center gap-1 pb-0.5">
+      <UTooltip v-if="isBusy" :text="activityLabel">
+        <button
+          type="button"
+          aria-label="Show activity"
+          class="flex size-6 items-center justify-center rounded-md"
+          :class="sessions.status === 'connected' ? 'cursor-pointer hover:bg-accented' : 'cursor-default'"
+          @click="showActivity"
+        >
+          <span class="size-2 rounded-full bg-primary animate-pulse" />
+        </button>
+      </UTooltip>
+      <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
+        <button
+          type="button"
+          aria-label="Restart to update"
+          class="flex items-center gap-1 rounded bg-success/20 px-1.5 py-0.5 text-2xs font-medium text-success transition-colors hover:bg-success/30"
+          @click="updateStore.installNow()"
+        >
+          <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
+          <span class="hidden md:inline">Update ready</span>
+        </button>
+      </UTooltip>
+      <UTooltip text="Command palette (Ctrl+K)">
+        <button
+          type="button"
+          aria-label="Open command palette"
+          class="flex items-center gap-1.5 rounded-md border border-default/70 bg-default/50 px-2 py-0.5 text-2xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          @click="commandPalette.open()"
+        >
+          <UIcon name="i-lucide-search" class="size-3" />
+          <span class="hidden sm:inline">Search</span>
+          <kbd class="rounded bg-muted px-1 py-0.2 font-mono text-[10px] text-muted">Ctrl+K</kbd>
+        </button>
+      </UTooltip>
+      <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          :icon="ui.theme === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
+          aria-label="Toggle theme"
+          @click="ui.toggleTheme()"
+        />
+      </UTooltip>
+      <UTooltip text="History">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-history"
+          aria-label="History"
+          @click="historyDialog.open()"
+        />
+      </UTooltip>
+      <UTooltip text="Settings">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-settings"
+          aria-label="Settings"
+          @click="settingsDialog.open()"
+        />
+      </UTooltip>
+      <UTooltip v-if="isFullScreen" text="Exit full screen (F11)">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-minimize-2"
+          aria-label="Exit full screen"
+          @click="exitFullScreen"
+        />
+      </UTooltip>
+      <UTooltip :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          :icon="ui.showLocalPane ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
+          :aria-label="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'"
+          @click="ui.toggleLocalPane()"
+        />
+      </UTooltip>
+    </div>
   </div>
 </template>

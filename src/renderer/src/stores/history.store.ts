@@ -37,6 +37,12 @@ export const useHistoryStore = defineStore('history', {
     async clear(): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.historyClear)
       this.entries = []
+    },
+
+    reset(): void {
+      this.requestSeq++
+      this.entries = []
+      this.loading = false
     }
   }
 })

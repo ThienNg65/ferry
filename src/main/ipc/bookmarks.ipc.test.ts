@@ -35,11 +35,11 @@ describe('bookmarks.ipc', () => {
   })
 
   it('bookmarks:create forwards the input and returns the created bookmark', async () => {
-    bookmarkStoreMock.create.mockReturnValueOnce({ id: '2', path: '/root', label: 'Root' })
-    const input = { path: '/root', label: 'Root' }
+    bookmarkStoreMock.create.mockReturnValueOnce({ id: '2', side: 'remote', path: '/root', label: 'Root' })
+    const input = { side: 'remote', path: '/root', label: 'Root' }
     const result = await invoke('bookmarks:create', input)
     expect(bookmarkStoreMock.create).toHaveBeenCalledWith(input)
-    expect(result).toEqual({ ok: true, data: { id: '2', path: '/root', label: 'Root' } })
+    expect(result).toEqual({ ok: true, data: { id: '2', side: 'remote', path: '/root', label: 'Root' } })
   })
 
   it('bookmarks:delete forwards the id', async () => {
@@ -52,7 +52,7 @@ describe('bookmarks.ipc', () => {
     bookmarkStoreMock.create.mockImplementationOnce(() => {
       throw new Error('duplicate bookmark')
     })
-    const result = await invoke('bookmarks:create', { path: '/root', label: 'Root' })
+    const result = await invoke('bookmarks:create', { side: 'remote', path: '/root', label: 'Root' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'duplicate bookmark' })
   })
 })

@@ -2,10 +2,16 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
 import USwitch from '@nuxt/ui/components/Switch.vue'
-import type { ProxyType } from '@shared/contract'
+import { INVOKE_CHANNELS, type KnownHostEntry, type ProxyType } from '@shared/contract'
+import privacyMarkdown from '../../../../../PRIVACY.md?raw'
+import termsMarkdown from '../../../../../TERMS.md?raw'
+import { invoke } from '../../api'
 import SettingsRow from './SettingsRow.vue'
 import TerminalAppearanceSettings from './TerminalAppearanceSettings.vue'
 import { useSettingsStore } from '../../stores/settings.store'
+import { useSitesStore } from '../../stores/sites.store'
+import { useBookmarksStore } from '../../stores/bookmarks.store'
+import { useHistoryStore } from '../../stores/history.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
@@ -13,12 +19,15 @@ import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.
 import { formatDateTime, formatSpeed } from '../../utils/format'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
-type TabId = 'appearance' | 'terminal' | 'network' | 'updates'
+type TabId = 'appearance' | 'terminal' | 'network' | 'privacy' | 'updates'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const settings = useSettingsStore()
+const sites = useSitesStore()
+const bookmarks = useBookmarksStore()
+const historyStore = useHistoryStore()
 const update = useUpdateStore()
 const notify = useNotify()
 const confirm = useConfirm()
@@ -28,9 +37,20 @@ const tabs: { id: TabId; label: string; icon: string }[] = [
   { id: 'appearance', label: 'Appearance', icon: 'i-lucide-palette' },
   { id: 'terminal', label: 'Terminal', icon: 'i-lucide-square-terminal' },
   { id: 'network', label: 'Network', icon: 'i-lucide-network' },
+  { id: 'privacy', label: 'Privacy & Legal', icon: 'i-lucide-shield-check' },
   { id: 'updates', label: 'Updates & About', icon: 'i-lucide-refresh-cw' }
 ]
 const activeTab = ref<TabId>('appearance')
+
+const knownHosts = ref<KnownHostEntry[]>([])
+const legalDoc = ref<'privacy' | 'terms' | 'licenses' | null>(null)
+const licensesText = ref('')
+const retentionOptions = [
+  { label: '30 days', value: 30 },
+  { label: '90 days', value: 90 },
+  { label: '1 year', value: 365 },
+  { label: 'Unlimited', value: 0 }
+]
 
 const unlimited = ref(true)
 const limitInput = ref(1024)
@@ -109,8 +129,10 @@ watch(
       return
     }
     activeTab.value = 'appearance'
+    legalDoc.value = null
     seedNetwork()
     await settings.fetch()
+    knownHosts.value = await settings.listKnownHosts()
     void update.init()
     autoCheckUpdates.value = settings.autoCheckUpdates
     seedNetwork()
@@ -152,6 +174,85 @@ async function toggleAutoCheck(value: boolean): Promise<void> {
   } catch (err) {
     autoCheckUpdates.value = settings.autoCheckUpdates
     notify.error('Failed to save setting', err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function toggleLegalDoc(doc: 'privacy' | 'terms' | 'licenses'): Promise<void> {
+  if (legalDoc.value === doc) {
+    legalDoc.value = null
+    return
+  }
+  if (doc === 'licenses' && !licensesText.value) {
+    const mod = await import('../../../../../THIRD_PARTY_LICENSES.txt?raw')
+    licensesText.value = mod.default
+  }
+  legalDoc.value = doc
+}
+
+async function onRetentionChange(value: number): Promise<void> {
+  try {
+    await settings.setHistoryRetentionDays(value === 0 ? null : value)
+    notify.success('Retention updated', value === 0 ? 'History retention set to unlimited' : `History older than ${value} days will be removed`)
+  } catch (err) {
+    notify.error('Failed to update retention', err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onForgetHost(hostPort: string): Promise<void> {
+  try {
+    await settings.forgetKnownHost(hostPort)
+    knownHosts.value = knownHosts.value.filter((h) => h.hostPort !== hostPort)
+  } catch (err) {
+    notify.error('Failed to forget host', err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onClearKnownHosts(): Promise<void> {
+  const ok = await confirm({
+    title: 'Clear all trusted SSH hosts?',
+    body: 'You will be asked to re-verify host key fingerprints on your next connection.',
+    confirmLabel: 'Clear all',
+    confirmColor: 'warning'
+  })
+  if (!ok) return
+  try {
+    await settings.clearKnownHosts()
+    knownHosts.value = []
+  } catch (err) {
+    notify.error('Failed to clear hosts', err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onExportData(): Promise<void> {
+  try {
+    const json = await settings.exportUserData()
+    const savePath = await invoke<string | null>(INVOKE_CHANNELS.dialogPickSaveFile, 'ferry-data-export.json')
+    if (!savePath) return
+    await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, { path: savePath, content: json })
+    notify.success('Data exported', `Saved local data export to ${savePath}`)
+  } catch (err) {
+    notify.error('Export failed', err instanceof Error ? err.message : String(err))
+  }
+}
+
+async function onDeleteAllData(): Promise<void> {
+  const ok = await confirm({
+    title: 'Delete all local Ferry data?',
+    body: 'This permanently erases all saved sites, encrypted credentials, bookmarks, history, trusted SSH hosts, and preferences.',
+    confirmLabel: 'Delete everything',
+    confirmColor: 'error'
+  })
+  if (!ok) return
+  try {
+    await settings.deleteAllLocalData()
+    knownHosts.value = []
+    bookmarks.reset()
+    historyStore.reset()
+    await sites.fetchSites()
+    notify.success('Local data deleted', 'All saved local data has been erased')
+    emit('update:open', false)
+  } catch (err) {
+    notify.error('Deletion failed', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -338,6 +439,97 @@ async function saveNetwork(): Promise<void> {
                   </div>
                 </SettingsRow>
               </template>
+            </div>
+
+            <div
+              v-show="activeTab === 'privacy'"
+              id="settings-panel-privacy"
+              role="tabpanel"
+              aria-labelledby="settings-tab-privacy"
+            >
+              <h2 class="text-base font-semibold text-highlighted">Privacy &amp; Legal</h2>
+              <SettingsRow
+                label="Maintainer & Contact"
+                description="ThienNg65 · github.com/ThienNg65/ferry (MIT License). Zero telemetry, cookies, or AI training."
+              >
+                <span class="text-xs text-muted">
+                  {{
+                    settings.termsAcceptance
+                      ? `Accepted v${settings.termsAcceptance.version} (${formatTime(settings.termsAcceptance.acceptedAt)})`
+                      : 'Not accepted'
+                  }}
+                </span>
+              </SettingsRow>
+              <SettingsRow label="Legal & Open Source Notices" description="Review Privacy Policy, Terms of Service, and third-party licenses.">
+                <div class="flex flex-wrap gap-1.5">
+                  <UButton size="xs" variant="outline" color="neutral" @click="toggleLegalDoc('privacy')">
+                    Privacy Policy
+                  </UButton>
+                  <UButton size="xs" variant="outline" color="neutral" @click="toggleLegalDoc('terms')">
+                    Terms
+                  </UButton>
+                  <UButton size="xs" variant="outline" color="neutral" @click="toggleLegalDoc('licenses')">
+                    Licenses
+                  </UButton>
+                </div>
+              </SettingsRow>
+              <pre
+                v-if="legalDoc"
+                class="my-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border border-muted bg-elevated p-3 font-sans text-xs text-default"
+              >{{ legalDoc === 'privacy' ? privacyMarkdown : legalDoc === 'terms' ? termsMarkdown : licensesText }}</pre>
+
+              <SettingsRow label="History retention limit" description="Automatically prune transfer & operation history older than this window.">
+                <USelect
+                  :model-value="settings.historyRetentionDays ?? 0"
+                  :items="retentionOptions"
+                  class="w-32"
+                  aria-label="History retention limit"
+                  @update:model-value="(v: number) => onRetentionChange(Number(v))"
+                />
+              </SettingsRow>
+
+              <SettingsRow label="Data access & deletion" description="Export local data (excluding passwords) or erase all local Ferry data.">
+                <div class="flex flex-wrap gap-2">
+                  <UButton size="xs" variant="outline" color="neutral" icon="i-lucide-download" @click="onExportData">
+                    Export My Data
+                  </UButton>
+                  <UButton size="xs" variant="soft" color="error" icon="i-lucide-trash-2" @click="onDeleteAllData">
+                    Delete All Data
+                  </UButton>
+                </div>
+              </SettingsRow>
+
+              <div class="mt-4">
+                <div class="mb-2 flex items-center justify-between">
+                  <div>
+                    <div class="text-sm font-medium text-highlighted">Trusted SSH Hosts ({{ knownHosts.length }})</div>
+                    <div class="text-xs text-muted">SHA-256 host-key fingerprints stored locally in known_hosts.json.</div>
+                  </div>
+                  <UButton
+                    v-if="knownHosts.length > 0"
+                    size="xs"
+                    variant="ghost"
+                    color="error"
+                    @click="onClearKnownHosts"
+                  >
+                    Clear all
+                  </UButton>
+                </div>
+                <div v-if="knownHosts.length === 0" class="rounded-md border border-muted p-3 text-xs text-muted">
+                  No trusted SSH host keys stored.
+                </div>
+                <div v-else class="max-h-36 divide-y divide-muted overflow-y-auto rounded-md border border-muted">
+                  <div v-for="entry in knownHosts" :key="entry.hostPort" class="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate font-medium text-default">{{ entry.hostPort }}</div>
+                      <div class="truncate font-mono text-[11px] text-muted">{{ entry.fingerprint }}</div>
+                    </div>
+                    <UButton size="xs" variant="ghost" color="neutral" @click="onForgetHost(entry.hostPort)">
+                      Forget
+                    </UButton>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getLogLevelStyles, parseLogLevel, parseTimestampPrefix, splitLineMatches } from './logParser'
+import { buildSafeSearchRegex, getLogLevelStyles, parseLogLevel, parseTimestampPrefix, splitLineMatches } from './logParser'
 
 describe('parseTimestampPrefix', () => {
   it('extracts ISO 8601 timestamps', () => {
@@ -136,5 +136,36 @@ describe('splitLineMatches', () => {
     expect(chunks).toHaveLength(2)
     expect(chunks[0]).toEqual({ text: 'Error', isMatch: true, isActiveMatch: false })
     expect(chunks[1]).toEqual({ text: ' and error', isMatch: false, isActiveMatch: false })
+  })
+
+  it('caps matches per line and skips regex on oversized lines', () => {
+    const many = splitLineMatches('a'.repeat(300), /a/g)
+    const matchChunks = many.filter((c) => c.isMatch)
+    expect(matchChunks).toHaveLength(200)
+
+    const longLine = 'a'.repeat(16_385)
+    expect(splitLineMatches(longLine, /a/g)).toEqual([
+      { text: longLine, isMatch: false, isActiveMatch: false },
+    ])
+  })
+})
+
+describe('buildSafeSearchRegex', () => {
+  it('rejects nested quantifiers and oversized patterns', () => {
+    expect(buildSafeSearchRegex('(a+)+', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('(a+){2,}', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('(a|b){2,5}', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('a'.repeat(257), true, false).error).toBeTruthy()
+  })
+
+  it('escapes plain text queries and compiles valid regexes', () => {
+    const plain = buildSafeSearchRegex('err.log[1]', false, false)
+    expect(plain.error).toBeNull()
+    expect(plain.regex?.test('err.log[1]')).toBe(true)
+    expect(plain.regex?.test('errXlog1')).toBe(false)
+
+    const valid = buildSafeSearchRegex('err(or|no)', true, true)
+    expect(valid.error).toBeNull()
+    expect(valid.regex?.flags).toBe('g')
   })
 })

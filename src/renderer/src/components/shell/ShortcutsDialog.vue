@@ -9,7 +9,8 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ['Ctrl+K', 'Command palette'],
       ['?', 'This cheat-sheet'],
       ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous site tab'],
-      ['Ctrl+W', 'Close site tab']
+      ['Ctrl+W', 'Close site tab'],
+      ['F11', 'Toggle full screen']
     ]
   },
   {

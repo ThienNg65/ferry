@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { handle, onSend } from './envelope'
+import { requireNonEmptyString, requireObject } from './validation'
 import { INVOKE_CHANNELS, SEND_CHANNELS } from '../../shared/contract'
 import type {
   TerminalAckEvent,
@@ -13,9 +14,10 @@ import { TerminalManager } from '../terminal/TerminalManager'
 /** Registers handlers for opening/driving/closing an interactive SSH shell (PTY). */
 export function registerTerminalHandlers(): void {
   handle<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, async (req) => {
-    const request = req as TerminalOpenRequest
+    const request = requireObject(req, INVOKE_CHANNELS.terminalOpen) as unknown as TerminalOpenRequest
+    const sessionId = requireNonEmptyString(request.sessionId, 'sessionId', INVOKE_CHANNELS.terminalOpen)
     const terminalId = randomUUID()
-    await TerminalManager.getInstance().open(terminalId, request.sessionId, request.cols, request.rows)
+    await TerminalManager.getInstance().open(terminalId, sessionId, request.cols, request.rows)
     return { terminalId }
   })
 
@@ -47,6 +49,6 @@ export function registerTerminalHandlers(): void {
   })
 
   handle<void>(INVOKE_CHANNELS.terminalClose, (terminalId) => {
-    TerminalManager.getInstance().close(terminalId as string)
+    TerminalManager.getInstance().close(requireNonEmptyString(terminalId, 'terminalId', INVOKE_CHANNELS.terminalClose))
   })
 }

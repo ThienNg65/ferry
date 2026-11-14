@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { readFile } from 'fs/promises'
 import * as net from 'net'
 import { host as getHost } from '../host/host'
+import { logSecurityEvent } from '../host/securityLog'
 import { RemoteShell } from './RemoteShell'
 import { SshError } from './errors'
 import { friendlyConnectError } from './friendlyConnectError'
@@ -319,6 +320,9 @@ export class SessionManager {
       const known = KnownHostsStore.getInstance().get(host, port)
       const decision = evaluateHostKey(known, presented, forceTrustThisHop)
       if (decision === 'trust-new') {
+        if (known && forceTrustThisHop) {
+          logSecurityEvent('ssh.host_key_force_trusted', { host, port, expected: known, presented })
+        }
         void this.promptHostKey(sessionId, host, port, presented).then((accept) => {
           if (accept) {
             KnownHostsStore.getInstance().trust(host, port, presented)
@@ -615,6 +619,15 @@ export class SessionManager {
           if (hopMismatch.rejected) {
             throw new SshError('CANCELLED', 'Connection cancelled — host key not trusted')
           }
+          if (hopMismatch.value) {
+            logSecurityEvent('ssh.host_key_mismatch', {
+              host: hopMismatch.value.host,
+              port: hopMismatch.value.port,
+              hopIndex: i,
+              expected: hopMismatch.value.expected,
+              presented: hopMismatch.value.presented
+            })
+          }
           throw hopMismatch.value
             ? new SshError(
                 'HOST_KEY_MISMATCH',
@@ -647,6 +660,12 @@ export class SessionManager {
           throw new SshError('CANCELLED', 'Connection cancelled — host key not trusted')
         }
         if (hostKeyMismatch.value) {
+          logSecurityEvent('ssh.host_key_mismatch', {
+            host: hostKeyMismatch.value.host,
+            port: hostKeyMismatch.value.port,
+            expected: hostKeyMismatch.value.expected,
+            presented: hostKeyMismatch.value.presented
+          })
           throw new SshError(
             'HOST_KEY_MISMATCH',
             `Host key for ${input.host}:${input.port} has changed! Expected ${hostKeyMismatch.value.expected} but the server presented ${hostKeyMismatch.value.presented}. This could mean a man-in-the-middle attack, or that the server was legitimately reinstalled/rekeyed — only continue if you're certain.`,
@@ -657,6 +676,13 @@ export class SessionManager {
         if (agentIdentityCount !== undefined && e instanceof SshError) {
           throw new SshError(e.code, rewriteAgentAuthError(e.message, agentIdentityCount))
         }
+        logSecurityEvent('ssh.connect_failed', {
+          host: input.host,
+          port: input.port,
+          username: input.username,
+          authMethod: input.authMethod,
+          reason: e instanceof Error ? e.message : String(e)
+        })
         throw e
       }
     } catch (e) {

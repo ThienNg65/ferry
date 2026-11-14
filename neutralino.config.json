@@ -10,16 +10,23 @@
   "enableNativeAPI": true,
   "tokenSecurity": "one-time",
   "logging": {
-    "enabled": true,
-    "writeToLogFile": true
+    "enabled": false,
+    "writeToLogFile": false
   },
   "nativeAllowList": [
     "app.broadcast",
     "app.exit",
     "window.minimize",
+    "window.isMinimized",
     "window.maximize",
     "window.unmaximize",
     "window.isMaximized",
+    "window.setFullScreen",
+    "window.exitFullScreen",
+    "window.isFullScreen",
+    "window.show",
+    "window.focus",
+    "window.setTitle",
     "window.move",
     "os.showOpenDialog",
     "os.showFolderDialog",
@@ -41,11 +48,12 @@
       "alwaysOnTop": false,
       "icon": "/out/renderer/favicon.ico",
       "enableInspector": false,
-      "borderless": true,
+      "borderless": false,
       "maximize": false,
-      "hidden": false,
+      "hidden": true,
+      "useSavedState": false,
       "resizable": true,
-      "exitProcessOnClose": true,
+      "exitProcessOnClose": false,
       "injectGlobals": true
     }
   },
@@ -62,7 +70,7 @@
     "binaryName": "ferry",
     "resourcesPath": "/out/renderer/",
     "extensionsPath": "/extensions/",
-    "binaryVersion": "5.6.0",
-    "clientVersion": "5.6.0"
+    "binaryVersion": "6.10.0",
+    "clientVersion": "6.10.0"
   }
 }

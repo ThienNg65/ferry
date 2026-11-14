@@ -61,8 +61,11 @@ export class HistoryStore {
     return HistoryStore.instance
   }
 
-  record(entry: Omit<HistoryEntry, 'id'>): void {
+  record(entry: Omit<HistoryEntry, 'id'>, retentionDays?: number | null): void {
     this.entries.push({ ...entry, id: randomUUID() })
+    if (retentionDays !== undefined) {
+      this.pruneExpired(retentionDays)
+    }
     // Drop oldest first — entries are appended in chronological order.
     if (this.entries.length > MAX_HISTORY_ENTRIES) {
       this.entries.splice(0, this.entries.length - MAX_HISTORY_ENTRIES)
@@ -90,6 +93,22 @@ export class HistoryStore {
     this.entries = []
     // Immediate, not debounced — a deliberate, rare user action, not a burst.
     this.flush()
+  }
+
+  /** Drops history entries older than `retentionDays` (no-op when `retentionDays` is null or <= 0). */
+  pruneExpired(retentionDays: number | null, nowMs = Date.now()): number {
+    if (retentionDays === null || retentionDays <= 0) {
+      return 0
+    }
+    const cutoff = nowMs - retentionDays * 86_400_000
+    const before = this.entries.length
+    const kept = this.entries.filter((e) => e.finishedAt >= cutoff)
+    const removed = before - kept.length
+    if (removed > 0) {
+      this.entries = kept
+      this.flush()
+    }
+    return removed
   }
 
   private scheduleFlush(): void {

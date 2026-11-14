@@ -45,7 +45,20 @@ async function connectSocks5(
  * a plain-text request line + headers, then a status line + headers response,
  * after which the socket is a raw byte pipe to the target.
  */
+function assertNoHeaderControlChars(value: string, field: string): void {
+  if (/[\r\n\0]/.test(value)) {
+    throw new SshError('VALIDATION', `Invalid control characters in ${field}`)
+  }
+}
+
 function connectHttp(proxy: ProxyConfig, targetHost: string, targetPort: number, timeoutMs: number): Promise<Duplex> {
+  assertNoHeaderControlChars(targetHost, 'target host')
+  if (proxy.username !== undefined) {
+    assertNoHeaderControlChars(proxy.username, 'proxy username')
+  }
+  if (proxy.password !== undefined) {
+    assertNoHeaderControlChars(proxy.password, 'proxy password')
+  }
   return new Promise((resolve, reject) => {
     const socket: Socket = netConnect({ host: proxy.host, port: proxy.port })
     let settled = false

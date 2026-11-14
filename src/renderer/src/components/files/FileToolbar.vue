@@ -39,7 +39,9 @@ const emit = defineEmits<{
 }>()
 
 const moreItems = computed<DropdownMenuItem[]>(() => {
-  const items: DropdownMenuItem[] = []
+  const items: DropdownMenuItem[] = [
+    { label: 'New file', icon: 'i-lucide-file-plus', onSelect: () => emit('touch') }
+  ]
   if (props.showSync) {
     items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
     items.push({ label: 'Compare with local folder…', icon: 'i-lucide-columns-2', onSelect: () => emit('compare-folder') })
@@ -55,9 +57,12 @@ const moreItems = computed<DropdownMenuItem[]>(() => {
   return items
 })
 
+const filterExpanded = ref(false)
+const showFilterInput = computed(() => filterExpanded.value || Boolean(props.filterText))
 const filterInputRef = ref<{ inputRef?: HTMLInputElement } | HTMLInputElement | null>(null)
 
 function focusFilter(): void {
+  filterExpanded.value = true
   void nextTick(() => {
     const el =
       filterInputRef.value && 'inputRef' in filterInputRef.value
@@ -68,6 +73,17 @@ function focusFilter(): void {
       el.select()
     }
   })
+}
+
+function collapseEmptyFilter(): void {
+  if (!props.filterText) {
+    filterExpanded.value = false
+  }
+}
+
+function clearAndCollapseFilter(): void {
+  emit('update:filterText', '')
+  filterExpanded.value = false
 }
 
 defineExpose({ focusFilter })
@@ -103,17 +119,28 @@ function onFilterInput(value: string | number): void {
       <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
     </UTooltip>
     <UTooltip text="New file">
-      <UButton icon="i-lucide-file-plus" color="neutral" variant="ghost" size="xs" aria-label="New file" @click="emit('touch')" />
+      <UButton
+        icon="i-lucide-file-plus"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        aria-label="New file"
+        class="hidden @[340px]:inline-flex"
+        @click="emit('touch')"
+      />
     </UTooltip>
     <UInput
+      v-if="showFilterInput"
       ref="filterInputRef"
       :model-value="filterText ?? ''"
       icon="i-lucide-search"
-      placeholder="Filter (Ctrl+F)…"
+      placeholder="Filter…"
       size="xs"
-      class="w-24 transition-[width] focus-within:w-40"
+      class="w-28 @[440px]:w-36 focus-within:w-40 transition-[width]"
       :ui="{ trailing: 'pointer-events-auto' }"
       @update:model-value="onFilterInput"
+      @blur="collapseEmptyFilter"
+      @keydown.esc.stop="clearAndCollapseFilter"
     >
       <template v-if="filterText" #trailing>
         <UButton
@@ -123,10 +150,21 @@ function onFilterInput(value: string | number): void {
           size="xs"
           aria-label="Clear filter"
           :padded="false"
-          @click="emit('update:filterText', '')"
+          @mousedown.prevent
+          @click="clearAndCollapseFilter"
         />
       </template>
     </UInput>
+    <UTooltip v-else text="Filter (Ctrl+F)">
+      <UButton
+        icon="i-lucide-search"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        aria-label="Filter files"
+        @click="focusFilter()"
+      />
+    </UTooltip>
     <UTooltip
       v-if="selectedCount && transferIcon"
       :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"

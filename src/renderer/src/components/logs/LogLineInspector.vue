@@ -206,7 +206,7 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
       <div v-if="jsonFields.length > 0" class="space-y-1.5">
         <div class="flex items-center justify-between">
           <span class="text-2xs font-medium uppercase tracking-wider text-muted">Fields ({{ jsonFields.length }})</span>
-          <span class="text-[10px] text-dimmed">Click value to copy</span>
+          <span class="text-[10px] text-muted">Click value to copy</span>
         </div>
         <div class="divide-y divide-muted rounded-md border border-muted overflow-hidden">
           <div

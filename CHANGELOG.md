@@ -4,10 +4,29 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 
 ## Unreleased
 
+### Added
+
+- Local-first **Privacy Policy** (`PRIVACY.md`), **Terms of Service** (`TERMS.md`), and **Third-Party Licenses** (`THIRD_PARTY_LICENSES.txt` + `npm run licenses:generate`), all bundled into packaged/NSIS distributions.
+- First-run **Terms & Privacy** acceptance modal (`LegalConsentDialog`) recording `{ version, acceptedAt }`, with an `autoCheckUpdates` toggle and deferred startup update checks until accepted.
+- **Privacy & Legal** tab in Settings with policy/license viewers, configurable transfer/operation history retention (`30 days`, `90 days` default, `1 year`, `Unlimited`), **Export My Data** (JSON excluding passwords/passphrases), **Delete All Data**, and **Trusted SSH Hosts** management.
+- `Home`, `End`, `PageUp`, and `PageDown` (with `Shift+` range selection) keyboard navigation in file panes.
+
 ### Changed
 
+- Switched Ferry to a genuine native OS window frame on Neutralinojs `6.10.0` (`borderless: false`, `hidden: true`), removing the custom `TitleBar` and `WindowResizeHandles` components and consolidating header controls into `SiteTabBar`.
+- Synced Windows 10/11 dark/light framing (`DWMWA_USE_IMMUTABLE_DARK_MODE`) and Windows 11 caption color (`DWMWA_CAPTION_COLOR`) to `SiteTabBar` before first paint, added multi-monitor `Screen.AllScreens` startup clamping, `Alt+F4` / close bounds persistence, and `F11` fullscreen toggle.
+- Prevented dual-pane toolbar and breadcrumb clipping on narrow split panes by collapsing `Filter (Ctrl+F)` into an expandable search button and hiding idle breadcrumb action buttons from layout flow.
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
+- Upgraded readable low-contrast `text-dimmed` UI labels to `text-muted` across dialogs, title bar, bottom dock, monitor, and log viewers.
+
+### Security
+
+- Added secret-redacted JSON-line security logging (`security.log`, 1 MB rotation) for SSH host key events, failed connections, updater rejections, blocked paths, and invalid IPC payloads.
+- Enforced `https://` and origin allowlisting in the sidecar auto-updater for packaged builds, and rejected control characters (`\r`, `\n`, `\0`) in HTTP `CONNECT` proxy headers.
+- Hardened remote-edit temp file naming against path traversal and Windows reserved device names, capped drag-and-drop staging to 1,000 entries, and added runtime validation across IPC handlers (including a 5 MB limit on `sitesImportJson`).
+- Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
+- Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
 ## [0.24.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.0...ferry-v0.24.1) (2026-11-14)
 

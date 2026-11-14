@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
+import { EVENT_CHANNELS, INVOKE_CHANNELS, LEGAL_POLICY_VERSION } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
 import { useOperationsStore } from './stores/operations.store'
 import { useEditSessionsStore } from './stores/editSessions.store'
+import { useSettingsStore } from './stores/settings.store'
 import { DEFAULT_LOCAL_PANE_WIDTH, useUiStore } from './stores/ui.store'
 import { clampLocalPaneWidth } from './utils/paneColumns'
+import { initWindowBoundsPersistence } from './utils/windowBounds'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
@@ -16,13 +18,13 @@ import { useDockState } from './composables/useDockState'
 import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
-import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 
 const SessionManagerView = defineAsyncComponent(() => import('./components/sessions/SessionManagerView.vue'))
 const SettingsDialog = defineAsyncComponent(() => import('./components/shell/SettingsDialog.vue'))
 const HistoryDialog = defineAsyncComponent(() => import('./components/history/HistoryDialog.vue'))
 const CommandPalette = defineAsyncComponent(() => import('./components/shell/CommandPalette.vue'))
+const LegalConsentDialog = defineAsyncComponent(() => import('./components/shell/LegalConsentDialog.vue'))
 
 // Only ever rendered once connected — deferring these keeps their whole
 // subtree (FileList/FileRow/FilePreviewDialog/TransferQueue/TerminalView/...)
@@ -31,8 +33,14 @@ const FilePane = defineAsyncComponent(() => import('./components/files/FilePane.
 const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomDock.vue'))
 
 const sessions = useSessionsStore()
+const settingsStore = useSettingsStore()
 const updateStore = useUpdateStore()
 const ui = useUiStore()
+const needsLegalConsent = computed(
+  () =>
+    settingsStore.loaded &&
+    (!settingsStore.termsAcceptance || settingsStore.termsAcceptance.version !== LEGAL_POLICY_VERSION)
+)
 const isConnected = computed(() => sessions.status === 'connected')
 const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
@@ -41,7 +49,9 @@ const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
 window.addEventListener('resize', onWindowResize)
+let disposeWindowBounds: (() => void) | null = null
 onUnmounted(() => {
+  disposeWindowBounds?.()
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onTabShortcut)
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
@@ -69,7 +79,7 @@ const historyDialog = useHistoryDialog()
 const shortcutsDialog = useShortcutsDialog()
 const notify = useNotify()
 
-ui.initTheme()
+const initialThemeSync = ui.initTheme()
 ui.initAccentColor()
 
 // Defer non-essential tab restoration and IPC subscriptions until after initial paint frame
@@ -125,6 +135,11 @@ function onPaneResizerMouseUp() {
 }
 
 function onTabShortcut(event: KeyboardEvent): void {
+  if (event.key === 'F11' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    event.preventDefault()
+    void invoke<void>(INVOKE_CHANNELS.windowFullScreenToggle)
+    return
+  }
   if (event.key === '?' && !event.ctrlKey && !event.metaKey && !event.altKey) {
     const target = event.target
     const typing =
@@ -157,7 +172,9 @@ function onTabShortcut(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  disposeWindowBounds = initWindowBoundsPersistence({ beforeShow: initialThemeSync })
   window.addEventListener('keydown', onTabShortcut)
+  void settingsStore.fetch()
   void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin
@@ -197,7 +214,6 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
 <template>
   <UApp :toaster="{ position: 'bottom-right', duration: 4000 }">
     <div class="flex h-screen flex-col bg-default text-default">
-      <TitleBar />
       <SiteTabBar />
       <div class="relative min-h-0 flex-1">
         <!--
@@ -252,6 +268,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
     <ShortcutsDialog v-model:open="shortcutsDialog.isOpen.value" />
+    <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
   </UApp>
 </template>

@@ -3,6 +3,7 @@ import { promises as fs, watch, type FSWatcher } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { host } from '../host/host'
+import { logSecurityEvent } from '../host/securityLog'
 import { SessionManager } from '../ssh/SessionManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import {
@@ -15,6 +16,26 @@ import {
 } from '../fs/RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS, type EditEvent, type OpenEditSnapshot } from '../../shared/contract'
+
+const WINDOWS_RESERVED_NAME_RE = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i
+
+/** Sanitizes a remote filename for safe local temp-file creation (strips POSIX/Windows separators, traversal, and reserved/control chars). */
+export function sanitizeEditFilename(remotePath: string): string {
+  const raw = remotePath.split(/[/\\]/).filter(Boolean).pop() ?? 'file'
+  const cleaned = raw.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').trim()
+  if (!cleaned || cleaned === '.' || cleaned === '..') {
+    return 'file'
+  }
+  return WINDOWS_RESERVED_NAME_RE.test(cleaned) ? `_${cleaned}` : cleaned
+}
+
+function sanitizeSessionSegment(sessionId: string): string {
+  const cleaned = sessionId.replace(/[^A-Za-z0-9_-]/g, '')
+  if (!cleaned) {
+    throw new SshError('VALIDATION', 'Invalid sessionId for edit session')
+  }
+  return cleaned
+}
 
 /** Debounce window after the last file-change before re-uploading — many editors write-then-rename on save, firing several raw fs events per save. */
 const REUPLOAD_DEBOUNCE_MS = 450
@@ -81,9 +102,14 @@ export class EditSessionManager {
 
     const editId = randomUUID()
     const remoteStamp = await this.remoteStamp(sessionId, remotePath, viaSudo)
-    const basename = remotePath.split('/').filter(Boolean).pop() ?? 'file'
-    const tempDir = path.join(os.tmpdir(), 'ferry-edit', sessionId, randomUUID())
-    const localTempPath = path.join(tempDir, basename)
+    const basename = sanitizeEditFilename(remotePath)
+    const safeSession = sanitizeSessionSegment(sessionId)
+    const tempDir = path.resolve(os.tmpdir(), 'ferry-edit', safeSession, randomUUID())
+    const localTempPath = path.resolve(tempDir, basename)
+    if (!localTempPath.startsWith(tempDir + path.sep)) {
+      logSecurityEvent('edit.path_traversal_blocked', { sessionId, remotePath })
+      throw new SshError('VALIDATION', `Unsafe remote filename for edit: ${remotePath}`)
+    }
     // Mode is only fully meaningful on POSIX (Windows honors just the
     // read-only attribute bit) — but on a shared Linux/macOS machine with a
     // world-readable /tmp, an unrestricted directory would let other local

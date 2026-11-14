@@ -13,9 +13,9 @@ describe('clampDockHeight', () => {
   })
 
   it('caps at (window - reserved chrome) when that is the tighter bound', () => {
-    // At a small window, window - 260 is tighter than 70% of window.
-    // 600 - 260 = 340 < 600 * 0.7 = 420.
-    expect(clampDockHeight(5000, 600)).toBe(340)
+    // At a small window, window - 224 is tighter than 70% of window.
+    // 600 - 224 = 376 < 600 * 0.7 = 420.
+    expect(clampDockHeight(5000, 600)).toBe(376)
   })
 
   it('still yields at least MIN_DOCK_HEIGHT even at a tiny window', () => {
@@ -109,5 +109,18 @@ describe('ui store layout state', () => {
     ui.setTerminalFontSize(18)
     ui.resetTerminalAppearance()
     expect(ui.terminalFontSize).toBe(14)
+  })
+
+  it('syncs theme and fallback Win32 captionColor via window:syncTheme', async () => {
+    const { vi } = await import('vitest')
+    const { INVOKE_CHANNELS } = await import('@shared/contract')
+    const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
+    const toggleMock = vi.fn()
+    vi.stubGlobal('document', { documentElement: { classList: { toggle: toggleMock }, style: { setProperty: vi.fn() } } })
+    const { ui } = await freshStore({ 'ferry:ui:theme': 'dark' })
+    vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
+    await ui.initTheme()
+    expect(toggleMock).toHaveBeenCalledWith('dark', true)
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, { theme: 'dark', captionColor: 0x262626 })
   })
 })

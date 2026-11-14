@@ -199,7 +199,7 @@ const sampleAgeLabel = computed(() => {
                       : 'Connecting…'
             }}
           </span>
-          <span v-if="sampleAgeLabel" class="text-2xs text-dimmed tabular-nums">
+          <span v-if="sampleAgeLabel" class="text-2xs text-muted tabular-nums">
             · {{ sampleAgeLabel }}
           </span>
         </div>
@@ -392,7 +392,7 @@ const sampleAgeLabel = computed(() => {
               />
               <circle v-if="hoveredCpu" :cx="hoveredCpu.x" :cy="hoveredCpu.y" r="2.5" fill="currentColor" />
             </svg>
-            <div v-else class="flex h-full items-center justify-center text-2xs text-dimmed">
+            <div v-else class="flex h-full items-center justify-center text-2xs text-muted">
               Collecting CPU history…
             </div>
           </div>
@@ -417,7 +417,7 @@ const sampleAgeLabel = computed(() => {
                 +{{ hiddenCoreCount }}
               </span>
             </div>
-            <span class="shrink-0 text-[10px] text-dimmed">per-core</span>
+            <span class="shrink-0 text-[10px] text-muted">per-core</span>
           </div>
         </div>
 
@@ -497,7 +497,7 @@ const sampleAgeLabel = computed(() => {
                 </span>
               </div>
             </template>
-            <span v-else class="text-dimmed">Not configured</span>
+            <span v-else class="text-muted">Not configured</span>
           </div>
         </div>
 
@@ -529,7 +529,7 @@ const sampleAgeLabel = computed(() => {
               </div>
             </div>
           </template>
-          <p v-else class="text-2xs text-dimmed">Disk usage unavailable on this host</p>
+          <p v-else class="text-2xs text-muted">Disk usage unavailable on this host</p>
 
           <!-- Host Process Count Footer -->
           <div class="flex items-center justify-between gap-2 border-t border-muted/60 pt-1.5 text-[10px] text-muted">

@@ -357,7 +357,7 @@ function sessionLabel(sessionId: string): string | null {
 
                 <span
                   v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
-                  class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-dimmed"
+                  class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-muted"
                 >
                   {{ sessionLabel(openTail.sessionId) }}
                 </span>

@@ -2,7 +2,13 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, SEND_CHANNELS, ok } from '../../../shared/contract'
-import { createNeutralinoApi, decodeB64Deep, encodeB64Deep, type NeutralinoTransport } from './neutralinoApi'
+import {
+  createNeutralinoApi,
+  decodeB64Deep,
+  encodeB64Deep,
+  registerBeforeWindowClose,
+  type NeutralinoTransport
+} from './neutralinoApi'
 
 function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar']): {
   transport: NeutralinoTransport
@@ -31,9 +37,19 @@ function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar'
       connected: connectedExtensions
     })),
     minimizeWindow: vi.fn(async () => {}),
+    isWindowMinimized: vi.fn(async () => false),
     maximizeWindow: vi.fn(async () => {}),
     unmaximizeWindow: vi.fn(async () => {}),
     isWindowMaximized: vi.fn(async () => false),
+    setFullScreen: vi.fn(async () => {}),
+    exitFullScreen: vi.fn(async () => {}),
+    isWindowFullScreen: vi.fn(async () => false),
+    showWindow: vi.fn(async () => {}),
+    setWindowTitle: vi.fn(async () => {}),
+    getWindowPosition: vi.fn(async () => ({ x: 100, y: 80 })),
+    getWindowSize: vi.fn(async () => ({ width: 1280, height: 800 })),
+    setWindowSize: vi.fn(async () => {}),
+    moveWindow: vi.fn(async () => {}),
     exitApp: vi.fn(async () => {}),
     showOpenDialog: vi.fn(async () => ['C:\\tmp\\picked.json']),
     showFolderDialog: vi.fn(async () => 'C:\\tmp\\folder'),
@@ -82,14 +98,54 @@ describe('neutralinoApi', () => {
     const windowEvents: unknown[] = []
     api.on(EVENT_CHANNELS.windowStateChange, (payload) => windowEvents.push(payload))
     expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: false }))
+    expect(await api.invoke(INVOKE_CHANNELS.windowGetState)).toEqual(
+      ok({ isMaximized: false, isMinimized: false, isFullScreen: false })
+    )
     expect(await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)).toEqual(ok(undefined))
     expect(transport.maximizeWindow).toHaveBeenCalledTimes(1)
-    expect(windowEvents).toEqual([{ isMaximized: true }])
+    expect(windowEvents).toEqual([{ isMaximized: true, isMinimized: false, isFullScreen: false }])
 
+    expect(await api.invoke(INVOKE_CHANNELS.windowShow)).toEqual(ok(undefined))
+    expect(transport.showWindow).toHaveBeenCalledTimes(1)
+    expect(await api.invoke(INVOKE_CHANNELS.windowSetTitle, 'prod — Ferry')).toEqual(ok(undefined))
+    expect(transport.setWindowTitle).toHaveBeenCalledWith('prod — Ferry')
+    expect(await api.invoke(INVOKE_CHANNELS.windowFullScreenToggle)).toEqual(ok(undefined))
+    expect(transport.setFullScreen).toHaveBeenCalledTimes(1)
     expect(await api.invoke(INVOKE_CHANNELS.windowMinimize)).toEqual(ok(undefined))
     expect(transport.minimizeWindow).toHaveBeenCalledTimes(1)
     expect(await api.invoke(INVOKE_CHANNELS.windowClose)).toEqual(ok(undefined))
     expect(transport.exitApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards native Neutralino window lifecycle events and flushes bounds before OS close', async () => {
+    const { transport, emit } = createFakeTransport()
+    const api = createNeutralinoApi(transport)
+    const events: unknown[] = []
+    api.on(EVENT_CHANNELS.windowStateChange, (payload) => events.push(payload))
+
+    emit('windowMaximize', undefined)
+    emit('windowRestore', undefined)
+    emit('windowFullScreenEnter', undefined)
+    emit('windowFullScreenExit', undefined)
+    emit('windowMinimize', undefined)
+
+    expect(events).toEqual([
+      { isMaximized: true, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: false, isFullScreen: true },
+      { isMaximized: false, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: true, isFullScreen: false }
+    ])
+
+    const flushed = vi.fn(async () => {})
+    const unregister = registerBeforeWindowClose(flushed)
+    try {
+      emit('windowClose', undefined)
+      await vi.waitFor(() => expect(transport.exitApp).toHaveBeenCalledTimes(1))
+      expect(flushed).toHaveBeenCalledTimes(1)
+    } finally {
+      unregister()
+    }
   })
 
   it('correlates concurrent sidecar rpc_invoke calls, queues until ready, and decodes { __b64 } bytes', async () => {

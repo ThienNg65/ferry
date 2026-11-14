@@ -88,6 +88,9 @@ matching secrets) are added, the workflow uploads the built installer as an arti
 SignPath for Authenticode signing, and regenerates `latest.yml`'s hash/size before publishing —
 without touching anything else in this flow.
 
-## License
+## Legal, Privacy & Licenses
 
-[MIT](LICENSE)
+- **License:** [MIT](LICENSE) — third-party notices in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)
+- **Privacy Policy:** [PRIVACY.md](PRIVACY.md) (local-first; zero telemetry, cookies, analytics, or AI training)
+- **Terms of Service:** [TERMS.md](TERMS.md)
+- **Maintainer Contact:** ThienNg65 via [GitHub Issues](https://github.com/ThienNg65/ferry/issues) or [GitHub Security Advisories](https://github.com/ThienNg65/ferry/security)

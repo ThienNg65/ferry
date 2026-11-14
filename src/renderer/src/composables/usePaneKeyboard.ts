@@ -108,19 +108,35 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       await ctx.store.goUp()
       return
     }
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (
+      event.key === 'ArrowDown' ||
+      event.key === 'ArrowUp' ||
+      event.key === 'Home' ||
+      event.key === 'End' ||
+      event.key === 'PageDown' ||
+      event.key === 'PageUp'
+    ) {
       const list = ctx.filteredEntries.value
       if (list.length === 0) return
       event.preventDefault()
       const selectedPaths = Array.from(ctx.store.selected)
       const lastSelectedPath = selectedPaths[selectedPaths.length - 1]
       const currentIdx = lastSelectedPath ? list.findIndex((e) => e.path === lastSelectedPath) : -1
-      const nextIdx =
-        event.key === 'ArrowDown'
-          ? Math.min(list.length - 1, currentIdx + 1)
-          : currentIdx <= 0
-            ? 0
-            : currentIdx - 1
+      const pageStep = 10
+      let nextIdx = 0
+      if (event.key === 'Home') {
+        nextIdx = 0
+      } else if (event.key === 'End') {
+        nextIdx = list.length - 1
+      } else if (event.key === 'PageDown') {
+        nextIdx = Math.min(list.length - 1, (currentIdx < 0 ? 0 : currentIdx) + pageStep)
+      } else if (event.key === 'PageUp') {
+        nextIdx = Math.max(0, (currentIdx < 0 ? 0 : currentIdx) - pageStep)
+      } else if (event.key === 'ArrowDown') {
+        nextIdx = Math.min(list.length - 1, currentIdx + 1)
+      } else {
+        nextIdx = currentIdx <= 0 ? 0 : currentIdx - 1
+      }
       const nextPath = list[nextIdx].path
       if (event.shiftKey) {
         ctx.store.selectRange(nextPath)

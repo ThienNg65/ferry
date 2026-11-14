@@ -226,7 +226,7 @@ async function copyText(label: string, value: string): Promise<void> {
             </div>
           </div>
 
-          <span class="w-20 shrink-0 text-right font-mono text-dimmed tabular-nums">
+          <span class="w-20 shrink-0 text-right font-mono text-muted tabular-nums">
             {{ sortedProcesses[virtualRow.index].pid }}
           </span>
 
@@ -234,7 +234,7 @@ async function copyText(label: string, value: string): Promise<void> {
             <span class="shrink-0 whitespace-nowrap font-mono text-default">
               {{ formatBytes(sortedProcesses[virtualRow.index].rssBytes) }}
             </span>
-            <span v-if="totalMemBytes > 0" class="w-10 shrink-0 text-right font-mono text-[10px] text-dimmed">
+            <span v-if="totalMemBytes > 0" class="w-10 shrink-0 text-right font-mono text-[10px] text-muted">
               {{ ramPercent(sortedProcesses[virtualRow.index].rssBytes).toFixed(1) }}%
             </span>
             <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">

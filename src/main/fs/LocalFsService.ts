@@ -2,6 +2,7 @@ import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
+import { logSecurityEvent } from '../host/securityLog'
 import type { FileEntry, FileListResult, FileReadResult, IpcErrorCode, StageDropRequest } from '../../shared/contract'
 
 function isRootOrEmpty(p: string): boolean {
@@ -205,6 +206,7 @@ export async function mkdirRecursive(dirPath: string): Promise<void> {
 }
 
 export const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
+export const MAX_STAGE_DROP_ENTRIES = 1000
 const STAGE_DROP_PREFIX = 'ferry-drop-'
 const activeStageDirs = new Set<string>()
 
@@ -287,16 +289,25 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
   if (entries.length === 0) {
     return []
   }
+  if (entries.length > MAX_STAGE_DROP_ENTRIES) {
+    logSecurityEvent('fs.stage_drop_entry_limit', { count: entries.length, max: MAX_STAGE_DROP_ENTRIES })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped selection exceeds the ${MAX_STAGE_DROP_ENTRIES}-item staging limit. Use the Local pane for larger transfers.`
+    )
+  }
 
   let totalBytes = 0
   const normalized: Array<{ segments: string[]; isDir: boolean; data?: Uint8Array; modifiedAt?: string }> = []
   for (const item of entries) {
     const rawRel = String(item.relativePath ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
     if (!rawRel || /^[a-zA-Z]:/.test(rawRel)) {
+      logSecurityEvent('fs.stage_drop_path_blocked', { relativePath: item.relativePath })
       throw new SshError('VALIDATION', `Invalid dropped relative path "${item.relativePath}"`)
     }
     const segments = rawRel.split('/').filter(Boolean)
     if (segments.length === 0 || segments.some((s) => s === '.' || s === '..')) {
+      logSecurityEvent('fs.stage_drop_path_blocked', { relativePath: item.relativePath })
       throw new SshError('VALIDATION', `Unsafe dropped relative path "${item.relativePath}"`)
     }
     const bytes = item.data ? Buffer.from(item.data) : Buffer.alloc(0)

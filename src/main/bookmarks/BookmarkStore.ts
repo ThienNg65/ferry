@@ -55,4 +55,8 @@ export class BookmarkStore {
     const bookmarks = this.store.get('bookmarks').filter((b) => b.siteId !== siteId)
     this.store.set('bookmarks', bookmarks)
   }
+
+  clear(): void {
+    this.store.set('bookmarks', [])
+  }
 }

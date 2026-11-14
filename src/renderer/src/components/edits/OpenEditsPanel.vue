@@ -33,7 +33,7 @@ const edits = computed(() => editSessions.edits)
           />
         </UTooltip>
         <span class="truncate font-medium">{{ basename(edit.remotePath) }}</span>
-        <span class="truncate text-dimmed">{{ sessionLabel(edit.sessionId) }}</span>
+        <span class="truncate text-muted">{{ sessionLabel(edit.sessionId) }}</span>
         <UTooltip text="Close edit">
           <UButton
             aria-label="Close edit"
@@ -48,7 +48,7 @@ const edits = computed(() => editSessions.edits)
     </div>
     <div v-else class="flex h-full flex-col items-center justify-center gap-1 px-3 py-6 text-center">
       <UIcon name="i-lucide-file-pen-line" class="size-5 text-dimmed" />
-      <p class="text-xs text-dimmed">Files opened for editing appear here — the dot shows sync status</p>
+      <p class="text-xs text-muted">Files opened for editing appear here — the dot shows sync status</p>
     </div>
   </div>
 </template>
