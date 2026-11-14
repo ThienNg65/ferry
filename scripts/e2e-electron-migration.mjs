@@ -41,7 +41,7 @@ function assert(cond, msg) {
 // ---------------------------------------------------------------------------
 // 1. Fault-Injection Tests: Locked-file rollback & pre-existing backup preservation
 // ---------------------------------------------------------------------------
-console.log('=== [1/3] Fault-injection: locked-file rollback ===')
+console.log('=== [1/4] Fault-injection: locked-file rollback ===')
 {
   const dir = mkdtempSync(join(os.tmpdir(), 'ferry-rollback-lock-'))
   let locker = null
@@ -90,7 +90,7 @@ console.log('=== [1/3] Fault-injection: locked-file rollback ===')
   }
 }
 
-console.log('=== [2/3] Fault-injection: pre-existing interrupted backup preservation ===')
+console.log('=== [2/4] Fault-injection: pre-existing interrupted backup preservation ===')
 {
   const dir = mkdtempSync(join(os.tmpdir(), 'ferry-rollback-crash-'))
   let locker = null
@@ -139,9 +139,51 @@ console.log('=== [2/3] Fault-injection: pre-existing interrupted backup preserva
 }
 
 // ---------------------------------------------------------------------------
-// 3. Real v0.23.1 Electron -> electron-updater -> Neutralino E2E Migration
+// 3. Fault injection: failed restoration must preserve the only backup
 // ---------------------------------------------------------------------------
-console.log('=== [3/3] Real v0.23.1 Electron -> electron-updater -> Neutralino E2E ===')
+console.log('=== [3/4] Fault-injection: failed restoration retains the backup ===')
+{
+  const dir = mkdtempSync(join(os.tmpdir(), 'ferry-restore-failure-'))
+  let locker = null
+  try {
+    const backup = join(dir, '_ferry_upgrade_backup')
+    mkdirSync(backup, { recursive: true })
+    writeFileSync(join(backup, 'Ferry.exe'), 'only-valid-backup')
+    writeFileSync(join(dir, 'Ferry.exe'), 'locked-partial-install')
+    const lockPath = join(dir, 'Ferry.exe').replace(/'/g, "''")
+    locker = spawn('powershell.exe', [
+      '-NoProfile', '-Command',
+      `$fs = [IO.File]::Open('${lockPath}', 'Open', 'ReadWrite', 'None'); Write-Output 'LOCKED'; Start-Sleep -Seconds 30; $fs.Close()`
+    ], { stdio: ['ignore', 'pipe', 'inherit'] })
+    await new Promise((resolveLock, rejectLock) => {
+      const timer = setTimeout(() => rejectLock(new Error('Restore failure lock did not start')), 5000)
+      locker.stdout.on('data', (d) => {
+        if (d.toString().includes('LOCKED')) {
+          clearTimeout(timer)
+          resolveLock()
+        }
+      })
+    })
+    const result = spawnSync(neutralinoInstaller, ['/S', `/D=${dir}`], { encoding: 'utf8' })
+    assert(result.status !== 0, `Expected a failed restore, got installer exit ${result.status}`)
+    assert(existsSync(join(backup, 'Ferry.exe')), 'The original backup was deleted after restoration failed')
+    assert(readFileSync(join(backup, 'Ferry.exe'), 'utf8') === 'only-valid-backup',
+      'The original backup was modified after restoration failed')
+    console.log('  PASS: failed restore leaves the only valid backup intact.')
+  } finally {
+    if (locker && locker.exitCode === null) {
+      const exited = new Promise((resolveExit) => locker.once('exit', resolveExit))
+      locker.kill()
+      await exited
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Real v0.23.1 Electron -> electron-updater -> Neutralino E2E Migration
+// ---------------------------------------------------------------------------
+console.log('=== [4/4] Real v0.23.1 Electron -> electron-updater -> Neutralino E2E ===')
 const electronInstaller =
   process.env.FERRY_ELECTRON_INSTALLER || join(os.tmpdir(), 'ferry-v0.23.1-electron-setup.exe')
 
