@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { execFile, execFileSync, spawn, spawnSync } from 'child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs'
 import http from 'http'
 import * as os from 'os'
 import { dirname, join, resolve } from 'path'
@@ -18,7 +18,9 @@ const rootDir = resolve(__dirname, '..')
 const distDir = join(rootDir, 'dist')
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
 const version = String(pkg.version)
-if (version !== '0.24.0') throw new Error(`Expected v0.24.0 release candidate, got ${version}`)
+if (!/^\d+\.\d+\.\d+$/.test(version) || version.localeCompare('0.23.1', undefined, { numeric: true }) <= 0) {
+  throw new Error(`Electron migration E2E requires a release newer than v0.23.1, got ${version}`)
+}
 const neutralinoInstaller = join(distDir, `Ferry-Setup-${version}.exe`)
 
 if (!existsSync(neutralinoInstaller)) {
@@ -36,6 +38,52 @@ function runPs(script) {
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg)
+}
+
+/**
+ * Windows may report a process path using expanded long names while the
+ * temp directory used by the GitHub runner contains 8.3 aliases (RUNNER~1).
+ * Resolve both sides through the filesystem before matching.
+ */
+function canonicalWindowsPath(filePath) {
+  try {
+    return realpathSync.native(filePath).replace(/^\\\\\?\\/, '').toLowerCase()
+  } catch {
+    return resolve(filePath).replace(/^\\\\\?\\/, '').toLowerCase()
+  }
+}
+
+function runningFerryProcesses() {
+  // Only collect executable name, PID and path: never log command lines
+  // because Neutralino extension arguments may contain authentication tokens.
+  const raw = runPs(String.raw`$rows = @(Get-CimInstance Win32_Process -Filter "Name='Ferry.exe' OR Name='ferry-win_x64.exe' OR Name='node.exe'" | Select-Object Name,ProcessId,ExecutablePath); ConvertTo-Json -InputObject $rows -Compress`)
+  const processes = JSON.parse(raw || '[]')
+  return (Array.isArray(processes) ? processes : [processes]).filter(
+    (p) => p && typeof p.ExecutablePath === 'string' && Number.isInteger(p.ProcessId)
+  )
+}
+
+function processesInDirectory(dir) {
+  const prefix = canonicalWindowsPath(dir).replace(/[\\/]+$/, '') + '\\'
+  return runningFerryProcesses().filter((p) => canonicalWindowsPath(p.ExecutablePath).startsWith(prefix))
+}
+
+function describeProcesses(processes) {
+  return processes.map((p) => `${p.Name} PID=${p.ProcessId} path=${p.ExecutablePath}`).join('; ') || '(none)'
+}
+
+function terminateProcessesInDirectory(dir) {
+  const processes = processesInDirectory(dir)
+  for (const proc of processes) {
+    try {
+      execFileSync('taskkill.exe', ['/PID', String(proc.ProcessId), '/T', '/F'], {
+        stdio: 'ignore',
+        timeout: 15_000
+      })
+    } catch {
+      // The process may have exited before taskkill could run.
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -348,17 +396,25 @@ try {
     'Electron-triggered quitAndInstall failed to migrate the runtime')
   await new Promise((r) => setTimeout(r, 2000))
 
-  // Verify Neutralino + Node sidecar are running and Electron is gone
-  const procCheck = runPs(`
-    $nl = Get-Process -Name 'ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) }
-    $sc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) }
-    if (-not $nl) { throw 'Neutralino ferry-win_x64.exe did not launch' }
-    if (-not $sc) { throw 'Node sidecar did not launch' }
-    $nl | Stop-Process -Force -ErrorAction SilentlyContinue
-    $sc | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Write-Output "OK"
-  `)
-  assert(procCheck.includes('OK'), 'Neutralino process verification failed')
+  // GitHub runners can use 8.3 path aliases. Compare canonical file paths,
+  // not Get-Process.Path against the raw short TEMP directory.
+  const expectedNeutralino = canonicalWindowsPath(join(customDir, 'ferry-win_x64.exe'))
+  const expectedNode = canonicalWindowsPath(join(customDir, 'extensions', 'js.ferry.sidecar', 'node.exe'))
+  const launchDeadline = Date.now() + 20_000
+  let hostProcess = null
+  let nodeProcess = null
+  let observed = []
+  do {
+    observed = processesInDirectory(customDir)
+    hostProcess = observed.find((p) => canonicalWindowsPath(p.ExecutablePath) === expectedNeutralino) ?? null
+    nodeProcess = observed.find((p) => canonicalWindowsPath(p.ExecutablePath) === expectedNode) ?? null
+    if (hostProcess && nodeProcess) break
+    await new Promise((r) => setTimeout(r, 500))
+  } while (Date.now() < launchDeadline)
+
+  assert(hostProcess && nodeProcess,
+    `Neutralino host/sidecar did not launch from the migrated install. Found: ${describeProcesses(observed)}`)
+  console.log(`  PASS: Neutralino host PID=${hostProcess.ProcessId} and Node sidecar PID=${nodeProcess.ProcessId} launched.`)
 
   assert(!existsSync(join(customDir, 'Ferry.exe')), 'Electron Ferry.exe still exists')
   assert(!existsSync(join(customDir, 'Uninstall Ferry.exe')), 'Electron Uninstall Ferry.exe still exists')
@@ -379,20 +435,37 @@ try {
   assert(preservedHosts.hosts['e2e.example.com:22'] === 'SHA256:e2etestfingerprint', 'known_hosts.json was altered')
   console.log('  PASS: custom-dir migration, single Uninstall entry, Neutralino launch, and DPAPI data preservation verified.')
 
-  // Clean uninstall
+  // Stop the verified host and sidecar before invoking NSIS uninstaller.
+  // The old uninstaller's process-path filtering is not reliable with 8.3 paths.
+  terminateProcessesInDirectory(customDir)
   const uninst = spawnSync(join(customDir, 'Uninstall.exe'), ['/S'], { encoding: 'utf8' })
   assert(uninst.status === 0, `Uninstaller failed: ${uninst.status}`)
 } finally {
   httpServer?.close()
+
+  // The application may still be starting or exiting when an assertion fails.
+  // Terminate only processes whose canonical executable paths belong to the
+  // isolated test installation; never kill unrelated Node or Ferry instances.
   try {
-    runPs(
-      `Get-Process -Name 'Ferry','ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0`
-    )
-  } catch {
-    // ignore cleanup errors
+    terminateProcessesInDirectory(customDir)
+  } catch (error) {
+    console.warn(`Unable to inspect test processes during cleanup: ${String(error)}`)
   }
-  rmSync(customDir, { recursive: true, force: true })
-  if (createdTestProfile) rmSync(appDataDir, { recursive: true, force: true })
+
+  // On GitHub-hosted runners lingering WebView2 handles can delay deletion.
+  // Cleanup errors must not hide the actual migration assertion failure.
+  try {
+    rmSync(customDir, { recursive: true, force: true, maxRetries: 15, retryDelay: 300 })
+  } catch (error) {
+    console.warn(`Unable to remove temporary test installation: ${String(error)}`)
+  }
+  if (createdTestProfile) {
+    try {
+      rmSync(appDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+    } catch (error) {
+      console.warn(`Unable to remove isolated test profile: ${String(error)}`)
+    }
+  }
 }
 
 console.log('ALL E2E MIGRATION & ROLLBACK GATES PASSED!')

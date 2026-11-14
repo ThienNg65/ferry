@@ -1,0 +1,43 @@
+name: Windows Migration E2E
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/e2e-electron-migration.mjs'
+      - 'build/neutralino-installer.nsi'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/migration-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  electron-to-neutralino:
+    runs-on: windows-latest
+    env:
+      FERRY_REQUIRE_NSIS: '1'
+      FERRY_E2E_ISOLATED_RUNNER: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Validate migration test syntax
+        run: node --check scripts/e2e-electron-migration.mjs
+
+      - name: Install and verify NSIS
+        shell: pwsh
+        run: |
+          choco install nsis.install --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed: $LASTEXITCODE" }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $compiler)) { $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe' }
+          if (-not (Test-Path $compiler)) { throw 'NSIS compiler not found' }
+          "FERRY_MAKENSIS=$compiler" >> $env:GITHUB_ENV
+
+      - name: Package Neutralino
+        run: npm run package
+
+      - name: Test real Electron updater migration and rollback
+        run: npm run e2e:migration

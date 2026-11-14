@@ -102,7 +102,7 @@ jobs:
 
       # Hard gate for the one-time Electron bridge, isolated from developer profiles.
       - name: E2E Electron to Neutralino migration
-        if: steps.target.outputs.version == '0.24.0'
+        if: vars.PUBLISH_LEGACY_FERRY != 'false'
         shell: bash
         env:
           FERRY_E2E_ISOLATED_RUNNER: '1'
