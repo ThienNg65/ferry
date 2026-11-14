@@ -287,6 +287,11 @@ export class SiteStore {
     return toPublicSite(copy)
   }
 
+  /** Removes all saved sites and their encrypted credentials. */
+  clear(): void {
+    this.store.set('sites', [])
+  }
+
   /** Raw stored record (still has ciphertext, not decrypted) — main-process only. */
   getRaw(id: string): StoredSite | undefined {
     return this.store.get('sites').find((s) => s.id === id)

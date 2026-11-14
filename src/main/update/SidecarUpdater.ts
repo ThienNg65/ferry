@@ -5,6 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { spawn } from 'child_process'
 import { host } from '../host/host'
+import { logSecurityEvent } from '../host/securityLog'
 
 export const DEFAULT_UPDATE_FEED_URL =
   'https://github.com/ThienNg65/ferry-release/releases/latest/download'
@@ -103,7 +104,51 @@ export class SidecarUpdater extends EventEmitter {
   }
 
   private getFeedBase(): string {
-    return (process.env['FERRY_UPDATE_FEED_URL'] || this.deps.feedUrl).replace(/\/+$/, '')
+    const raw = (process.env['FERRY_UPDATE_FEED_URL'] || this.deps.feedUrl).replace(/\/+$/, '')
+    let parsed: URL
+    try {
+      parsed = new URL(raw)
+    } catch {
+      logSecurityEvent('updater.invalid_feed_url', { url: raw })
+      throw new Error(`Invalid update feed URL: ${raw}`)
+    }
+    const isLoopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
+    const allowInsecureLocal = !host().isPackaged && isLoopback
+    if (parsed.protocol !== 'https:' && !allowInsecureLocal) {
+      logSecurityEvent('updater.insecure_feed_url', { url: raw })
+      throw new Error(`Refusing insecure non-HTTPS update feed URL: ${raw}`)
+    }
+    return raw
+  }
+
+  private resolveInstallerUrl(manifestPath: string, safeName: string): string {
+    const feedBase = this.getFeedBase()
+    if (!/^https?:\/\//i.test(manifestPath)) {
+      return `${feedBase}/${encodeURIComponent(safeName)}`
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(manifestPath)
+    } catch {
+      logSecurityEvent('updater.invalid_installer_url', { url: manifestPath })
+      throw new Error(`Invalid installer URL in update manifest: ${manifestPath}`)
+    }
+    const feedOrigin = new URL(feedBase).origin
+    const isLoopback = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost'
+    const allowInsecureLocal = !host().isPackaged && isLoopback
+    if (parsed.protocol !== 'https:' && !allowInsecureLocal) {
+      logSecurityEvent('updater.insecure_installer_url', { url: manifestPath })
+      throw new Error(`Refusing insecure non-HTTPS installer URL: ${manifestPath}`)
+    }
+    const trustedGitHubHost =
+      parsed.hostname === 'github.com' ||
+      parsed.hostname === 'objects.githubusercontent.com' ||
+      parsed.hostname === 'release-assets.githubusercontent.com'
+    if (parsed.origin !== feedOrigin && !trustedGitHubHost) {
+      logSecurityEvent('updater.untrusted_installer_origin', { url: manifestPath, feedOrigin })
+      throw new Error(`Refusing untrusted installer origin in update manifest: ${parsed.origin}`)
+    }
+    return parsed.toString()
   }
 
   private async fetchManifest(): Promise<UpdateManifest> {
@@ -143,9 +188,7 @@ export class SidecarUpdater extends EventEmitter {
     const finalPath = path.join(this.deps.downloadDir, safeName)
     const tmpPath = `${finalPath}.tmp`
 
-    const url = /^https?:\/\//i.test(manifest.path)
-      ? manifest.path
-      : `${this.getFeedBase()}/${encodeURIComponent(safeName)}`
+    const url = this.resolveInstallerUrl(manifest.path, safeName)
 
     const controller = new AbortController()
     let idleTimer: ReturnType<typeof setTimeout> | null = null
@@ -228,6 +271,7 @@ export class SidecarUpdater extends EventEmitter {
     const actualSha512 = hash.digest('base64')
     if (actualSha512 !== manifest.sha512) {
       rmSync(tmpPath, { force: true })
+      logSecurityEvent('updater.sha512_mismatch', { file: safeName, expected: manifest.sha512, actual: actualSha512 })
       throw new Error(`SHA-512 verification failed for ${safeName}`)
     }
 

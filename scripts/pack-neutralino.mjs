@@ -57,7 +57,7 @@ function brandWindowsExecutable(exePath, iconPath, appVersion) {
     {
       ProductName: 'Ferry',
       FileDescription: 'Ferry',
-      CompanyName: 'Ferry',
+      CompanyName: 'ThienNg65',
       InternalName: 'Ferry',
       OriginalFilename: 'ferry-win_x64.exe',
       ProductVersion: appVersion,
@@ -83,8 +83,14 @@ function runNpx(args) {
   }
 }
 
-if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe'))) {
+const expectedNlVersion = String(nlConfig.cli?.binaryVersion || '')
+const nlVersionMarker = join(rootDir, 'bin', '.ferry-nl-version')
+const cachedNlVersion = existsSync(nlVersionMarker) ? readFileSync(nlVersionMarker, 'utf8').trim() : ''
+
+if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe')) || cachedNlVersion !== expectedNlVersion) {
   runNpx(['@neutralinojs/neu', 'update'])
+  mkdirSync(join(rootDir, 'bin'), { recursive: true })
+  writeFileSync(nlVersionMarker, expectedNlVersion, 'utf8')
 }
 
 rmSync(join(distDir, 'ferry'), { recursive: true, force: true })
@@ -98,6 +104,13 @@ brandWindowsExecutable(targetExePath, join(rootDir, 'resources', 'icon.ico'), ve
 copyFileSync(join(distDir, 'ferry', 'resources.neu'), join(protoDir, 'resources.neu'))
 copyFileSync(process.execPath, join(sidecarDistDir, process.platform === 'win32' ? 'node.exe' : 'node'))
 copyFileSync(sidecarBundle, join(sidecarDistDir, 'index.cjs'))
+for (const noticeFile of ['LICENSE', 'PRIVACY.md', 'TERMS.md', 'THIRD_PARTY_LICENSES.txt']) {
+  const srcNotice = join(rootDir, noticeFile)
+  if (!existsSync(srcNotice)) {
+    throw new Error(`Missing required legal/license file for packaging: ${srcNotice}`)
+  }
+  copyFileSync(srcNotice, join(protoDir, noticeFile))
+}
 
 const zipPath = join(distDir, `Ferry-Portable-${version}-win-x64.zip`)
 rmSync(zipPath, { force: true })

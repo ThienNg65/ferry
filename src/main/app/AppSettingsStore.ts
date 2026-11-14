@@ -1,7 +1,7 @@
 import Conf from 'conf'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
-import type { AppSettings, ProxyConfig } from '../../shared/contract'
+import type { AppSettings, ProxyConfig, TermsAcceptance } from '../../shared/contract'
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
 interface StoredProxy {
@@ -17,6 +17,8 @@ interface StoreSchema {
   bandwidthLimitKBps: number | null
   defaultProxy: StoredProxy | null
   autoCheckUpdates: boolean
+  historyRetentionDays: number | null
+  termsAcceptance: TermsAcceptance | null
 }
 
 /**
@@ -35,7 +37,14 @@ export class AppSettingsStore {
       this._store = new Conf<StoreSchema>({
         cwd: host().dataDir,
         configName: 'app-settings',
-        defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null, autoCheckUpdates: true }
+        defaults: {
+          openTabSiteIds: [],
+          bandwidthLimitKBps: null,
+          defaultProxy: null,
+          autoCheckUpdates: true,
+          historyRetentionDays: 90,
+          termsAcceptance: null
+        }
       })
     }
     return this._store
@@ -50,13 +59,16 @@ export class AppSettingsStore {
 
   get(): AppSettings {
     const proxy = this.store.get('defaultProxy')
+    const rawRetention = this.store.get('historyRetentionDays')
     return {
       openTabSiteIds: this.store.get('openTabSiteIds'),
       bandwidthLimitKBps: this.store.get('bandwidthLimitKBps'),
       defaultProxy: proxy
         ? { type: proxy.type, host: proxy.host, port: proxy.port, username: proxy.username, hasPassword: Boolean(proxy.secretPassword) }
         : undefined,
-      autoCheckUpdates: this.store.get('autoCheckUpdates') ?? true
+      autoCheckUpdates: this.store.get('autoCheckUpdates') ?? true,
+      historyRetentionDays: rawRetention === undefined ? 90 : rawRetention,
+      termsAcceptance: this.store.get('termsAcceptance') ?? null
     }
   }
 
@@ -66,6 +78,25 @@ export class AppSettingsStore {
 
   setAutoCheckUpdates(enabled: boolean): void {
     this.store.set('autoCheckUpdates', enabled)
+  }
+
+  setHistoryRetentionDays(days: number | null): void {
+    this.store.set('historyRetentionDays', days)
+  }
+
+  acceptTerms(version: string): TermsAcceptance {
+    const record: TermsAcceptance = { version, acceptedAt: new Date().toISOString() }
+    this.store.set('termsAcceptance', record)
+    return record
+  }
+
+  reset(): void {
+    this.store.set('openTabSiteIds', [])
+    this.store.set('bandwidthLimitKBps', null)
+    this.store.set('defaultProxy', null)
+    this.store.set('autoCheckUpdates', true)
+    this.store.set('historyRetentionDays', 90)
+    this.store.set('termsAcceptance', null)
   }
 
   setBandwidthLimitKBps(limit: number | null): void {

@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import { INVOKE_CHANNELS, type WindowThemeSyncInput } from '@shared/contract'
+import { invoke } from '../api'
 import { clampColumnWidth, parseColumnPrefs, type ColumnKey, type ColumnPrefs } from '../utils/columnPrefs'
 import { generateShadeRamp } from '../utils/colorRamp'
 import {
@@ -64,8 +66,8 @@ export type Density = 'compact' | 'comfortable'
 export const MIN_DOCK_HEIGHT = 224
 /** Cap the dock at a fraction of the window so it never feels like it's "taking over". */
 export const MAX_DOCK_HEIGHT_RATIO = 0.7
-/** Reserve space for title bar + site tab bar + toolbar/path bar + status bar above the dock. */
-const RESERVED_CHROME_HEIGHT = 260
+/** Reserve space for site tab bar + toolbar/path bar + status bar above the dock. */
+const RESERVED_CHROME_HEIGHT = 224
 
 /**
  * Clamps a candidate dock height to [MIN_DOCK_HEIGHT, the smaller of 70% of
@@ -124,8 +126,39 @@ function loadTheme(): Theme {
   return systemPrefersDark() ? 'dark' : 'light'
 }
 
-function applyTheme(theme: Theme): void {
+/** Converts `--ui-bg-muted` (including `oklch(...)`) into a Win32 COLORREF (`0x00BBGGRR`) so the Win11 titlebar matches `SiteTabBar`. */
+function resolveCaptionColorRef(theme: Theme): number {
+  const fallback = theme === 'dark' ? 0x262626 : 0xfafafa
+  try {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-bg-muted').trim()
+    if (!raw || (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports('color', raw))) {
+      return fallback
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return fallback
+    ctx.fillStyle = raw
+    ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+    if (a !== 255) return fallback
+    return ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff)
+  } catch {
+    return fallback
+  }
+}
+
+async function applyTheme(theme: Theme): Promise<void> {
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  if (typeof window !== 'undefined' && window.api) {
+    try {
+      const payload: WindowThemeSyncInput = { theme, captionColor: resolveCaptionColorRef(theme) }
+      await invoke<void>(INVOKE_CHANNELS.windowSyncTheme, payload)
+    } catch {
+      // Non-fatal in test/non-Windows environments.
+    }
+  }
 }
 
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
@@ -270,15 +303,15 @@ export const useUiStore = defineStore('ui', {
       localStorage.setItem(DENSITY_KEY, density)
     },
 
-    /** Applies the persisted theme to the document — call once on app start. */
-    initTheme(): void {
-      applyTheme(this.theme)
+    /** Applies the persisted theme to the document and OS window frame — call once on app start. */
+    initTheme(): Promise<void> {
+      return applyTheme(this.theme)
     },
 
     toggleTheme(): void {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
       localStorage.setItem(THEME_KEY, this.theme)
-      applyTheme(this.theme)
+      void applyTheme(this.theme)
     },
 
     /** Applies the persisted accent color to the document — call once on app start, alongside initTheme(). */

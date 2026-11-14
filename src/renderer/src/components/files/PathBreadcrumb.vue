@@ -70,7 +70,7 @@ async function copyCurrentPath(): Promise<void> {
       @keyup.esc="cancelEdit"
       @blur="cancelEdit"
     />
-    <div v-else class="group flex items-center gap-1 text-xs">
+    <div v-else class="group flex min-w-0 flex-1 items-center gap-1 text-xs">
       <div
         ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scrollbar-none"
@@ -105,7 +105,7 @@ async function copyCurrentPath(): Promise<void> {
           @click="startEdit"
         />
       </div>
-      <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
         <UTooltip text="Edit path">
           <UButton
             icon="i-lucide-pencil"

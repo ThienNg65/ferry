@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import type { NativeDisplayInfo } from '@shared/contract'
 import {
   clampWindowBounds,
-  computeResizedBounds,
   loadWindowBounds,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
+  pickTargetScreen,
   saveWindowBounds,
   WINDOW_BOUNDS_STORAGE_KEY
 } from './windowBounds'
@@ -53,7 +54,7 @@ describe('windowBounds', () => {
     )
     expect(clamped.width).toBe(MIN_WINDOW_WIDTH)
     expect(clamped.height).toBe(MIN_WINDOW_HEIGHT)
-    expect(clamped.x).toBe(1820)
+    expect(clamped.x).toBe(1800)
     expect(clamped.y).toBe(0)
   })
 
@@ -66,44 +67,39 @@ describe('windowBounds', () => {
     expect(highDpiClamped.width).toBe(MIN_WINDOW_WIDTH * 2)
     expect(highDpiClamped.height).toBe(MIN_WINDOW_HEIGHT * 2)
     expect(highDpiClamped.x).toBe(2000)
-
-    const resizedHighDpi = computeResizedBounds(
-      { x: 200, y: 150, width: 2000, height: 1400 },
-      500,
-      500,
-      'nw',
-      2
-    )
-    expect(resizedHighDpi).toEqual({
-      x: 400,
-      y: 350,
-      width: MIN_WINDOW_WIDTH * 2,
-      height: MIN_WINDOW_HEIGHT * 2
-    })
   })
 
-  it('computes resized bounds while anchoring opposite edge at minimum size', () => {
-    const start = { x: 200, y: 150, width: 1000, height: 700 }
-    // Dragging top-left inward past minimum size clamps x/y to right/bottom edge minus min dimensions
-    expect(computeResizedBounds(start, 300, 300, 'nw')).toEqual({
-      x: 300,
-      y: 250,
-      width: MIN_WINDOW_WIDTH,
-      height: MIN_WINDOW_HEIGHT
+  it('picks the display with largest overlap and falls back to primary when unplugged', () => {
+    const displays: NativeDisplayInfo[] = [
+      {
+        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        workArea: { x: 0, y: 0, width: 1920, height: 1032 },
+        isPrimary: true,
+        scaleFactor: 1
+      },
+      {
+        bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 1920, y: 0, width: 2560, height: 1392 },
+        isPrimary: false,
+        scaleFactor: 1
+      }
+    ]
+
+    expect(pickTargetScreen({ x: 2100, y: 100, width: 1280, height: 800 }, displays)).toEqual({
+      availLeft: 1920,
+      availTop: 0,
+      availWidth: 2560,
+      availHeight: 1392
     })
-    // Dragging bottom-right outward expands width and height without moving x/y
-    expect(computeResizedBounds(start, 120, 80, 'se')).toEqual({
-      x: 200,
-      y: 150,
-      width: 1120,
-      height: 780
+
+    // Disconnected third monitor at x=5000 falls back to primary monitor.
+    expect(pickTargetScreen({ x: 5000, y: 100, width: 1280, height: 800 }, displays)).toEqual({
+      availLeft: 0,
+      availTop: 0,
+      availWidth: 1920,
+      availHeight: 1032
     })
-    // Dragging west edge left expands width and shifts x left; east/south/north/ne/sw
-    expect(computeResizedBounds(start, -50, 0, 'w')).toEqual({ x: 150, y: 150, width: 1050, height: 700 })
-    expect(computeResizedBounds(start, 50, 0, 'e')).toEqual({ x: 200, y: 150, width: 1050, height: 700 })
-    expect(computeResizedBounds(start, 0, -40, 'n')).toEqual({ x: 200, y: 110, width: 1000, height: 740 })
-    expect(computeResizedBounds(start, 0, 40, 's')).toEqual({ x: 200, y: 150, width: 1000, height: 740 })
-    expect(computeResizedBounds(start, 50, -40, 'ne')).toEqual({ x: 200, y: 110, width: 1050, height: 740 })
-    expect(computeResizedBounds(start, -50, 40, 'sw')).toEqual({ x: 150, y: 150, width: 1050, height: 740 })
+
+    expect(pickTargetScreen({ x: 0, y: 0, width: 1280, height: 800 }, [])).toBeUndefined()
   })
 })

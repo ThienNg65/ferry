@@ -7,7 +7,7 @@ const calls: string[] = []
 vi.mock('../main/ipc/registerSidecar', () => ({ registerSidecarHandlers: () => calls.push('register') }))
 vi.mock('../main/history/HistoryRecorder', () => ({ initHistoryRecorder: () => calls.push('history-recorder') }))
 vi.mock('../main/history/HistoryStore', () => ({
-  HistoryStore: { getInstance: () => ({ flush: () => calls.push('history-flush') }) }
+  HistoryStore: { getInstance: () => ({ flush: () => calls.push('history-flush'), pruneExpired: () => 0 }) }
 }))
 vi.mock('../main/edit/EditSessionManager', () => ({
   EditSessionManager: { getInstance: () => ({ disposeAll: async () => calls.push('edit-dispose') }) }

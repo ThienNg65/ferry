@@ -15,14 +15,17 @@ import { serve, type WriteLine } from './protocol'
 
 export function initSidecarServices(): void {
   initHistoryRecorder()
-  TransferQueue.getInstance().setBandwidthLimitKBps(AppSettingsStore.getInstance().get().bandwidthLimitKBps)
+  const settings = AppSettingsStore.getInstance().get()
+  TransferQueue.getInstance().setBandwidthLimitKBps(settings.bandwidthLimitKBps)
+  const retention = settings.historyRetentionDays === undefined ? 90 : settings.historyRetentionDays
+  HistoryStore.getInstance().pruneExpired(retention)
   try {
     KnownHostsStore.getInstance()
   } catch (e) {
     console.error('sidecar: known_hosts.json unreadable at startup:', e)
   }
   void cleanupAllStagedDrops().catch(() => undefined)
-  if (host().isPackaged) {
+  if (host().isPackaged && settings.termsAcceptance !== null) {
     setTimeout(() => void initAutoUpdater(), 5000).unref?.()
   }
 }

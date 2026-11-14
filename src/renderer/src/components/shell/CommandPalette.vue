@@ -4,6 +4,8 @@ import { computed, onMounted, onUnmounted } from 'vue'
 // of relying on <UCommandPalette> (see ImportSessionsDialog.vue/ChmodDialog.vue
 // for the same pattern with <UCheckbox>).
 import UCommandPalette from '@nuxt/ui/components/CommandPalette.vue'
+import { INVOKE_CHANNELS } from '@shared/contract'
+import { invoke } from '../../api'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
@@ -75,6 +77,21 @@ const groups = computed(() => {
       onSelect: () => run(() => ui.toggleLocalPane())
     },
     { label: 'Keyboard shortcuts', icon: 'i-lucide-keyboard', onSelect: () => run(() => shortcutsDialog.open()) },
+    {
+      label: 'Toggle full screen (F11)',
+      icon: 'i-lucide-maximize-2',
+      onSelect: () => run(() => invoke<void>(INVOKE_CHANNELS.windowFullScreenToggle))
+    },
+    {
+      label: 'Maximize / Restore window',
+      icon: 'i-lucide-square',
+      onSelect: () => run(() => invoke<void>(INVOKE_CHANNELS.windowMaximizeToggle))
+    },
+    {
+      label: 'Minimize window',
+      icon: 'i-lucide-minus',
+      onSelect: () => run(() => invoke<void>(INVOKE_CHANNELS.windowMinimize))
+    },
     { label: 'History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
     { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
     {

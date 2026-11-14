@@ -146,13 +146,44 @@ export function getLogLevelStyles(level: LogLevel): LogLevelStyles {
  * Splits a line into chunks of matching and non-matching text based on a search RegExp.
  * Distinguishes whether a match is the globally active match.
  */
+const MAX_REGEX_LENGTH = 256
+const NESTED_QUANTIFIER_RE = /\([^)]*[+*][^)]*\)(?:[+*?]|\{\d+,?\d*\})|\([^)]*\|[^)]*\)(?:[+*]|\{\d+,?\d*\})/
+
+/** Builds a search RegExp safely, rejecting overly long or nested-quantifier ReDoS patterns. */
+export function buildSafeSearchRegex(
+  query: string,
+  isRegex: boolean,
+  caseSensitive: boolean
+): { regex: RegExp | null; error: string | null } {
+  if (!query) {
+    return { regex: null, error: null }
+  }
+  if (isRegex) {
+    if (query.length > MAX_REGEX_LENGTH) {
+      return { regex: null, error: `Regex exceeds ${MAX_REGEX_LENGTH} character limit` }
+    }
+    if (NESTED_QUANTIFIER_RE.test(query)) {
+      return { regex: null, error: 'Unsafe nested quantifier in regex' }
+    }
+  }
+  try {
+    const pattern = isRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return { regex: new RegExp(pattern, caseSensitive ? 'g' : 'gi'), error: null }
+  } catch (e) {
+    return { regex: null, error: e instanceof Error ? e.message : 'Invalid regex' }
+  }
+}
+
+const MAX_REGEX_LINE_LENGTH = 16_384
+const MAX_MATCHES_PER_LINE = 200
+
 export function splitLineMatches(
   line: string,
   regex: RegExp | null,
   lineGlobalMatchStart = -1,
   activeGlobalMatchIndex = -1
 ): LineMatchChunk[] {
-  if (!regex || !line) {
+  if (!regex || !line || line.length > MAX_REGEX_LINE_LENGTH) {
     return [{ text: line, isMatch: false, isActiveMatch: false }]
   }
 
@@ -168,7 +199,7 @@ export function splitLineMatches(
   let matchCount = 0
   let match: RegExpExecArray | null
 
-  while ((match = re.exec(line)) !== null) {
+  while (matchCount < MAX_MATCHES_PER_LINE && (match = re.exec(line)) !== null) {
     // Avoid infinite loops with zero-length matches
     if (match[0].length === 0) {
       re.lastIndex++

@@ -1,6 +1,7 @@
 import Conf from 'conf'
 import { createHash } from 'crypto'
 import { host } from '../host/host'
+import type { KnownHostEntry } from '../../shared/contract'
 
 interface StoreSchema {
   /** `"host:port"` -> the OpenSSH-style `SHA256:...` fingerprint last trusted for it. */
@@ -77,10 +78,26 @@ export class KnownHostsStore {
     this.store.set('hosts', hosts)
   }
 
-  /** Removes a stored fingerprint — mainly for tests; the app itself never needs to forget a host. */
-  forget(host: string, port: number): void {
+  /** Lists all stored host-key fingerprints sorted by `host:port`. */
+  list(): KnownHostEntry[] {
     const hosts = this.store.get('hosts')
-    delete hosts[this.key(host, port)]
+    return Object.entries(hosts)
+      .map(([hostPort, fingerprint]) => ({ hostPort, fingerprint }))
+      .sort((a, b) => a.hostPort.localeCompare(b.hostPort))
+  }
+
+  /** Removes a stored fingerprint by `host:port`. */
+  forget(host: string, port: number): void {
+    this.forgetKey(this.key(host, port))
+  }
+
+  forgetKey(hostPort: string): void {
+    const hosts = this.store.get('hosts')
+    delete hosts[hostPort]
     this.store.set('hosts', hosts)
+  }
+
+  clear(): void {
+    this.store.set('hosts', {})
   }
 }

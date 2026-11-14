@@ -53,7 +53,7 @@ describe('sites.ipc', () => {
 
   it('sites:create forwards the input and returns the created site', async () => {
     siteStoreMock.create.mockReturnValueOnce({ id: '2', name: 'b' })
-    const input = { name: 'b', host: 'h', port: 22, username: 'u' }
+    const input = { name: 'b', host: 'h', port: 22, username: 'u', authMethod: 'password' }
     const result = await invoke('sites:create', input)
     expect(siteStoreMock.create).toHaveBeenCalledWith(input)
     expect(result).toEqual({ ok: true, data: { id: '2', name: 'b' } })
@@ -61,7 +61,7 @@ describe('sites.ipc', () => {
 
   it('sites:update forwards id and input', async () => {
     siteStoreMock.update.mockReturnValueOnce({ id: '2', name: 'c' })
-    const input = { name: 'c', host: 'h', port: 22, username: 'u' }
+    const input = { name: 'c', host: 'h', port: 22, username: 'u', authMethod: 'password' }
     const result = await invoke('sites:update', '2', input)
     expect(siteStoreMock.update).toHaveBeenCalledWith('2', input)
     expect(result).toEqual({ ok: true, data: { id: '2', name: 'c' } })
@@ -91,7 +91,7 @@ describe('sites.ipc', () => {
     siteStoreMock.create.mockImplementationOnce(() => {
       throw new Error('name already exists')
     })
-    const result = await invoke('sites:create', { name: 'dup', host: 'h', port: 22, username: 'u' })
+    const result = await invoke('sites:create', { name: 'dup', host: 'h', port: 22, username: 'u', authMethod: 'password' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'name already exists' })
   })
 })

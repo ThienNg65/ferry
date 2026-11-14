@@ -5,6 +5,7 @@ import { MAX_TAIL_LINES, useTailStreamsStore } from '../../stores/tailStreams.st
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useNotify } from '../../composables/useNotify'
 import {
+  buildSafeSearchRegex,
   extractJsonPayload,
   getLogLevelStyles,
   tokenizeLogLine
@@ -155,21 +156,9 @@ const levelCounts = computed(() => {
 
 // Search Regex Builder
 const searchRegex = computed<RegExp | null>(() => {
-  const q = debouncedSearchQuery.value
-  if (!q) {
-    regexError.value = null
-    return null
-  }
-  try {
-    regexError.value = null
-    const pattern = isRegex.value
-      ? q
-      : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    return new RegExp(pattern, caseSensitive.value ? 'g' : 'gi')
-  } catch (e) {
-    regexError.value = e instanceof Error ? e.message : 'Invalid regex'
-    return null
-  }
+  const { regex, error } = buildSafeSearchRegex(debouncedSearchQuery.value, isRegex.value, caseSensitive.value)
+  regexError.value = error
+  return regex
 })
 
 // Filtered Lines according to selected level, pins, and search filter mode
@@ -696,7 +685,7 @@ watchEffect(() => {
                   ? 'bg-error/20 text-error'
                   : opt.id === 'warn'
                     ? 'bg-warning/20 text-warning'
-                    : 'bg-muted text-dimmed'
+                    : 'bg-muted text-muted'
               "
             >
               {{ opt.count }}

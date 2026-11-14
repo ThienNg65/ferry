@@ -161,4 +161,18 @@ describe('HistoryStore', () => {
 
     expect(new HistoryStore().list().map((e) => e.label)).toEqual(['urgent'])
   })
+
+  it('pruneExpired() drops entries older than retentionDays and keeps unlimited when null', () => {
+    const dayMs = 86_400_000
+    const now = 100 * dayMs
+    const store = new HistoryStore()
+    store.record(entry({ label: 'old', finishedAt: now - 40 * dayMs }))
+    store.record(entry({ label: 'recent', finishedAt: now - 5 * dayMs }))
+
+    expect(store.pruneExpired(null, now)).toBe(0)
+    expect(store.list()).toHaveLength(2)
+
+    expect(store.pruneExpired(30, now)).toBe(1)
+    expect(store.list().map((e) => e.label)).toEqual(['recent'])
+  })
 })

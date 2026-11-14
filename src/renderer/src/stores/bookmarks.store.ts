@@ -56,6 +56,11 @@ export const useBookmarksStore = defineStore('bookmarks', {
     async remove(id: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.bookmarksDelete, id)
       this.bookmarks = this.bookmarks.filter((b) => b.id !== id)
+    },
+
+    reset(): void {
+      this.bookmarks = []
+      this.loaded = false
     }
   }
 })

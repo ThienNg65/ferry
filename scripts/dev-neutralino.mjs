@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { execFileSync, spawn } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -27,7 +27,12 @@ function runNpx(args) {
 
 runNpm(['run', 'build'])
 
-if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe'))) {
+const nlConfig = JSON.parse(readFileSync(join(rootDir, 'neutralino.config.json'), 'utf8'))
+const expectedNlVersion = String(nlConfig.cli?.binaryVersion || '')
+const nlVersionMarker = join(rootDir, 'bin', '.ferry-nl-version')
+const cachedNlVersion = existsSync(nlVersionMarker) ? readFileSync(nlVersionMarker, 'utf8').trim() : ''
+
+if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe')) || cachedNlVersion !== expectedNlVersion) {
   if (process.platform === 'win32') {
     execFileSync('cmd.exe', ['/d', '/c', 'npx.cmd', '--registry=https://registry.npmjs.org', '@neutralinojs/neu', 'update'], {
       cwd: rootDir,
@@ -39,6 +44,8 @@ if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe'))) {
       stdio: 'inherit'
     })
   }
+  mkdirSync(join(rootDir, 'bin'), { recursive: true })
+  writeFileSync(nlVersionMarker, expectedNlVersion, 'utf8')
 }
 
 mkdirSync(sidecarDir, { recursive: true })

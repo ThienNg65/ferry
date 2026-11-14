@@ -41,7 +41,7 @@ describe('session.ipc', () => {
 
     it('opens a quick-connect session when quickConnect is present', async () => {
       sessionManagerMock.openQuickConnect.mockResolvedValueOnce({ sessionId: 's2' })
-      const quickConnect = { host: 'h', port: 22, username: 'u' }
+      const quickConnect = { host: 'h', port: 22, username: 'u', authMethod: 'password' }
       const result = await invoke('session:open', { quickConnect, sessionId: 's2' })
       expect(sessionManagerMock.openQuickConnect).toHaveBeenCalledWith(quickConnect, 's2', undefined)
       expect(result).toEqual({ ok: true, data: { sessionId: 's2' } })

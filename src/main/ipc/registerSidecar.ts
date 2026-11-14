@@ -15,6 +15,7 @@ import { registerArchiveHandlers } from './archive.ipc'
 import { registerOperationsHandlers } from './operations.ipc'
 import { registerMonitorHandlers } from './monitor.ipc'
 import { registerUpdateHandlers } from './update.ipc'
+import { registerWindowHandlers } from './window.ipc'
 
 export function registerSidecarHandlers(): void {
   registerSitesHandlers()
@@ -34,4 +35,5 @@ export function registerSidecarHandlers(): void {
   registerOperationsHandlers()
   registerMonitorHandlers()
   registerUpdateHandlers()
+  registerWindowHandlers()
 }

@@ -41,9 +41,15 @@ export interface NeutralinoTransport {
   dispatchExtension: (extensionId: string, event: string, data?: unknown) => Promise<void>
   getExtensionStats: () => Promise<{ loaded: string[]; connected: string[] }>
   minimizeWindow: () => Promise<void>
+  isWindowMinimized: () => Promise<boolean>
   maximizeWindow: () => Promise<void>
   unmaximizeWindow: () => Promise<void>
   isWindowMaximized: () => Promise<boolean>
+  setFullScreen: () => Promise<void>
+  exitFullScreen: () => Promise<void>
+  isWindowFullScreen: () => Promise<boolean>
+  showWindow: () => Promise<void>
+  setWindowTitle: (title: string) => Promise<void>
   getWindowPosition: () => Promise<{ x: number; y: number }>
   getWindowSize: () => Promise<{ width?: number; height?: number }>
   setWindowSize: (options: { width?: number; height?: number }) => Promise<void>
@@ -74,10 +80,19 @@ function createDefaultTransport(): NeutralinoTransport {
     dispatchExtension: (extensionId, event, data) => extensions.dispatch(extensionId, event, data),
     getExtensionStats: () => extensions.getStats(),
     minimizeWindow: () => nlWindow.minimize(),
+    isWindowMinimized: () => nlWindow.isMinimized(),
     maximizeWindow: () => nlWindow.maximize(),
     unmaximizeWindow: () => nlWindow.unmaximize(),
     isWindowMaximized: () => nlWindow.isMaximized(),
-    getWindowPosition: () => nlWindow.getPosition(),
+    setFullScreen: () => nlWindow.setFullScreen(),
+    exitFullScreen: () => nlWindow.exitFullScreen(),
+    isWindowFullScreen: () => nlWindow.isFullScreen(),
+    showWindow: () => nlWindow.show(),
+    setWindowTitle: (title: string) => nlWindow.setTitle(title),
+    getWindowPosition: async () => {
+      const pos = await nlWindow.getPosition()
+      return { x: pos.x ?? 0, y: pos.y ?? 0 }
+    },
     getWindowSize: () => nlWindow.getSize(),
     setWindowSize: (options) => nlWindow.setSize(options),
     moveWindow: (x, y) => nlWindow.move(x, y),
@@ -166,6 +181,16 @@ export interface NeutralinoApiOptions {
 const DEFAULT_READY_TIMEOUT_MS = 15_000
 const DEFAULT_RPC_TIMEOUT_MS = 120_000
 
+const beforeCloseHooks = new Set<() => Promise<void> | void>()
+
+/** Registers a cleanup/flush hook executed before the window exits via OS close or `window:close`. */
+export function registerBeforeWindowClose(hook: () => Promise<void> | void): () => void {
+  beforeCloseHooks.add(hook)
+  return () => {
+    beforeCloseHooks.delete(hook)
+  }
+}
+
 export function createNeutralinoApi(
   transport: NeutralinoTransport = createDefaultTransport(),
   options: NeutralinoApiOptions = {}
@@ -182,8 +207,9 @@ export function createNeutralinoApi(
   >()
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   let sidecarReady = false
-  let emulatedMaximized = false
-  let savedRestoreBounds: { x: number; y: number; width: number; height: number } | null = null
+  let closing = false
+  let closePromise: Promise<void> | null = null
+  let lastWindowState = { isMaximized: false, isMinimized: false, isFullScreen: false }
   const readyWaiters: Array<{
     resolve: () => void
     reject: (error: Error) => void
@@ -231,6 +257,33 @@ export function createNeutralinoApi(
     }
   }
 
+  const emitWindowState = (patch: Partial<typeof lastWindowState>): void => {
+    lastWindowState = { ...lastWindowState, ...patch }
+    emitLocal(EVENT_CHANNELS.windowStateChange, { ...lastWindowState })
+  }
+
+  const closeWindowGracefully = (): Promise<void> => {
+    if (closePromise) {
+      return closePromise
+    }
+    closing = true
+    closePromise = (async () => {
+      if (beforeCloseHooks.size > 0) {
+        const hooks = [...beforeCloseHooks].map((fn) =>
+          Promise.resolve()
+            .then(() => fn())
+            .catch(() => {})
+        )
+        await Promise.race([
+          Promise.allSettled(hooks),
+          new Promise<void>((resolve) => setTimeout(resolve, 500))
+        ])
+      }
+      await transport.exitApp()
+    })()
+    return closePromise
+  }
+
   transport.onEvent(SIDECAR_READY_EVENT, () => {
     markReady()
   })
@@ -242,13 +295,39 @@ export function createNeutralinoApi(
   })
 
   transport.onEvent('extClientDisconnect', (detail) => {
-    if (detail === SIDECAR_EXTENSION_ID) {
+    if (!closing && detail === SIDECAR_EXTENSION_ID) {
       failAllPending('Sidecar disconnected before replying')
     }
   })
 
   transport.onEvent('serverOffline', () => {
-    failAllPending('Neutralino server went offline')
+    if (!closing) {
+      failAllPending('Neutralino server went offline')
+    }
+  })
+
+  transport.onEvent('windowMaximize', () => {
+    emitWindowState({ isMaximized: true, isMinimized: false })
+  })
+
+  transport.onEvent('windowRestore', () => {
+    emitWindowState({ isMaximized: false, isMinimized: false })
+  })
+
+  transport.onEvent('windowMinimize', () => {
+    emitWindowState({ isMinimized: true })
+  })
+
+  transport.onEvent('windowFullScreenEnter', () => {
+    emitWindowState({ isFullScreen: true, isMinimized: false })
+  })
+
+  transport.onEvent('windowFullScreenExit', () => {
+    emitWindowState({ isFullScreen: false })
+  })
+
+  transport.onEvent('windowClose', () => {
+    void closeWindowGracefully()
   })
 
   transport.onEvent(RPC_REPLY_EVENT, (detail) => {
@@ -311,53 +390,52 @@ export function createNeutralinoApi(
   const invokeHostChannel = async (channel: string, args: unknown[]): Promise<unknown> => {
     switch (channel) {
       case INVOKE_CHANNELS.windowMinimize:
-        return runHostCall(() => transport.minimizeWindow())
+        return runHostCall(async () => {
+          await transport.minimizeWindow()
+          emitWindowState({ isMinimized: true })
+        })
       case INVOKE_CHANNELS.windowMaximizeToggle:
         return runHostCall(async () => {
-          const wasMaximized = emulatedMaximized || (await transport.isWindowMaximized())
+          const wasMaximized = await transport.isWindowMaximized()
           if (wasMaximized) {
-            if (emulatedMaximized && savedRestoreBounds) {
-              const { x, y, width, height } = savedRestoreBounds
-              await transport.moveWindow(x, y)
-              await transport.setWindowSize({ width, height })
-            } else {
-              await transport.unmaximizeWindow()
-            }
-            emulatedMaximized = false
-            savedRestoreBounds = null
+            await transport.unmaximizeWindow()
           } else {
-            const scr = typeof window !== 'undefined' ? window.screen : undefined
-            if (scr && scr.availWidth > 0 && scr.availHeight > 0) {
-              // Neutralino's native maximize() on a borderless Windows window covers the taskbar;
-              // size and position to the screen's work area (avail*) instead.
-              const [pos, size] = await Promise.all([transport.getWindowPosition(), transport.getWindowSize()])
-              const scale =
-                typeof window.innerWidth === 'number' && window.innerWidth > 0 && size.width
-                  ? size.width / window.innerWidth
-                  : 1
-              const restoreWidth = Math.round((size.width ?? 1280) / scale)
-              const restoreHeight = Math.round((size.height ?? 800) / scale)
-              savedRestoreBounds = { x: pos.x, y: pos.y, width: restoreWidth, height: restoreHeight }
-              const availLeft = (scr as Screen & { availLeft?: number }).availLeft ?? 0
-              const availTop = (scr as Screen & { availTop?: number }).availTop ?? 0
-              await transport.moveWindow(Math.round(availLeft * scale), Math.round(availTop * scale))
-              // Neutralino's setSize() on Windows expects logical (CSS) pixels and applies DPI
-              // scaling internally, whereas getSize() returns physical pixels; pass availWidth/Height directly.
-              await transport.setWindowSize({
-                width: Math.round(scr.availWidth),
-                height: Math.round(scr.availHeight)
-              })
-              emulatedMaximized = true
-            } else {
-              await transport.maximizeWindow()
-            }
+            await transport.maximizeWindow()
           }
-          emitLocal(EVENT_CHANNELS.windowStateChange, { isMaximized: !wasMaximized })
+          emitWindowState({ isMaximized: !wasMaximized, isMinimized: false })
         })
+      case INVOKE_CHANNELS.windowFullScreenToggle:
+        return runHostCall(async () => {
+          const wasFullScreen = await transport.isWindowFullScreen()
+          if (wasFullScreen) {
+            await transport.exitFullScreen()
+          } else {
+            await transport.setFullScreen()
+          }
+          emitWindowState({ isFullScreen: !wasFullScreen, isMinimized: false })
+        })
+      case INVOKE_CHANNELS.windowShow:
+        return runHostCall(() => transport.showWindow())
+      case INVOKE_CHANNELS.windowSetTitle:
+        return runHostCall(() => transport.setWindowTitle(typeof args[0] === 'string' && args[0] ? args[0] : 'Ferry'))
       case INVOKE_CHANNELS.windowClose:
-        return runHostCall(() => transport.exitApp())
+        return runHostCall(() => closeWindowGracefully())
       case INVOKE_CHANNELS.windowIsMaximized:
-        return runHostCall(async () => ({ isMaximized: emulatedMaximized || (await transport.isWindowMaximized()) }))
+        return runHostCall(async () => {
+          const isMaximized = await transport.isWindowMaximized()
+          lastWindowState = { ...lastWindowState, isMaximized }
+          return { isMaximized }
+        })
+      case INVOKE_CHANNELS.windowGetState:
+        return runHostCall(async () => {
+          const [isMaximized, isMinimized, isFullScreen] = await Promise.all([
+            transport.isWindowMaximized(),
+            transport.isWindowMinimized(),
+            transport.isWindowFullScreen()
+          ])
+          lastWindowState = { isMaximized, isMinimized, isFullScreen }
+          return { ...lastWindowState }
+        })
       case INVOKE_CHANNELS.dialogPickFile:
         return runHostCall(async () => {
           const entries = await transport.showOpenDialog('Select file', { multiSelections: false })
@@ -489,208 +567,6 @@ export function createNeutralinoApi(
 /** True when running inside the Neutralinojs native container rather than Electron. */
 export function isNeutralinoRuntime(): boolean {
   return typeof window !== 'undefined' && typeof (window as unknown as { NL_PORT?: unknown }).NL_PORT === 'number'
-}
-
-/**
- * Activates Neutralino native window dragging on a borderless titlebar element.
- * Waits for initial window bounds before moving (preventing the (0,0) jump race)
- * and unmaximizes automatically when dragging from a maximized window.
- */
-export function registerTitleBarDragRegion(
-  el: HTMLElement | null,
-  options?: {
-    isMaximized?: () => boolean
-    onUnmaximizeForDrag?: () => Promise<void>
-  }
-): () => void {
-  if (!el || !isNeutralinoRuntime()) {
-    return () => {}
-  }
-
-  let active = false
-  let ready = false
-  let dragging = false
-  let unmaximizing = false
-  let capturedEl: HTMLElement | null = null
-  let capturedPointerId: number | null = null
-  let startClientX = 0
-  let startClientY = 0
-  let startScreenX = 0
-  let startScreenY = 0
-  let startWinX = 0
-  let startWinY = 0
-  let moveScale = 1
-  let moveRaf: number | null = null
-  let moveInFlight = false
-  let hasPendingMove = false
-  let dragGen = 0
-  let lastSentX = Number.NaN
-  let lastSentY = Number.NaN
-  let latestScreenX = 0
-  let latestScreenY = 0
-
-  const flushMove = (): void => {
-    if (!active || !dragging || !ready) return
-    if (moveInFlight) {
-      hasPendingMove = true
-      return
-    }
-    const nextX = Math.round(startWinX + (latestScreenX - startScreenX) * moveScale)
-    const nextY = Math.round(startWinY + (latestScreenY - startScreenY) * moveScale)
-    if (nextX === lastSentX && nextY === lastSentY) return
-    lastSentX = nextX
-    lastSentY = nextY
-    moveInFlight = true
-    const gen = dragGen
-    void nlWindow.move(nextX, nextY).finally(() => {
-      if (gen !== dragGen) return
-      moveInFlight = false
-      if (hasPendingMove) {
-        hasPendingMove = false
-        flushMove()
-      }
-    })
-  }
-
-  const stopDrag = (): void => {
-    if (!active) return
-    const wasDragging = dragging
-    active = false
-    ready = false
-    dragging = false
-    unmaximizing = false
-    dragGen++
-    moveInFlight = false
-    hasPendingMove = false
-    lastSentX = Number.NaN
-    lastSentY = Number.NaN
-    if (capturedEl && capturedPointerId !== null) {
-      try {
-        capturedEl.releasePointerCapture?.(capturedPointerId)
-      } catch {
-        // Ignore if pointer capture was already released.
-      }
-    }
-    capturedEl = null
-    capturedPointerId = null
-    if (moveRaf !== null) {
-      cancelAnimationFrame(moveRaf)
-      moveRaf = null
-    }
-    window.removeEventListener('pointermove', onPointerMove)
-    window.removeEventListener('pointerup', stopDrag)
-    window.removeEventListener('pointercancel', stopDrag)
-    if (wasDragging) {
-      window.dispatchEvent(new CustomEvent('ferry:window-bounds-dirty'))
-    }
-  }
-
-  const onPointerMove = (e: PointerEvent): void => {
-    if (!active) return
-    if (unmaximizing) {
-      latestScreenX = e.screenX
-      latestScreenY = e.screenY
-      return
-    }
-    if (!ready) return
-    if (!dragging) {
-      const dx = e.clientX - startClientX
-      const dy = e.clientY - startClientY
-      if (Math.hypot(dx, dy) < 6) return
-      if (options?.isMaximized?.() && options.onUnmaximizeForDrag) {
-        ready = false
-        unmaximizing = true
-        const gen = dragGen
-        const cursorRatioX = window.innerWidth > 0 ? Math.min(0.9, Math.max(0.1, e.clientX / window.innerWidth)) : 0.5
-        const dragScreenX = e.screenX
-        const dragScreenY = e.screenY
-        latestScreenX = e.screenX
-        latestScreenY = e.screenY
-        void options
-          .onUnmaximizeForDrag()
-          .then(() => Promise.all([nlWindow.getPosition(), nlWindow.getSize()]))
-          .then(([, size]) => {
-            if (!active || gen !== dragGen) return
-            // Reuse moveScale captured at pointerdown; window.innerWidth may still
-            // reflect the pre-unmaximize layout until the next frame.
-            const scale = moveScale
-            const width = size.width ?? 1280
-            startWinX = Math.round(dragScreenX * scale - width * cursorRatioX)
-            startWinY = Math.round(dragScreenY * scale - Math.min(20 * scale, e.clientY * scale))
-            startScreenX = dragScreenX
-            startScreenY = dragScreenY
-            unmaximizing = false
-            dragging = true
-            ready = true
-            flushMove()
-          })
-          .catch(() => {
-            if (gen === dragGen) stopDrag()
-          })
-        return
-      }
-      dragging = true
-    }
-    latestScreenX = e.screenX
-    latestScreenY = e.screenY
-    if (moveRaf !== null) return
-    moveRaf = requestAnimationFrame(() => {
-      moveRaf = null
-      flushMove()
-    })
-  }
-
-  const onPointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0) return
-    const target = e.target as HTMLElement | null
-    if (target?.closest('button, a, input, [role="button"]')) return
-    if (active) stopDrag()
-
-    active = true
-    ready = false
-    dragging = false
-    unmaximizing = false
-    const gen = ++dragGen
-    startClientX = e.clientX
-    startClientY = e.clientY
-    startScreenX = e.screenX
-    startScreenY = e.screenY
-    latestScreenX = e.screenX
-    latestScreenY = e.screenY
-
-    try {
-      el.setPointerCapture?.(e.pointerId)
-      capturedEl = el
-      capturedPointerId = e.pointerId
-    } catch {
-      // Ignore environments without pointer capture support.
-    }
-
-    window.addEventListener('pointermove', onPointerMove)
-    window.addEventListener('pointerup', stopDrag)
-    window.addEventListener('pointercancel', stopDrag)
-
-    void Promise.all([nlWindow.getPosition(), nlWindow.getSize()])
-      .then(([pos, size]) => {
-        if (!active || gen !== dragGen) return
-        startWinX = pos.x
-        startWinY = pos.y
-        moveScale =
-          typeof window.innerWidth === 'number' && window.innerWidth > 0 && size.width
-            ? size.width / window.innerWidth
-            : 1
-        ready = true
-      })
-      .catch(() => {
-        if (gen === dragGen) stopDrag()
-      })
-  }
-
-  el.addEventListener('pointerdown', onPointerDown)
-  return () => {
-    stopDrag()
-    el.removeEventListener('pointerdown', onPointerDown)
-  }
 }
 
 /** Installs the Neutralino-backed `window.api` bridge when Electron's preload script is absent. */

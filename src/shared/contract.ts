@@ -836,6 +836,21 @@ export interface UpdateDownloadedEvent {
 // Domain models — persisted app settings
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Current version of Ferry's Privacy Policy and Terms of Service. */
+export const LEGAL_POLICY_VERSION = '1.0'
+
+/** Recorded local acceptance of Ferry's Privacy Policy and Terms of Service. */
+export interface TermsAcceptance {
+  version: string
+  acceptedAt: string
+}
+
+/** Trusted SSH host-key fingerprint stored in `known_hosts.json`. */
+export interface KnownHostEntry {
+  hostPort: string
+  fingerprint: string
+}
+
 /**
  * App-wide settings persisted across restarts (not per-session/domain state) —
  * mirrors `ui.store.ts`'s `localStorage` prefs, but for state only the main
@@ -850,6 +865,10 @@ export interface AppSettings {
   defaultProxy?: ProxyInfo
   /** Whether Ferry automatically checks for updates on startup and periodically in the background. */
   autoCheckUpdates?: boolean
+  /** Maximum age (in days) for transfer/operation history entries, or null for unlimited. */
+  historyRetentionDays?: number | null
+  /** Local acceptance record for Privacy Policy and Terms of Service. */
+  termsAcceptance?: TermsAcceptance | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -859,11 +878,43 @@ export interface AppSettings {
 /** Payload for the `window:state-change` channel. */
 export interface WindowStateEvent {
   isMaximized: boolean
+  isMinimized?: boolean
+  isFullScreen?: boolean
 }
 
 /** Result of querying the current window's maximized state. */
 export interface WindowIsMaximizedResult {
   isMaximized: boolean
+}
+
+/** Result of querying the full window state. */
+export interface WindowStateResult {
+  isMaximized: boolean
+  isMinimized: boolean
+  isFullScreen: boolean
+}
+
+/** Theme sync payload sent to the Windows native host window (`window:syncTheme`). */
+export interface WindowThemeSyncInput {
+  theme: 'light' | 'dark'
+  /** Win32 COLORREF (`0x00BBGGRR`) for Windows 11 `DWMWA_CAPTION_COLOR`. */
+  captionColor?: number
+}
+
+/** Pixel rectangle in virtual desktop coordinates. */
+export interface DisplayBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Native monitor geometry returned by the Windows host helper. */
+export interface NativeDisplayInfo {
+  bounds: DisplayBounds
+  workArea: DisplayBounds
+  isPrimary: boolean
+  scaleFactor: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -890,6 +941,14 @@ export const INVOKE_CHANNELS = {
   settingsSetBandwidthLimit: 'settings:setBandwidthLimit',
   settingsSetDefaultProxy: 'settings:setDefaultProxy',
   settingsSetAutoCheckUpdates: 'settings:setAutoCheckUpdates',
+  settingsSetHistoryRetention: 'settings:setHistoryRetention',
+  settingsAcceptTerms: 'settings:acceptTerms',
+  // privacy & known hosts
+  knownHostsList: 'knownHosts:list',
+  knownHostsForget: 'knownHosts:forget',
+  knownHostsClear: 'knownHosts:clear',
+  privacyExportData: 'privacy:exportData',
+  privacyDeleteAllData: 'privacy:deleteAllData',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
@@ -967,8 +1026,14 @@ export const INVOKE_CHANNELS = {
   // window chrome
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',
+  windowFullScreenToggle: 'window:fullScreenToggle',
   windowClose: 'window:close',
+  windowShow: 'window:show',
+  windowSetTitle: 'window:setTitle',
   windowIsMaximized: 'window:isMaximized',
+  windowGetState: 'window:getState',
+  windowSyncTheme: 'window:syncTheme',
+  windowGetDisplays: 'window:getDisplays',
   // auto-update
   updateCheck: 'update:check',
   updateGetStatus: 'update:getStatus',
@@ -991,8 +1056,12 @@ export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
   INVOKE_CHANNELS.systemClipboardReadText,
   INVOKE_CHANNELS.windowMinimize,
   INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowFullScreenToggle,
   INVOKE_CHANNELS.windowClose,
+  INVOKE_CHANNELS.windowShow,
+  INVOKE_CHANNELS.windowSetTitle,
   INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.windowGetState,
   INVOKE_CHANNELS.profileReport
 ]
 

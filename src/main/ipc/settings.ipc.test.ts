@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { handlers } from './envelope'
-import type { IpcResult } from '../../shared/contract'
+import type { IpcResult, KnownHostEntry } from '../../shared/contract'
 
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
@@ -9,11 +9,36 @@ const appSettingsStoreMock = {
   setOpenTabSiteIds: vi.fn(),
   setBandwidthLimitKBps: vi.fn(),
   setDefaultProxy: vi.fn(),
-  setAutoCheckUpdates: vi.fn()
+  setAutoCheckUpdates: vi.fn(),
+  setHistoryRetentionDays: vi.fn(),
+  acceptTerms: vi.fn(),
+  reset: vi.fn()
 }
 
 const transferQueueMock = {
   setBandwidthLimitKBps: vi.fn()
+}
+
+const historyStoreMock = {
+  pruneExpired: vi.fn(),
+  list: vi.fn(() => []),
+  clear: vi.fn()
+}
+
+const siteStoreMock = {
+  list: vi.fn(() => []),
+  clear: vi.fn()
+}
+
+const bookmarkStoreMock = {
+  list: vi.fn(() => []),
+  clear: vi.fn()
+}
+
+const knownHostsStoreMock = {
+  list: vi.fn((): KnownHostEntry[] => []),
+  forgetKey: vi.fn(),
+  clear: vi.fn()
 }
 
 vi.mock('../app/AppSettingsStore', () => ({
@@ -22,6 +47,22 @@ vi.mock('../app/AppSettingsStore', () => ({
 
 vi.mock('../transfer/TransferQueue', () => ({
   TransferQueue: { getInstance: () => transferQueueMock }
+}))
+
+vi.mock('../history/HistoryStore', () => ({
+  HistoryStore: { getInstance: () => historyStoreMock }
+}))
+
+vi.mock('../sites/SiteStore', () => ({
+  SiteStore: { getInstance: () => siteStoreMock }
+}))
+
+vi.mock('../bookmarks/BookmarkStore', () => ({
+  BookmarkStore: { getInstance: () => bookmarkStoreMock }
+}))
+
+vi.mock('../ssh/KnownHostsStore', () => ({
+  KnownHostsStore: { getInstance: () => knownHostsStoreMock }
 }))
 
 async function invoke(channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> {
@@ -38,12 +79,18 @@ describe('settings.ipc', () => {
     registerSettingsHandlers()
   })
 
-  it('settings:get returns the store snapshot', async () => {
-    appSettingsStoreMock.get.mockReturnValueOnce({ openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null })
+  it('settings:get returns the store snapshot and respects null historyRetentionDays', async () => {
+    appSettingsStoreMock.get.mockReturnValueOnce({
+      openTabSiteIds: [],
+      bandwidthLimitKBps: null,
+      defaultProxy: null,
+      historyRetentionDays: null
+    })
     const result = await invoke('settings:get')
+    expect(historyStoreMock.pruneExpired).toHaveBeenCalledWith(null)
     expect(result).toEqual({
       ok: true,
-      data: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null }
+      data: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null, historyRetentionDays: null }
     })
   })
 
@@ -109,5 +156,54 @@ describe('settings.ipc', () => {
     })
     const result = await invoke('settings:get')
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'disk read failed' })
+  })
+
+  it('settings:setHistoryRetention validates bounds and forwards null/integer days', async () => {
+    expect(await invoke('settings:setHistoryRetention', 0)).toMatchObject({ ok: false, code: 'VALIDATION' })
+    expect(await invoke('settings:setHistoryRetention', 90)).toEqual({ ok: true, data: undefined })
+    expect(appSettingsStoreMock.setHistoryRetentionDays).toHaveBeenCalledWith(90)
+    expect(historyStoreMock.pruneExpired).toHaveBeenCalledWith(90)
+
+    expect(await invoke('settings:setHistoryRetention', null)).toEqual({ ok: true, data: undefined })
+    expect(appSettingsStoreMock.setHistoryRetentionDays).toHaveBeenCalledWith(null)
+    expect(historyStoreMock.pruneExpired).toHaveBeenCalledWith(null)
+  })
+
+  it('settings:acceptTerms validates non-empty version and records acceptance', async () => {
+    expect(await invoke('settings:acceptTerms', '  ')).toMatchObject({ ok: false, code: 'VALIDATION' })
+    const record = { version: '1.0', acceptedAt: '2026-11-14T00:00:00.000Z' }
+    appSettingsStoreMock.acceptTerms.mockReturnValueOnce(record)
+    expect(await invoke('settings:acceptTerms', '1.0')).toEqual({ ok: true, data: record })
+  })
+
+  it('knownHosts handlers list, forget, and clear entries', async () => {
+    knownHostsStoreMock.list.mockReturnValueOnce([{ hostPort: 'example.com:22', fingerprint: 'SHA256:abc' }])
+    expect(await invoke('knownHosts:list')).toEqual({
+      ok: true,
+      data: [{ hostPort: 'example.com:22', fingerprint: 'SHA256:abc' }]
+    })
+    expect(await invoke('knownHosts:forget', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+    expect(await invoke('knownHosts:forget', 'example.com:22')).toEqual({ ok: true, data: undefined })
+    expect(knownHostsStoreMock.forgetKey).toHaveBeenCalledWith('example.com:22')
+    expect(await invoke('knownHosts:clear')).toEqual({ ok: true, data: undefined })
+    expect(knownHostsStoreMock.clear).toHaveBeenCalled()
+  })
+
+  it('privacy:exportData returns JSON bundle and privacy:deleteAllData wipes all stores', async () => {
+    appSettingsStoreMock.get.mockReturnValueOnce({ openTabSiteIds: [], bandwidthLimitKBps: null })
+    const exported = await invoke('privacy:exportData')
+    expect(exported.ok).toBe(true)
+    if (exported.ok) {
+      const parsed = JSON.parse(exported.data as string)
+      expect(parsed).toMatchObject({ sites: [], bookmarks: [], knownHosts: [], history: [] })
+    }
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(siteStoreMock.clear).toHaveBeenCalled()
+    expect(bookmarkStoreMock.clear).toHaveBeenCalled()
+    expect(historyStoreMock.clear).toHaveBeenCalled()
+    expect(knownHostsStoreMock.clear).toHaveBeenCalled()
+    expect(appSettingsStoreMock.reset).toHaveBeenCalled()
+    expect(transferQueueMock.setBandwidthLimitKBps).toHaveBeenCalledWith(null)
   })
 })

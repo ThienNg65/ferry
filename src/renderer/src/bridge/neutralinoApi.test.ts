@@ -2,7 +2,13 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, SEND_CHANNELS, ok } from '../../../shared/contract'
-import { createNeutralinoApi, decodeB64Deep, encodeB64Deep, type NeutralinoTransport } from './neutralinoApi'
+import {
+  createNeutralinoApi,
+  decodeB64Deep,
+  encodeB64Deep,
+  registerBeforeWindowClose,
+  type NeutralinoTransport
+} from './neutralinoApi'
 
 function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar']): {
   transport: NeutralinoTransport
@@ -31,9 +37,15 @@ function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar'
       connected: connectedExtensions
     })),
     minimizeWindow: vi.fn(async () => {}),
+    isWindowMinimized: vi.fn(async () => false),
     maximizeWindow: vi.fn(async () => {}),
     unmaximizeWindow: vi.fn(async () => {}),
     isWindowMaximized: vi.fn(async () => false),
+    setFullScreen: vi.fn(async () => {}),
+    exitFullScreen: vi.fn(async () => {}),
+    isWindowFullScreen: vi.fn(async () => false),
+    showWindow: vi.fn(async () => {}),
+    setWindowTitle: vi.fn(async () => {}),
     getWindowPosition: vi.fn(async () => ({ x: 100, y: 80 })),
     getWindowSize: vi.fn(async () => ({ width: 1280, height: 800 })),
     setWindowSize: vi.fn(async () => {}),
@@ -86,65 +98,53 @@ describe('neutralinoApi', () => {
     const windowEvents: unknown[] = []
     api.on(EVENT_CHANNELS.windowStateChange, (payload) => windowEvents.push(payload))
     expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: false }))
+    expect(await api.invoke(INVOKE_CHANNELS.windowGetState)).toEqual(
+      ok({ isMaximized: false, isMinimized: false, isFullScreen: false })
+    )
     expect(await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)).toEqual(ok(undefined))
     expect(transport.maximizeWindow).toHaveBeenCalledTimes(1)
-    expect(windowEvents).toEqual([{ isMaximized: true }])
+    expect(windowEvents).toEqual([{ isMaximized: true, isMinimized: false, isFullScreen: false }])
 
+    expect(await api.invoke(INVOKE_CHANNELS.windowShow)).toEqual(ok(undefined))
+    expect(transport.showWindow).toHaveBeenCalledTimes(1)
+    expect(await api.invoke(INVOKE_CHANNELS.windowSetTitle, 'prod — Ferry')).toEqual(ok(undefined))
+    expect(transport.setWindowTitle).toHaveBeenCalledWith('prod — Ferry')
+    expect(await api.invoke(INVOKE_CHANNELS.windowFullScreenToggle)).toEqual(ok(undefined))
+    expect(transport.setFullScreen).toHaveBeenCalledTimes(1)
     expect(await api.invoke(INVOKE_CHANNELS.windowMinimize)).toEqual(ok(undefined))
     expect(transport.minimizeWindow).toHaveBeenCalledTimes(1)
     expect(await api.invoke(INVOKE_CHANNELS.windowClose)).toEqual(ok(undefined))
     expect(transport.exitApp).toHaveBeenCalledTimes(1)
   })
 
-  it('maximizes to screen work area and restores saved bounds without covering the taskbar', async () => {
-    const { transport } = createFakeTransport()
+  it('forwards native Neutralino window lifecycle events and flushes bounds before OS close', async () => {
+    const { transport, emit } = createFakeTransport()
     const api = createNeutralinoApi(transport)
     const events: unknown[] = []
     api.on(EVENT_CHANNELS.windowStateChange, (payload) => events.push(payload))
 
-    vi.stubGlobal('window', {
-      innerWidth: 1280,
-      screen: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1032 }
-    })
+    emit('windowMaximize', undefined)
+    emit('windowRestore', undefined)
+    emit('windowFullScreenEnter', undefined)
+    emit('windowFullScreenExit', undefined)
+    emit('windowMinimize', undefined)
 
+    expect(events).toEqual([
+      { isMaximized: true, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: false, isFullScreen: true },
+      { isMaximized: false, isMinimized: false, isFullScreen: false },
+      { isMaximized: false, isMinimized: true, isFullScreen: false }
+    ])
+
+    const flushed = vi.fn(async () => {})
+    const unregister = registerBeforeWindowClose(flushed)
     try {
-      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
-      expect(transport.moveWindow).toHaveBeenCalledWith(0, 0)
-      expect(transport.setWindowSize).toHaveBeenCalledWith({ width: 1920, height: 1032 })
-      expect(transport.maximizeWindow).not.toHaveBeenCalled()
-      expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: true }))
-
-      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
-      expect(transport.moveWindow).toHaveBeenLastCalledWith(100, 80)
-      expect(transport.setWindowSize).toHaveBeenLastCalledWith({ width: 1280, height: 800 })
-      expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: false }))
-      expect(events).toEqual([{ isMaximized: true }, { isMaximized: false }])
+      emit('windowClose', undefined)
+      await vi.waitFor(() => expect(transport.exitApp).toHaveBeenCalledTimes(1))
+      expect(flushed).toHaveBeenCalledTimes(1)
     } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('does not double-scale maximize or restore dimensions on HiDPI displays', async () => {
-    const { transport } = createFakeTransport()
-    // Simulate Windows 125% DPI: getWindowSize returns physical px (1600x1000) while innerWidth is 1280.
-    transport.getWindowSize = vi.fn().mockResolvedValue({ width: 1600, height: 1000 })
-    const api = createNeutralinoApi(transport)
-
-    vi.stubGlobal('window', {
-      innerWidth: 1280,
-      screen: { availLeft: 0, availTop: 0, availWidth: 1536, availHeight: 825 }
-    })
-
-    try {
-      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
-      expect(transport.moveWindow).toHaveBeenCalledWith(0, 0)
-      expect(transport.setWindowSize).toHaveBeenCalledWith({ width: 1536, height: 825 })
-
-      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
-      expect(transport.moveWindow).toHaveBeenLastCalledWith(100, 80)
-      expect(transport.setWindowSize).toHaveBeenLastCalledWith({ width: 1280, height: 800 })
-    } finally {
-      vi.unstubAllGlobals()
+      unregister()
     }
   })
 
