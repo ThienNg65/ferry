@@ -9,6 +9,29 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.24.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.23.1...ferry-v0.24.0) (2026-11-14)
+
+
+### Features
+
+* complete Neutralino cutover and automatic Electron migration ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([4c9ab67](https://github.com/ThienNg65/ferry/commit/4c9ab67124c628bd3ac11c3c1bdff916518fa740))
+* complete Neutralino cutover and automatic Electron migration ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([755446c](https://github.com/ThienNg65/ferry/commit/755446cbef08f6823f97db3c82ad538f01b4b12f))
+
+
+### Bug Fixes
+
+* add transactional NSIS rollback, custom-dir discovery, and PE icon check ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([09b229a](https://github.com/ThienNg65/ferry/commit/09b229a60cc1beed63dac1be26418ce2391aede1))
+* fix URL pathname matching and cleanup in E2E migration script ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([5f66412](https://github.com/ThienNg65/ferry/commit/5f66412a5f4a75bc1e61719230b10c19a6435ae5))
+* harden crash-safe NSIS rollback, HKLM discovery, and real Electron E2E suite ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([e434b11](https://github.com/ThienNg65/ferry/commit/e434b118dff120c55fda7f1a1a207a28e6396eb2))
+* keep migration update server responsive during UI automation ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([c280ec8](https://github.com/ThienNg65/ferry/commit/c280ec862af0af205125ea1aeebfb0102befc264))
+* preserve rollback backups and gate real Electron migration on isolated Windows runner ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([3483ff2](https://github.com/ThienNg65/ferry/commit/3483ff2daaf5e500f2fa54c7a843b066e90dcad8))
+
+
+### Tests
+
+* preserve installer rollback snapshot on restore failure ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([19815ed](https://github.com/ThienNg65/ferry/commit/19815edbb977db7c84f27e4f8554ef096c8a4f3b))
+* validate Electron migration E2E script in PR CI ([#49](https://github.com/ThienNg65/ferry/issues/49)) ([c5cd2ac](https://github.com/ThienNg65/ferry/commit/c5cd2ac2b84e7d133f0750a15cde7886c001ede3))
+
 ## [0.23.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.23.0...ferry-v0.23.1) (2026-11-14)
 
 
