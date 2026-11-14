@@ -6,6 +6,7 @@ import { dirname, join, posix as pathPosix, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import ssh2Pkg from 'ssh2'
 import { WebSocketServer } from 'ws'
+import { NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
 const { Server: SshServer, utils: sshUtils } = ssh2Pkg
 const { STATUS_CODE } = sshUtils.sftp
@@ -14,12 +15,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, '..')
 const distDir = join(rootDir, 'dist')
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
-const version = String(pkg.version || '0.22.0')
+const version = String(pkg.version || '0.24.0')
 
 const protoDir = join(distDir, 'ferry-neutralino-win_x64')
-const zipPath = join(distDir, `Ferry-Neutralino-${version}-win-x64.zip`)
-const installerPath = join(distDir, `Ferry-Neutralino-Setup-${version}.exe`)
-const manifestPath = join(distDir, 'latest-neutralino.yml')
+const zipPath = join(distDir, `Ferry-Portable-${version}-win-x64.zip`)
+const installerPath = join(distDir, `Ferry-Setup-${version}.exe`)
+const manifestPath = join(distDir, 'latest.yml')
 
 function assertExists(filePath, label) {
   if (!existsSync(filePath)) {
@@ -33,8 +34,26 @@ assertExists(join(protoDir, 'extensions', 'js.ferry.sidecar', 'node.exe'), 'Bund
 assertExists(join(protoDir, 'extensions', 'js.ferry.sidecar', 'index.cjs'), 'Bundled sidecar CJS')
 assertExists(zipPath, 'Portable ZIP archive')
 if (process.platform === 'win32' && process.env.FERRY_REQUIRE_NSIS === '1') {
-  assertExists(installerPath, 'Required Neutralino NSIS installer')
-  assertExists(manifestPath, 'Required Neutralino update manifest')
+  assertExists(installerPath, 'Required Ferry NSIS installer')
+  assertExists(manifestPath, 'Required Ferry update manifest')
+}
+
+// Verify PE icon and version branding on the packaged Neutralino executable.
+{
+  const exe = NtExecutable.from(readFileSync(join(protoDir, 'ferry-win_x64.exe')), { ignoreCert: true })
+  const res = NtExecutableResource.from(exe)
+  const iconGroups = Resource.IconGroupEntry.fromEntries(res.entries)
+  if (iconGroups.length === 0) {
+    throw new Error('ferry-win_x64.exe is missing embedded PE icon resources')
+  }
+  const viList = Resource.VersionInfo.fromEntries(res.entries)
+  if (viList.length === 0) {
+    throw new Error('ferry-win_x64.exe is missing PE VersionInfo')
+  }
+  const strings = viList[0].getStringValues({ lang: 1033, codepage: 1200 })
+  if (strings.ProductName !== 'Ferry' || strings.FileDescription !== 'Ferry') {
+    throw new Error(`Unexpected PE VersionInfo branding: ${JSON.stringify(strings)}`)
+  }
 }
 
 const tempInstallRoot = mkdtempSync(join(os.tmpdir(), 'ferry-smoke-install-'))
@@ -247,11 +266,12 @@ async function startSmokeSshServer() {
 
 try {
   if (process.platform === 'win32' && existsSync(installerPath)) {
-    assertExists(manifestPath, 'latest-neutralino.yml')
+    assertExists(manifestPath, 'latest.yml')
     const installDir = join(tempInstallRoot, 'FerryApp')
     mkdirSync(join(installDir, 'locales'), { recursive: true })
     mkdirSync(join(installDir, 'resources'), { recursive: true })
     writeFileSync(join(installDir, 'Ferry.exe'), 'legacy-electron')
+    writeFileSync(join(installDir, 'Uninstall Ferry.exe'), 'legacy-electron-uninstaller')
     writeFileSync(join(installDir, 'chrome_100_percent.pak'), 'legacy')
     writeFileSync(join(installDir, 'locales', 'en-US.pak'), 'legacy')
     writeFileSync(join(installDir, 'resources', 'app.asar'), 'legacy')
@@ -262,6 +282,7 @@ try {
 
     if (
       existsSync(join(installDir, 'Ferry.exe')) ||
+      existsSync(join(installDir, 'Uninstall Ferry.exe')) ||
       existsSync(join(installDir, 'chrome_100_percent.pak')) ||
       existsSync(join(installDir, 'locales')) ||
       existsSync(join(installDir, 'resources'))

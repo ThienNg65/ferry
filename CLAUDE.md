@@ -4,10 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Ferry is a lightweight WinSCP alternative: an Electron + Vue 3 desktop SFTP client (dual-pane file
-browser, recursive transfer queue with bandwidth cap, live remote log tail via `tail -F`, remote
-archive extract/compress, browser-like multi-session site tabs, an interactive SSH Terminal per
-site, command palette, light/dark theme). SSH/SFTP only — no FTP/FTPS/SCP.
+Ferry is a lightweight WinSCP alternative: a Neutralinojs (`WebView2`) + Node.js sidecar + Vue 3 desktop SFTP client (dual-pane file browser, recursive transfer queue with bandwidth cap, live remote log tail via `tail -F`, remote archive extract/compress, browser-like multi-session site tabs, an interactive SSH Terminal per site, command palette, light/dark theme). SSH/SFTP only — no FTP/FTPS/SCP.
 
 **For anything beyond this file** — full directory map, every convention, and a running list of
 gotchas that have already cost a session real time — read
@@ -18,16 +15,13 @@ just this file) whenever you add a convention or hit a new gotcha worth remember
 
 ```bash
 npm install --registry=https://registry.npmjs.org   # always pass --registry explicitly on this machine
-npm run dev          # electron-vite dev, hot reload
+npm run dev          # build renderer + sidecar and launch Neutralinojs (neu run)
 npm run typecheck    # vue-tsc --build + tsc --build tsconfig.node.json, no emit — run before every build
-npm run build            # electron-vite build -> out/
-npm run build:renderer   # Vite renderer build for Neutralino -> out/renderer/
-npm run build:sidecar    # bundle standalone Node sidecar -> out/sidecar/index.cjs
-npm run build:neutralino # build both renderer and sidecar targets for Neutralino
-npm run package:neutralino # assemble Neutralino + sidecar zip (+ NSIS exe if makensis on PATH)
-npm run package          # build + electron-builder -> dist/*.exe (NSIS) + dist/win-unpacked/
-npm test              # vitest run (single pass)
-npm run test:watch    # vitest watch mode
+npm run build        # build both renderer (out/renderer/) and sidecar (out/sidecar/index.cjs)
+npm run package      # build + package Neutralino portable zip, NSIS installer (Ferry-Setup-*.exe), and latest.yml
+npm run smoke:neutralino # packaged NSIS upgrade & live SSH/SFTP/PTY/Tail smoke test
+npm test             # vitest run (single pass)
+npm run test:watch   # vitest watch mode
 ```
 
 Run a single test file: `npx vitest run src/main/ssh/shellEscape.test.ts`. Run by name:
@@ -43,17 +37,8 @@ container isn't running. `vitest.config.ts` sets `fileParallelism: false` — th
 
 ## Architecture
 
-- **Dual desktop host support (Electron + Neutralinojs sidecar)**: `src/main` logic is decoupled from
-  Electron behind `src/main/host/host.ts` (`electronHost` for Electron vs `createNodeHost` in
-  `src/sidecar/wsExtension.ts` + DPAPI `src/main/host/dpapiKey.ts` for Neutralino). The renderer
-  automatically falls back to `src/renderer/src/bridge/neutralinoApi.ts` when `window.api` is not
-  injected by Electron's preload script. On Neutralino/WebView2, `system:startDrag` (native OS
-  drag-out) is an accepted platform no-op, while external OS drag-in stages up to 16 MB via
-  `fs:local:stage-drop` with automatic post-upload cleanup.
-- **Three-process Electron split**: `src/main` (Node context — SSH/SFTP, filesystem, transfer
-  queue, tail, terminal, archive, sites, IPC handlers), `src/preload` (the only renderer↔main
-  bridge — a `contextBridge` whitelist derived from `src/shared/contract.ts`), `src/renderer`
-  (Vue 3 + Pinia UI, no Node access, `sandbox: true`).
+- **Neutralinojs + Node.js sidecar host**: `src/main` logic runs in the bundled Node.js v22 sidecar (`src/sidecar/wsExtension.ts` + `createNodeHost` + DPAPI `src/main/host/dpapiKey.ts`), with `src/renderer` running inside Neutralino's WebView2 shell and communicating via `src/renderer/src/bridge/neutralinoApi.ts` (`window.api`). `system:startDrag` (native OS drag-out) is an accepted platform no-op, while external OS drag-in stages up to 16 MB via `fs:local:stage-drop` with automatic post-upload cleanup.
+- **Sidecar + Shell split**: `src/sidecar` + `src/main` (Node context — SSH/SFTP, filesystem, transfer queue, tail, terminal, archive, sites, auto-updater via `SidecarUpdater`, IPC handlers), `src/renderer` (Vue 3 + Pinia UI, using `neutralinoApi.ts` for Neutralino native dialogs/window controls and sidecar WebSocket RPC for backend channels).
 - **`src/shared/contract.ts` is the single source of truth for IPC**: every channel name and
   payload type. Change it FIRST when adding a feature that crosses the process boundary — preload
   and main both import from it and won't compile otherwise.
@@ -104,7 +89,7 @@ For full architectural details, see [docs/ci-cd-release-workflow.md](docs/ci-cd-
 - **Workflow Architecture**:
   - `.github/workflows/ci.yml`: Runs on PRs and pushes to `main` for verification (`typecheck`, `test`, `build`).
   - `.github/workflows/release.yml`: Runs Google `release-please` on `main`. It maintains a single accumulating Release PR (`chore: release X.Y.Z`) with updated `package.json`, `VERSION`, and `CHANGELOG.md`.
-  - **Cutting a Release**: Merging the Release PR automatically cuts the GitHub release and triggers the Windows runner to build `Ferry-Setup-*.exe`, `latest.yml`, and `*.blockmap` and attach them to the release.
+  - **Cutting a Release**: Merging the Release PR automatically cuts the GitHub release and triggers the Windows runner to build `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` and attach them to the release.
   - Do NOT manually hack versions in `package.json` on `main` or add ad-hoc version-bump loops. Releases are managed through the Release PR.
 
 ```mermaid
@@ -113,7 +98,7 @@ flowchart LR
     B --> C["Merge to main"]
     C --> D["Release-Please\nMaintains 1 Release PR"]
     D --> E["Maintainer Merges Release PR"]
-    E --> F["electron-builder\nPackages .exe & latest.yml"]
+    E --> F["pack-neutralino + NSIS\nPackages Ferry-Setup-*.exe & latest.yml"]
     F --> G["Publish GitHub Release\n& Client Auto-Update"]
 ```
 
