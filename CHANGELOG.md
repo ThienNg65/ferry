@@ -9,6 +9,14 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.24.2](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.1...ferry-v0.24.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* fix Neutralino window maximize, titlebar drag, and bottom dock resize ([67cb5e8](https://github.com/ThienNg65/ferry/commit/67cb5e89526b81276f04a503ce7d9208ee50ba53))
+* fix Neutralino window maximize, titlebar drag, and bottom dock resize ([646a99e](https://github.com/ThienNg65/ferry/commit/646a99ee7575c8dcdf83053e68442c1830c9a0ca))
+
 ## [0.24.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.0...ferry-v0.24.1) (2026-11-14)
 
 
