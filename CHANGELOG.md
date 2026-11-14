@@ -28,6 +28,20 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.25.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.2...ferry-v0.25.0) (2026-11-14)
+
+
+### Features
+
+* native OS window frame, Win11 caption sync, and unclipped toolbars ([27ead3b](https://github.com/ThienNg65/ferry/commit/27ead3be05f4e8f748b70e81325a0f0157f463e3))
+* native OS window frame, Win11 caption sync, and unclipped toolbars ([eb476a0](https://github.com/ThienNg65/ferry/commit/eb476a0e8ca0f9c87ba4dc2e176347b5baccbdef))
+
+
+### Bug Fixes
+
+* harden window bounds, updater timeouts, async dialogs, and store search perf ([0740621](https://github.com/ThienNg65/ferry/commit/07406216f628d73e8f2c849d460890f4c766ed52))
+* harden window bounds, updater timeouts, async dialogs, and store/search perf ([f7febf5](https://github.com/ThienNg65/ferry/commit/f7febf572334dc0feb5c842c7d799d59d42efad4))
+
 ## [0.24.2](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.1...ferry-v0.24.2) (2026-11-14)
 
 
