@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { execFileSync, spawn, spawnSync } from 'child_process'
+import { execFile, execFileSync, spawn, spawnSync } from 'child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import http from 'http'
 import * as os from 'os'
@@ -285,11 +285,17 @@ try {
     "if (-not $invoked) { throw 'Electron UI never exposed Restart to update' }",
     "Write-Output 'RESTART_INVOKED'"
   ].join('\n')
-  const uiResult = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', uiScript], {
-    encoding: 'utf8', timeout: 70_000
+  // Must be asynchronous: this Node process also serves the installer over HTTP.
+  // spawnSync would block that server before electron-updater finished downloading.
+  const uiOutput = await new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', uiScript],
+      { encoding: 'utf8', timeout: 70_000 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(`Electron update UI automation failed: ${stderr || error.message}`))
+        else resolve(stdout)
+      })
   })
-  assert(uiResult.status === 0 && uiResult.stdout?.includes('RESTART_INVOKED'),
-    `Failed to invoke Electron updater: ${uiResult.stderr || uiResult.error || uiResult.status}`)
+  assert(uiOutput.includes('RESTART_INVOKED'), 'Electron did not invoke Restart to update')
   // Do not launch NSIS manually: it must be started by electron-updater itself.
   const upgradeDeadline = Date.now() + 90_000
   while ((!existsSync(join(customDir, 'ferry-win_x64.exe')) || existsSync(join(customDir, 'Ferry.exe'))) &&
