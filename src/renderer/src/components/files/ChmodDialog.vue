@@ -37,7 +37,8 @@ watch(
     Object.assign(owner, parsed.owner)
     Object.assign(group, parsed.group)
     Object.assign(other, parsed.other)
-  }
+  },
+  { immediate: true }
 )
 
 const recursive = ref(false)

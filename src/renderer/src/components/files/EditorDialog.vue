@@ -72,7 +72,8 @@ watch(
       content.value = ''
       savedContent.value = ''
     }
-  }
+  },
+  { immediate: true }
 )
 
 async function onSave(): Promise<void> {
@@ -141,8 +142,8 @@ async function onOpenExternal(): Promise<void> {
         @keydown.meta.s.prevent="onSave"
         @wheel="onWheel"
       >
-        <div v-if="loading" class="flex h-full items-center justify-center">
-          <UIcon name="i-lucide-loader-2" class="size-6 animate-spin text-dimmed" />
+        <div v-if="loading" role="status" aria-label="Loading file editor" class="flex h-full flex-col gap-2.5 p-4">
+          <USkeleton v-for="i in 8" :key="i" class="h-3.5" :style="{ width: `${45 + ((i * 23) % 45)}%` }" />
         </div>
         <Codemirror
           v-else

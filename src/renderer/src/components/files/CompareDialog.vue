@@ -54,7 +54,8 @@ watch(
       error.value = null
       void compare()
     }
-  }
+  },
+  { immediate: true }
 )
 
 const visibleRows = computed(() => (rows.value ?? []).filter((r) => showSame.value || r.status !== 'same'))

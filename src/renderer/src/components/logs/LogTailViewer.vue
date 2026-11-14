@@ -14,6 +14,7 @@ import LogSearchBar from './LogSearchBar.vue'
 import LogLineInspector from './LogLineInspector.vue'
 import LogRail from './LogRail.vue'
 import { tailControls } from '../../composables/useTailControls'
+import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import { KEYWORD_CLASSES, buildKeywordRegex } from '../../utils/keywordHighlight'
 
 const props = withDefaults(defineProps<{ tailId: string; active?: boolean }>(), { active: true })
@@ -87,6 +88,7 @@ const rowEstimateSize = computed(() => {
 
 // Search & Keyword Highlight State
 const searchQuery = ref('')
+const { debounced: debouncedSearchQuery, flush: flushSearchQuery } = useDebouncedRef(searchQuery, 150)
 const caseSensitive = ref(false)
 const isRegex = ref(false)
 const filterOnly = ref(false)
@@ -153,15 +155,16 @@ const levelCounts = computed(() => {
 
 // Search Regex Builder
 const searchRegex = computed<RegExp | null>(() => {
-  if (!searchQuery.value) {
+  const q = debouncedSearchQuery.value
+  if (!q) {
     regexError.value = null
     return null
   }
   try {
     regexError.value = null
     const pattern = isRegex.value
-      ? searchQuery.value
-      : searchQuery.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      ? q
+      : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     return new RegExp(pattern, caseSensitive.value ? 'g' : 'gi')
   } catch (e) {
     regexError.value = e instanceof Error ? e.message : 'Invalid regex'
@@ -280,17 +283,26 @@ function jumpToActiveMatch(): void {
   rowVirtualizer.value.scrollToIndex(match.filteredIndex, { align: 'center' })
 }
 
-function nextMatch(): void {
+function stepMatch(delta: 1 | -1): void {
+  const flushed = searchQuery.value !== debouncedSearchQuery.value
+  flushSearchQuery()
   if (searchIndex.value.matchCount === 0) return
-  activeMatchIndex.value = (activeMatchIndex.value + 1) % searchIndex.value.matchCount
-  jumpToActiveMatch()
+  activeMatchIndex.value =
+    (activeMatchIndex.value + delta + searchIndex.value.matchCount) % searchIndex.value.matchCount
+  if (filterOnly.value && flushed) {
+    // Wait for Vue to propagate filteredLines.length to rowVirtualizer before scrolling.
+    void nextTick(jumpToActiveMatch)
+  } else {
+    jumpToActiveMatch()
+  }
+}
+
+function nextMatch(): void {
+  stepMatch(1)
 }
 
 function prevMatch(): void {
-  if (searchIndex.value.matchCount === 0) return
-  activeMatchIndex.value =
-    (activeMatchIndex.value - 1 + searchIndex.value.matchCount) % searchIndex.value.matchCount
-  jumpToActiveMatch()
+  stepMatch(-1)
 }
 
 function closeSearch(): void {
@@ -653,6 +665,7 @@ watchEffect(() => {
       :current-match="searchIndex.matchCount > 0 ? activeMatchIndex + 1 : 0"
       :regex-error="regexError"
       :keywords="keywords"
+      :search-pending="searchQuery !== debouncedSearchQuery"
       @add-keyword="addKeyword"
       @remove-keyword="removeKeyword"
       @clear-keywords="clearKeywords"
@@ -732,6 +745,18 @@ watchEffect(() => {
             v-for="virtualRow in virtualRows"
             :key="String(virtualRow.key)"
             :ref="measureRow"
+            v-memo="[
+              virtualRow.start,
+              virtualRow.index,
+              filteredLines[virtualRow.index],
+              selectedOriginalIndex === filteredLines[virtualRow.index].originalIndex,
+              pinnedSet.has(filteredLines[virtualRow.index].originalIndex),
+              searchIndex.lineMatchStarts[virtualRow.index],
+              searchIndex.lineMatchStarts[virtualRow.index] >= 0 ? activeMatchIndex : -1,
+              searchIndex.lineMatchStarts[virtualRow.index] >= 0 ? searchRegex : null,
+              keywordRegex,
+              wrapLines
+            ]"
             :data-index="virtualRow.index"
             :style="{
               position: 'absolute',

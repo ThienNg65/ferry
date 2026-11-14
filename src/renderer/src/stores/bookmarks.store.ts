@@ -6,12 +6,14 @@ import { invoke } from '../api'
 interface BookmarksState {
   bookmarks: Bookmark[]
   loaded: boolean
+  inFlightFetch: Promise<void> | null
 }
 
 export const useBookmarksStore = defineStore('bookmarks', {
   state: (): BookmarksState => ({
     bookmarks: [],
-    loaded: false
+    loaded: false,
+    inFlightFetch: null
   }),
 
   getters: {
@@ -26,8 +28,18 @@ export const useBookmarksStore = defineStore('bookmarks', {
 
   actions: {
     async fetch(): Promise<void> {
-      this.bookmarks = await invoke<Bookmark[]>(INVOKE_CHANNELS.bookmarksList)
-      this.loaded = true
+      if (this.inFlightFetch) {
+        return this.inFlightFetch
+      }
+      this.inFlightFetch = (async () => {
+        try {
+          this.bookmarks = await invoke<Bookmark[]>(INVOKE_CHANNELS.bookmarksList)
+          this.loaded = true
+        } finally {
+          this.inFlightFetch = null
+        }
+      })()
+      return this.inFlightFetch
     },
 
     async ensureLoaded(): Promise<void> {

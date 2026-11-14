@@ -8,6 +8,7 @@ import { useOperationsStore } from './stores/operations.store'
 import { useEditSessionsStore } from './stores/editSessions.store'
 import { DEFAULT_LOCAL_PANE_WIDTH, useUiStore } from './stores/ui.store'
 import { clampLocalPaneWidth } from './utils/paneColumns'
+import { initWindowBoundsPersistence } from './utils/windowBounds'
 import { useGlobalActivity } from './composables/useGlobalActivity'
 import { useSettingsDialog } from './composables/useSettingsDialog'
 import { useHistoryDialog } from './composables/useHistoryDialog'
@@ -18,6 +19,7 @@ import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
 import TitleBar from './components/shell/TitleBar.vue'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
+import WindowResizeHandles from './components/shell/WindowResizeHandles.vue'
 
 const SessionManagerView = defineAsyncComponent(() => import('./components/sessions/SessionManagerView.vue'))
 const SettingsDialog = defineAsyncComponent(() => import('./components/shell/SettingsDialog.vue'))
@@ -41,7 +43,9 @@ const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
 window.addEventListener('resize', onWindowResize)
+let disposeWindowBounds: (() => void) | null = null
 onUnmounted(() => {
+  disposeWindowBounds?.()
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onTabShortcut)
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
@@ -157,6 +161,7 @@ function onTabShortcut(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
+  disposeWindowBounds = initWindowBoundsPersistence()
   window.addEventListener('keydown', onTabShortcut)
   void updateStore.init()
   const mountTime = performance.now()
@@ -197,6 +202,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
 <template>
   <UApp :toaster="{ position: 'bottom-right', duration: 4000 }">
     <div class="flex h-screen flex-col bg-default text-default">
+      <WindowResizeHandles />
       <TitleBar />
       <SiteTabBar />
       <div class="relative min-h-0 flex-1">

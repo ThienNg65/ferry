@@ -147,4 +147,55 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.entries).toHaveLength(1)
     expect(store.error).toBe('Permission denied')
   })
+
+  it('coalesces duplicate concurrent loads for the same uncached path under slow network', async () => {
+    const store = useRemoteFsStore()
+    let resolveSlow!: (val: any) => void
+    vi.mocked(api.invoke).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSlow = resolve
+      }) as any
+    )
+
+    const p1 = store.loadForSession('sess-1', '/var/slow')
+    const p2 = store.loadForSession('sess-1', '/var/slow')
+    expect(api.invoke).toHaveBeenCalledTimes(1)
+
+    resolveSlow({
+      path: '/var/slow',
+      entries: [{ name: 'slow.log', path: '/var/slow/slow.log', isDir: false, size: 42, permissions: '0644' }]
+    })
+    await Promise.all([p1, p2])
+
+    expect(store.currentPath).toBe('/var/slow')
+    expect(store.entries).toHaveLength(1)
+  })
+
+  it('ignores stale slow response when user navigates elsewhere before it resolves', async () => {
+    const store = useRemoteFsStore()
+    let resolveFirst!: (val: any) => void
+    let resolveSecond!: (val: any) => void
+    vi.mocked(api.invoke)
+      .mockReturnValueOnce(new Promise((r) => { resolveFirst = r }) as any)
+      .mockReturnValueOnce(new Promise((r) => { resolveSecond = r }) as any)
+
+    const pFirst = store.loadForSession('sess-1', '/slow-dir')
+    const pSecond = store.loadForSession('sess-1', '/fast-dir')
+
+    resolveSecond({
+      path: '/fast-dir',
+      entries: [{ name: 'fast.txt', path: '/fast-dir/fast.txt', isDir: false, size: 5, permissions: '0644' }]
+    })
+    await pSecond
+
+    // Stale first response arrives later — must not overwrite /fast-dir
+    resolveFirst({
+      path: '/slow-dir',
+      entries: [{ name: 'stale.txt', path: '/slow-dir/stale.txt', isDir: false, size: 5, permissions: '0644' }]
+    })
+    await pFirst
+
+    expect(store.currentPath).toBe('/fast-dir')
+    expect(store.entries[0].name).toBe('fast.txt')
+  })
 })

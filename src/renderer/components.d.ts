@@ -64,7 +64,9 @@ declare module 'vue' {
     UProgress: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Progress.vue')['default']
     URadioGroup: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/RadioGroup.vue')['default']
     USelect: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Select.vue')['default']
+    USkeleton: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Skeleton.vue')['default']
     UTextarea: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Textarea.vue')['default']
     UTooltip: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Tooltip.vue')['default']
+    WindowResizeHandles: typeof import('./src/components/shell/WindowResizeHandles.vue')['default']
   }
 }
