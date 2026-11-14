@@ -9,6 +9,25 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.24.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.0...ferry-v0.24.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* correct migration process helper template literals ([481159f](https://github.com/ThienNg65/ferry/commit/481159fa5fe2552828e440d100024ec0545fcc96))
+* prevent false-negative Electron migration release failures ([ba7faf1](https://github.com/ThienNg65/ferry/commit/ba7faf17aa0eae67d4e272fb0e834b1f0bafddb0))
+* recognize Windows 8.3 process paths in migration release gate ([74e32ab](https://github.com/ThienNg65/ferry/commit/74e32abe7ee30c90c8490b5a98f58aa781596a38))
+
+
+### Tests
+
+* stop migrated processes before uninstall verification ([e3b2eeb](https://github.com/ThienNg65/ferry/commit/e3b2eebdaea7a4dca31a9aa365f626aa4deb1bbf))
+
+
+### Continuous Integration
+
+* run real Electron-to-Neutralino migration E2E for migration PRs ([3ad84e2](https://github.com/ThienNg65/ferry/commit/3ad84e2cd9f4bdc6acbbc6bf316c9b19e90828a4))
+
 ## [0.24.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.23.1...ferry-v0.24.0) (2026-11-14)
 
 
