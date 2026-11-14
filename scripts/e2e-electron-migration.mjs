@@ -1,21 +1,24 @@
 import { createHash } from 'crypto'
 import { execFileSync, spawn, spawnSync } from 'child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import http from 'http'
 import * as os from 'os'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
-if (process.platform !== 'win32') {
-  console.log('Skipping Windows Electron -> Neutralino E2E migration test on non-Windows platform.')
-  process.exit(0)
+if (process.platform !== 'win32') throw new Error('Migration E2E requires Windows.')
+if (process.env.GITHUB_ACTIONS !== 'true' ||
+    process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
+    process.env.FERRY_E2E_ISOLATED_RUNNER !== '1') {
+  throw new Error('Migration E2E requires an opted-in fresh GitHub-hosted Windows runner.')
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, '..')
 const distDir = join(rootDir, 'dist')
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
-const version = String(pkg.version || '0.24.0')
+const version = String(pkg.version)
+if (version !== '0.24.0') throw new Error(`Expected v0.24.0 release candidate, got ${version}`)
 const neutralinoInstaller = join(distDir, `Ferry-Setup-${version}.exe`)
 
 if (!existsSync(neutralinoInstaller)) {
@@ -150,18 +153,19 @@ if (!existsSync(electronInstaller)) {
 }
 
 const appDataDir = join(process.env.APPDATA || join(os.homedir(), 'AppData', 'Roaming'), 'Ferry')
-const appDataBackup = existsSync(appDataDir) ? `${appDataDir}.e2e-backup-${Date.now()}` : null
+if (existsSync(appDataDir)) throw new Error(`Refusing to modify existing Ferry profile at ${appDataDir}`)
+const existingInstall = join(process.env.LOCALAPPDATA || '', 'Programs', 'Ferry')
+if (existsSync(existingInstall)) throw new Error('Refusing to modify existing Ferry installation')
+const oldEntries = runPs(String.raw`$hives = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'); foreach ($h in $hives) { if (Test-Path $h) { Get-ChildItem $h | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like 'Ferry*' } | ForEach-Object { $_.DisplayName } } }`)
+if (oldEntries) throw new Error('Refusing to modify an existing Ferry uninstall registration')
 const customDir = mkdtempSync(join(os.tmpdir(), 'ferry-e2e-real-'))
 let httpServer = null
+let createdTestProfile = false
 
 try {
-  if (appDataBackup) {
-    cpSync(appDataDir, appDataBackup, { recursive: true })
-    rmSync(appDataDir, { recursive: true, force: true })
-  }
-
-  // Seed DPAPI Local State + encrypted site + known_hosts in %APPDATA%\Ferry
   mkdirSync(appDataDir, { recursive: true })
+  createdTestProfile = true
+  // Seed DPAPI Local State + encrypted sites in a newly-created test profile.
   const dpapiOut = runPs(`
     Add-Type -AssemblyName System.Security
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -218,7 +222,7 @@ try {
   const nlBuf = readFileSync(neutralinoInstaller)
   const nlSha512 = createHash('sha512').update(nlBuf).digest('base64')
   const nlExeName = `Ferry-Setup-${version}.exe`
-  const feedManifest = `version: 0.24.0\nfiles:\n  - url: ${nlExeName}\n    sha512: ${nlSha512}\n    size: ${nlBuf.length}\npath: ${nlExeName}\nsha512: ${nlSha512}\nreleaseDate: '${new Date().toISOString()}'\n`
+  const feedManifest = `version: ${version}\nfiles:\n  - url: ${nlExeName}\n    sha512: ${nlSha512}\n    size: ${nlBuf.length}\npath: ${nlExeName}\nsha512: ${nlSha512}\nreleaseDate: '${new Date().toISOString()}'\n`
 
   let manifestRequested = false
   let installerDownloaded = false
@@ -259,17 +263,41 @@ try {
   assert(installerDownloaded, `Real Electron electron-updater did not download /${nlExeName}`)
   console.log('  PASS: real Electron electron-updater fetched latest.yml and downloaded Neutralino installer.')
 
-  // Run Neutralino installer with --updated /S --force-run (NO /D=, testing .onInit custom-dir discovery)
-  const nlChild = spawn(neutralinoInstaller, ['--updated', '/S', '--force-run'], { stdio: 'ignore' })
-  await new Promise((resolveExit, rejectExit) => {
-    const timer = setTimeout(() => rejectExit(new Error('Neutralino installer timed out')), 60_000)
-    nlChild.on('exit', (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolveExit()
-      else rejectExit(new Error(`Neutralino installer exited with ${code}`))
-    })
+  // Exercise the installed Electron app's actual Update ready -> Restart action.
+  const uiScript = [
+    'Add-Type -AssemblyName UIAutomationClient',
+    'Add-Type -AssemblyName UIAutomationTypes',
+    `$targetPid = ${electronChild.pid}`,
+    '$deadline = [DateTime]::UtcNow.AddSeconds(60)',
+    '$invoked = $false',
+    'while ([DateTime]::UtcNow -lt $deadline) {',
+    '  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $targetPid)))',
+    '  foreach ($window in $windows) {',
+    "    $button = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'Restart to update')))",
+    '    if ($null -ne $button) {',
+    '      $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+    '      $invoked = $true; break',
+    '    }',
+    '  }',
+    '  if ($invoked) { break }',
+    '  Start-Sleep -Milliseconds 500',
+    '}',
+    "if (-not $invoked) { throw 'Electron UI never exposed Restart to update' }",
+    "Write-Output 'RESTART_INVOKED'"
+  ].join('\n')
+  const uiResult = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', uiScript], {
+    encoding: 'utf8', timeout: 70_000
   })
-
+  assert(uiResult.status === 0 && uiResult.stdout?.includes('RESTART_INVOKED'),
+    `Failed to invoke Electron updater: ${uiResult.stderr || uiResult.error || uiResult.status}`)
+  // Do not launch NSIS manually: it must be started by electron-updater itself.
+  const upgradeDeadline = Date.now() + 90_000
+  while ((!existsSync(join(customDir, 'ferry-win_x64.exe')) || existsSync(join(customDir, 'Ferry.exe'))) &&
+         Date.now() < upgradeDeadline) {
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  assert(existsSync(join(customDir, 'ferry-win_x64.exe')) && !existsSync(join(customDir, 'Ferry.exe')),
+    'Electron-triggered quitAndInstall failed to migrate the runtime')
   await new Promise((r) => setTimeout(r, 2000))
 
   // Verify Neutralino + Node sidecar are running and Electron is gone
@@ -316,11 +344,7 @@ try {
     // ignore cleanup errors
   }
   rmSync(customDir, { recursive: true, force: true })
-  if (appDataBackup && existsSync(appDataBackup)) {
-    rmSync(appDataDir, { recursive: true, force: true })
-    cpSync(appDataBackup, appDataDir, { recursive: true })
-    rmSync(appDataBackup, { recursive: true, force: true })
-  }
+  if (createdTestProfile) rmSync(appDataDir, { recursive: true, force: true })
 }
 
 console.log('ALL E2E MIGRATION & ROLLBACK GATES PASSED!')

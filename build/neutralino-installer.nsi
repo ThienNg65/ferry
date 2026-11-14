@@ -66,15 +66,35 @@ SetCompressor /SOLID lzma
 
 !macro RestoreFile REL_PATH
   ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}"
-    Delete "$INSTDIR\${REL_PATH}"
+    ${If} ${FileExists} "$INSTDIR\${REL_PATH}"
+      ClearErrors
+      Delete "$INSTDIR\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_failed
+      ${EndIf}
+    ${EndIf}
+    ClearErrors
     Rename "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}" "$INSTDIR\${REL_PATH}"
+    ${If} ${Errors}
+      Goto rollback_failed
+    ${EndIf}
   ${EndIf}
 !macroend
 
 !macro RestoreDir REL_PATH
   ${If} ${FileExists} "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}\*.*"
-    RMDir /r "$INSTDIR\${REL_PATH}"
+    ${If} ${FileExists} "$INSTDIR\${REL_PATH}\*.*"
+      ClearErrors
+      RMDir /r "$INSTDIR\${REL_PATH}"
+      ${If} ${Errors}
+        Goto rollback_failed
+      ${EndIf}
+    ${EndIf}
+    ClearErrors
     Rename "$INSTDIR\_ferry_upgrade_backup\${REL_PATH}" "$INSTDIR\${REL_PATH}"
+    ${If} ${Errors}
+      Goto rollback_failed
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -182,6 +202,7 @@ Section "Ferry" SecMain
 
   !insertmacro BackupFile "Ferry.exe"
   !insertmacro BackupFile "Uninstall Ferry.exe"
+  !insertmacro BackupFile "Uninstall.exe"
   !insertmacro BackupFile "ferry-win_x64.exe"
   !insertmacro BackupFile "resources.neu"
   !insertmacro BackupFile "chrome_100_percent.pak"
@@ -226,12 +247,10 @@ Section "Ferry" SecMain
   Goto commit_install
 
 rollback_install:
-  Delete "$INSTDIR\ferry-win_x64.exe"
-  Delete "$INSTDIR\resources.neu"
-  RMDir /r "$INSTDIR\extensions"
-
+  ; Preserve original files when a backup operation failed before Rename.
   !insertmacro RestoreFile "Ferry.exe"
   !insertmacro RestoreFile "Uninstall Ferry.exe"
+  !insertmacro RestoreFile "Uninstall.exe"
   !insertmacro RestoreFile "ferry-win_x64.exe"
   !insertmacro RestoreFile "resources.neu"
   !insertmacro RestoreFile "chrome_100_percent.pak"
@@ -252,16 +271,29 @@ rollback_install:
   !insertmacro RestoreDir "locales"
   !insertmacro RestoreDir "resources"
   !insertmacro RestoreDir "extensions"
+  ClearErrors
   RMDir /r "$INSTDIR\_ferry_upgrade_backup"
-  Abort "Ferry installation failed; previous installation was restored and user data was preserved."
+  ${If} ${Errors}
+    Goto rollback_failed
+  ${EndIf}
+  SetErrorLevel 1
+  Abort "Ferry upgrade failed. Previous installation was restored."
+
+rollback_failed:
+  ; On partial restoration failure the ONLY good copy may still be here.
+  ; Never delete that directory; report its location for manual recovery.
+  SetErrorLevel 1
+  Abort "Ferry rollback failed. Original files remain in $INSTDIR\_ferry_upgrade_backup."
 
 commit_install:
-  ; Only discard backup and update registry/shortcuts after post-copy validation succeeds.
-  RMDir /r "$INSTDIR\_ferry_upgrade_backup"
+  ; Validate uninstaller/registry/shortcuts before discarding the snapshot.
+  ClearErrors
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ${If} ${Errors}
+    Goto rollback_install
+  ${EndIf}
 
-  !insertmacro CleanLegacyUninstallHive HKCU
-  !insertmacro CleanLegacyUninstallHive HKLM
-
+  ClearErrors
   WriteRegStr HKCU "Software\Ferry" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "DisplayName" "Ferry"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "DisplayVersion" "${VERSION}"
@@ -271,7 +303,9 @@ commit_install:
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Ferry" "NoRepair" 1
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ${If} ${Errors}
+    Goto rollback_install
+  ${EndIf}
 
   ; Replace legacy Electron shortcuts and create canonical Neutralino shortcuts.
   Delete "$SMPROGRAMS\Ferry.lnk"
@@ -280,6 +314,14 @@ commit_install:
   CreateDirectory "$SMPROGRAMS\Ferry"
   CreateShortcut "$SMPROGRAMS\Ferry\Ferry.lnk" "$INSTDIR\ferry-win_x64.exe" "" "$INSTDIR\ferry-win_x64.exe" 0
   CreateShortcut "$DESKTOP\Ferry.lnk" "$INSTDIR\ferry-win_x64.exe" "" "$INSTDIR\ferry-win_x64.exe" 0
+  ${If} ${Errors}
+    Goto rollback_install
+  ${EndIf}
+
+  !insertmacro CleanLegacyUninstallHive HKCU
+  !insertmacro CleanLegacyUninstallHive HKLM
+  ; The new runtime, uninstaller, and shortcuts are installed; commit at last.
+  RMDir /r "$INSTDIR\_ferry_upgrade_backup"
 
   ; Notify Explorer to refresh shortcut and icon caches.
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)'
