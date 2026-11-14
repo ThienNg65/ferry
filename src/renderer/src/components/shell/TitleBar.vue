@@ -72,8 +72,8 @@ function close(): void {
 <template>
   <div
     ref="titleBarRef"
-    class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center bg-muted"
-    style="-webkit-app-region: drag"
+    class="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center bg-muted select-none"
+    :style="isNeutralinoRuntime() ? undefined : '-webkit-app-region: drag'"
     @dblclick="onTitleBarDblClick"
   >
     <div class="flex items-center" style="-webkit-app-region: no-drag" @pointerdown.stop>

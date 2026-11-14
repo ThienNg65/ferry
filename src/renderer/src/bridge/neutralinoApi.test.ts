@@ -34,6 +34,10 @@ function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar'
     maximizeWindow: vi.fn(async () => {}),
     unmaximizeWindow: vi.fn(async () => {}),
     isWindowMaximized: vi.fn(async () => false),
+    getWindowPosition: vi.fn(async () => ({ x: 100, y: 80 })),
+    getWindowSize: vi.fn(async () => ({ width: 1280, height: 800 })),
+    setWindowSize: vi.fn(async () => {}),
+    moveWindow: vi.fn(async () => {}),
     exitApp: vi.fn(async () => {}),
     showOpenDialog: vi.fn(async () => ['C:\\tmp\\picked.json']),
     showFolderDialog: vi.fn(async () => 'C:\\tmp\\folder'),
@@ -90,6 +94,34 @@ describe('neutralinoApi', () => {
     expect(transport.minimizeWindow).toHaveBeenCalledTimes(1)
     expect(await api.invoke(INVOKE_CHANNELS.windowClose)).toEqual(ok(undefined))
     expect(transport.exitApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('maximizes to screen work area and restores saved bounds without covering the taskbar', async () => {
+    const { transport } = createFakeTransport()
+    const api = createNeutralinoApi(transport)
+    const events: unknown[] = []
+    api.on(EVENT_CHANNELS.windowStateChange, (payload) => events.push(payload))
+
+    vi.stubGlobal('window', {
+      innerWidth: 1280,
+      screen: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1032 }
+    })
+
+    try {
+      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
+      expect(transport.moveWindow).toHaveBeenCalledWith(0, 0)
+      expect(transport.setWindowSize).toHaveBeenCalledWith({ width: 1920, height: 1032 })
+      expect(transport.maximizeWindow).not.toHaveBeenCalled()
+      expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: true }))
+
+      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
+      expect(transport.moveWindow).toHaveBeenLastCalledWith(100, 80)
+      expect(transport.setWindowSize).toHaveBeenLastCalledWith({ width: 1280, height: 800 })
+      expect(await api.invoke(INVOKE_CHANNELS.windowIsMaximized)).toEqual(ok({ isMaximized: false }))
+      expect(events).toEqual([{ isMaximized: true }, { isMaximized: false }])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('correlates concurrent sidecar rpc_invoke calls, queues until ready, and decodes { __b64 } bytes', async () => {
