@@ -223,11 +223,12 @@ try {
   let manifestRequested = false
   let installerDownloaded = false
   httpServer = http.createServer((req, res) => {
-    if (req.url === '/latest.yml') {
+    const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname
+    if (pathname === '/latest.yml') {
       manifestRequested = true
       res.writeHead(200, { 'Content-Type': 'text/yaml' })
       res.end(feedManifest)
-    } else if (req.url === `/${nlExeName}`) {
+    } else if (pathname === `/${nlExeName}`) {
       installerDownloaded = true
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(nlBuf.length) })
       res.end(nlBuf)
@@ -307,12 +308,16 @@ try {
   assert(uninst.status === 0, `Uninstaller failed: ${uninst.status}`)
 } finally {
   httpServer?.close()
-  runPs(
-    `Get-Process -Name 'Ferry','ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue`
-  )
+  try {
+    runPs(
+      `Get-Process -Name 'Ferry','ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0`
+    )
+  } catch {
+    // ignore cleanup errors
+  }
   rmSync(customDir, { recursive: true, force: true })
-  rmSync(appDataDir, { recursive: true, force: true })
   if (appDataBackup && existsSync(appDataBackup)) {
+    rmSync(appDataDir, { recursive: true, force: true })
     cpSync(appDataBackup, appDataDir, { recursive: true })
     rmSync(appDataBackup, { recursive: true, force: true })
   }
