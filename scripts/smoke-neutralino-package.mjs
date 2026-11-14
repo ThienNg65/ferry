@@ -6,7 +6,7 @@ import { dirname, join, posix as pathPosix, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import ssh2Pkg from 'ssh2'
 import { WebSocketServer } from 'ws'
-import { NtExecutable, NtExecutableResource, Resource } from 'resedit'
+import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
 const { Server: SshServer, utils: sshUtils } = ssh2Pkg
 const { STATUS_CODE } = sshUtils.sftp
@@ -38,13 +38,25 @@ if (process.platform === 'win32' && process.env.FERRY_REQUIRE_NSIS === '1') {
   assertExists(manifestPath, 'Required Ferry update manifest')
 }
 
-// Verify PE icon and version branding on the packaged Neutralino executable.
+// Verify PE icon bytes match resources/icon.ico and version branding is set on the packaged Neutralino executable.
 {
   const exe = NtExecutable.from(readFileSync(join(protoDir, 'ferry-win_x64.exe')), { ignoreCert: true })
   const res = NtExecutableResource.from(exe)
   const iconGroups = Resource.IconGroupEntry.fromEntries(res.entries)
   if (iconGroups.length === 0) {
     throw new Error('ferry-win_x64.exe is missing embedded PE icon resources')
+  }
+  const expectedIco = Data.IconFile.from(readFileSync(join(rootDir, 'resources', 'icon.ico')))
+  const embeddedIcons = iconGroups[0].icons.map((item) => res.entries.find((e) => e.type === 3 && e.id === item.iconID))
+  if (iconGroups[0].icons.length !== expectedIco.icons.length) {
+    throw new Error(`Expected ${expectedIco.icons.length} PE icon resolutions, got ${iconGroups[0].icons.length}`)
+  }
+  for (let i = 0; i < expectedIco.icons.length; i++) {
+    const actualEntry = embeddedIcons[i]
+    const expectedBytes = Buffer.from(expectedIco.icons[i].data.bin)
+    if (!actualEntry || !Buffer.from(actualEntry.bin).equals(expectedBytes)) {
+      throw new Error(`PE icon entry ${i} does not match resources/icon.ico`)
+    }
   }
   const viList = Resource.VersionInfo.fromEntries(res.entries)
   if (viList.length === 0) {
