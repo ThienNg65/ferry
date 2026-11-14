@@ -83,7 +83,7 @@ Release Please relies on [Conventional Commits](https://www.conventionalcommits.
 - **Steps**:
   1. `actions/checkout@v4`
   2. `./.github/actions/setup-node-deps`
-  3. Cache Electron and Electron Builder toolsets
+  3. Run `npm run typecheck`, `npm test`, `npm run build`, `npm run package`, and `npm run smoke:neutralino`
   4. `npm run typecheck`
   5. `npm test`
   6. `npm run build`

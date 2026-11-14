@@ -8,7 +8,7 @@ import { testHost } from '../host/testHost.setup'
 import { SidecarUpdater } from './SidecarUpdater'
 
 const sendMock = vi.fn()
-const hostState = { isPackaged: false, appVersion: '0.14.11' }
+const hostState = { isPackaged: false, appVersion: '0.24.0' }
 
 const appSettingsMock = {
   get: vi.fn(() => ({ autoCheckUpdates: true }))
@@ -31,12 +31,13 @@ const autoUpdaterMock = {
   quitAndInstall: vi.fn()
 }
 
-vi.mock('electron-updater', () => ({
-  autoUpdater: autoUpdaterMock,
-  default: {
-    autoUpdater: autoUpdaterMock
+vi.mock('./SidecarUpdater', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SidecarUpdater')>()
+  return {
+    ...actual,
+    getSidecarUpdater: () => autoUpdaterMock
   }
-}))
+})
 
 describe('AutoUpdater', () => {
   beforeEach(async () => {
@@ -134,7 +135,7 @@ describe('SidecarUpdater', () => {
   function fakeFetchFor(yamlBody: string, installerBytes: Buffer): typeof fetch {
     return vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
-      if (url.endsWith('/latest-neutralino.yml')) {
+      if (url.endsWith('/latest.yml')) {
         return new Response(yamlBody, { status: 200 })
       }
       if (url.endsWith('.exe')) {
@@ -147,10 +148,10 @@ describe('SidecarUpdater', () => {
     }) as unknown as typeof fetch
   }
 
-  it('downloads, verifies SHA-512, and launches the installer on quitAndInstall', async () => {
+  it('downloads, verifies SHA-512, and launches the canonical installer on quitAndInstall', async () => {
     const payload = Buffer.from('MZ-fake-neutralino-installer-binary')
     const sha512 = createHash('sha512').update(payload).digest('base64')
-    const yaml = `version: 0.23.0\npath: Ferry-Neutralino-Setup-0.23.0.exe\nsha512: ${sha512}\nsize: ${payload.length}\n`
+    const yaml = `version: 0.24.0\npath: Ferry-Setup-0.24.0.exe\nsha512: ${sha512}\nsize: ${payload.length}\n`
 
     const unrefMock = vi.fn()
     const spawnMock = vi.fn(() => ({ unref: unrefMock }))
@@ -167,13 +168,13 @@ describe('SidecarUpdater', () => {
     updater.on('update-downloaded', (info) => downloaded.push(info.version))
 
     const res = await updater.checkForUpdates()
-    expect(res.updateInfo.version).toBe('0.23.0')
-    expect(downloaded).toEqual(['0.23.0'])
+    expect(res.updateInfo.version).toBe('0.24.0')
+    expect(downloaded).toEqual(['0.24.0'])
 
-    updater.quitAndInstall(true)
+    updater.quitAndInstall(true, true)
     expect(spawnMock).toHaveBeenCalledWith(
-      path.join(tmpDir, 'Ferry-Neutralino-Setup-0.23.0.exe'),
-      ['/S'],
+      path.join(tmpDir, 'Ferry-Setup-0.24.0.exe'),
+      ['--updated', '/S', '--force-run'],
       { detached: true, stdio: 'ignore' }
     )
     expect(unrefMock).toHaveBeenCalledOnce()
@@ -183,7 +184,7 @@ describe('SidecarUpdater', () => {
   it('rejects installers whose SHA-512 digest mismatches the manifest', async () => {
     const payload = Buffer.from('tampered-binary')
     const wrongSha = createHash('sha512').update('expected-binary').digest('base64')
-    const yaml = `version: 0.23.0\npath: Ferry-Neutralino-Setup-0.23.0.exe\nsha512: ${wrongSha}\n`
+    const yaml = `version: 0.24.0\npath: Ferry-Setup-0.24.0.exe\nsha512: ${wrongSha}\n`
 
     const updater = new SidecarUpdater({
       feedUrl: 'https://example.invalid/releases',
@@ -195,14 +196,8 @@ describe('SidecarUpdater', () => {
     expect(() => updater.quitAndInstall()).toThrow(/No verified update installer/)
   })
 
-  it('does not fall back to latest.yml when latest-neutralino.yml is absent', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input)
-      if (url.endsWith('/latest.yml')) {
-        return new Response('version: 0.99.0\npath: Ferry-Setup-0.99.0.exe\nsha512: abc\n', { status: 200 })
-      }
-      return new Response('not found', { status: 404 })
-    }) as unknown as typeof fetch
+  it('fetches canonical latest.yml without falling back to latest-neutralino.yml', async () => {
+    const fetchMock = vi.fn(async () => new Response('not found', { status: 404 })) as unknown as typeof fetch
 
     const updater = new SidecarUpdater({
       feedUrl: 'https://example.invalid/releases',
@@ -210,17 +205,15 @@ describe('SidecarUpdater', () => {
       fetchImpl: fetchMock
     })
 
-    await expect(updater.checkForUpdates()).rejects.toThrow(/No Neutralino update manifest \(latest-neutralino\.yml\)/)
+    await expect(updater.checkForUpdates()).rejects.toThrow(/No update manifest \(latest\.yml\)/)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(String((fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(
-      /\/latest-neutralino\.yml$/
-    )
+    expect(String((fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0])).toMatch(/\/latest\.yml$/)
   })
 
-  it('rejects Electron installer filenames inside latest-neutralino.yml', async () => {
-    const payload = Buffer.from('electron-installer')
+  it('rejects non-canonical installer filenames inside latest.yml', async () => {
+    const payload = Buffer.from('legacy-installer')
     const sha512 = createHash('sha512').update(payload).digest('base64')
-    const yaml = `version: 0.23.0\npath: Ferry-Setup-0.23.0.exe\nsha512: ${sha512}\n`
+    const yaml = `version: 0.24.0\npath: Ferry-Neutralino-Setup-0.24.0.exe\nsha512: ${sha512}\n`
 
     const updater = new SidecarUpdater({
       feedUrl: 'https://example.invalid/releases',
@@ -228,6 +221,6 @@ describe('SidecarUpdater', () => {
       fetchImpl: fakeFetchFor(yaml, payload)
     })
 
-    await expect(updater.checkForUpdates()).rejects.toThrow(/Refusing non-Neutralino installer/)
+    await expect(updater.checkForUpdates()).rejects.toThrow(/Refusing unexpected installer/)
   })
 })

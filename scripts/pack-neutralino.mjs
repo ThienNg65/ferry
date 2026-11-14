@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { ZipArchive } from 'archiver'
+import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
 const MAX_COMPRESSED_BYTES = 45 * 1024 * 1024 // 45 MB feasibility gate (<= 50% of Electron setup)
 
@@ -26,7 +27,46 @@ if (nlConfig.version !== version) {
 const rendererIndex = join(rootDir, 'out', 'renderer', 'index.html')
 const sidecarBundle = join(rootDir, 'out', 'sidecar', 'index.cjs')
 if (!existsSync(rendererIndex) || !existsSync(sidecarBundle)) {
-  throw new Error('Missing built artifacts. Run "npm run build:neutralino" before packaging.')
+  throw new Error('Missing built artifacts. Run "npm run build" before packaging.')
+}
+
+function brandWindowsExecutable(exePath, iconPath, appVersion) {
+  const exe = NtExecutable.from(readFileSync(exePath), { ignoreCert: true })
+  const res = NtExecutableResource.from(exe)
+
+  const iconFile = Data.IconFile.from(readFileSync(iconPath))
+  const iconGroups = Resource.IconGroupEntry.fromEntries(res.entries)
+  const iconGroupId = iconGroups.length > 0 ? iconGroups[0].id : 1
+  Resource.IconGroupEntry.replaceIconsForResource(
+    res.entries,
+    iconGroupId,
+    1033,
+    iconFile.icons.map((icon) => icon.data)
+  )
+
+  const viList = Resource.VersionInfo.fromEntries(res.entries)
+  const vi = viList.length > 0 ? viList[0] : Resource.VersionInfo.createEmpty()
+  const [major = 0, minor = 0, patch = 0] = appVersion
+    .split('-')[0]
+    .split('.')
+    .map((n) => Number.parseInt(n, 10) || 0)
+  vi.setFileVersion(major, minor, patch, 0, 1033)
+  vi.setProductVersion(major, minor, patch, 0, 1033)
+  vi.setStringValues(
+    { lang: 1033, codepage: 1200 },
+    {
+      ProductName: 'Ferry',
+      FileDescription: 'Ferry',
+      CompanyName: 'Ferry',
+      InternalName: 'Ferry',
+      OriginalFilename: 'ferry-win_x64.exe',
+      ProductVersion: appVersion,
+      FileVersion: appVersion
+    }
+  )
+  vi.outputToResourceEntries(res.entries)
+  res.outputResource(exe)
+  writeFileSync(exePath, Buffer.from(exe.generate()))
 }
 
 function runNpx(args) {
@@ -52,12 +92,14 @@ runNpx(['@neutralinojs/neu', 'build'])
 
 rmSync(protoDir, { recursive: true, force: true })
 mkdirSync(sidecarDistDir, { recursive: true })
-copyFileSync(join(distDir, 'ferry', 'ferry-win_x64.exe'), join(protoDir, 'ferry-win_x64.exe'))
+const targetExePath = join(protoDir, 'ferry-win_x64.exe')
+copyFileSync(join(distDir, 'ferry', 'ferry-win_x64.exe'), targetExePath)
+brandWindowsExecutable(targetExePath, join(rootDir, 'resources', 'icon.ico'), version)
 copyFileSync(join(distDir, 'ferry', 'resources.neu'), join(protoDir, 'resources.neu'))
 copyFileSync(process.execPath, join(sidecarDistDir, process.platform === 'win32' ? 'node.exe' : 'node'))
 copyFileSync(sidecarBundle, join(sidecarDistDir, 'index.cjs'))
 
-const zipPath = join(distDir, `Ferry-Neutralino-${version}-win-x64.zip`)
+const zipPath = join(distDir, `Ferry-Portable-${version}-win-x64.zip`)
 rmSync(zipPath, { force: true })
 
 await new Promise((resolveZip, rejectZip) => {
@@ -112,17 +154,15 @@ if (makensisBin) {
     cwd: rootDir,
     stdio: 'inherit'
   })
-  installerPath = join(distDir, `Ferry-Neutralino-Setup-${version}.exe`)
+  const exeName = `Ferry-Setup-${version}.exe`
+  installerPath = join(distDir, exeName)
   if (!existsSync(installerPath)) {
     throw new Error(`NSIS exited successfully but did not create ${installerPath}`)
   }
-  if (existsSync(installerPath)) {
-    const installerBuf = readFileSync(installerPath)
-    const sha512 = createHash('sha512').update(installerBuf).digest('base64')
-    const exeName = `Ferry-Neutralino-Setup-${version}.exe`
-    const latestYml = `version: ${version}\nfiles:\n  - url: ${exeName}\n    sha512: ${sha512}\n    size: ${installerBuf.length}\npath: ${exeName}\nsha512: ${sha512}\nreleaseDate: '${new Date().toISOString()}'\n`
-    writeFileSync(join(distDir, 'latest-neutralino.yml'), latestYml, 'utf8')
-  }
+  const installerBuf = readFileSync(installerPath)
+  const sha512 = createHash('sha512').update(installerBuf).digest('base64')
+  const latestYml = `version: ${version}\nfiles:\n  - url: ${exeName}\n    sha512: ${sha512}\n    size: ${installerBuf.length}\npath: ${exeName}\nsha512: ${sha512}\nreleaseDate: '${new Date().toISOString()}'\n`
+  writeFileSync(join(distDir, 'latest.yml'), latestYml, 'utf8')
 }
 
 const files = [
@@ -145,7 +185,7 @@ console.log(`Compressed ZIP: ${zipPath} -> ${zipBytes} bytes (${(zipBytes / (102
 if (installerPath && existsSync(installerPath)) {
   const exeBytes = statSync(installerPath).size
   console.log(`NSIS Installer: ${installerPath} -> ${exeBytes} bytes (${(exeBytes / (1024 * 1024)).toFixed(2)} MB)`)
-  console.log(`Update Manifest: ${join(distDir, 'latest-neutralino.yml')}`)
+  console.log(`Update Manifest: ${join(distDir, 'latest.yml')}`)
   if (exeBytes > MAX_COMPRESSED_BYTES) {
     throw new Error(`NSIS installer (${exeBytes} bytes) exceeds ${MAX_COMPRESSED_BYTES} byte limit.`)
   }

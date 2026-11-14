@@ -1,8 +1,7 @@
-import type { IpcMainInvokeEvent } from 'electron'
 import { err, ok, type IpcResult, type IpcErrorCode, type InvokeChannel, type SendChannel } from '../../shared/contract'
 import { SshError } from '../ssh/errors'
 
-export type ChannelHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => Promise<IpcResult<unknown>>
+export type ChannelHandler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
 export type SendChannelHandler = (event: unknown, payload: unknown) => void
 
 export const handlers = new Map<InvokeChannel, ChannelHandler>()
@@ -34,18 +33,6 @@ export function handle<T>(
   fn: (...args: unknown[]) => Promise<T> | T
 ): void {
   handlers.set(channel, (_event, ...args) => envelope(() => fn(...args)))
-}
-
-/**
- * Same envelope as {@link handle}, but also hands the handler the raw
- * `IpcMainInvokeEvent` — needed only by the rare handler that must act on
- * `event.sender` itself (e.g. `WebContents.startDrag`).
- */
-export function handleWithEvent<T>(
-  channel: InvokeChannel,
-  fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => Promise<T> | T
-): void {
-  handlers.set(channel, (event, ...args) => envelope(() => fn(event, ...args)))
 }
 
 /** Registers a fire-and-forget send handler into the shared registry. */

@@ -8,10 +8,10 @@ import { host } from '../host/host'
 
 export const DEFAULT_UPDATE_FEED_URL =
   'https://github.com/ThienNg65/ferry-release/releases/latest/download'
-export const NEUTRALINO_MANIFEST_FILE = 'latest-neutralino.yml'
+export const UPDATE_MANIFEST_FILE = 'latest.yml'
 
-export function isNeutralinoInstallerName(fileName: string): boolean {
-  return /^Ferry-Neutralino-Setup-[A-Za-z0-9._-]+\.exe$/i.test(fileName)
+export function isFerryInstallerName(fileName: string): boolean {
+  return /^Ferry-Setup-[A-Za-z0-9._-]+\.exe$/i.test(fileName)
 }
 
 export interface UpdateManifest {
@@ -101,28 +101,28 @@ export class SidecarUpdater extends EventEmitter {
 
   private async fetchManifest(): Promise<UpdateManifest> {
     const base = this.getFeedBase()
-    const res = await this.deps.fetchImpl(`${base}/${NEUTRALINO_MANIFEST_FILE}`)
+    const res = await this.deps.fetchImpl(`${base}/${UPDATE_MANIFEST_FILE}`)
     if (res.status === 404) {
-      throw new Error(`No Neutralino update manifest (${NEUTRALINO_MANIFEST_FILE}) found on release feed`)
+      throw new Error(`No update manifest (${UPDATE_MANIFEST_FILE}) found on release feed`)
     }
     if (!res.ok) {
       throw new Error(`Update manifest fetch failed (${res.status} ${res.statusText})`)
     }
     const parsed = parseUpdateManifest(await res.text())
     if (!parsed) {
-      throw new Error(`Invalid update manifest in ${NEUTRALINO_MANIFEST_FILE}`)
+      throw new Error(`Invalid update manifest in ${UPDATE_MANIFEST_FILE}`)
     }
     const safeName = path.basename(parsed.path)
-    if (!isNeutralinoInstallerName(safeName)) {
-      throw new Error(`Refusing non-Neutralino installer in update manifest: ${safeName}`)
+    if (!isFerryInstallerName(safeName)) {
+      throw new Error(`Refusing unexpected installer in update manifest: ${safeName}`)
     }
     return parsed
   }
 
   private async downloadAndVerify(manifest: UpdateManifest): Promise<string> {
     const safeName = path.basename(manifest.path)
-    if (!isNeutralinoInstallerName(safeName)) {
-      throw new Error(`Invalid Neutralino installer filename in update manifest: ${manifest.path}`)
+    if (!isFerryInstallerName(safeName)) {
+      throw new Error(`Invalid installer filename in update manifest: ${manifest.path}`)
     }
     mkdirSync(this.deps.downloadDir, { recursive: true })
     const finalPath = path.join(this.deps.downloadDir, safeName)
@@ -205,12 +205,18 @@ export class SidecarUpdater extends EventEmitter {
     }
   }
 
-  quitAndInstall(isSilent = true): void {
+  quitAndInstall(isSilent = true, isForceRunAfter = true): void {
     const installerPath = this.downloadedInstallerPath
     if (!installerPath || !existsSync(installerPath)) {
       throw new Error('No verified update installer is ready to launch')
     }
-    const args = isSilent ? ['/S'] : []
+    const args = ['--updated']
+    if (isSilent) {
+      args.push('/S')
+    }
+    if (isForceRunAfter) {
+      args.push('--force-run')
+    }
     const child = this.deps.spawnImpl(installerPath, args, {
       detached: true,
       stdio: 'ignore'

@@ -1,0 +1,398 @@
+import { createHash } from 'crypto'
+import { execFile, execFileSync, spawn, spawnSync } from 'child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import http from 'http'
+import * as os from 'os'
+import { dirname, join, resolve } from 'path'
+import { fileURLToPath } from 'url'
+
+if (process.platform !== 'win32') throw new Error('Migration E2E requires Windows.')
+if (process.env.GITHUB_ACTIONS !== 'true' ||
+    process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
+    process.env.FERRY_E2E_ISOLATED_RUNNER !== '1') {
+  throw new Error('Migration E2E requires an opted-in fresh GitHub-hosted Windows runner.')
+}
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const rootDir = resolve(__dirname, '..')
+const distDir = join(rootDir, 'dist')
+const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
+const version = String(pkg.version)
+if (version !== '0.24.0') throw new Error(`Expected v0.24.0 release candidate, got ${version}`)
+const neutralinoInstaller = join(distDir, `Ferry-Setup-${version}.exe`)
+
+if (!existsSync(neutralinoInstaller)) {
+  throw new Error(`Missing packaged Neutralino installer: ${neutralinoInstaller}. Run "npm run package" first.`)
+}
+
+const ELECTRON_V0231_URL =
+  'https://github.com/ThienNg65/ferry-release/releases/download/ferry-v0.23.1/Ferry-Setup-0.23.1.exe'
+
+function runPs(script) {
+  return execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8'
+  }).trim()
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
+
+// ---------------------------------------------------------------------------
+// 1. Fault-Injection Tests: Locked-file rollback & pre-existing backup preservation
+// ---------------------------------------------------------------------------
+console.log('=== [1/4] Fault-injection: locked-file rollback ===')
+{
+  const dir = mkdtempSync(join(os.tmpdir(), 'ferry-rollback-lock-'))
+  let locker = null
+  try {
+    mkdirSync(join(dir, 'locales'), { recursive: true })
+    mkdirSync(join(dir, 'resources'), { recursive: true })
+    writeFileSync(join(dir, 'Ferry.exe'), 'original-electron-exe')
+    writeFileSync(join(dir, 'Uninstall Ferry.exe'), 'original-uninstaller')
+    writeFileSync(join(dir, 'resources', 'app.asar'), 'original-asar')
+    writeFileSync(join(dir, 'locales', 'en-US.pak'), 'locked-pak')
+
+    // Hold an exclusive OS file lock on locales\en-US.pak so BackupDir("locales") fails.
+    const lockPath = join(dir, 'locales', 'en-US.pak').replace(/'/g, "''")
+    locker = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `$fs = [IO.File]::Open('${lockPath}', 'Open', 'ReadWrite', 'None'); Write-Output 'LOCKED'; Start-Sleep -Seconds 30; $fs.Close()`
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] }
+    )
+    await new Promise((resolveLock, rejectLock) => {
+      const timer = setTimeout(() => rejectLock(new Error('File locker did not start')), 5000)
+      locker.stdout.on('data', (d) => {
+        if (d.toString().includes('LOCKED')) {
+          clearTimeout(timer)
+          resolveLock()
+        }
+      })
+    })
+
+    const res = spawnSync(neutralinoInstaller, ['/S', `/D=${dir}`], { encoding: 'utf8' })
+    assert(res.status !== 0, `Expected installer to fail on locked file, got exit ${res.status}`)
+    assert(readFileSync(join(dir, 'Ferry.exe'), 'utf8') === 'original-electron-exe', 'Ferry.exe was not restored after rollback')
+    assert(readFileSync(join(dir, 'resources', 'app.asar'), 'utf8') === 'original-asar', 'app.asar was not restored after rollback')
+    assert(!existsSync(join(dir, '_ferry_upgrade_backup')), '_ferry_upgrade_backup was not cleaned up after rollback')
+    console.log('  PASS: locked-file rollback restored previous installation.')
+  } finally {
+    if (locker && locker.exitCode === null) {
+      const exited = new Promise((r) => locker.once('exit', r))
+      locker.kill()
+      await exited
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+console.log('=== [2/4] Fault-injection: pre-existing interrupted backup preservation ===')
+{
+  const dir = mkdtempSync(join(os.tmpdir(), 'ferry-rollback-crash-'))
+  let locker = null
+  try {
+    mkdirSync(join(dir, '_ferry_upgrade_backup', 'resources'), { recursive: true })
+    mkdirSync(join(dir, 'locales'), { recursive: true })
+    writeFileSync(join(dir, '_ferry_upgrade_backup', 'Ferry.exe'), 'intact-pre-crash-backup')
+    writeFileSync(join(dir, '_ferry_upgrade_backup', 'resources', 'app.asar'), 'intact-pre-crash-asar')
+    writeFileSync(join(dir, 'locales', 'en-US.pak'), 'locked-pak')
+
+    const lockPath = join(dir, 'locales', 'en-US.pak').replace(/'/g, "''")
+    locker = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        `$fs = [IO.File]::Open('${lockPath}', 'Open', 'ReadWrite', 'None'); Write-Output 'LOCKED'; Start-Sleep -Seconds 30; $fs.Close()`
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] }
+    )
+    await new Promise((resolveLock, rejectLock) => {
+      const timer = setTimeout(() => rejectLock(new Error('File locker did not start')), 5000)
+      locker.stdout.on('data', (d) => {
+        if (d.toString().includes('LOCKED')) {
+          clearTimeout(timer)
+          resolveLock()
+        }
+      })
+    })
+
+    const res = spawnSync(neutralinoInstaller, ['/S', `/D=${dir}`], { encoding: 'utf8' })
+    assert(res.status !== 0, `Expected installer retry to fail on locked file, got exit ${res.status}`)
+    assert(
+      readFileSync(join(dir, 'Ferry.exe'), 'utf8') === 'intact-pre-crash-backup',
+      'Pre-existing _ferry_upgrade_backup was overwritten instead of preserved/restored'
+    )
+    console.log('  PASS: pre-existing interrupted backup was preserved and restored.')
+  } finally {
+    if (locker && locker.exitCode === null) {
+      const exited = new Promise((r) => locker.once('exit', r))
+      locker.kill()
+      await exited
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Fault injection: failed restoration must preserve the only backup
+// ---------------------------------------------------------------------------
+console.log('=== [3/4] Fault-injection: failed restoration retains the backup ===')
+{
+  const dir = mkdtempSync(join(os.tmpdir(), 'ferry-restore-failure-'))
+  let locker = null
+  try {
+    const backup = join(dir, '_ferry_upgrade_backup')
+    mkdirSync(backup, { recursive: true })
+    writeFileSync(join(backup, 'Ferry.exe'), 'only-valid-backup')
+    writeFileSync(join(dir, 'Ferry.exe'), 'locked-partial-install')
+    const lockPath = join(dir, 'Ferry.exe').replace(/'/g, "''")
+    locker = spawn('powershell.exe', [
+      '-NoProfile', '-Command',
+      `$fs = [IO.File]::Open('${lockPath}', 'Open', 'ReadWrite', 'None'); Write-Output 'LOCKED'; Start-Sleep -Seconds 30; $fs.Close()`
+    ], { stdio: ['ignore', 'pipe', 'inherit'] })
+    await new Promise((resolveLock, rejectLock) => {
+      const timer = setTimeout(() => rejectLock(new Error('Restore failure lock did not start')), 5000)
+      locker.stdout.on('data', (d) => {
+        if (d.toString().includes('LOCKED')) {
+          clearTimeout(timer)
+          resolveLock()
+        }
+      })
+    })
+    const result = spawnSync(neutralinoInstaller, ['/S', `/D=${dir}`], { encoding: 'utf8' })
+    assert(result.status !== 0, `Expected a failed restore, got installer exit ${result.status}`)
+    assert(existsSync(join(backup, 'Ferry.exe')), 'The original backup was deleted after restoration failed')
+    assert(readFileSync(join(backup, 'Ferry.exe'), 'utf8') === 'only-valid-backup',
+      'The original backup was modified after restoration failed')
+    console.log('  PASS: failed restore leaves the only valid backup intact.')
+  } finally {
+    if (locker && locker.exitCode === null) {
+      const exited = new Promise((resolveExit) => locker.once('exit', resolveExit))
+      locker.kill()
+      await exited
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Real v0.23.1 Electron -> electron-updater -> Neutralino E2E Migration
+// ---------------------------------------------------------------------------
+console.log('=== [4/4] Real v0.23.1 Electron -> electron-updater -> Neutralino E2E ===')
+const electronInstaller =
+  process.env.FERRY_ELECTRON_INSTALLER || join(os.tmpdir(), 'ferry-v0.23.1-electron-setup.exe')
+
+if (!existsSync(electronInstaller)) {
+  console.log(`Downloading real v0.23.1 Electron installer from ${ELECTRON_V0231_URL}...`)
+  const resp = await fetch(ELECTRON_V0231_URL)
+  if (!resp.ok) throw new Error(`Failed to download ${ELECTRON_V0231_URL}: ${resp.status}`)
+  writeFileSync(electronInstaller, Buffer.from(await resp.arrayBuffer()))
+}
+
+const appDataDir = join(process.env.APPDATA || join(os.homedir(), 'AppData', 'Roaming'), 'Ferry')
+if (existsSync(appDataDir)) throw new Error(`Refusing to modify existing Ferry profile at ${appDataDir}`)
+const existingInstall = join(process.env.LOCALAPPDATA || '', 'Programs', 'Ferry')
+if (existsSync(existingInstall)) throw new Error('Refusing to modify existing Ferry installation')
+const oldEntries = runPs(String.raw`$hives = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'); foreach ($h in $hives) { if (Test-Path $h) { Get-ChildItem $h | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like 'Ferry*' } | ForEach-Object { $_.DisplayName } } }`)
+if (oldEntries) throw new Error('Refusing to modify an existing Ferry uninstall registration')
+const customDir = mkdtempSync(join(os.tmpdir(), 'ferry-e2e-real-'))
+let httpServer = null
+let createdTestProfile = false
+
+try {
+  mkdirSync(appDataDir, { recursive: true })
+  createdTestProfile = true
+  // Seed DPAPI Local State + encrypted sites in a newly-created test profile.
+  const dpapiOut = runPs(`
+    Add-Type -AssemblyName System.Security
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $key = New-Object byte[] 32
+    $rng.GetBytes($key)
+    $enc = [Security.Cryptography.ProtectedData]::Protect($key, $null, 'CurrentUser')
+    $prefix = [System.Text.Encoding]::ASCII.GetBytes('DPAPI')
+    $combined = New-Object byte[] ($prefix.Length + $enc.Length)
+    [Array]::Copy($prefix, 0, $combined, 0, $prefix.Length)
+    [Array]::Copy($enc, 0, $combined, $prefix.Length, $enc.Length)
+    Write-Output ([Convert]::ToBase64String($key))
+    Write-Output ([Convert]::ToBase64String($combined))
+  `).split(/\r?\n/)
+  const rawKey = Buffer.from(dpapiOut[0].trim(), 'base64')
+  const wrappedKeyB64 = dpapiOut[1].trim()
+
+  const { createCipheriv, randomBytes } = await import('crypto')
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', rawKey, iv)
+  const ct = Buffer.concat([cipher.update('e2e-secret-password', 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  const v10Secret = Buffer.concat([Buffer.from('v10'), iv, ct, tag]).toString('base64')
+
+  writeFileSync(join(appDataDir, 'Local State'), JSON.stringify({ os_crypt: { encrypted_key: wrappedKeyB64 } }))
+  writeFileSync(
+    join(appDataDir, 'sites.json'),
+    JSON.stringify({
+      sites: [
+        {
+          id: 'e2e-site',
+          name: 'E2E Server',
+          host: 'e2e.example.com',
+          port: 22,
+          username: 'tester',
+          authMethod: 'password',
+          secretPassword: v10Secret,
+          createdAt: '2026-11-14T00:00:00.000Z',
+          updatedAt: '2026-11-14T00:00:00.000Z'
+        }
+      ]
+    })
+  )
+  writeFileSync(
+    join(appDataDir, 'known_hosts.json'),
+    JSON.stringify({ hosts: { 'e2e.example.com:22': 'SHA256:e2etestfingerprint' } })
+  )
+
+  // Install real v0.23.1 Electron into custom directory
+  const instElectron = spawnSync(electronInstaller, ['/S', `/D=${customDir}`], { encoding: 'utf8' })
+  assert(instElectron.status === 0, `Electron installer failed: ${instElectron.status}`)
+  assert(existsSync(join(customDir, 'Ferry.exe')), 'Electron Ferry.exe missing')
+
+  // Start local HTTP update feed serving canonical latest.yml (with target version 0.24.0) + Ferry-Setup-*.exe
+  const nlBuf = readFileSync(neutralinoInstaller)
+  const nlSha512 = createHash('sha512').update(nlBuf).digest('base64')
+  const nlExeName = `Ferry-Setup-${version}.exe`
+  const feedManifest = `version: ${version}\nfiles:\n  - url: ${nlExeName}\n    sha512: ${nlSha512}\n    size: ${nlBuf.length}\npath: ${nlExeName}\nsha512: ${nlSha512}\nreleaseDate: '${new Date().toISOString()}'\n`
+
+  let manifestRequested = false
+  let installerDownloaded = false
+  httpServer = http.createServer((req, res) => {
+    const pathname = new URL(req.url || '/', 'http://127.0.0.1').pathname
+    if (pathname === '/latest.yml') {
+      manifestRequested = true
+      res.writeHead(200, { 'Content-Type': 'text/yaml' })
+      res.end(feedManifest)
+    } else if (pathname === `/${nlExeName}`) {
+      installerDownloaded = true
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(nlBuf.length) })
+      res.end(nlBuf)
+    } else {
+      res.writeHead(404)
+      res.end('Not found')
+    }
+  })
+  await new Promise((r) => httpServer.listen(0, '127.0.0.1', r))
+  const feedPort = httpServer.address().port
+
+  // Point the installed Electron app's app-update.yml to our local generic feed
+  writeFileSync(
+    join(customDir, 'resources', 'app-update.yml'),
+    `provider: generic\nurl: http://127.0.0.1:${feedPort}\nupdaterCacheDirName: ferry-updater\n`,
+    'utf8'
+  )
+
+  // Launch real Electron Ferry.exe and wait for its bundled electron-updater to fetch latest.yml + download installer
+  const electronChild = spawn(join(customDir, 'Ferry.exe'), [], { detached: true, stdio: 'ignore' })
+  electronChild.unref()
+
+  const dlDeadline = Date.now() + 30_000
+  while ((!manifestRequested || !installerDownloaded) && Date.now() < dlDeadline) {
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  assert(manifestRequested, 'Real Electron electron-updater did not request /latest.yml')
+  assert(installerDownloaded, `Real Electron electron-updater did not download /${nlExeName}`)
+  console.log('  PASS: real Electron electron-updater fetched latest.yml and downloaded Neutralino installer.')
+
+  // Exercise the installed Electron app's actual Update ready -> Restart action.
+  const uiScript = [
+    'Add-Type -AssemblyName UIAutomationClient',
+    'Add-Type -AssemblyName UIAutomationTypes',
+    `$targetPid = ${electronChild.pid}`,
+    '$deadline = [DateTime]::UtcNow.AddSeconds(60)',
+    '$invoked = $false',
+    'while ([DateTime]::UtcNow -lt $deadline) {',
+    '  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $targetPid)))',
+    '  foreach ($window in $windows) {',
+    "    $button = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'Restart to update')))",
+    '    if ($null -ne $button) {',
+    '      $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+    '      $invoked = $true; break',
+    '    }',
+    '  }',
+    '  if ($invoked) { break }',
+    '  Start-Sleep -Milliseconds 500',
+    '}',
+    "if (-not $invoked) { throw 'Electron UI never exposed Restart to update' }",
+    "Write-Output 'RESTART_INVOKED'"
+  ].join('\n')
+  // Must be asynchronous: this Node process also serves the installer over HTTP.
+  // spawnSync would block that server before electron-updater finished downloading.
+  const uiOutput = await new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', uiScript],
+      { encoding: 'utf8', timeout: 70_000 },
+      (error, stdout, stderr) => {
+        if (error) reject(new Error(`Electron update UI automation failed: ${stderr || error.message}`))
+        else resolve(stdout)
+      })
+  })
+  assert(uiOutput.includes('RESTART_INVOKED'), 'Electron did not invoke Restart to update')
+  // Do not launch NSIS manually: it must be started by electron-updater itself.
+  const upgradeDeadline = Date.now() + 90_000
+  while ((!existsSync(join(customDir, 'ferry-win_x64.exe')) || existsSync(join(customDir, 'Ferry.exe'))) &&
+         Date.now() < upgradeDeadline) {
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  assert(existsSync(join(customDir, 'ferry-win_x64.exe')) && !existsSync(join(customDir, 'Ferry.exe')),
+    'Electron-triggered quitAndInstall failed to migrate the runtime')
+  await new Promise((r) => setTimeout(r, 2000))
+
+  // Verify Neutralino + Node sidecar are running and Electron is gone
+  const procCheck = runPs(`
+    $nl = Get-Process -Name 'ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) }
+    $sc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) }
+    if (-not $nl) { throw 'Neutralino ferry-win_x64.exe did not launch' }
+    if (-not $sc) { throw 'Node sidecar did not launch' }
+    $nl | Stop-Process -Force -ErrorAction SilentlyContinue
+    $sc | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Write-Output "OK"
+  `)
+  assert(procCheck.includes('OK'), 'Neutralino process verification failed')
+
+  assert(!existsSync(join(customDir, 'Ferry.exe')), 'Electron Ferry.exe still exists')
+  assert(!existsSync(join(customDir, 'Uninstall Ferry.exe')), 'Electron Uninstall Ferry.exe still exists')
+  assert(!existsSync(join(customDir, 'resources', 'app.asar')), 'Electron app.asar still exists')
+  assert(existsSync(join(customDir, 'ferry-win_x64.exe')), 'Neutralino ferry-win_x64.exe missing')
+
+  // Verify single Uninstall entry
+  const uninstallCount = runPs(`
+    $keys = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like 'Ferry*' })
+    Write-Output "$($keys.Count):$($keys.PSChildName -join ',')"
+  `)
+  assert(uninstallCount === '1:Ferry', `Expected exactly 1 Uninstall entry (1:Ferry), got ${uninstallCount}`)
+
+  // Verify %APPDATA%\Ferry DPAPI secret and known_hosts preserved
+  const preservedSites = JSON.parse(readFileSync(join(appDataDir, 'sites.json'), 'utf8'))
+  assert(preservedSites.sites[0].secretPassword === v10Secret, 'DPAPI secret in sites.json was altered')
+  const preservedHosts = JSON.parse(readFileSync(join(appDataDir, 'known_hosts.json'), 'utf8'))
+  assert(preservedHosts.hosts['e2e.example.com:22'] === 'SHA256:e2etestfingerprint', 'known_hosts.json was altered')
+  console.log('  PASS: custom-dir migration, single Uninstall entry, Neutralino launch, and DPAPI data preservation verified.')
+
+  // Clean uninstall
+  const uninst = spawnSync(join(customDir, 'Uninstall.exe'), ['/S'], { encoding: 'utf8' })
+  assert(uninst.status === 0, `Uninstaller failed: ${uninst.status}`)
+} finally {
+  httpServer?.close()
+  try {
+    runPs(
+      `Get-Process -Name 'Ferry','ferry-win_x64' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith('${customDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0`
+    )
+  } catch {
+    // ignore cleanup errors
+  }
+  rmSync(customDir, { recursive: true, force: true })
+  if (createdTestProfile) rmSync(appDataDir, { recursive: true, force: true })
+}
+
+console.log('ALL E2E MIGRATION & ROLLBACK GATES PASSED!')

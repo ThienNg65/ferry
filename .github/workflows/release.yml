@@ -76,32 +76,6 @@ jobs:
 
       - uses: ./.github/actions/setup-node-deps
 
-      - name: Cache electron and electron-builder
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/AppData/Local/electron/Cache
-            ~/AppData/Local/electron-builder/Cache
-          key: electron-builder-win-${{ runner.os }}-${{ hashFiles('package-lock.json', 'electron-builder.yml') }}
-          restore-keys: |
-            electron-builder-win-${{ runner.os }}-
-
-      - name: Build and Package with Electron Builder
-        shell: bash
-        run: |
-          npm run build
-          max_attempts=3
-          attempt=1
-          until npx electron-builder --publish never; do
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "::error::electron-builder packaging failed after $max_attempts attempts."
-              exit 1
-            fi
-            echo "Packaging failed on attempt $attempt. Retrying in 15 seconds..."
-            attempt=$((attempt + 1))
-            sleep 15
-          done
-
       - name: Install and verify NSIS compiler
         shell: pwsh
         run: |
@@ -117,16 +91,22 @@ jobs:
           "FERRY_MAKENSIS=$compiler" >> $env:GITHUB_ENV
           "FERRY_REQUIRE_NSIS=1" >> $env:GITHUB_ENV
 
-      # Build and package Neutralino desktop shell + Node sidecar alongside Electron.
+      # Build and package the canonical Neutralino desktop shell + Node sidecar.
       - name: Build and Package Neutralino
         shell: bash
-        run: |
-          npm run build:neutralino
-          npm run package:neutralino
+        run: npm run package
 
       - name: Smoke test Neutralino package
         shell: bash
         run: npm run smoke:neutralino
+
+      # Hard gate for the one-time Electron bridge, isolated from developer profiles.
+      - name: E2E Electron to Neutralino migration
+        if: steps.target.outputs.version == '0.24.0'
+        shell: bash
+        env:
+          FERRY_E2E_ISOLATED_RUNNER: '1'
+        run: npm run e2e:migration
 
       # Dormant SignPath stage: active only when the organization ID is configured.
       - name: Upload unsigned installer for signing
@@ -135,9 +115,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unsigned-installer
-          path: |
-            dist/Ferry-Setup-*.exe
-            dist/Ferry-Neutralino-Setup-*.exe
+          path: dist/Ferry-Setup-*.exe
 
       - name: Submit signing request to SignPath
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
@@ -160,15 +138,18 @@ jobs:
         run: |
           shopt -s nullglob
           installers=(dist/Ferry-Setup-*.exe)
-          blockmaps=(dist/*.blockmap)
-          nl_installers=(dist/Ferry-Neutralino-Setup-*.exe)
-          nl_zips=(dist/Ferry-Neutralino-*-win-x64.zip)
-          if [ "${#installers[@]}" -ne 1 ] || [ "${#blockmaps[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
-            echo "::error::Expected one Electron installer, one blockmap and a nonempty latest.yml."
+          zips=(dist/Ferry-Portable-*-win-x64.zip)
+          legacy_nl=(dist/Ferry-Neutralino-*)
+          if [ "${#installers[@]}" -ne 1 ] || [ "${#zips[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
+            echo "::error::Expected one Ferry-Setup-*.exe, one Ferry-Portable-*-win-x64.zip, and a nonempty dist/latest.yml."
             exit 1
           fi
-          if [ "${#nl_installers[@]}" -ne 1 ] || [ "${#nl_zips[@]}" -ne 1 ] || [ ! -s dist/latest-neutralino.yml ]; then
-            echo "::error::Expected one Neutralino installer, one portable zip and a nonempty latest-neutralino.yml."
+          if [ "${#legacy_nl[@]}" -ne 0 ] || [ -e dist/latest-neutralino.yml ]; then
+            echo "::error::Unexpected legacy Ferry-Neutralino-* or latest-neutralino.yml artifacts found."
+            exit 1
+          fi
+          if [ -e dist/ferry-neutralino-win_x64/resources/app.asar ] || [ -e dist/ferry-neutralino-win_x64/chrome_100_percent.pak ]; then
+            echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
             exit 1
           fi
 
@@ -191,7 +172,7 @@ jobs:
           NOTES_FILE: ${{ steps.public-release.outputs.notes_file }}
         run: |
           shopt -s nullglob
-          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml dist/Ferry-Neutralino-Setup-*.exe dist/Ferry-Neutralino-*-win-x64.zip dist/latest-neutralino.yml)
+          assets=(dist/Ferry-Setup-*.exe dist/Ferry-Portable-*-win-x64.zip dist/latest.yml)
           # Never move an existing release tag: release tags must be stable.
           if existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null); then
             : # Existing tag found.
@@ -221,5 +202,5 @@ jobs:
           LEGACY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml dist/Ferry-Neutralino-Setup-*.exe dist/Ferry-Neutralino-*-win-x64.zip dist/latest-neutralino.yml)
+          assets=(dist/Ferry-Setup-*.exe dist/Ferry-Portable-*-win-x64.zip dist/latest.yml)
           GH_TOKEN="$LEGACY_TOKEN" gh release upload "$TAG" "${assets[@]}" --repo "${{ github.repository }}" --clobber

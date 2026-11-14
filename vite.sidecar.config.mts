@@ -7,7 +7,7 @@ const externalNativeAddons: Plugin = {
   name: 'external-native-addons',
   enforce: 'pre',
   resolveId(source) {
-    if (source.endsWith('.node') || source === 'cpu-features' || source === 'electron' || source === 'electron-updater') {
+    if (source.endsWith('.node') || source === 'cpu-features') {
       return { id: source, external: true }
     }
     return null
@@ -22,7 +22,7 @@ export default defineConfig({
   publicDir: false,
   ssr: {
     noExternal: true,
-    external: ['cpu-features', 'electron', 'electron-updater']
+    external: ['cpu-features']
   },
   build: {
     ssr: 'src/sidecar/index.ts',
@@ -31,10 +31,10 @@ export default defineConfig({
     target: 'node22',
     minify: 'esbuild',
     commonjsOptions: {
-      ignore: (id) => id.endsWith('.node') || id === 'cpu-features' || id === 'electron' || id === 'electron-updater'
+      ignore: (id) => id.endsWith('.node') || id === 'cpu-features'
     },
     rollupOptions: {
-      external: ['cpu-features', 'electron', 'electron-updater', /\.node$/],
+      external: ['cpu-features', /\.node$/],
       output: { format: 'cjs', entryFileNames: 'index.cjs', inlineDynamicImports: true }
     }
   }

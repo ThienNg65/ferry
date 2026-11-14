@@ -1,6 +1,6 @@
 # Ferry
 
-A lightweight WinSCP alternative: an Electron + Vue 3 desktop SFTP client. SSH/SFTP only — no
+A lightweight WinSCP alternative: a Neutralinojs + Vue 3 desktop SFTP client. SSH/SFTP only — no
 FTP/FTPS/SCP.
 
 ## Features
@@ -59,10 +59,10 @@ Authenticode signing program the moment that application is approved; see
 
 ```bash
 npm install --registry=https://registry.npmjs.org
-npm run dev          # electron-vite dev, hot reload
+npm run dev          # build and launch Neutralinojs dev shell
 npm run typecheck    # type-check the whole project, no emit
-npm run build        # electron-vite build -> out/
-npm run package      # build + electron-builder -> dist/*.exe (NSIS) + dist/win-unpacked/
+npm run build        # build renderer & Node sidecar -> out/
+npm run package      # build + package Ferry-Setup-*.exe (NSIS), Ferry-Portable-*-win-x64.zip, latest.yml
 npm test             # vitest run (single pass)
 ```
 
@@ -74,9 +74,10 @@ conventions, and development notes.
 CI lives in `.github/workflows/ci.yml` and runs type checking, tests, and a build on each
 push/PR to `main`. Release Please handles versioning and source release tags through
 `.github/workflows/release.yml`. Its Windows packaging job builds and (when configured with a
-scoped `PUBLIC_RELEASE_TOKEN`) uploads the NSIS installer, blockmap, and `latest.yml` to
+scoped `PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` to
 `ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
 the same assets are uploaded to the legacy `ferry` release for existing installations.
+Note: `v0.23.1` Neutralino preview users must run `Ferry-Setup-0.24.0.exe` manually once (preserving `%APPDATA%\Ferry`); `v0.22.x`/`v0.23.x` Electron users and `v0.24.0+` Neutralino users update automatically.
 See [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 
 Signing goes through a currently-dormant SignPath stage rather than `electron-builder`'s native
