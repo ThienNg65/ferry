@@ -56,7 +56,7 @@ function canonicalWindowsPath(filePath) {
 function runningFerryProcesses() {
   // Only collect executable name, PID and path: never log command lines
   // because Neutralino extension arguments may contain authentication tokens.
-  const raw = runPs(String.raw\`$rows = @(Get-CimInstance Win32_Process -Filter "Name='Ferry.exe' OR Name='ferry-win_x64.exe' OR Name='node.exe'" | Select-Object Name,ProcessId,ExecutablePath); ConvertTo-Json -InputObject $rows -Compress\`)
+  const raw = runPs(String.raw`$rows = @(Get-CimInstance Win32_Process -Filter "Name='Ferry.exe' OR Name='ferry-win_x64.exe' OR Name='node.exe'" | Select-Object Name,ProcessId,ExecutablePath); ConvertTo-Json -InputObject $rows -Compress`)
   const processes = JSON.parse(raw || '[]')
   return (Array.isArray(processes) ? processes : [processes]).filter(
     (p) => p && typeof p.ExecutablePath === 'string' && Number.isInteger(p.ProcessId)
@@ -69,7 +69,7 @@ function processesInDirectory(dir) {
 }
 
 function describeProcesses(processes) {
-  return processes.map((p) => \`\${p.Name} PID=\${p.ProcessId} path=\${p.ExecutablePath}\`).join('; ') || '(none)'
+  return processes.map((p) => `${p.Name} PID=${p.ProcessId} path=${p.ExecutablePath}`).join('; ') || '(none)'
 }
 
 function terminateProcessesInDirectory(dir) {
@@ -413,8 +413,8 @@ try {
   } while (Date.now() < launchDeadline)
 
   assert(hostProcess && nodeProcess,
-    \`Neutralino host/sidecar did not launch from the migrated install. Found: \${describeProcesses(observed)}\`)
-  console.log(\`  PASS: Neutralino host PID=\${hostProcess.ProcessId} and Node sidecar PID=\${nodeProcess.ProcessId} launched.\`)
+    `Neutralino host/sidecar did not launch from the migrated install. Found: ${describeProcesses(observed)}`)
+  console.log(`  PASS: Neutralino host PID=${hostProcess.ProcessId} and Node sidecar PID=${nodeProcess.ProcessId} launched.`)
 
   assert(!existsSync(join(customDir, 'Ferry.exe')), 'Electron Ferry.exe still exists')
   assert(!existsSync(join(customDir, 'Uninstall Ferry.exe')), 'Electron Uninstall Ferry.exe still exists')
@@ -447,7 +447,7 @@ try {
   try {
     terminateProcessesInDirectory(customDir)
   } catch (error) {
-    console.warn(\`Unable to inspect test processes during cleanup: \${String(error)}\`)
+    console.warn(`Unable to inspect test processes during cleanup: ${String(error)}`)
   }
 
   // On GitHub-hosted runners lingering WebView2 handles can delay deletion.
@@ -455,13 +455,13 @@ try {
   try {
     rmSync(customDir, { recursive: true, force: true, maxRetries: 15, retryDelay: 300 })
   } catch (error) {
-    console.warn(\`Unable to remove temporary test installation: \${String(error)}\`)
+    console.warn(`Unable to remove temporary test installation: ${String(error)}`)
   }
   if (createdTestProfile) {
     try {
       rmSync(appDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
     } catch (error) {
-      console.warn(\`Unable to remove isolated test profile: \${String(error)}\`)
+      console.warn(`Unable to remove isolated test profile: ${String(error)}`)
     }
   }
 }
