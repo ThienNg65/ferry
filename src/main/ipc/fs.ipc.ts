@@ -4,9 +4,11 @@ import {
   INVOKE_CHANNELS,
   type DeleteManyRequest,
   type DeleteManyResult,
+  type FileEntry,
   type FileListResult,
   type FileReadResult,
-  type RemoteAdminRequest
+  type RemoteAdminRequest,
+  type StageDropRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -36,6 +38,9 @@ export function registerFsHandlers(): void {
   )
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
     LocalFs.remove(targetPath as string, Boolean(isDir))
+  )
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) =>
+    LocalFs.stageDroppedEntries(req as StageDropRequest)
   )
   handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {

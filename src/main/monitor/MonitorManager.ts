@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import {
   capProcesses,
@@ -199,19 +199,11 @@ export class MonitorManager {
   }
 
   private broadcastSample(sample: MonitorSample): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.monitorSample, sample)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.monitorSample, sample)
   }
 
   private broadcastStatus(sessionId: string, state: MonitorStatusEvent['state'], message?: string): void {
     const payload: MonitorStatusEvent = { sessionId, state, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.monitorStatus, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.monitorStatus, payload)
   }
 }

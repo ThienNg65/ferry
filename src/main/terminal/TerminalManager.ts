@@ -1,5 +1,5 @@
-import { BrowserWindow } from 'electron'
 import type { ClientChannel } from 'ssh2'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import { shellEscape } from '../ssh/shellEscape'
 import { FlowControl } from './FlowControl'
@@ -34,20 +34,12 @@ export class TerminalManager {
 
   private broadcastData(terminalId: string, data: Uint8Array): void {
     const payload: TerminalDataEvent = { terminalId, data }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.terminalData, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.terminalData, payload)
   }
 
   private broadcastExit(terminalId: string, exitCode: number | null): void {
     const payload: TerminalExitEvent = { terminalId, exitCode }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.terminalExit, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.terminalExit, payload)
   }
 
   /** Opens a PTY shell on `sessionId`'s connection. `terminalId` is caller-chosen. */

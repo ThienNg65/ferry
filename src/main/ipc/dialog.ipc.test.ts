@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const focusedWindow = { id: 'focused' }
 
@@ -18,12 +19,6 @@ const browserWindowMock = {
 }
 
 vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  },
   dialog: dialogMock,
   BrowserWindow: browserWindowMock
 }))

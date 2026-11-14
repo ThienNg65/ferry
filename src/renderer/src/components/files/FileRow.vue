@@ -5,6 +5,7 @@ import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMe
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry } from '@shared/contract'
 import { invoke } from '../../api'
+import { isNeutralinoRuntime } from '../../bridge/neutralinoApi'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
@@ -35,7 +36,7 @@ const ui = useUiStore()
  * no local path to hand the OS, so they keep the in-app-only payload used for downloads.
  */
 function onDragStart(event: DragEvent): void {
-  if (props.side === 'local') {
+  if (props.side === 'local' && !isNeutralinoRuntime()) {
     event.preventDefault()
     void invoke<void>(INVOKE_CHANNELS.systemStartDrag, props.entry.path)
     return

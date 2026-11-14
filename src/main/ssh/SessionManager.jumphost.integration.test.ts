@@ -15,9 +15,7 @@
  * physical endpoint here, and what that does and doesn't let it assert.
  */
 import { Client } from 'ssh2'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 const JUMP_HOST = '127.0.0.1'
 const JUMP_PORT = 2299 // Docker-mapped — reachable from this test process.

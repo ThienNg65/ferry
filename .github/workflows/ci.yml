@@ -41,3 +41,12 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build Neutralino & Sidecar
+        run: npm run build:neutralino
+
+      - name: Package Neutralino
+        run: npm run package:neutralino
+
+      - name: Smoke test Neutralino package
+        run: npm run smoke:neutralino

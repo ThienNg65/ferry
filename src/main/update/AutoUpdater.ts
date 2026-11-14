@@ -1,4 +1,3 @@
-import { app, BrowserWindow } from 'electron'
 import {
   EVENT_CHANNELS,
   type CheckUpdateResult,
@@ -7,37 +6,69 @@ import {
   type UpdateState
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
+import { host } from '../host/host'
+import { getSidecarUpdater } from './SidecarUpdater'
+
+interface UpdaterProgress {
+  percent: number
+  bytesPerSecond: number
+  transferred: number
+  total: number
+}
+
+interface UpdaterLike {
+  autoDownload: boolean
+  autoInstallOnAppQuit: boolean
+  on(event: 'checking-for-update', cb: () => void): unknown
+  on(event: 'update-available', cb: (info: { version: string }) => void): unknown
+  on(event: 'download-progress', cb: (progress: UpdaterProgress) => void): unknown
+  on(event: 'update-downloaded', cb: (info: { version: string }) => void): unknown
+  on(event: 'update-not-available', cb: () => void): unknown
+  on(event: 'error', cb: (err: unknown) => void): unknown
+  checkForUpdates(): Promise<{ updateInfo: { version: string } } | null>
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
+}
 
 let initialized = false
 let periodicTimer: NodeJS.Timeout | null = null
-let cachedAutoUpdater: typeof import('electron-updater').autoUpdater | null = null
+let cachedAutoUpdater: UpdaterLike | null = null
+let currentState: UpdateState | null = null
 
-let currentState: UpdateState = {
-  status: app.isPackaged ? 'idle' : 'disabled',
-  currentVersion: app.getVersion()
+function getIsPackaged(): boolean {
+  return Boolean(host().isPackaged)
 }
 
-function broadcast(channel: string, payload: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, payload)
+function getAppVersion(): string {
+  return host().appVersion ?? '0.22.0'
+}
+
+function ensureState(): UpdateState {
+  if (!currentState) {
+    currentState = {
+      status: getIsPackaged() ? 'idle' : 'disabled',
+      currentVersion: getAppVersion()
     }
   }
+  return currentState
 }
 
 function updateState(patch: Partial<UpdateState>): void {
-  currentState = { ...currentState, ...patch }
-  broadcast(EVENT_CHANNELS.updateStatus, currentState)
+  currentState = { ...ensureState(), currentVersion: getAppVersion(), ...patch }
+  host().broadcast(EVENT_CHANNELS.updateStatus, currentState)
 }
 
-/** Resolves the autoUpdater instance across ESM/CJS interop boundaries. */
-async function getAutoUpdater() {
+/** Resolves the updater instance across Electron and standalone Neutralino sidecar runtimes. */
+async function getAutoUpdater(): Promise<UpdaterLike> {
   if (cachedAutoUpdater) {
     return cachedAutoUpdater
   }
+  if (process.env['FERRY_UPDATER_MODE'] === 'sidecar' || (!process.versions.electron && !process.env['VITEST'])) {
+    cachedAutoUpdater = getSidecarUpdater()
+    return cachedAutoUpdater
+  }
   const mod = (await import('electron-updater')) as {
-    autoUpdater?: typeof import('electron-updater').autoUpdater
-    default?: { autoUpdater?: typeof import('electron-updater').autoUpdater }
+    autoUpdater?: UpdaterLike
+    default?: { autoUpdater?: UpdaterLike }
   }
   const updater = mod.default?.autoUpdater ?? mod.autoUpdater
   if (!updater) {
@@ -49,25 +80,33 @@ async function getAutoUpdater() {
 
 /** Returns the current snapshot of auto-update state. */
 export function getUpdateState(): UpdateState {
-  return { ...currentState }
+  return { ...ensureState() }
+}
+
+/** Resets singleton state for unit tests. */
+export function resetAutoUpdaterForTests(): void {
+  initialized = false
+  if (periodicTimer) {
+    clearInterval(periodicTimer)
+    periodicTimer = null
+  }
+  cachedAutoUpdater = null
+  currentState = null
 }
 
 /**
- * Wires electron-updater's GitHub-Releases-based update check.
+ * Wires GitHub-Releases-based update checks via `electron-updater` (Electron)
+ * or {@link SidecarUpdater} (Neutralino sidecar).
  *
- * `electron-builder.yml`'s `publish.owner`/`publish.repo` target the public
- * ferry-release repository. The private source repository builds and uploads
- * `latest.yml` and its matching installer to that public GitHub Releases feed.
- *
- * In dev (`app.isPackaged` is false), status is marked as 'disabled'.
+ * In unpackaged development mode (`host().isPackaged === false`), status is marked `'disabled'`.
  */
-export async function initAutoUpdater(): Promise<void> {
+export async function initAutoUpdater(checkImmediately = true): Promise<void> {
   if (initialized) {
     return
   }
   initialized = true
 
-  if (!app.isPackaged) {
+  if (!getIsPackaged()) {
     updateState({ status: 'disabled' })
     return
   }
@@ -86,7 +125,7 @@ export async function initAutoUpdater(): Promise<void> {
       availableVersion: info.version,
       error: undefined
     })
-    broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
+    host().broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
   })
 
   autoUpdater.on('download-progress', (progress) => {
@@ -107,7 +146,7 @@ export async function initAutoUpdater(): Promise<void> {
       availableVersion: info.version,
       error: undefined
     })
-    broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
+    host().broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
   })
 
   autoUpdater.on('update-not-available', () => {
@@ -133,23 +172,26 @@ export async function initAutoUpdater(): Promise<void> {
   }, SIX_HOURS_MS)
   periodicTimer.unref?.()
 
-  const settings = AppSettingsStore.getInstance().get()
-  if (settings.autoCheckUpdates !== false) {
-    void checkForUpdates(false)
+  if (checkImmediately) {
+    const settings = AppSettingsStore.getInstance().get()
+    if (settings.autoCheckUpdates !== false) {
+      void checkForUpdates(false)
+    }
   }
 }
 
 /** Checks for updates immediately. If isManual is true, returns status or error directly to caller. */
 export async function checkForUpdates(isManual = false): Promise<CheckUpdateResult> {
-  if (!app.isPackaged) {
+  if (!getIsPackaged()) {
     updateState({ status: 'disabled' })
     return { status: 'disabled', error: 'Updates are disabled in development mode' }
   }
 
-  await initAutoUpdater()
+  await initAutoUpdater(false)
 
-  if (currentState.status === 'checking' || currentState.status === 'downloading') {
-    return { status: currentState.status, version: currentState.availableVersion }
+  const state = ensureState()
+  if (state.status === 'checking' || state.status === 'downloading') {
+    return { status: state.status, version: state.availableVersion }
   }
 
   updateState({
@@ -161,9 +203,10 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
   try {
     const autoUpdater = await getAutoUpdater()
     const checkResult = await autoUpdater.checkForUpdates()
-    if (!checkResult || checkResult.updateInfo.version === app.getVersion()) {
+    const currentVer = getAppVersion()
+    if (!checkResult || checkResult.updateInfo.version === currentVer) {
       updateState({ status: 'not-available' })
-      return { status: 'not-available', version: app.getVersion() }
+      return { status: 'not-available', version: currentVer }
     }
     return { status: 'available', version: checkResult.updateInfo.version }
   } catch (err) {
@@ -180,7 +223,7 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
 
 /** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
 export async function installUpdateNow(): Promise<void> {
-  await initAutoUpdater()
+  await initAutoUpdater(false)
   const autoUpdater = await getAutoUpdater()
   autoUpdater.quitAndInstall(true, true)
 }

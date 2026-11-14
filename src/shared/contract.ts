@@ -360,6 +360,19 @@ export interface FileReadResult {
   size: number
 }
 
+/** One external OS file/folder dropped onto the webview when host filesystem paths aren't exposed directly. */
+export interface StageDropEntryInput {
+  relativePath: string
+  isDir: boolean
+  data?: Uint8Array
+  modifiedAt?: string
+}
+
+/** Request payload for `fs:local:stage-drop`. */
+export interface StageDropRequest {
+  entries: StageDropEntryInput[]
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -887,6 +900,7 @@ export const INVOKE_CHANNELS = {
   fsLocalMkdir: 'fs:local:mkdir',
   fsLocalRename: 'fs:local:rename',
   fsLocalDelete: 'fs:local:delete',
+  fsLocalStageDrop: 'fs:local:stage-drop',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',
@@ -966,6 +980,22 @@ export const INVOKE_CHANNELS = {
 /** Union of every valid invoke channel string. */
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNELS]
 
+/** Channels owned by the desktop shell host rather than the SSH/SFTP sidecar. */
+export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
+  INVOKE_CHANNELS.dialogPickFile,
+  INVOKE_CHANNELS.dialogPickFolder,
+  INVOKE_CHANNELS.dialogPickSaveFile,
+  INVOKE_CHANNELS.systemGetDownloadsPath,
+  INVOKE_CHANNELS.systemGetAppVersion,
+  INVOKE_CHANNELS.systemStartDrag,
+  INVOKE_CHANNELS.systemClipboardReadText,
+  INVOKE_CHANNELS.windowMinimize,
+  INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowClose,
+  INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.profileReport
+]
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Channels — push events (main → renderer)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -997,6 +1027,9 @@ export const SEND_CHANNELS = {
   terminalInput: 'terminal:input',
   terminalResize: 'terminal:resize'
 } as const
+
+/** Union of every valid fire-and-forget send channel string. */
+export type SendChannel = (typeof SEND_CHANNELS)[keyof typeof SEND_CHANNELS]
 
 export interface TerminalAckEvent {
   terminalId: string

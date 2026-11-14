@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, FileListResult, UnzipResult } from '@shared/contract'
+import type { FileEntry, FileListResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -480,22 +480,128 @@ function onDragLeave(): void {
   isDropTarget.value = false
 }
 
+const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
+
+interface MinimalFsEntry {
+  isFile: boolean
+  isDirectory: boolean
+  name: string
+  file?: (success: (f: File) => void, error?: (err: unknown) => void) => void
+  createReader?: () => { readEntries: (success: (entries: MinimalFsEntry[]) => void, error?: (err: unknown) => void) => void }
+}
+
+async function collectDroppedEntry(
+  fsEntry: MinimalFsEntry,
+  relPath: string,
+  out: StageDropEntryInput[],
+  state: { totalBytes: number }
+): Promise<void> {
+  if (fsEntry.isFile && fsEntry.file) {
+    const file = await new Promise<File>((resolve, reject) => {
+      fsEntry.file!(resolve, reject)
+    })
+    state.totalBytes += file.size
+    if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
+      throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
+    }
+    out.push({
+      relativePath: relPath,
+      isDir: false,
+      data: new Uint8Array(await file.arrayBuffer()),
+      modifiedAt: new Date(file.lastModified).toISOString()
+    })
+    return
+  }
+  if (fsEntry.isDirectory && fsEntry.createReader) {
+    out.push({ relativePath: relPath, isDir: true })
+    const reader = fsEntry.createReader()
+    while (true) {
+      const batch = await new Promise<MinimalFsEntry[]>((resolve, reject) => {
+        reader.readEntries(resolve, reject)
+      })
+      if (batch.length === 0) break
+      for (const child of batch) {
+        await collectDroppedEntry(child, `${relPath}/${child.name}`, out, state)
+      }
+    }
+  }
+}
+
+/**
+ * Resolves external OS drops to real local `FileEntry` items, staging dropped
+ * files/folders via `fs:local:stage-drop` when WebView2 hides host paths.
+ */
+async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<FileEntry[]> {
+  const direct: FileEntry[] = []
+  const unresolved: Array<{ file: File; fsEntry: MinimalFsEntry | null }> = []
+
+  // Snapshot DataTransferItemList synchronously before any await clears it.
+  for (const item of dataTransfer.items) {
+    if (item.kind !== 'file') continue
+    const file = item.getAsFile()
+    if (!file) continue
+    const fsEntry = (item.webkitGetAsEntry?.() as MinimalFsEntry | null) ?? null
+    const localPath = window.api.getPathForFile(file)
+    if (localPath) {
+      direct.push({
+        name: file.name,
+        path: localPath,
+        isDir: fsEntry?.isDirectory ?? false,
+        size: file.size,
+        modifiedAt: new Date(file.lastModified).toISOString(),
+        isSymlink: false
+      })
+    } else {
+      unresolved.push({ file, fsEntry })
+    }
+  }
+
+  if (unresolved.length === 0) {
+    return direct
+  }
+
+  const stageInputs: StageDropEntryInput[] = []
+  const state = { totalBytes: 0 }
+  for (const { file, fsEntry } of unresolved) {
+    if (fsEntry) {
+      await collectDroppedEntry(fsEntry, fsEntry.name, stageInputs, state)
+    } else {
+      state.totalBytes += file.size
+      if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
+        throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
+      }
+      stageInputs.push({
+        relativePath: file.name,
+        isDir: false,
+        data: new Uint8Array(await file.arrayBuffer()),
+        modifiedAt: new Date(file.lastModified).toISOString()
+      })
+    }
+  }
+
+  if (stageInputs.length === 0) {
+    return direct
+  }
+  const staged = await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, { entries: stageInputs })
+  return [...direct, ...staged]
+}
+
 /** Uploads every file/folder dropped from the OS straight into the remote pane's current directory. */
 async function onOsDrop(event: DragEvent): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId || !event.dataTransfer) return
-  const intents: TransferIntent[] = []
-  for (const item of event.dataTransfer.items) {
-    if (item.kind !== 'file') continue
-    const file = item.getAsFile()
-    const localPath = file ? window.api.getPathForFile(file) : ''
-    if (!file || !localPath) continue
-    const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
-    const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir, size: file.size, modifiedAt: new Date(file.lastModified).toISOString() }, sessionId)
-    if (intent) intents.push(intent)
-  }
-  if (intents.length > 0) {
-    await checkAndQueueTransfers(intents, remoteFs)
+  try {
+    const entries = await resolveOsDroppedEntries(event.dataTransfer)
+    const intents: TransferIntent[] = []
+    for (const entry of entries) {
+      const intent = buildTransferIntent('local', entry, sessionId)
+      if (intent) intents.push(intent)
+    }
+    if (intents.length > 0) {
+      await checkAndQueueTransfers(intents, remoteFs)
+    }
+  } catch (e) {
+    notify.error('External file drop failed', e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -534,18 +640,15 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
   const sessionId = sessions.activeSessionId
   try {
     if (isOsFileDrag(event) && event.dataTransfer) {
+      const entries = await resolveOsDroppedEntries(event.dataTransfer)
       const intents: TransferIntent[] = []
       let moved = false
-      for (const item of event.dataTransfer.items) {
-        const file = item.kind === 'file' ? item.getAsFile() : null
-        const localPath = file ? window.api.getPathForFile(file) : ''
-        if (!file || !localPath) continue
+      for (const entry of entries) {
         if (props.side === 'local') {
-          await moveInto(folder, localPath, file.name)
+          await moveInto(folder, entry.path, entry.name)
           moved = true
         } else if (sessionId) {
-          const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
-          const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir, size: file.size }, sessionId, folder.path)
+          const intent = buildTransferIntent('local', entry, sessionId, folder.path)
           if (intent) intents.push(intent)
         }
       }

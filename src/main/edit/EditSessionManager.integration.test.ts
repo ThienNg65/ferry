@@ -5,14 +5,16 @@ import * as path from 'path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'ssh2'
 
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
 const events: Array<{ editId: string; state: string }> = []
 
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: (_c: string, evt: { editId: string; state: string }) => events.push(evt) } }]
-  },
-  shell: { openPath: vi.fn(async () => '') }
-}))
+setHost({
+  ...testHost,
+  broadcast: (_c, evt) => events.push(evt as { editId: string; state: string }),
+  openPath: vi.fn(async () => '')
+})
 
 const HOST = '127.0.0.1'
 const PORT = 2299

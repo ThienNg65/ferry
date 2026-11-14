@@ -1,20 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EVENT_CHANNELS } from '../../shared/contract'
 
-// MonitorManager broadcasts via BrowserWindow.getAllWindows() — vitest runs
-// outside a real Electron process, so mock only that (same pattern as
-// TailManager.test.ts / TerminalManager.test.ts).
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
 const sent: Array<{ channel: string; evt: unknown }> = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (channel: string, evt: unknown) => sent.push({ channel, evt }) }
-      }
-    ]
-  }
-}))
+setHost({
+  ...testHost,
+  broadcast: (channel, evt) => sent.push({ channel, evt })
+})
 
 interface FakeExecResult {
   stdout: string

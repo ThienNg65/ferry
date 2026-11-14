@@ -44,9 +44,7 @@
  *      all of them" message from `rewriteAgentAuthError`.
  */
 import { Client, createAgent } from 'ssh2'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const HOST = '127.0.0.1'
 const PORT = 2299

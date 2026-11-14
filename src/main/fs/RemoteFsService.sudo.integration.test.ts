@@ -2,10 +2,8 @@ import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'ssh2'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
 
 const HOST = '127.0.0.1'
 const PORT = 2299

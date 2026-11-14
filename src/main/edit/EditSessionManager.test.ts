@@ -4,10 +4,10 @@ import * as os from 'os'
 import * as path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({
-  BrowserWindow: { getAllWindows: () => [] },
-  shell: { openPath: vi.fn(async () => '') }
-}))
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
+setHost({ ...testHost, openPath: vi.fn(async () => '') })
 
 vi.mock('../fs/RemoteFsService', () => ({
   downloadForEdit: vi.fn(async (_sessionId: string, _remotePath: string, localPath: string) => {

@@ -39,6 +39,24 @@ releaseDate: '${releaseDate}'
 `;
 fs.writeFileSync(path.join(distDir, "latest.yml"), latestYml, "utf8");
 
+const nlExeName = fs.readdirSync(distDir).find((f) => /^Ferry-Neutralino-Setup-.*\.exe$/.test(f));
+if (nlExeName) {
+  const nlExePath = path.join(distDir, nlExeName);
+  const nlSha512 = crypto.createHash("sha512").update(fs.readFileSync(nlExePath)).digest("base64");
+  const nlSize = fs.statSync(nlExePath).size;
+  const nlLatestYml = `version: ${version}
+files:
+  - url: ${nlExeName}
+    sha512: ${nlSha512}
+    size: ${nlSize}
+path: ${nlExeName}
+sha512: ${nlSha512}
+releaseDate: '${releaseDate}'
+`;
+  fs.writeFileSync(path.join(distDir, "latest-neutralino.yml"), nlLatestYml, "utf8");
+  console.log(`Regenerated dist/latest-neutralino.yml for signed ${nlExeName}.`);
+}
+
 for (const f of fs.readdirSync(distDir)) {
   if (f.endsWith(".blockmap")) {
     fs.unlinkSync(path.join(distDir, f));

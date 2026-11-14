@@ -1,16 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 vi.mock('../fs/LocalFsService', () => ({
   list: vi.fn(),
@@ -18,7 +10,8 @@ vi.mock('../fs/LocalFsService', () => ({
   rename: vi.fn(),
   remove: vi.fn(),
   readFileText: vi.fn(),
-  writeFileText: vi.fn()
+  writeFileText: vi.fn(),
+  stageDroppedEntries: vi.fn()
 }))
 
 vi.mock('../fs/RemoteFsService', () => ({
@@ -99,6 +92,15 @@ describe('fs.ipc', () => {
   it('fs:local:writeFile forwards the request object', async () => {
     await invoke('fs:local:writeFile', { path: '/tmp/a.txt', content: 'hello' })
     expect(LocalFs.writeFileText).toHaveBeenCalledWith('/tmp/a.txt', 'hello')
+  })
+
+  it('fs:local:stage-drop forwards staged entries to LocalFsService', async () => {
+    const req = { entries: [{ relativePath: 'notes.txt', isDir: false, data: new Uint8Array([104, 105]) }] }
+    const staged = [{ name: 'notes.txt', path: '/tmp/ferry-drop-1/notes.txt', isDir: false, size: 2, modifiedAt: null, isSymlink: false }]
+    vi.mocked(LocalFs.stageDroppedEntries).mockResolvedValueOnce(staged)
+    const result = await invoke('fs:local:stage-drop', req)
+    expect(LocalFs.stageDroppedEntries).toHaveBeenCalledWith(req)
+    expect(result).toEqual({ ok: true, data: staged })
   })
 
   it('fs:remote:list forwards sessionId, path, and isPrefetch flag', async () => {

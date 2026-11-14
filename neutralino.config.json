@@ -1,0 +1,68 @@
+{
+  "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
+  "applicationId": "js.ferry.app",
+  "version": "0.22.0",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/out/renderer/",
+  "url": "/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "tokenSecurity": "one-time",
+  "logging": {
+    "enabled": true,
+    "writeToLogFile": true
+  },
+  "nativeAllowList": [
+    "app.broadcast",
+    "app.exit",
+    "window.minimize",
+    "window.maximize",
+    "window.unmaximize",
+    "window.isMaximized",
+    "window.move",
+    "os.showOpenDialog",
+    "os.showFolderDialog",
+    "os.showSaveDialog",
+    "os.getPath",
+    "clipboard.readText",
+    "extensions.dispatch",
+    "extensions.getStats",
+    "debug.log"
+  ],
+  "modes": {
+    "window": {
+      "title": "Ferry",
+      "width": 1280,
+      "height": 800,
+      "minWidth": 900,
+      "minHeight": 600,
+      "fullScreen": false,
+      "alwaysOnTop": false,
+      "icon": "/out/renderer/favicon.ico",
+      "enableInspector": false,
+      "borderless": true,
+      "maximize": false,
+      "hidden": false,
+      "resizable": true,
+      "exitProcessOnClose": true,
+      "injectGlobals": true
+    }
+  },
+  "enableExtensions": true,
+  "exportAuthInfo": false,
+  "extensions": [
+    {
+      "id": "js.ferry.sidecar",
+      "command": "${NL_PATH}/extensions/js.ferry.sidecar/node ${NL_PATH}/extensions/js.ferry.sidecar/index.cjs --nl-mode",
+      "commandWindows": "\"${NL_PATH}\\extensions\\js.ferry.sidecar\\node.exe\" \"${NL_PATH}\\extensions\\js.ferry.sidecar\\index.cjs\" --nl-mode"
+    }
+  ],
+  "cli": {
+    "binaryName": "ferry",
+    "resourcesPath": "/out/renderer/",
+    "extensionsPath": "/extensions/",
+    "binaryVersion": "5.6.0",
+    "clientVersion": "5.6.0"
+  }
+}
