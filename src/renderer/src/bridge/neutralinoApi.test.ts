@@ -124,6 +124,30 @@ describe('neutralinoApi', () => {
     }
   })
 
+  it('does not double-scale maximize or restore dimensions on HiDPI displays', async () => {
+    const { transport } = createFakeTransport()
+    // Simulate Windows 125% DPI: getWindowSize returns physical px (1600x1000) while innerWidth is 1280.
+    transport.getWindowSize = vi.fn().mockResolvedValue({ width: 1600, height: 1000 })
+    const api = createNeutralinoApi(transport)
+
+    vi.stubGlobal('window', {
+      innerWidth: 1280,
+      screen: { availLeft: 0, availTop: 0, availWidth: 1536, availHeight: 825 }
+    })
+
+    try {
+      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
+      expect(transport.moveWindow).toHaveBeenCalledWith(0, 0)
+      expect(transport.setWindowSize).toHaveBeenCalledWith({ width: 1536, height: 825 })
+
+      await api.invoke(INVOKE_CHANNELS.windowMaximizeToggle)
+      expect(transport.moveWindow).toHaveBeenLastCalledWith(100, 80)
+      expect(transport.setWindowSize).toHaveBeenLastCalledWith({ width: 1280, height: 800 })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('correlates concurrent sidecar rpc_invoke calls, queues until ready, and decodes { __b64 } bytes', async () => {
     const { transport, emit, dispatched } = createFakeTransport([])
     const api = createNeutralinoApi(transport)

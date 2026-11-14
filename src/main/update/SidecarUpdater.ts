@@ -70,7 +70,12 @@ export interface SidecarUpdaterDeps {
   fetchImpl?: typeof fetch
   spawnImpl?: typeof spawn
   exitImpl?: (code: number) => void
+  manifestTimeoutMs?: number
+  downloadIdleTimeoutMs?: number
 }
+
+const DEFAULT_MANIFEST_TIMEOUT_MS = 15_000
+const DEFAULT_DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
 
 /**
  * GitHub-Releases updater for the standalone Neutralino sidecar runtime.
@@ -91,7 +96,9 @@ export class SidecarUpdater extends EventEmitter {
       downloadDir: deps.downloadDir ?? path.join(os.tmpdir(), 'ferry-updater'),
       fetchImpl: deps.fetchImpl ?? fetch,
       spawnImpl: deps.spawnImpl ?? spawn,
-      exitImpl: deps.exitImpl ?? ((code) => process.exit(code))
+      exitImpl: deps.exitImpl ?? ((code) => process.exit(code)),
+      manifestTimeoutMs: deps.manifestTimeoutMs ?? DEFAULT_MANIFEST_TIMEOUT_MS,
+      downloadIdleTimeoutMs: deps.downloadIdleTimeoutMs ?? DEFAULT_DOWNLOAD_IDLE_TIMEOUT_MS
     }
   }
 
@@ -101,14 +108,22 @@ export class SidecarUpdater extends EventEmitter {
 
   private async fetchManifest(): Promise<UpdateManifest> {
     const base = this.getFeedBase()
-    const res = await this.deps.fetchImpl(`${base}/${UPDATE_MANIFEST_FILE}`)
-    if (res.status === 404) {
-      throw new Error(`No update manifest (${UPDATE_MANIFEST_FILE}) found on release feed`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(new Error(`Update manifest request timed out after ${this.deps.manifestTimeoutMs}ms`)), this.deps.manifestTimeoutMs)
+    let manifestText: string
+    try {
+      const res = await this.deps.fetchImpl(`${base}/${UPDATE_MANIFEST_FILE}`, { signal: controller.signal })
+      if (res.status === 404) {
+        throw new Error(`No update manifest (${UPDATE_MANIFEST_FILE}) found on release feed`)
+      }
+      if (!res.ok) {
+        throw new Error(`Update manifest fetch failed (${res.status} ${res.statusText})`)
+      }
+      manifestText = await res.text()
+    } finally {
+      clearTimeout(timer)
     }
-    if (!res.ok) {
-      throw new Error(`Update manifest fetch failed (${res.status} ${res.statusText})`)
-    }
-    const parsed = parseUpdateManifest(await res.text())
+    const parsed = parseUpdateManifest(manifestText)
     if (!parsed) {
       throw new Error(`Invalid update manifest in ${UPDATE_MANIFEST_FILE}`)
     }
@@ -131,8 +146,33 @@ export class SidecarUpdater extends EventEmitter {
     const url = /^https?:\/\//i.test(manifest.path)
       ? manifest.path
       : `${this.getFeedBase()}/${encodeURIComponent(safeName)}`
-    const res = await this.deps.fetchImpl(url)
+
+    const controller = new AbortController()
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const armIdleTimer = (): void => {
+      if (idleTimer !== null) clearTimeout(idleTimer)
+      idleTimer = setTimeout(
+        () => controller.abort(new Error(`Installer download stalled for ${this.deps.downloadIdleTimeoutMs}ms`)),
+        this.deps.downloadIdleTimeoutMs
+      )
+    }
+    const clearIdleTimer = (): void => {
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer)
+        idleTimer = null
+      }
+    }
+
+    armIdleTimer()
+    let res: Response
+    try {
+      res = await this.deps.fetchImpl(url, { signal: controller.signal })
+    } catch (err) {
+      clearIdleTimer()
+      throw err
+    }
     if (!res.ok || !res.body) {
+      clearIdleTimer()
       throw new Error(`Installer download failed (${res.status} ${res.statusText})`)
     }
 
@@ -145,6 +185,7 @@ export class SidecarUpdater extends EventEmitter {
 
     try {
       while (true) {
+        armIdleTimer()
         const { done, value } = await reader.read()
         if (done) break
         const buf = Buffer.from(value)
@@ -161,13 +202,26 @@ export class SidecarUpdater extends EventEmitter {
           total
         })
       }
+      clearIdleTimer()
       await new Promise<void>((resolve, reject) => {
         fileStream.on('error', reject)
         fileStream.end(resolve)
       })
     } catch (err) {
-      fileStream.destroy()
-      rmSync(tmpPath, { force: true })
+      clearIdleTimer()
+      await new Promise<void>((resolve) => {
+        if (fileStream.closed) {
+          resolve()
+          return
+        }
+        fileStream.once('close', () => resolve())
+        fileStream.destroy()
+      })
+      try {
+        rmSync(tmpPath, { force: true })
+      } catch {
+        // Never mask the original download error with a cleanup error.
+      }
       throw err
     }
 

@@ -12,6 +12,7 @@ import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
 import { isNeutralinoRuntime, registerTitleBarDragRegion } from '../../bridge/neutralinoApi'
+import { flushWindowBoundsSnapshot } from '../../utils/windowBounds'
 
 const { isBusy, label: activityLabel } = useGlobalActivity()
 const ui = useUiStore()
@@ -28,13 +29,21 @@ function showActivity(): void {
     openDock('activity')
   }
 }
+
 const titleBarRef = ref<HTMLElement | null>(null)
 const isMaximized = ref(false)
 let unsubscribe: (() => void) | null = null
 let disposeDragRegion: (() => void) | null = null
 
 onMounted(async () => {
-  disposeDragRegion = registerTitleBarDragRegion(titleBarRef.value)
+  disposeDragRegion = registerTitleBarDragRegion(titleBarRef.value, {
+    isMaximized: () => isMaximized.value,
+    onUnmaximizeForDrag: async () => {
+      if (isMaximized.value) {
+        await invoke(INVOKE_CHANNELS.windowMaximizeToggle)
+      }
+    }
+  })
   unsubscribe = onEvent<WindowStateEvent>(EVENT_CHANNELS.windowStateChange, (evt) => {
     isMaximized.value = evt.isMaximized
   })
@@ -64,7 +73,8 @@ function minimize(): void {
 function toggleMaximize(): void {
   void invoke(INVOKE_CHANNELS.windowMaximizeToggle)
 }
-function close(): void {
+async function close(): Promise<void> {
+  await flushWindowBoundsSnapshot()
   void invoke(INVOKE_CHANNELS.windowClose)
 }
 </script>
@@ -76,12 +86,12 @@ function close(): void {
     :style="isNeutralinoRuntime() ? undefined : '-webkit-app-region: drag'"
     @dblclick="onTitleBarDblClick"
   >
-    <div class="flex items-center" style="-webkit-app-region: no-drag" @pointerdown.stop>
+    <div class="flex items-center gap-0.5 pl-2" style="-webkit-app-region: no-drag" @pointerdown.stop>
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
         <button
           type="button"
           aria-label="Toggle theme"
-          class="flex size-9 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          class="flex size-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
           @click="ui.toggleTheme()"
         >
           <UIcon :name="ui.theme === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'" class="size-3.5" />
@@ -91,7 +101,7 @@ function close(): void {
         <button
           type="button"
           aria-label="History"
-          class="flex size-9 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          class="flex size-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
           @click="historyDialog.open()"
         >
           <UIcon name="i-lucide-history" class="size-3.5" />
@@ -101,7 +111,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Settings"
-          class="flex size-9 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          class="flex size-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
           @click="settingsDialog.open()"
         >
           <UIcon name="i-lucide-settings" class="size-3.5" />
@@ -122,7 +132,6 @@ function close(): void {
           <span class="size-2 rounded-full bg-primary animate-pulse" />
         </button>
       </UTooltip>
-      <span class="text-xs font-medium text-toned">Ferry</span>
       <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
         <button
           type="button"
@@ -156,7 +165,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Minimize"
-          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          class="flex w-[46px] items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
           @click="minimize"
         >
           <UIcon name="i-lucide-minus" class="size-4" />
@@ -166,7 +175,7 @@ function close(): void {
         <button
           type="button"
           :aria-label="isMaximized ? 'Restore' : 'Maximize'"
-          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          class="flex w-[46px] items-center justify-center text-muted transition-colors hover:bg-accented hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
           @click="toggleMaximize"
         >
           <UIcon :name="isMaximized ? 'i-lucide-copy' : 'i-lucide-square'" class="size-3.5" />
@@ -176,7 +185,7 @@ function close(): void {
         <button
           type="button"
           aria-label="Close"
-          class="flex w-11 items-center justify-center text-muted transition-colors hover:bg-error hover:text-inverted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-error"
+          class="flex w-[46px] items-center justify-center text-muted transition-colors hover:bg-error hover:text-inverted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-error"
           @click="close"
         >
           <UIcon name="i-lucide-x" class="size-4" />

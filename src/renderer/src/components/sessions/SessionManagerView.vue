@@ -8,6 +8,7 @@ import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
+import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import { ENVIRONMENT_DOT } from '../../utils/environment'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
@@ -267,9 +268,10 @@ async function confirmBulkDelete(): Promise<void> {
 }
 
 const searchQuery = ref('')
+const { debounced: debouncedSearch } = useDebouncedRef(searchQuery, 120)
 
 const filteredSites = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
+  const q = debouncedSearch.value.trim().toLowerCase()
   if (!q) {
     return sites.sites
   }
@@ -398,7 +400,15 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             </div>
           </template>
 
-          <div v-if="sites.loading" class="py-6 text-center text-xs text-muted">Loading sites…</div>
+          <div v-if="sites.loading" role="status" aria-label="Loading sites" class="flex flex-col gap-2 py-2">
+            <div v-for="i in 4" :key="i" class="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+              <USkeleton class="size-4 shrink-0 rounded-xs" />
+              <div class="flex flex-1 flex-col gap-1.5">
+                <USkeleton class="h-3.5 w-36" />
+                <USkeleton class="h-2.5 w-48" />
+              </div>
+            </div>
+          </div>
           <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-2 py-6 text-center">
             <UIcon name="i-lucide-server" class="size-6 text-dimmed" />
             <p class="text-xs text-muted">No saved sites yet — add one, import from WinSCP/PuTTY, or use Quick Connect.</p>
@@ -412,7 +422,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               class="mb-2.5 w-full"
             />
             <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
-              No sites match "{{ searchQuery }}".
+              No sites match "{{ debouncedSearch }}".
             </p>
             <div
               v-if="selectMode"
