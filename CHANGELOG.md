@@ -9,6 +9,22 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - The file lists now take most of the window: the bottom panel starts collapsed and opens when a transfer starts, the active pane is highlighted, and there is a Compact row-density setting.
 - File lists are easier to scan: shorter dates, aligned size and date columns, sentence-case headers, and a title bar and site tabs that read as one band.
 
+## [0.23.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.22.0...ferry-v0.23.0) (2026-11-14)
+
+
+### Features
+
+* add log tail overview rail and dock tab controls ([11ce645](https://github.com/ThienNg65/ferry/commit/11ce6458ebaa4c743a946fdb9da49b2f55eb747a))
+* migrate desktop host to Neutralinojs with Node sidecar ([#37](https://github.com/ThienNg65/ferry/issues/37)) ([b76fc6c](https://github.com/ThienNg65/ferry/commit/b76fc6c8ddca3265d0ba435e97400a184e1bcdee))
+* migrate desktop host to Neutralinojs with Node sidecar ([#37](https://github.com/ThienNg65/ferry/issues/37)) ([68ea30b](https://github.com/ThienNg65/ferry/commit/68ea30be67bfa7dcd119536f0d88ff4c66927ccd))
+
+
+### Bug Fixes
+
+* address PR [#45](https://github.com/ThienNg65/ferry/issues/45) review findings for updater, release workflow, drop cleanup, and SSH/SFTP smoke parity ([#37](https://github.com/ThienNg65/ferry/issues/37)) ([7a3451e](https://github.com/ThienNg65/ferry/commit/7a3451e8eb0a217c4e7fbca07208c8135000cbd7))
+* measure maximized dock height from parent bounds ([2b7f4f7](https://github.com/ThienNg65/ferry/commit/2b7f4f7e36afbea5b27cbded96eb160a1188826d))
+* resolve PR [#45](https://github.com/ThienNg65/ferry/issues/45) blockers for Neutralino sidecar build, security, updater, drop, and CI smoke ([#37](https://github.com/ThienNg65/ferry/issues/37)) ([ab98e29](https://github.com/ThienNg65/ferry/commit/ab98e29f3360ac6338c05565d99fe3e8f7c9f329))
+
 ## [0.22.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.21.0...ferry-v0.22.0) (2026-11-13)
 
 
