@@ -45,7 +45,8 @@ watch(
       plan.value = null
       error.value = null
     }
-  }
+  },
+  { immediate: true }
 )
 
 const canPreview = computed(

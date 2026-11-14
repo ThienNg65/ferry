@@ -14,6 +14,9 @@ const MAX_CONCURRENT_PREFETCHES = 3
 /** In-flight prefetch deduplication tracker across sessions. */
 const inFlightPrefetches = new Set<string>()
 
+/** Coalesces duplicate concurrent loads for the same active `(sessionId, path)`. */
+const inFlightLoads = new Map<string, { seq: number; promise: Promise<void> }>()
+
 export interface DirCacheEntry {
   path: string
   entries: FileEntry[]
@@ -177,6 +180,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const cached = normalized ? entry.dirCache.get(normalized) : undefined
       const isCacheValid = cached && Date.now() - cached.timestamp < CACHE_TTL_MS && !options?.forceRefresh
 
+      const loadKey = `${sessionId}:${normalized || '.'}`
+      const existingLoad = !isCacheValid && !options?.forceRefresh ? inFlightLoads.get(loadKey) : undefined
+      if (existingLoad && existingLoad.seq === (this.requestSeq[sessionId] ?? 0)) {
+        return existingLoad.promise
+      }
+
       const seq = (this.requestSeq[sessionId] ?? 0) + 1
       this.requestSeq[sessionId] = seq
 
@@ -225,35 +234,44 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         entry.error = null
       }
 
-      try {
-        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, false)
-        if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
-          return
-        }
+      const run = (async () => {
+        try {
+          const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, false)
+          if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
+            return
+          }
 
-        // Store into in-memory SWR cache (both canonical and requested paths)
-        setCache(entry, result.path, result.entries, dirPath)
+          // Store into in-memory SWR cache (both canonical and requested paths)
+          setCache(entry, result.path, result.entries, dirPath)
 
-        recordFrom(result.path)
-        entry.currentPath = result.path
-        entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
-        entry.selected = new Set()
-        entry.selectAnchor = null
-      } catch (e) {
-        if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
-          return
+          recordFrom(result.path)
+          entry.currentPath = result.path
+          entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
+          entry.selected = new Set()
+          entry.selectAnchor = null
+        } catch (e) {
+          if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
+            return
+          }
+          // Rollback optimistic navigation on failure
+          entry.currentPath = previousPath
+          entry.entries = previousEntries
+          entry.selected = previousSelected
+          entry.selectAnchor = previousAnchor
+          entry.error = e instanceof Error ? e.message : String(e)
+        } finally {
+          const currentInFlight = inFlightLoads.get(loadKey)
+          if (currentInFlight?.seq === seq) {
+            inFlightLoads.delete(loadKey)
+          }
+          if (this.requestSeq[sessionId] === seq && this.bySession[sessionId]) {
+            entry.loading = false
+          }
         }
-        // Rollback optimistic navigation on failure
-        entry.currentPath = previousPath
-        entry.entries = previousEntries
-        entry.selected = previousSelected
-        entry.selectAnchor = previousAnchor
-        entry.error = e instanceof Error ? e.message : String(e)
-      } finally {
-        if (this.requestSeq[sessionId] === seq && this.bySession[sessionId]) {
-          entry.loading = false
-        }
-      }
+      })()
+
+      inFlightLoads.set(loadKey, { seq, promise: run })
+      return run
     },
 
     /**
@@ -464,6 +482,17 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     clearSession(sessionId: string): void {
       delete this.bySession[sessionId]
       delete this.requestSeq[sessionId]
+      const prefix = `${sessionId}:`
+      for (const key of inFlightLoads.keys()) {
+        if (key.startsWith(prefix)) {
+          inFlightLoads.delete(key)
+        }
+      }
+      for (const key of inFlightPrefetches) {
+        if (key.startsWith(prefix)) {
+          inFlightPrefetches.delete(key)
+        }
+      }
     }
   }
 })

@@ -60,7 +60,8 @@ watch(
     } finally {
       loading.value = false
     }
-  }
+  },
+  { immediate: true }
 )
 
 function onTail(): void {
@@ -108,7 +109,9 @@ function onEdit(): void {
         <p class="text-sm text-muted">Preview not available for this file type.</p>
         <UButton v-if="canDownload" icon="i-lucide-download" @click="onDownload">Download instead</UButton>
       </div>
-      <div v-else-if="loading" class="py-8 text-center text-xs text-muted">Loading…</div>
+      <div v-else-if="loading" role="status" aria-label="Loading file preview" class="flex flex-col gap-2 py-2">
+        <USkeleton v-for="i in 6" :key="i" class="h-3.5" :style="{ width: `${60 + ((i * 19) % 35)}%` }" />
+      </div>
       <UAlert v-else-if="error" color="error" variant="soft" :title="error" />
       <div v-else class="flex flex-col gap-2">
         <UAlert

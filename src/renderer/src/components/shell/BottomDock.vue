@@ -62,12 +62,16 @@ let dragRaf: number | null = null
 let latestPointerY = 0
 
 function onResizeStart(e: PointerEvent): void {
+  if (e.button !== 0) return
+  e.preventDefault()
   isMaximized.value = false
   dragging.value = true
   dragStartY = e.clientY
   latestPointerY = e.clientY
   dragStartHeight = ui.dockHeight
-  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', onResizeEnd)
+  window.addEventListener('pointercancel', onResizeEnd)
 }
 
 function onResizeMove(e: PointerEvent): void {
@@ -86,7 +90,13 @@ function onResizeMove(e: PointerEvent): void {
   })
 }
 
-function onResizeEnd(e: PointerEvent): void {
+function detachResizeListeners(): void {
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', onResizeEnd)
+  window.removeEventListener('pointercancel', onResizeEnd)
+}
+
+function onResizeEnd(): void {
   if (!dragging.value) {
     return
   }
@@ -95,7 +105,7 @@ function onResizeEnd(e: PointerEvent): void {
     dragRaf = null
   }
   dragging.value = false
-  ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+  detachResizeListeners()
   liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
   ui.setDockHeight(liveHeight.value)
   liveHeight.value = ui.dockHeight
@@ -127,6 +137,7 @@ function onWindowResize(): void {
 onMounted(() => window.addEventListener('resize', onWindowResize))
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
+  detachResizeListeners()
   if (dragRaf !== null) {
     cancelAnimationFrame(dragRaf)
     dragRaf = null
@@ -194,13 +205,11 @@ function sessionLabel(sessionId: string): string | null {
       tabindex="0"
       :aria-valuenow="liveHeight"
       :aria-valuemin="MIN_DOCK_HEIGHT"
-      class="h-1.5 shrink-0 cursor-row-resize hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
+      class="h-1.5 shrink-0 cursor-row-resize touch-none select-none hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
       :class="dragging ? 'bg-primary' : ''"
       @keydown="onResizeKey"
       @dblclick="resetHeight"
       @pointerdown="onResizeStart"
-      @pointermove="onResizeMove"
-      @pointerup="onResizeEnd"
     />
     <div
       class="flex items-center justify-between bg-muted px-2 py-1 select-none"

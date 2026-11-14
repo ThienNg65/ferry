@@ -278,9 +278,18 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
     </div>
     <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
       <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
-      <div v-if="loading && entries.length === 0" role="status" class="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
-        <UIcon name="i-lucide-loader-2" class="size-5 animate-spin text-muted" />
-        <p class="text-xs text-muted">Loading directory…</p>
+      <div v-if="loading && entries.length === 0" role="status" aria-label="Loading directory" class="flex flex-col gap-1 px-2 py-2">
+        <div
+          v-for="i in 10"
+          :key="i"
+          class="flex items-center gap-2.5 rounded-sm px-1.5"
+          :class="ui.density === 'compact' ? 'h-6' : 'h-8'"
+        >
+          <USkeleton class="size-4 shrink-0 rounded-xs" />
+          <USkeleton class="h-3 flex-1 max-w-[55%]" :style="{ maxWidth: `${35 + ((i * 17) % 40)}%` }" />
+          <USkeleton class="ml-auto h-3 w-12 shrink-0" />
+          <USkeleton class="h-3 w-20 shrink-0" />
+        </div>
       </div>
       <div v-else-if="entries.length === 0 && filtered" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
         <UIcon name="i-lucide-search-x" class="size-5 text-dimmed" />
@@ -302,6 +311,15 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           :style="{ transform: `translateY(${virtualRow.start}px)` }"
         >
           <FileRow
+            v-memo="[
+              entries[virtualRow.index],
+              selected.has(entries[virtualRow.index].path),
+              active,
+              renamingPath === entries[virtualRow.index].path,
+              transferIcon,
+              showTail,
+              allowExtract
+            ]"
             :entry="entries[virtualRow.index]"
             :selected="selected.has(entries[virtualRow.index].path)"
             :side="side"

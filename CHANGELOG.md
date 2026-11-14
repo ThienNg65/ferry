@@ -28,6 +28,14 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.24.2](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.1...ferry-v0.24.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* fix Neutralino window maximize, titlebar drag, and bottom dock resize ([67cb5e8](https://github.com/ThienNg65/ferry/commit/67cb5e89526b81276f04a503ce7d9208ee50ba53))
+* fix Neutralino window maximize, titlebar drag, and bottom dock resize ([646a99e](https://github.com/ThienNg65/ferry/commit/646a99ee7575c8dcdf83053e68442c1830c9a0ca))
+
 ## [0.24.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.24.0...ferry-v0.24.1) (2026-11-14)
 
 

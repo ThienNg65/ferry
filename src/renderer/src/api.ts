@@ -46,6 +46,30 @@ function toCloneable(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value))
 }
 
+const MAX_PERF_SAMPLES = 100
+const SLOW_IPC_THRESHOLD_MS = 100
+
+export interface IpcPerfSample {
+  channel: string
+  durationMs: number
+  ok: boolean
+  timestamp: number
+}
+
+function recordIpcPerf(sample: IpcPerfSample): void {
+  if (typeof window === 'undefined') return
+  const w = window as unknown as {
+    __FERRY_PERF__?: { recent: IpcPerfSample[]; slow: IpcPerfSample[] }
+  }
+  const store = (w.__FERRY_PERF__ ??= { recent: [], slow: [] })
+  store.recent.push(sample)
+  if (store.recent.length > MAX_PERF_SAMPLES) store.recent.shift()
+  if (sample.durationMs >= SLOW_IPC_THRESHOLD_MS) {
+    store.slow.push(sample)
+    if (store.slow.length > MAX_PERF_SAMPLES) store.slow.shift()
+  }
+}
+
 /**
  * Calls a contract invoke channel and unwraps the {@link IpcResult} envelope.
  *
@@ -59,13 +83,22 @@ export async function invoke<T>(channel: string, ...args: unknown[]): Promise<T>
   const tracked = !QUIET_CHANNELS.has(channel)
   const activity = tracked ? useIpcActivityStore() : null
   activity?.increment()
+  const start = performance.now()
+  let ok = false
   try {
     const res = (await window.api.invoke(channel, ...args.map(toCloneable))) as IpcResult<T>
     if (!res.ok) {
       throw new IpcError(res.code, res.message, res.hostKey)
     }
+    ok = true
     return res.data
   } finally {
+    recordIpcPerf({
+      channel,
+      durationMs: Math.round((performance.now() - start) * 100) / 100,
+      ok,
+      timestamp: Date.now()
+    })
     activity?.decrement()
   }
 }

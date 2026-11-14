@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "js.ferry.app",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "defaultMode": "window",
   "port": 0,
   "documentRoot": "/out/renderer/",
@@ -28,6 +28,9 @@
     "window.focus",
     "window.setTitle",
     "window.move",
+    "window.setSize",
+    "window.getSize",
+    "window.getPosition",
     "os.showOpenDialog",
     "os.showFolderDialog",
     "os.showSaveDialog",

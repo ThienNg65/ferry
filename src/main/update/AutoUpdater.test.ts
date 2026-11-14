@@ -223,4 +223,87 @@ describe('SidecarUpdater', () => {
 
     await expect(updater.checkForUpdates()).rejects.toThrow(/Refusing unexpected installer/)
   })
+
+  it('aborts manifest fetch when the feed stalls past manifestTimeoutMs', async () => {
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason ?? new Error('Aborted'))
+        })
+      })
+    }) as unknown as typeof fetch
+
+    const updater = new SidecarUpdater({
+      feedUrl: 'https://example.invalid/releases',
+      downloadDir: tmpDir,
+      fetchImpl: fetchMock,
+      manifestTimeoutMs: 25
+    })
+
+    await expect(updater.checkForUpdates()).rejects.toThrow(/timed out/i)
+  })
+
+  it('aborts stalled installer download and cleans up temporary file', async () => {
+    const payload = Buffer.from('partial-installer')
+    const sha512 = createHash('sha512').update(payload).digest('base64')
+    const yaml = `version: 0.24.0\npath: Ferry-Setup-0.24.0.exe\nsha512: ${sha512}\n`
+
+    let call = 0
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      call++
+      if (call === 1) {
+        return new Response(yaml, { status: 200 })
+      }
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason ?? new Error('Aborted'))
+        })
+      })
+    }) as unknown as typeof fetch
+
+    const updater = new SidecarUpdater({
+      feedUrl: 'https://example.invalid/releases',
+      downloadDir: tmpDir,
+      fetchImpl: fetchMock,
+      downloadIdleTimeoutMs: 25
+    })
+
+    await expect(updater.checkForUpdates()).rejects.toThrow(/stalled/i)
+    const { existsSync } = await import('fs')
+    expect(existsSync(path.join(tmpDir, 'Ferry-Setup-0.24.0.exe.tmp'))).toBe(false)
+  })
+
+  it('aborts mid-stream stalled installer download after writing chunks and cleans up .tmp', async () => {
+    const payload = Buffer.from('partial-installer-stream')
+    const sha512 = createHash('sha512').update(payload).digest('base64')
+    const yaml = `version: 0.24.0\npath: Ferry-Setup-0.24.0.exe\nsha512: ${sha512}\n`
+
+    let call = 0
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      call++
+      if (call === 1) {
+        return new Response(yaml, { status: 200 })
+      }
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(Buffer.from('MZ-chunk-1')))
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(init.signal?.reason ?? new Error('Aborted'))
+          })
+        }
+      })
+      return new Response(stream, { status: 200 })
+    }) as unknown as typeof fetch
+
+    const updater = new SidecarUpdater({
+      feedUrl: 'https://example.invalid/releases',
+      downloadDir: tmpDir,
+      fetchImpl: fetchMock,
+      downloadIdleTimeoutMs: 25
+    })
+
+    await expect(updater.checkForUpdates()).rejects.toThrow(/stalled/i)
+    const { existsSync } = await import('fs')
+    expect(existsSync(path.join(tmpDir, 'Ferry-Setup-0.24.0.exe.tmp'))).toBe(false)
+  })
 })

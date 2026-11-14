@@ -11,6 +11,7 @@ const props = defineProps<{
   filterOnly?: boolean
   regexError?: string | null
   keywords?: string[]
+  searchPending?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -141,7 +142,7 @@ function onKeydown(e: KeyboardEvent): void {
         <span class="font-bold text-default">{{ currentMatch }}</span> / {{ matchCount }}
       </span>
       <span
-        v-else-if="modelValue.length > 0 && matchCount === 0"
+        v-else-if="modelValue.length > 0 && !searchPending && matchCount === 0"
         class="rounded px-1.5 py-0.5 bg-error/15 text-error ring-1 ring-error/20 font-medium"
       >
         No matches
@@ -156,7 +157,7 @@ function onKeydown(e: KeyboardEvent): void {
         color="neutral"
         variant="ghost"
         size="xs"
-        :disabled="matchCount === 0"
+        :disabled="matchCount === 0 && !searchPending"
         @click="emit('prev')"
       />
     </UTooltip>
@@ -167,7 +168,7 @@ function onKeydown(e: KeyboardEvent): void {
         color="neutral"
         variant="ghost"
         size="xs"
-        :disabled="matchCount === 0"
+        :disabled="matchCount === 0 && !searchPending"
         @click="emit('next')"
       />
     </UTooltip>

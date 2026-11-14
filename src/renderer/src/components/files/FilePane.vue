@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, FileListResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
@@ -20,14 +20,16 @@ import { formatBytes, formatShortDate } from '../../utils/format'
 import type { TransferIntent } from '../../composables/useTransferIntents'
 import { useTransferIntents } from '../../composables/useTransferIntents'
 import { usePaneKeyboard } from '../../composables/usePaneKeyboard'
+import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
-import FilePreviewDialog from './FilePreviewDialog.vue'
-import EditorDialog from './EditorDialog.vue'
-import ChmodDialog from './ChmodDialog.vue'
-import SyncDialog from './SyncDialog.vue'
-import CompareDialog from './CompareDialog.vue'
+
+const FilePreviewDialog = defineAsyncComponent(() => import('./FilePreviewDialog.vue'))
+const EditorDialog = defineAsyncComponent(() => import('./EditorDialog.vue'))
+const ChmodDialog = defineAsyncComponent(() => import('./ChmodDialog.vue'))
+const SyncDialog = defineAsyncComponent(() => import('./SyncDialog.vue'))
+const CompareDialog = defineAsyncComponent(() => import('./CompareDialog.vue'))
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -59,9 +61,10 @@ const newEntryKind = ref<'folder' | 'file'>('folder')
 const newFolderName = ref('')
 const isDropTarget = ref(false)
 const filterText = ref('')
-const isFiltered = computed(() => filterText.value.trim().length > 0)
+const { debounced: debouncedFilter } = useDebouncedRef(filterText, 120)
+const isFiltered = computed(() => debouncedFilter.value.trim().length > 0)
 const filteredEntries = computed(() => {
-  const needle = filterText.value.trim().toLowerCase()
+  const needle = debouncedFilter.value.trim().toLowerCase()
   const visible = ui.showHidden ? store.entries : store.entries.filter((e) => !e.name.startsWith('.'))
   if (!needle) {
     return visible
