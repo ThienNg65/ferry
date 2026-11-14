@@ -435,7 +435,9 @@ try {
   assert(preservedHosts.hosts['e2e.example.com:22'] === 'SHA256:e2etestfingerprint', 'known_hosts.json was altered')
   console.log('  PASS: custom-dir migration, single Uninstall entry, Neutralino launch, and DPAPI data preservation verified.')
 
-  // Clean uninstall
+  // Stop the verified host and sidecar before invoking NSIS uninstaller.
+  // The old uninstaller's process-path filtering is not reliable with 8.3 paths.
+  terminateProcessesInDirectory(customDir)
   const uninst = spawnSync(join(customDir, 'Uninstall.exe'), ['/S'], { encoding: 'utf8' })
   assert(uninst.status === 0, `Uninstaller failed: ${uninst.status}`)
 } finally {
