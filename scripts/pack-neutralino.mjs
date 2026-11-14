@@ -71,6 +71,13 @@ await new Promise((resolveZip, rejectZip) => {
 })
 
 function findMakensis() {
+  // CI supplies an explicitly verified compiler path; do not silently ignore it.
+  if (process.env.FERRY_MAKENSIS) {
+    if (!existsSync(process.env.FERRY_MAKENSIS)) {
+      throw new Error(`FERRY_MAKENSIS does not exist: ${process.env.FERRY_MAKENSIS}`)
+    }
+    return process.env.FERRY_MAKENSIS
+  }
   const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['makensis'], { encoding: 'utf8' })
   if (probe.status === 0 && probe.stdout) {
     const first = probe.stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean)
@@ -96,6 +103,9 @@ function findMakensis() {
 }
 
 const makensisBin = findMakensis()
+if (!makensisBin && process.env.FERRY_REQUIRE_NSIS === '1') {
+  throw new Error('NSIS compiler is required for this build. Install NSIS or provide FERRY_MAKENSIS.')
+}
 let installerPath = null
 if (makensisBin) {
   execFileSync(makensisBin, [`/DVERSION=${version}`, join(rootDir, 'build', 'neutralino-installer.nsi')], {
@@ -103,6 +113,9 @@ if (makensisBin) {
     stdio: 'inherit'
   })
   installerPath = join(distDir, `Ferry-Neutralino-Setup-${version}.exe`)
+  if (!existsSync(installerPath)) {
+    throw new Error(`NSIS exited successfully but did not create ${installerPath}`)
+  }
   if (existsSync(installerPath)) {
     const installerBuf = readFileSync(installerPath)
     const sha512 = createHash('sha512').update(installerBuf).digest('base64')

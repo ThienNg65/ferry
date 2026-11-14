@@ -32,6 +32,10 @@ assertExists(join(protoDir, 'resources.neu'), 'Neutralino resources')
 assertExists(join(protoDir, 'extensions', 'js.ferry.sidecar', 'node.exe'), 'Bundled Node runtime')
 assertExists(join(protoDir, 'extensions', 'js.ferry.sidecar', 'index.cjs'), 'Bundled sidecar CJS')
 assertExists(zipPath, 'Portable ZIP archive')
+if (process.platform === 'win32' && process.env.FERRY_REQUIRE_NSIS === '1') {
+  assertExists(installerPath, 'Required Neutralino NSIS installer')
+  assertExists(manifestPath, 'Required Neutralino update manifest')
+}
 
 const tempInstallRoot = mkdtempSync(join(os.tmpdir(), 'ferry-smoke-install-'))
 const tempAppData = mkdtempSync(join(os.tmpdir(), 'ferry-smoke-appdata-'))
