@@ -28,6 +28,18 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.26.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.26.0...ferry-v0.26.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* accept scope on bookmarks:create and enable remote bookmarks for quick connect ([97dd9b2](https://github.com/ThienNg65/ferry/commit/97dd9b24c53a3c10276b278e4872997e462cc6a8))
+* auto-refresh destination pane after transfers without losing selection or scroll ([984064f](https://github.com/ThienNg65/ferry/commit/984064f2f06c931852c0bde78293bcdc50d984f4))
+* p1 critical blockers ([f66b98e](https://github.com/ThienNg65/ferry/commit/f66b98e0b9e0dd154ac76135079bbc433952a58f))
+* raise muted and dimmed text contrast to WCAG AA in light and dark themes ([33a1c72](https://github.com/ThienNg65/ferry/commit/33a1c72e4938ee411da1cc816556f84673870b30))
+* render privacy policy and terms markdown as semantic HTML with safe external links ([f2ced37](https://github.com/ThienNg65/ferry/commit/f2ced37aaf05af7bd147d2bb772edd4293266100))
+* surface error toast and alert banner on failed mkdir and touch ([aa8097a](https://github.com/ThienNg65/ferry/commit/aa8097a9bfd32db8dcd3a87d98ca10a1c1e3768b))
+
 ## [0.26.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.25.0...ferry-v0.26.0) (2026-11-14)
 
 
