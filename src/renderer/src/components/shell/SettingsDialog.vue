@@ -420,7 +420,14 @@ async function saveNetwork(): Promise<void> {
               <SettingsRow v-if="!unlimited" label="Bandwidth limit" for-id="settings-limit">
                 <div class="flex flex-col items-start gap-1 sm:items-end">
                   <div class="flex items-center gap-2">
-                    <UInput id="settings-limit" v-model.number="limitInput" type="number" :min="1" class="w-28" />
+                    <UInput
+                      id="settings-limit"
+                      v-model.number="limitInput"
+                      type="number"
+                      :min="1"
+                      :aria-invalid="Boolean(limitError)"
+                      class="w-28"
+                    />
                     <span class="text-xs text-muted">KB/s</span>
                   </div>
                   <p v-if="limitError" class="text-xs text-error" role="alert">{{ limitError }}</p>
@@ -440,7 +447,15 @@ async function saveNetwork(): Promise<void> {
                 <SettingsRow label="Host and port" stacked>
                   <div class="flex gap-2">
                     <UInput v-model="proxyHost" placeholder="proxy.example.com" aria-label="Proxy host" class="w-full flex-1" />
-                    <UInput v-model.number="proxyPort" type="number" aria-label="Proxy port" class="w-24" />
+                    <UInput
+                      v-model.number="proxyPort"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      aria-label="Proxy port"
+                      :aria-invalid="Boolean(portError)"
+                      class="w-28"
+                    />
                   </div>
                   <p v-if="hostError || portError" class="mt-1 text-xs text-error" role="alert">
                     {{ hostError || portError }}

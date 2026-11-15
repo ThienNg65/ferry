@@ -137,6 +137,14 @@ watch(
   }
 )
 
+function isValidPort(value: unknown): boolean {
+  const n = Number(value)
+  return (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= 65535
+}
+
 const isEdit = computed(() => Boolean(props.site))
 const passwordPlaceholder = computed(() =>
   props.site?.hasPassword ? 'Leave blank to keep current password' : 'Password'
@@ -144,34 +152,33 @@ const passwordPlaceholder = computed(() =>
 const passphrasePlaceholder = computed(() =>
   props.site?.hasPassphrase ? 'Leave blank to keep current passphrase' : 'Passphrase (optional)'
 )
+const portError = computed(() => (isValidPort(form.port) ? '' : 'Port must be 1–65535'))
+const proxyPortError = computed(() =>
+  proxyMode.value === 'custom' && !isValidPort(proxyPort.value) ? 'Port must be 1–65535' : ''
+)
 const canSave = computed(
   () =>
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    Number.isInteger(form.port) &&
-    form.port >= 1 &&
-    form.port <= 65535 &&
+    isValidPort(form.port) &&
     (!useJumpHost.value ||
       jumpHops.value.every(
         (hop) =>
           hop.host.trim().length > 0 &&
           hop.username.trim().length > 0 &&
-          Number.isInteger(hop.port) &&
-          hop.port >= 1 &&
-          hop.port <= 65535
+          isValidPort(hop.port)
       )) &&
     (proxyMode.value !== 'custom' ||
-      (proxyHost.value.trim().length > 0 &&
-        Number.isInteger(proxyPort.value) &&
-        proxyPort.value >= 1 &&
-        proxyPort.value <= 65535))
+      (proxyHost.value.trim().length > 0 && isValidPort(proxyPort.value)))
 )
 
 /** True while an incomplete jump host is the reason Save is disabled — used to force the Advanced section open so the offending fields are never hidden. */
 const jumpHostIncomplete = computed(
   () =>
     useJumpHost.value &&
-    jumpHops.value.some((hop) => hop.host.trim().length === 0 || hop.username.trim().length === 0)
+    jumpHops.value.some(
+      (hop) => hop.host.trim().length === 0 || hop.username.trim().length === 0 || !isValidPort(hop.port)
+    )
 )
 
 const authOptions: { label: string; value: AuthMethod }[] = [
@@ -295,7 +302,7 @@ async function save(): Promise<void> {
           <UFormField label="Host" class="flex-1">
             <UInput v-model="form.host" placeholder="example.com" class="w-full" />
           </UFormField>
-          <UFormField label="Port" class="w-24">
+          <UFormField label="Port" :error="portError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
             <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
           </UFormField>
         </div>
@@ -396,7 +403,7 @@ async function save(): Promise<void> {
                   <UFormField label="Proxy host" class="flex-1">
                     <UInput v-model="proxyHost" placeholder="proxy.example.com" class="w-full" />
                   </UFormField>
-                  <UFormField label="Port" class="w-24">
+                  <UFormField label="Port" :error="proxyPortError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
                     <UInput v-model.number="proxyPort" type="number" min="1" max="65535" class="w-full" />
                   </UFormField>
                 </div>

@@ -99,14 +99,16 @@ async function onSaveQuickAsSite(): Promise<void> {
   }
 }
 
-const canQuickConnect = computed(() => {
+const portError = computed(() => {
   const port = Number(form.port)
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be 1–65535'
+})
+
+const canQuickConnect = computed(() => {
   return (
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    Number.isInteger(port) &&
-    port >= 1 &&
-    port <= 65535
+    portError.value === ''
   )
 })
 const canConnect = canQuickConnect
@@ -498,7 +500,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <UFormField label="Host" class="flex-1">
                 <UInput v-model="form.host" placeholder="example.com" class="w-full" />
               </UFormField>
-              <UFormField label="Port" class="w-24">
+              <UFormField label="Port" :error="portError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
                 <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
               </UFormField>
             </div>
