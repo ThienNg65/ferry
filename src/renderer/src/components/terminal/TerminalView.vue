@@ -195,13 +195,18 @@ watch([searchQuery, caseSensitive, isRegex], () => {
 
 const containerRef = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
+let resizeRaf = 0
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
   window.addEventListener(TERMINAL_SEARCH_EVENT, openSearch)
   
   resizeObserver = new ResizeObserver(() => {
-    onWindowResize()
+    if (resizeRaf) cancelAnimationFrame(resizeRaf)
+    resizeRaf = requestAnimationFrame(() => {
+      resizeRaf = 0
+      onWindowResize()
+    })
   })
   if (containerRef.value) {
     resizeObserver.observe(containerRef.value)
@@ -213,6 +218,10 @@ onBeforeUnmount(() => {
   window.removeEventListener(TERMINAL_SEARCH_EVENT, openSearch)
   resultsSub?.dispose()
   resizeObserver?.disconnect()
+  if (resizeRaf) {
+    cancelAnimationFrame(resizeRaf)
+    resizeRaf = 0
+  }
   if (resizeTimer !== null) {
     clearTimeout(resizeTimer)
   }

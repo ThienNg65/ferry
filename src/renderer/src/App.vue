@@ -224,7 +224,16 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
 </script>
 
 <template>
-  <UApp :locale="appLocale" :toaster="{ position: 'bottom-right', duration: 4000 }">
+  <UApp
+    :locale="appLocale"
+    :toaster="{
+      position: 'bottom-right',
+      duration: 3500,
+      max: 3,
+      expand: false,
+      ui: { viewport: 'bottom-12 right-4' }
+    }"
+  >
     <div class="flex h-screen flex-col bg-default text-default">
       <SiteTabBar />
       <div class="relative min-h-0 flex-1">
