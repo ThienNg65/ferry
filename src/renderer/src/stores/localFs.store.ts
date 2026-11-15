@@ -215,6 +215,10 @@ export const useLocalFsStore = defineStore('localFs', {
       const result = selectAll(entries ?? this.entries)
       this.selected = result.selected
       this.selectAnchor = result.anchor
+    },
+
+    setError(message: string | null): void {
+      this.error = message
     }
   }
 })

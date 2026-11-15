@@ -294,9 +294,16 @@ function onTouchClick(): void {
 
 async function submitMkdir(): Promise<void> {
   const name = newFolderName.value.trim()
+  const kind = newEntryKind.value
   showNewFolder.value = false
-  if (name) {
-    await (newEntryKind.value === 'file' ? store.touch(name) : store.mkdir(name))
+  if (!name) return
+  try {
+    store.setError(null)
+    await (kind === 'file' ? store.touch(name) : store.mkdir(name))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    notify.error(kind === 'file' ? 'Could not create file' : 'Could not create folder', message)
+    store.setError(message)
   }
 }
 
