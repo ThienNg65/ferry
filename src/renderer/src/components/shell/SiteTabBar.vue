@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
-import type { WindowStateEvent, WindowStateResult } from '@shared/contract'
+import type { Site, SiteInput, WindowStateEvent, WindowStateResult } from '@shared/contract'
 import { invoke, onEvent } from '../../api'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
 import { useGlobalActivity } from '../../composables/useGlobalActivity'
 import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useSettingsDialog } from '../../composables/useSettingsDialog'
+import { useNotify } from '../../composables/useNotify'
+import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
@@ -15,15 +17,49 @@ import { useUpdateStore } from '../../stores/update.store'
 import { ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
+const SiteFormDialog = defineAsyncComponent(() => import('../sessions/SiteFormDialog.vue'))
+
 const sessions = useSessionsStore()
+const remoteFs = useRemoteFsStore()
 const ui = useUiStore()
 const sites = useSitesStore()
 const updateStore = useUpdateStore()
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const commandPalette = useCommandPalette()
+const notify = useNotify()
 const { isBusy, label: activityLabel } = useGlobalActivity()
 const { openDock } = useDockState()
+
+const saveQuickOpen = ref(false)
+const saveQuickTabId = ref<string | null>(null)
+const saveQuickInitialValues = ref<Partial<SiteInput> | null>(null)
+
+const canSaveActiveQuickConnect = computed(() =>
+  Boolean(!sessions.activeTab.siteId && sessions.status === 'connected' && sessions.activeTab.quickConnectInput)
+)
+
+function openSaveQuickSite(): void {
+  const tab = sessions.activeTab
+  const qc = tab.quickConnectInput
+  if (!qc || tab.siteId) {
+    return
+  }
+  saveQuickTabId.value = tab.tabId
+  saveQuickInitialValues.value = {
+    ...qc,
+    name: `${qc.username}@${qc.host}`,
+    remoteInitialPath: remoteFs.currentPath || undefined
+  }
+  saveQuickOpen.value = true
+}
+
+function onQuickSiteSaved(site: Site): void {
+  if (saveQuickTabId.value) {
+    sessions.promoteTabToSite(saveQuickTabId.value, site)
+    notify.success('Site saved', site.name)
+  }
+}
 
 const isFullScreen = ref(false)
 let unsubscribeWindowState: (() => void) | null = null
@@ -193,13 +229,23 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @click="ui.toggleTheme()"
         />
       </UTooltip>
-      <UTooltip text="History">
+      <UTooltip v-if="canSaveActiveQuickConnect" text="Save as site">
+        <UButton
+          size="xs"
+          variant="ghost"
+          color="neutral"
+          icon="i-lucide-bookmark-plus"
+          aria-label="Save as site"
+          @click="openSaveQuickSite"
+        />
+      </UTooltip>
+      <UTooltip text="Transfer History">
         <UButton
           size="xs"
           variant="ghost"
           color="neutral"
           icon="i-lucide-history"
-          aria-label="History"
+          aria-label="Transfer History"
           @click="historyDialog.open()"
         />
       </UTooltip>
@@ -234,5 +280,11 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         />
       </UTooltip>
     </div>
+    <SiteFormDialog
+      v-model:open="saveQuickOpen"
+      :site="null"
+      :initial-values="saveQuickInitialValues"
+      @saved="onQuickSiteSaved"
+    />
   </div>
 </template>

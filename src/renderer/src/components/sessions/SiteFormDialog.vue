@@ -17,10 +17,12 @@ import GenerateKeyDialog from './GenerateKeyDialog.vue'
 const props = defineProps<{
   open: boolean
   site?: Site | null
+  initialValues?: Partial<SiteInput> | null
 }>()
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
+  saved: [site: Site]
 }>()
 
 const sites = useSitesStore()
@@ -94,22 +96,22 @@ const proxyTypeOptions: { label: string; value: ProxyType }[] = [
   { label: 'HTTP CONNECT', value: 'http' }
 ]
 
-function resetForm(site?: Site | null): void {
-  form.name = site?.name ?? ''
-  form.host = site?.host ?? ''
-  form.port = site?.port ?? 22
-  form.username = site?.username ?? ''
-  form.authMethod = site?.authMethod ?? 'password'
-  form.privateKeyPath = site?.privateKeyPath ?? ''
-  form.agentPath = site?.agentPath ?? ''
-  form.remoteInitialPath = site?.remoteInitialPath ?? ''
-  form.localInitialPath = site?.localInitialPath ?? ''
+function resetForm(seed?: Site | Partial<SiteInput> | null): void {
+  form.name = seed?.name ?? ''
+  form.host = seed?.host ?? ''
+  form.port = seed?.port ?? 22
+  form.username = seed?.username ?? ''
+  form.authMethod = seed?.authMethod ?? 'password'
+  form.privateKeyPath = seed?.privateKeyPath ?? ''
+  form.agentPath = seed?.agentPath ?? ''
+  form.remoteInitialPath = seed?.remoteInitialPath ?? ''
+  form.localInitialPath = seed?.localInitialPath ?? ''
   form.password = ''
   form.passphrase = ''
-  form.group = site?.group ?? ''
-  environment.value = site?.environment ?? 'none'
-  useJumpHost.value = Boolean(site?.jumpHosts?.length)
-  jumpHops.value = (site?.jumpHosts ?? []).map((hop) => ({
+  form.group = seed?.group ?? ''
+  environment.value = seed?.environment ?? 'none'
+  useJumpHost.value = Boolean(seed?.jumpHosts?.length)
+  jumpHops.value = (seed?.jumpHosts ?? []).map((hop) => ({
     host: hop.host,
     port: hop.port,
     username: hop.username,
@@ -118,13 +120,15 @@ function resetForm(site?: Site | null): void {
     password: '',
     passphrase: ''
   }))
-  proxyMode.value = site?.proxyMode ?? 'inherit'
-  proxyType.value = site?.proxy?.type ?? 'socks5'
-  proxyHost.value = site?.proxy?.host ?? ''
-  proxyPort.value = site?.proxy?.port ?? 1080
-  proxyUsername.value = site?.proxy?.username ?? ''
+  proxyMode.value = seed?.proxyMode ?? 'inherit'
+  proxyType.value = seed?.proxy?.type ?? 'socks5'
+  proxyHost.value = seed?.proxy?.host ?? ''
+  proxyPort.value = seed?.proxy?.port ?? 1080
+  proxyUsername.value = seed?.proxy?.username ?? ''
   proxyPassword.value = ''
-  advancedOpen.value = shouldExpandAdvanced(site)
+  advancedOpen.value = shouldExpandAdvanced(
+    seed ? { jumpHosts: seed.jumpHosts as Site['jumpHosts'], proxyMode: seed.proxyMode } : null
+  )
   error.value = null
 }
 
@@ -132,7 +136,7 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      resetForm(props.site)
+      resetForm(props.site ?? props.initialValues)
     }
   }
 )
@@ -260,11 +264,10 @@ async function save(): Promise<void> {
     environment: environment.value === 'none' ? undefined : environment.value
   }
   try {
-    if (props.site) {
-      await sites.updateSite(props.site.id, input)
-    } else {
-      await sites.createSite(input)
-    }
+    const saved = props.site
+      ? await sites.updateSite(props.site.id, input)
+      : await sites.createSite(input)
+    emit('saved', saved)
     close()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)

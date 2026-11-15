@@ -92,7 +92,7 @@ const groups = computed(() => {
       icon: 'i-lucide-minus',
       onSelect: () => run(() => invoke<void>(INVOKE_CHANNELS.windowMinimize))
     },
-    { label: 'History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
+    { label: 'Transfer History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
     { label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
     {
       label: 'Check for updates…',

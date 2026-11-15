@@ -52,9 +52,10 @@ export const useSitesStore = defineStore('sites', {
       return this.inFlightFetch
     },
 
-    async createSite(input: SiteInput): Promise<void> {
-      await invoke<Site>(INVOKE_CHANNELS.sitesCreate, withNameFallback(input))
+    async createSite(input: SiteInput): Promise<Site> {
+      const site = await invoke<Site>(INVOKE_CHANNELS.sitesCreate, withNameFallback(input))
       await this.fetchSites()
+      return site
     },
 
     /** Same as {@link createSite} but skips the refetch — for batch imports that refetch once at the end. */
@@ -62,9 +63,10 @@ export const useSitesStore = defineStore('sites', {
       await invoke<Site>(INVOKE_CHANNELS.sitesCreate, withNameFallback(input))
     },
 
-    async updateSite(id: string, input: SiteInput): Promise<void> {
-      await invoke<Site>(INVOKE_CHANNELS.sitesUpdate, id, withNameFallback(input))
+    async updateSite(id: string, input: SiteInput): Promise<Site> {
+      const site = await invoke<Site>(INVOKE_CHANNELS.sitesUpdate, id, withNameFallback(input))
       await this.fetchSites()
+      return site
     },
 
     async deleteSite(id: string): Promise<void> {

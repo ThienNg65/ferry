@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppVersionResult, AuthMethod, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
-import { useSessionsStore } from '../../stores/sessions.store'
+import { useSessionsStore, type RecentQuickConnect } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
@@ -74,6 +74,30 @@ const quickAuthOptions: { label: string; value: AuthMethod }[] = [
   { label: 'SSH agent', value: 'agent' }
 ]
 const savePassword = ref(false)
+const quickPasswordInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
+
+const recentQuickMenuItems = computed(() =>
+  sessions.recentQuickConnects.map((entry) => ({
+    label: `${entry.username}@${entry.host}:${entry.port}`,
+    icon: entry.authMethod === 'privateKey' ? 'i-lucide-key-round' : entry.authMethod === 'agent' ? 'i-lucide-shield-check' : 'i-lucide-terminal',
+    onSelect: () => void applyRecentQuickConnect(entry)
+  }))
+)
+
+async function applyRecentQuickConnect(entry: RecentQuickConnect): Promise<void> {
+  form.host = entry.host
+  form.port = entry.port
+  form.username = entry.username
+  form.authMethod = entry.authMethod
+  form.privateKeyPath = entry.privateKeyPath ?? ''
+  form.password = ''
+  form.passphrase = ''
+  bypassDefaultProxy.value = entry.proxyMode === 'none'
+  if (entry.authMethod === 'password') {
+    await nextTick()
+    quickPasswordInput.value?.inputRef?.focus()
+  }
+}
 
 async function browseQuickKey(): Promise<void> {
   const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
@@ -492,7 +516,19 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 
         <UCard>
           <template #header>
-            <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
+              <UDropdownMenu v-if="sessions.recentQuickConnects.length > 0" :items="recentQuickMenuItems">
+                <UButton
+                  label="Recent"
+                  icon="i-lucide-clock"
+                  trailing-icon="i-lucide-chevron-down"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                />
+              </UDropdownMenu>
+            </div>
           </template>
 
           <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
@@ -511,7 +547,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <USelect v-model="form.authMethod" :items="quickAuthOptions" class="w-full" />
             </UFormField>
             <UFormField v-if="form.authMethod === 'password'" label="Password">
-              <UInput v-model="form.password" type="password" class="w-full" />
+              <UInput ref="quickPasswordInput" v-model="form.password" type="password" class="w-full" />
             </UFormField>
             <template v-else-if="form.authMethod === 'privateKey'">
               <UFormField label="Private key file">
