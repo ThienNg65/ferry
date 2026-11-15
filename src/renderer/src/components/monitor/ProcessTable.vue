@@ -167,7 +167,7 @@ async function copyText(label: string, value: string): Promise<void> {
     <!-- Virtualized Rows -->
     <div ref="scrollEl" class="min-h-0 flex-1 overflow-y-auto px-1 py-1">
       <div v-if="sortedProcesses.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
-        <UIcon name="i-lucide-search-x" class="size-4 text-dimmed" />
+        <UIcon name="i-lucide-search-x" class="size-4 text-muted" />
         <p class="text-xs text-muted">
           {{ searchQuery.trim() ? `No processes matching "${searchQuery.trim()}"` : 'No process data yet' }}
         </p>

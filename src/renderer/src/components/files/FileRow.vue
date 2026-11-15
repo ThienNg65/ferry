@@ -260,7 +260,7 @@ function onMouseLeave(): void {
         <UIcon
           :name="entry.symlinkBroken ? 'i-lucide-link-2-off' : 'i-lucide-link-2'"
           class="absolute -bottom-1 -right-1 size-2.5 rounded-full bg-default"
-          :class="entry.symlinkBroken ? 'text-error' : 'text-dimmed'"
+          :class="entry.symlinkBroken ? 'text-error' : 'text-muted'"
         />
       </span>
     </UTooltip>
@@ -292,7 +292,7 @@ function onMouseLeave(): void {
         <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
           {{ technicalPermissions }}
         </span>
-        <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate">{{ friendlyPermissions }}</UBadge>
+        <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate text-toned">{{ friendlyPermissions }}</UBadge>
       </UTooltip>
     </div>
     <div v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
