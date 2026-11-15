@@ -210,6 +210,87 @@ body {
   transform: scale(0.98);
 }
 
+.ferry-legal-doc {
+  line-height: 1.55;
+}
+.ferry-legal-doc > :first-child {
+  margin-top: 0;
+}
+.ferry-legal-doc > :last-child {
+  margin-bottom: 0;
+}
+.ferry-legal-doc h1 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--ui-text-highlighted);
+}
+.ferry-legal-doc h2 {
+  margin: 0.875rem 0 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ui-text-highlighted);
+}
+.ferry-legal-doc h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ui-text-highlighted);
+}
+.ferry-legal-doc p {
+  margin: 0 0 0.5rem;
+}
+.ferry-legal-doc ul,
+.ferry-legal-doc ol {
+  margin: 0 0 0.5rem;
+  padding-left: 1.25rem;
+}
+.ferry-legal-doc ul {
+  list-style-type: disc;
+}
+.ferry-legal-doc ol {
+  list-style-type: decimal;
+}
+.ferry-legal-doc li {
+  margin-bottom: 0.2rem;
+}
+.ferry-legal-doc table {
+  width: 100%;
+  margin: 0.5rem 0;
+  border-collapse: collapse;
+  font-size: 0.6875rem;
+}
+.ferry-legal-doc th,
+.ferry-legal-doc td {
+  border: 1px solid var(--ui-border-muted);
+  padding: 0.3rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+.ferry-legal-doc th {
+  font-weight: 600;
+  color: var(--ui-text-highlighted);
+  background: var(--ui-bg-muted);
+}
+.ferry-legal-doc code {
+  border-radius: 0.25rem;
+  background: var(--ui-bg-muted);
+  padding: 0.05rem 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+}
+.ferry-legal-doc a {
+  color: var(--ui-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ferry-legal-doc a:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { LEGAL_POLICY_VERSION } from '@shared/contract'
 import privacyMarkdown from '../../../../../PRIVACY.md?raw'
 import termsMarkdown from '../../../../../TERMS.md?raw'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
+import { openExternal } from '../../bridge/neutralinoApi'
+import { renderLegalMarkdown } from '../../utils/renderLegalMarkdown'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
 const props = defineProps<{ open: boolean }>()
@@ -17,6 +19,23 @@ const acceptedCheckbox = ref(false)
 const autoUpdates = ref(true)
 const activeDoc = ref<'summary' | 'privacy' | 'terms'>('summary')
 const saving = ref(false)
+const renderedLegalHtml = computed(() =>
+  activeDoc.value === 'privacy'
+    ? renderLegalMarkdown(privacyMarkdown)
+    : activeDoc.value === 'terms'
+      ? renderLegalMarkdown(termsMarkdown)
+      : ''
+)
+
+function onLegalLinkClick(event: MouseEvent): void {
+  const anchor = (event.target as HTMLElement | null)?.closest('a')
+  if (!anchor) return
+  event.preventDefault()
+  const href = anchor.getAttribute('href')
+  if (href) {
+    void openExternal(href)
+  }
+}
 
 const docTabs: { id: 'summary' | 'privacy' | 'terms'; label: string }[] = [
   { id: 'summary', label: 'Summary' },
@@ -102,13 +121,15 @@ async function onContinue(): Promise<void> {
             <li>You can export or delete all local data and adjust history retention anytime in <strong>Settings → Privacy &amp; Legal</strong>.</li>
           </ul>
         </div>
-        <pre
+        <div
           v-else
           :id="`legal-panel-${activeDoc}`"
           role="tabpanel"
           :aria-labelledby="`legal-tab-${activeDoc}`"
-          class="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-muted bg-elevated p-3 font-sans text-xs text-default"
-        >{{ activeDoc === 'privacy' ? privacyMarkdown : termsMarkdown }}</pre>
+          class="ferry-legal-doc max-h-60 overflow-y-auto rounded-md border border-muted bg-elevated p-3 text-xs text-default"
+          @click="onLegalLinkClick"
+          v-html="renderedLegalHtml"
+        />
 
         <div class="flex items-center justify-between rounded-md border border-muted bg-elevated/50 px-3 py-2">
           <div class="min-w-0 pr-3">

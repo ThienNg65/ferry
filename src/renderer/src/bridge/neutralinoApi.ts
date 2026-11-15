@@ -569,6 +569,31 @@ export function isNeutralinoRuntime(): boolean {
   return typeof window !== 'undefined' && typeof (window as unknown as { NL_PORT?: unknown }).NL_PORT === 'number'
 }
 
+/** Opens an external `https://` URL in the user's default browser (Neutralino `os.open`, falling back to `window.open`). */
+export async function openExternal(url: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return
+  }
+  if (parsed.protocol !== 'https:') {
+    return
+  }
+  const safeUrl = parsed.toString()
+  if (isNeutralinoRuntime()) {
+    try {
+      await nlOs.open(safeUrl)
+      return
+    } catch {
+      // Fall through to window.open if host does not support os.open
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.open(safeUrl, '_blank', 'noopener,noreferrer')
+  }
+}
+
 /** Installs the Neutralino-backed `window.api` bridge when Electron's preload script is absent. */
 export function installNeutralinoApi(): void {
   if (typeof window === 'undefined' || window.api) {
