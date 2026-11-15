@@ -86,6 +86,167 @@ const ACCENT_PRESETS: { label: string; hex: string }[] = [
   { label: 'Teal', hex: '#14b8a6' }
 ]
 
+const HEX_6_RE = /^#?[0-9a-f]{6}$/i
+const HEX_3_RE = /^#?[0-9a-f]{3}$/i
+const customHexInput = ref(ui.accentColor)
+const hexInputInvalid = ref(false)
+const colorPickerHostRef = ref<HTMLElement | null>(null)
+
+watch(
+  () => ui.accentColor,
+  (val) => {
+    customHexInput.value = val
+    hexInputInvalid.value = false
+    syncColorPickerAria()
+  }
+)
+
+function normalizeHex(raw: string, allowShort = false): string | null {
+  const trimmed = raw.trim()
+  if (HEX_6_RE.test(trimmed)) {
+    return (trimmed.startsWith('#') ? trimmed : `#${trimmed}`).toLowerCase()
+  }
+  if (allowShort && HEX_3_RE.test(trimmed)) {
+    const clean = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed
+    return `#${clean[0]}${clean[0]}${clean[1]}${clean[1]}${clean[2]}${clean[2]}`.toLowerCase()
+  }
+  return null
+}
+
+function onCustomHexInput(val: string): void {
+  customHexInput.value = val
+  const normalized = normalizeHex(val, false)
+  if (normalized) {
+    hexInputInvalid.value = false
+    ui.setAccentColor(normalized)
+  }
+}
+
+function commitCustomHex(): void {
+  const normalized = normalizeHex(customHexInput.value, true)
+  if (normalized) {
+    hexInputInvalid.value = false
+    customHexInput.value = normalized
+    ui.setAccentColor(normalized)
+  } else {
+    hexInputInvalid.value = true
+  }
+}
+
+function hexToHsv(hex: string): { h: number; s: number; v: number } {
+  const clean = hex.replace('#', '')
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean
+  const n = parseInt(full, 16)
+  if (!Number.isFinite(n)) return { h: 210, s: 96, v: 100 }
+  const r = ((n >> 16) & 255) / 255
+  const g = ((n >> 8) & 255) / 255
+  const b = (n & 255) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  let h = 0
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60
+    else if (max === g) h = ((b - r) / d + 2) * 60
+    else h = ((r - g) / d + 4) * 60
+  }
+  return { h, s: max === 0 ? 0 : (d / max) * 100, v: max * 100 }
+}
+
+function hsvToHex(h: number, s: number, v: number): string {
+  const sn = Math.max(0, Math.min(100, s)) / 100
+  const vn = Math.max(0, Math.min(100, v)) / 100
+  const c = vn * sn
+  const hue = ((h % 360) + 360) % 360
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1))
+  const m = vn - c
+  let rf = 0
+  let gf = 0
+  let bf = 0
+  if (hue < 60) [rf, gf, bf] = [c, x, 0]
+  else if (hue < 120) [rf, gf, bf] = [x, c, 0]
+  else if (hue < 180) [rf, gf, bf] = [0, c, x]
+  else if (hue < 240) [rf, gf, bf] = [0, x, c]
+  else if (hue < 300) [rf, gf, bf] = [x, 0, c]
+  else [rf, gf, bf] = [c, 0, x]
+  const toHex = (val: number): string => Math.round((val + m) * 255).toString(16).padStart(2, '0')
+  return `#${toHex(rf)}${toHex(gf)}${toHex(bf)}`
+}
+
+function syncColorPickerAria(): void {
+  const host = colorPickerHostRef.value
+  if (!host) return
+  const { h, s, v } = hexToHsv(ui.accentColor)
+  const selectorThumb = host.querySelector<HTMLElement>('[data-slot="selectorThumb"]')
+  const trackThumb = host.querySelector<HTMLElement>('[data-slot="trackThumb"]')
+  if (selectorThumb) {
+    selectorThumb.setAttribute('aria-valuenow', String(Math.round(v)))
+    selectorThumb.setAttribute('aria-valuetext', `Saturation ${Math.round(s)}%, Brightness ${Math.round(v)}%`)
+  }
+  if (trackThumb) {
+    trackThumb.setAttribute('aria-valuenow', String(Math.round((h / 360) * 100)))
+    trackThumb.setAttribute('aria-valuetext', `Hue ${Math.round(h)}°`)
+  }
+}
+
+watch(colorPickerHostRef, (host, _, onCleanup) => {
+  if (!host) return
+  const selectorThumb = host.querySelector<HTMLElement>('[data-slot="selectorThumb"]')
+  const trackThumb = host.querySelector<HTMLElement>('[data-slot="trackThumb"]')
+
+  const onSelectorKeydown = (e: KeyboardEvent): void => {
+    const step = e.shiftKey ? 10 : 5
+    const hsv = hexToHsv(ui.accentColor)
+    let handled = true
+    if (e.key === 'ArrowRight') hsv.s = Math.min(100, hsv.s + step)
+    else if (e.key === 'ArrowLeft') hsv.s = Math.max(0, hsv.s - step)
+    else if (e.key === 'ArrowUp') hsv.v = Math.min(100, hsv.v + step)
+    else if (e.key === 'ArrowDown') hsv.v = Math.max(0, hsv.v - step)
+    else handled = false
+    if (!handled) return
+    e.preventDefault()
+    ui.setAccentColor(hsvToHex(hsv.h, hsv.s, hsv.v))
+  }
+
+  const onTrackKeydown = (e: KeyboardEvent): void => {
+    const step = e.shiftKey ? 10 : 5
+    const hsv = hexToHsv(ui.accentColor)
+    let huePct = (hsv.h / 360) * 100
+    let handled = true
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') huePct = Math.min(100, huePct + step)
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') huePct = Math.max(0, huePct - step)
+    else if (e.key === 'Home') huePct = 0
+    else if (e.key === 'End') huePct = 100
+    else handled = false
+    if (!handled) return
+    e.preventDefault()
+    ui.setAccentColor(hsvToHex((huePct / 100) * 360, hsv.s, hsv.v))
+  }
+
+  if (selectorThumb) {
+    selectorThumb.setAttribute('role', 'slider')
+    selectorThumb.setAttribute('tabindex', '0')
+    selectorThumb.setAttribute('aria-label', 'Color saturation and brightness')
+    selectorThumb.setAttribute('aria-valuemin', '0')
+    selectorThumb.setAttribute('aria-valuemax', '100')
+    selectorThumb.addEventListener('keydown', onSelectorKeydown)
+  }
+  if (trackThumb) {
+    trackThumb.setAttribute('role', 'slider')
+    trackThumb.setAttribute('tabindex', '0')
+    trackThumb.setAttribute('aria-label', 'Color hue')
+    trackThumb.setAttribute('aria-valuemin', '0')
+    trackThumb.setAttribute('aria-valuemax', '100')
+    trackThumb.addEventListener('keydown', onTrackKeydown)
+  }
+  syncColorPickerAria()
+
+  onCleanup(() => {
+    selectorThumb?.removeEventListener('keydown', onSelectorKeydown)
+    trackThumb?.removeEventListener('keydown', onTrackKeydown)
+  })
+})
+
 const draftKey = computed(() =>
   JSON.stringify([
     unlimited.value,
@@ -379,13 +540,30 @@ async function saveNetwork(): Promise<void> {
                       <UIcon v-if="ui.accentColor === preset.hex" name="i-lucide-check" class="size-3.5 text-white" />
                     </button>
                   </UTooltip>
-                  <ColorPicker
-                    :model-value="ui.accentColor"
-                    format="hex"
-                    size="xs"
-                    :throttle="100"
-                    @update:model-value="(v: string | undefined) => { if (v) ui.setAccentColor(v) }"
-                  />
+                  <div ref="colorPickerHostRef" class="flex items-center gap-2">
+                    <ColorPicker
+                      :model-value="ui.accentColor"
+                      format="hex"
+                      size="xs"
+                      :throttle="100"
+                      :ui="{
+                        selectorThumb: 'focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2',
+                        trackThumb: 'focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2'
+                      }"
+                      @update:model-value="(v: string | undefined) => { if (v) ui.setAccentColor(v) }"
+                    />
+                    <UInput
+                      :model-value="customHexInput"
+                      aria-label="Custom accent hex color"
+                      :aria-invalid="hexInputInvalid"
+                      placeholder="#0a84ff"
+                      size="xs"
+                      class="w-24 font-mono"
+                      @update:model-value="(v: string) => onCustomHexInput(v)"
+                      @blur="commitCustomHex"
+                      @keydown.enter.prevent="commitCustomHex"
+                    />
+                  </div>
                 </div>
               </SettingsRow>
               <SettingsRow label="Row density" description="Spacing of rows in the file lists.">

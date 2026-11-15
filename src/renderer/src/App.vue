@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { en } from '@nuxt/ui/locale'
+import { extendLocale } from '@nuxt/ui/composables'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, LEGAL_POLICY_VERSION } from '@shared/contract'
 import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contract'
 import { invoke, onEvent } from './api'
@@ -200,6 +202,13 @@ onMounted(() => {
 
 // Only ever fires in a packaged build — see AutoUpdater.ts's app.isPackaged guard.
 const toast = useToast()
+const appLocale = extendLocale(en, {
+  messages: {
+    modal: {
+      close: 'Close dialog'
+    }
+  }
+})
 onEvent<UpdateAvailableEvent>(EVENT_CHANNELS.updateAvailable, (evt) => {
   notify.success('Update available', `Ferry v${evt.version} is downloading in the background`)
 })
@@ -215,7 +224,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
 </script>
 
 <template>
-  <UApp :toaster="{ position: 'bottom-right', duration: 4000 }">
+  <UApp :locale="appLocale" :toaster="{ position: 'bottom-right', duration: 4000 }">
     <div class="flex h-screen flex-col bg-default text-default">
       <SiteTabBar />
       <div class="relative min-h-0 flex-1">
