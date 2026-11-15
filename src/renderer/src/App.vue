@@ -5,6 +5,7 @@ import type { UpdateAvailableEvent, UpdateDownloadedEvent } from '@shared/contra
 import { invoke, onEvent } from './api'
 import { useSessionsStore } from './stores/sessions.store'
 import { useOperationsStore } from './stores/operations.store'
+import { useTransferQueueStore } from './stores/transferQueue.store'
 import { useEditSessionsStore } from './stores/editSessions.store'
 import { useSettingsStore } from './stores/settings.store'
 import { DEFAULT_LOCAL_PANE_WIDTH, useUiStore } from './stores/ui.store'
@@ -88,6 +89,7 @@ if (typeof requestAnimationFrame === 'function') {
     setTimeout(() => {
       void sessions.restoreOpenTabs()
       useOperationsStore().ensureSubscription()
+      useTransferQueueStore().ensureSubscription()
       useEditSessionsStore().ensureSubscription()
     }, 0)
   })
@@ -95,6 +97,7 @@ if (typeof requestAnimationFrame === 'function') {
   setTimeout(() => {
     void sessions.restoreOpenTabs()
     useOperationsStore().ensureSubscription()
+    useTransferQueueStore().ensureSubscription()
     useEditSessionsStore().ensureSubscription()
   }, 0)
 }

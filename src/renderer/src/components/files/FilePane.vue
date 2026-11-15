@@ -161,14 +161,20 @@ const onKeydown = usePaneKeyboard({
 
 void bookmarks.ensureLoaded()
 
-/** The current pane's saved-site id — null for local, and for a remote quick-connect tab with no site to attach a bookmark to. */
-const currentSiteId = computed(() => (props.side === 'remote' ? sessions.activeTab.siteId : null))
-const canBookmark = computed(() => props.side === 'local' || currentSiteId.value !== null)
+/** The current pane's bookmark scope key: saved siteId, Quick Connect hostLabel, or null for local. */
+const currentSiteId = computed(() =>
+  props.side === 'remote' ? (sessions.activeTab.siteId ?? sessions.activeTab.hostLabel ?? null) : null
+)
+const canBookmark = computed(
+  () => props.side === 'local' || (sessions.status === 'connected' && Boolean(currentSiteId.value))
+)
 const currentBookmarks = computed(() => {
   if (props.side === 'local') {
     return bookmarks.localBookmarks
   }
-  return currentSiteId.value ? bookmarks.forSite(currentSiteId.value) : []
+  return currentSiteId.value
+    ? bookmarks.forSite(currentSiteId.value, sessions.activeTab.hostLabel)
+    : []
 })
 
 /** Last path segment, for a bookmark's default label — falls back to the whole path for a root/drive path with no separator. */
@@ -198,7 +204,11 @@ async function onJumpBookmark(path: string): Promise<void> {
 }
 
 async function onRemoveBookmark(id: string): Promise<void> {
-  await bookmarks.remove(id)
+  try {
+    await bookmarks.remove(id)
+  } catch (e) {
+    notify.error('Could not remove bookmark', e instanceof Error ? e.message : String(e))
+  }
 }
 
 if (props.side === 'local') {
@@ -284,9 +294,16 @@ function onTouchClick(): void {
 
 async function submitMkdir(): Promise<void> {
   const name = newFolderName.value.trim()
+  const kind = newEntryKind.value
   showNewFolder.value = false
-  if (name) {
-    await (newEntryKind.value === 'file' ? store.touch(name) : store.mkdir(name))
+  if (!name) return
+  try {
+    store.setError(null)
+    await (kind === 'file' ? store.touch(name) : store.mkdir(name))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    notify.error(kind === 'file' ? 'Could not create file' : 'Could not create folder', message)
+    store.setError(message)
   }
 }
 

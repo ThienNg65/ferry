@@ -292,12 +292,12 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         </div>
       </div>
       <div v-else-if="entries.length === 0 && filtered" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
-        <UIcon name="i-lucide-search-x" class="size-5 text-dimmed" />
+        <UIcon name="i-lucide-search-x" class="size-5 text-muted" />
         <p class="text-xs text-muted">No files match the current filter</p>
         <UButton size="xs" color="neutral" variant="soft" @click="emit('clear-filter')">Clear filter</UButton>
       </div>
       <div v-else-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
-        <UIcon name="i-lucide-folder-open" class="size-5 text-dimmed" />
+        <UIcon name="i-lucide-folder-open" class="size-5 text-muted" />
         <p class="text-xs text-muted">Empty folder</p>
       </div>
       <div v-else role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">

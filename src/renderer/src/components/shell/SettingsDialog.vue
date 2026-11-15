@@ -6,6 +6,8 @@ import { INVOKE_CHANNELS, type KnownHostEntry, type ProxyType } from '@shared/co
 import privacyMarkdown from '../../../../../PRIVACY.md?raw'
 import termsMarkdown from '../../../../../TERMS.md?raw'
 import { invoke } from '../../api'
+import { openExternal } from '../../bridge/neutralinoApi'
+import { renderLegalMarkdown } from '../../utils/renderLegalMarkdown'
 import SettingsRow from './SettingsRow.vue'
 import TerminalAppearanceSettings from './TerminalAppearanceSettings.vue'
 import { useSettingsStore } from '../../stores/settings.store'
@@ -187,6 +189,24 @@ async function toggleLegalDoc(doc: 'privacy' | 'terms' | 'licenses'): Promise<vo
     licensesText.value = mod.default
   }
   legalDoc.value = doc
+}
+
+async function onLegalLinkClick(event: MouseEvent): Promise<void> {
+  const anchor = (event.target as HTMLElement | null)?.closest('a')
+  if (!anchor) return
+  event.preventDefault()
+  if (anchor.dataset.legalDoc === 'licenses') {
+    if (!licensesText.value) {
+      const mod = await import('../../../../../THIRD_PARTY_LICENSES.txt?raw')
+      licensesText.value = mod.default
+    }
+    legalDoc.value = 'licenses'
+    return
+  }
+  const href = anchor.getAttribute('href')
+  if (href) {
+    void openExternal(href)
+  }
 }
 
 async function onRetentionChange(value: number): Promise<void> {
@@ -473,10 +493,16 @@ async function saveNetwork(): Promise<void> {
                   </UButton>
                 </div>
               </SettingsRow>
+              <div
+                v-if="legalDoc === 'privacy' || legalDoc === 'terms'"
+                class="ferry-legal-doc my-2 max-h-48 overflow-y-auto rounded-md border border-muted bg-elevated p-3 text-xs text-default"
+                @click="onLegalLinkClick"
+                v-html="renderLegalMarkdown(legalDoc === 'privacy' ? privacyMarkdown : termsMarkdown)"
+              />
               <pre
-                v-if="legalDoc"
+                v-else-if="legalDoc === 'licenses'"
                 class="my-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border border-muted bg-elevated p-3 font-sans text-xs text-default"
-              >{{ legalDoc === 'privacy' ? privacyMarkdown : legalDoc === 'terms' ? termsMarkdown : licensesText }}</pre>
+              >{{ licensesText }}</pre>
 
               <SettingsRow label="History retention limit" description="Automatically prune transfer & operation history older than this window.">
                 <USelect

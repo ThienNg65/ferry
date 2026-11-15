@@ -35,6 +35,7 @@
     "os.showFolderDialog",
     "os.showSaveDialog",
     "os.getPath",
+    "os.open",
     "clipboard.readText",
     "extensions.dispatch",
     "extensions.getStats",

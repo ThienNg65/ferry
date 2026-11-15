@@ -11,10 +11,16 @@ export function registerBookmarksHandlers(): void {
 
   handle<Bookmark>(INVOKE_CHANNELS.bookmarksCreate, (input) => {
     const obj = requireObject(input, INVOKE_CHANNELS.bookmarksCreate)
-    requireEnum(obj.side, ['local', 'remote'] as const, 'side', INVOKE_CHANNELS.bookmarksCreate)
-    requireNonEmptyString(obj.label, 'label', INVOKE_CHANNELS.bookmarksCreate)
-    requireNonEmptyString(obj.path, 'path', INVOKE_CHANNELS.bookmarksCreate)
-    return BookmarkStore.getInstance().create(obj as unknown as BookmarkInput)
+    const scope = requireEnum(obj.scope ?? obj.side, ['local', 'remote'] as const, 'scope', INVOKE_CHANNELS.bookmarksCreate)
+    const label = requireNonEmptyString(obj.label, 'label', INVOKE_CHANNELS.bookmarksCreate)
+    const path = requireNonEmptyString(obj.path, 'path', INVOKE_CHANNELS.bookmarksCreate)
+    const normalized: BookmarkInput = {
+      scope,
+      label,
+      path,
+      ...(typeof obj.siteId === 'string' && obj.siteId.trim() ? { siteId: obj.siteId.trim() } : {})
+    }
+    return BookmarkStore.getInstance().create(normalized)
   })
 
   handle<void>(INVOKE_CHANNELS.bookmarksDelete, (id) => {
