@@ -11,7 +11,7 @@ import { SshError } from '../ssh/errors'
 import { commitRemoteFile } from '../fs/RemoteFsService'
 import { cleanupStagedDropPath, listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { runConcurrent } from '../util/concurrency'
-import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
+import { EVENT_CHANNELS, type TransferEvent, type TransferKind, type TransferState } from '../../shared/contract'
 
 /** Exported so a terminal-event listener (see `onTerminalEvent`) gets full job context, not just the wire-format `TransferEvent`. */
 export interface TransferJob {
@@ -186,7 +186,7 @@ export class TransferQueue {
       resume: false
     }
     this.pending.push(job)
-    this.broadcast({ transferId, kind, state: 'queued' })
+    this.broadcast(this.jobEvent(job, 'queued'))
     this.pump()
     return transferId
   }
@@ -198,8 +198,9 @@ export class TransferQueue {
     }
     this.retryable.delete(transferId)
     this.paused.delete(transferId)
-    this.pending.push({ ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true })
-    this.broadcast({ transferId, kind: old.kind, state: 'queued' })
+    const job: TransferJob = { ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true }
+    this.pending.push(job)
+    this.broadcast(this.jobEvent(job, 'queued'))
     this.pump()
   }
 
@@ -222,7 +223,7 @@ export class TransferQueue {
       const [job] = this.pending.splice(idx, 1)
       this.rememberRetryable(job)
       this.paused.add(transferId)
-      this.broadcast({ transferId, kind: job.kind, state: 'paused' })
+      this.broadcast(this.jobEvent(job, 'paused'))
     }
   }
 
@@ -236,7 +237,7 @@ export class TransferQueue {
     if (pausedJob) {
       this.retryable.delete(transferId)
       this.paused.delete(transferId)
-      const evt: TransferEvent = { transferId, kind: pausedJob.kind, state: 'cancelled' }
+      const evt = this.jobEvent(pausedJob, 'cancelled')
       this.broadcast(evt)
       this.notifyTerminal(pausedJob, evt)
       if (pausedJob.kind === 'upload') {
@@ -257,7 +258,7 @@ export class TransferQueue {
     const idx = this.pending.findIndex((j) => j.transferId === transferId)
     if (idx !== -1) {
       const [job] = this.pending.splice(idx, 1)
-      const evt: TransferEvent = { transferId: job.transferId, kind: job.kind, state: 'cancelled' }
+      const evt = this.jobEvent(job, 'cancelled')
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
       if (job.kind === 'upload') {
@@ -287,7 +288,7 @@ export class TransferQueue {
     }
 
     const { transferId, kind } = job
-    this.broadcast({ transferId, kind, state: 'started' })
+    this.broadcast(this.jobEvent(job, 'started'))
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
@@ -325,7 +326,7 @@ export class TransferQueue {
       if (kind === 'upload') {
         await cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: 1, filesTotal: 1 }
+      const doneEvt = this.jobEvent(job, 'done', { bytesTransferred: totalBytes, totalBytes, filesDone: 1, filesTotal: 1 })
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
@@ -337,13 +338,13 @@ export class TransferQueue {
       }
       if (pausedNow) {
         this.paused.add(transferId)
-        this.broadcast({ transferId, kind, state: 'paused' })
+        this.broadcast(this.jobEvent(job, 'paused'))
         return
       }
       if (cancelled && kind === 'upload') {
         void cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }
@@ -477,7 +478,7 @@ export class TransferQueue {
    */
   private async runTree(job: TransferJob): Promise<void> {
     const { transferId, kind } = job
-    this.broadcast({ transferId, kind, state: 'started' })
+    this.broadcast(this.jobEvent(job, 'started'))
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
@@ -561,7 +562,7 @@ export class TransferQueue {
       if (kind === 'upload') {
         await cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length }
+      const doneEvt = this.jobEvent(job, 'done', { bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length })
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
@@ -573,15 +574,32 @@ export class TransferQueue {
       }
       if (pausedNow) {
         this.paused.add(transferId)
-        this.broadcast({ transferId, kind, state: 'paused' })
+        this.broadcast(this.jobEvent(job, 'paused'))
         return
       }
       if (cancelled && kind === 'upload') {
         void cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
+    }
+  }
+
+  private jobEvent(
+    job: TransferJob,
+    state: TransferState,
+    extra?: Partial<Omit<TransferEvent, 'transferId' | 'kind' | 'state'>>
+  ): TransferEvent {
+    return {
+      transferId: job.transferId,
+      kind: job.kind,
+      state,
+      sessionId: job.sessionId,
+      localPath: job.localPath,
+      remotePath: job.remotePath,
+      isDir: job.isTree,
+      ...extra
     }
   }
 

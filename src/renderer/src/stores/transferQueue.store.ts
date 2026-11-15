@@ -3,9 +3,42 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { TransferEnqueueResult, TransferEvent, TransferKind, TransferState } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { useLocalFsStore } from './localFs.store'
+import { useRemoteFsStore } from './remoteFs.store'
+
+const REFRESH_DEBOUNCE_MS = 100
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
+}
+
+function parentPosixDir(remotePath: string): string {
+  const trimmed = remotePath.replace(/\/+$/, '')
+  const idx = trimmed.lastIndexOf('/')
+  if (idx < 0) return ''
+  return idx === 0 ? '/' : trimmed.slice(0, idx)
+}
+
+function parentLocalDir(localPath: string): string {
+  const trimmed = localPath.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (idx < 0) return ''
+  if (idx === 0) return '/'
+  if (idx === 2 && /^[A-Za-z]:/.test(trimmed)) return trimmed.slice(0, 3)
+  return trimmed.slice(0, idx)
+}
+
+function scheduleDestinationRefresh(key: string, fn: () => Promise<void>): void {
+  const prev = refreshTimers.get(key)
+  if (prev) clearTimeout(prev)
+  refreshTimers.set(
+    key,
+    setTimeout(() => {
+      refreshTimers.delete(key)
+      void fn()
+    }, REFRESH_DEBOUNCE_MS)
+  )
 }
 
 export interface TransferItemState {
@@ -71,14 +104,14 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       const notify = useNotify()
       this.unsubscribe = onEvent<TransferEvent>(EVENT_CHANNELS.transferEvent, (evt) => {
         const existing = this.items.get(evt.transferId)
-        this.items.set(evt.transferId, {
+        const item: TransferItemState = {
           transferId: evt.transferId,
-          sessionId: existing?.sessionId ?? '',
+          sessionId: evt.sessionId ?? existing?.sessionId ?? '',
           kind: evt.kind,
           state: evt.state,
-          localPath: existing?.localPath ?? '',
-          remotePath: existing?.remotePath ?? '',
-          isDir: existing?.isDir ?? false,
+          localPath: evt.localPath ?? existing?.localPath ?? '',
+          remotePath: evt.remotePath ?? existing?.remotePath ?? '',
+          isDir: evt.isDir ?? existing?.isDir ?? false,
           bytesTransferred: evt.bytesTransferred ?? existing?.bytesTransferred ?? 0,
           totalBytes: evt.totalBytes ?? existing?.totalBytes ?? 0,
           bytesPerSec: evt.bytesPerSec ?? 0,
@@ -86,10 +119,26 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           filesDone: evt.filesDone ?? existing?.filesDone ?? 0,
           filesTotal: evt.filesTotal ?? existing?.filesTotal ?? 0,
           error: evt.error
-        })
-        const name = basename(existing?.remotePath || existing?.localPath || '')
+        }
+        this.items.set(evt.transferId, item)
+        const name = basename(item.remotePath || item.localPath || '')
         if (evt.state === 'done') {
           notify.success(evt.kind === 'download' ? 'Download complete' : 'Upload complete', name)
+          if (item.kind === 'upload' && item.sessionId && item.remotePath) {
+            const targetDir = parentPosixDir(item.remotePath)
+            if (targetDir) {
+              const remoteFs = useRemoteFsStore()
+              scheduleDestinationRefresh(`remote:${item.sessionId}:${targetDir}`, () =>
+                remoteFs.refreshSessionIfViewing(item.sessionId, targetDir)
+              )
+            }
+          } else if (item.kind === 'download' && item.localPath) {
+            const targetDir = parentLocalDir(item.localPath)
+            if (targetDir) {
+              const localFs = useLocalFsStore()
+              scheduleDestinationRefresh(`local:${targetDir}`, () => localFs.refreshIfViewing(targetDir))
+            }
+          }
         } else if (evt.state === 'error') {
           notify.error(evt.kind === 'download' ? 'Download failed' : 'Upload failed', evt.error ?? name)
         }
@@ -135,6 +184,11 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           filesDone: 0,
           filesTotal: 0
         })
+      } else {
+        existing.sessionId ||= sessionId
+        existing.localPath ||= localPath
+        existing.remotePath ||= remotePath
+        existing.isDir ||= isDir
       }
     },
 

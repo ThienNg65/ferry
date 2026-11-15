@@ -6,6 +6,17 @@ import { compareEntries, type SortColumn, type SortDirection } from '../utils/fi
 import { selectAll, selectOnly, selectRange, toggleSelect } from '../utils/fileSelection'
 import { emptyHistory, recordVisit, stepBack, stepForward, type NavHistory } from '../utils/navHistory'
 
+function normalizeLocalDir(dirPath: string): string {
+  if (!dirPath) return ''
+  if (/^[A-Za-z]:/.test(dirPath)) {
+    const windows = dirPath.replace(/\//g, '\\')
+    const trimmed = windows.replace(/\\+$/, '')
+    return (/^[A-Za-z]:$/.test(trimmed) ? `${trimmed}\\` : trimmed).toLowerCase()
+  }
+  const trimmed = dirPath.replace(/\/+$/, '')
+  return trimmed.length === 0 ? '/' : trimmed
+}
+
 interface LocalFsState {
   currentPath: string
   entries: FileEntry[]
@@ -54,6 +65,33 @@ export const useLocalFsStore = defineStore('localFs', {
         this.error = e instanceof Error ? e.message : String(e)
       } finally {
         this.loading = false
+      }
+    },
+
+    /** Silently refreshes the current local directory if it matches `targetDir`, preserving selection and scroll. */
+    async refreshIfViewing(targetDir: string): Promise<void> {
+      const normalizedTarget = normalizeLocalDir(targetDir)
+      if (!normalizedTarget || this.loading || normalizeLocalDir(this.currentPath) !== normalizedTarget) {
+        return
+      }
+      const pathAtStart = this.currentPath
+      try {
+        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, pathAtStart)
+        if (normalizeLocalDir(this.currentPath) !== normalizedTarget) {
+          return
+        }
+        this.entries = result.entries.sort(compareEntries(this.sortColumn, this.sortDirection))
+        const existingPaths = new Set(this.entries.map((e) => e.path))
+        const nextSelected = new Set<string>()
+        for (const p of this.selected) {
+          if (existingPaths.has(p)) nextSelected.add(p)
+        }
+        this.selected = nextSelected
+        if (this.selectAnchor && !existingPaths.has(this.selectAnchor)) {
+          this.selectAnchor = null
+        }
+      } catch {
+        // Ignore transient background refresh errors so active work is uninterrupted
       }
     },
 

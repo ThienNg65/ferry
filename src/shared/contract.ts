@@ -400,6 +400,10 @@ export interface TransferEvent {
   transferId: string
   kind: TransferKind
   state: TransferState
+  sessionId?: string
+  localPath?: string
+  remotePath?: string
+  isDir?: boolean
   bytesTransferred?: number
   totalBytes?: number
   bytesPerSec?: number

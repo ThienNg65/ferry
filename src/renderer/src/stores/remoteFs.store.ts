@@ -274,6 +274,42 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       return run
     },
 
+    /** Invalidates SWR cache for `targetDir` and quietly refreshes the listing if `sessionId` is currently viewing it, preserving selection and scroll. */
+    async refreshSessionIfViewing(sessionId: string, targetDir: string): Promise<void> {
+      const entry = this.bySession[sessionId]
+      if (!entry) return
+      const normalizedTarget = normalizeDirPath(targetDir)
+      if (!normalizedTarget) return
+
+      entry.dirCache.delete(normalizedTarget)
+      if (entry.loading || normalizeDirPath(entry.currentPath) !== normalizedTarget) {
+        return
+      }
+
+      const seqAtStart = this.requestSeq[sessionId] ?? 0
+      const pathAtStart = entry.currentPath
+      try {
+        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, pathAtStart, true)
+        const currentBucket = this.bySession[sessionId]
+        if (!currentBucket || (this.requestSeq[sessionId] ?? 0) !== seqAtStart || currentBucket.currentPath !== pathAtStart) {
+          return
+        }
+        setCache(currentBucket, result.path, result.entries, pathAtStart)
+        currentBucket.entries = result.entries.sort(compareEntries(currentBucket.sortColumn, currentBucket.sortDirection))
+        const existingPaths = new Set(currentBucket.entries.map((e) => e.path))
+        const nextSelected = new Set<string>()
+        for (const p of currentBucket.selected) {
+          if (existingPaths.has(p)) nextSelected.add(p)
+        }
+        currentBucket.selected = nextSelected
+        if (currentBucket.selectAnchor && !existingPaths.has(currentBucket.selectAnchor)) {
+          currentBucket.selectAnchor = null
+        }
+      } catch {
+        // Ignore transient background refresh errors so active work is uninterrupted
+      }
+    },
+
     /**
      * Prefetches a directory listing in the background quietly without changing current view or CWD.
      */
