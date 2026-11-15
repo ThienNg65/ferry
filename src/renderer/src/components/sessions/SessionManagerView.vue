@@ -352,7 +352,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <div class="truncate text-sm font-medium text-highlighted">
                 {{ sessions.status === 'error' ? 'Connection lost:' : 'Tab site:' }} {{ activeTabSite.name }}
               </div>
-              <div class="truncate text-xs text-muted">
+              <div class="break-words [overflow-wrap:anywhere] text-xs text-muted">
                 {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
                 <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
               </div>
@@ -577,6 +577,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               color="error"
               variant="soft"
               :title="sessions.statusMessage ?? 'Connection failed'"
+              :ui="{ title: 'break-words [overflow-wrap:anywhere]', description: 'break-words [overflow-wrap:anywhere]' }"
             />
           </form>
 
@@ -647,7 +648,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             icon="i-lucide-shield-alert"
             title="This could mean a man-in-the-middle attack"
           />
-          <p class="text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
+          <p class="break-words [overflow-wrap:anywhere] text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
           <p class="text-xs text-muted">
             Only continue if you're certain the change is legitimate — e.g. the server was reinstalled or its key was
             deliberately rotated.

@@ -3,6 +3,31 @@ export interface BreadcrumbSegment {
   fullPath: string
 }
 
+export interface CollapsedBreadcrumbs {
+  root: BreadcrumbSegment | null
+  collapsed: BreadcrumbSegment[]
+  current: BreadcrumbSegment | null
+}
+
+/**
+ * Collapses intermediate ancestor segments into a dropdown list while keeping
+ * root (`/` or `C:\`) and the active directory always visible.
+ */
+export function collapseBreadcrumbSegments(segments: BreadcrumbSegment[]): CollapsedBreadcrumbs {
+  if (segments.length <= 2) {
+    return {
+      root: segments[0] ?? null,
+      collapsed: [],
+      current: segments[1] ?? null
+    }
+  }
+  return {
+    root: segments[0],
+    collapsed: segments.slice(1, -1),
+    current: segments[segments.length - 1]
+  }
+}
+
 /**
  * Splits a POSIX (`/var/log/nginx`) or Windows (`C:\Users\name`) directory path
  * into clickable ancestor segments for `PathBreadcrumb.vue`.
