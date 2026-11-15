@@ -20,9 +20,12 @@ export const useBookmarksStore = defineStore('bookmarks', {
     localBookmarks(state): Bookmark[] {
       return state.bookmarks.filter((b) => b.scope === 'local')
     },
-    /** Remote bookmarks belonging to a specific saved site — quick-connect sessions have no siteId, so they never match. */
-    forSite(state): (siteId: string) => Bookmark[] {
-      return (siteId: string) => state.bookmarks.filter((b) => b.scope === 'remote' && b.siteId === siteId)
+    /** Remote bookmarks belonging to a specific saved site or Quick Connect hostLabel. */
+    forSite(state): (siteId: string, hostLabel?: string | null) => Bookmark[] {
+      return (siteId: string, hostLabel?: string | null) =>
+        state.bookmarks.filter(
+          (b) => b.scope === 'remote' && (b.siteId === siteId || (Boolean(hostLabel) && b.siteId === hostLabel))
+        )
     }
   },
 
