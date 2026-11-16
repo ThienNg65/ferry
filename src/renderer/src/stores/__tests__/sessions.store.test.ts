@@ -166,4 +166,37 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.activeTab.label).toBe('agent1@127.0.0.1')
     expect(api.invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.settingsSetOpenTabs, ['site-123'])
   })
+
+  it('ignores corrupt or out-of-range entries and strips secrets when loading recentQuickConnects from localStorage', async () => {
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    storageData.set(
+      'ferry:recentQuickConnect',
+      JSON.stringify([
+        { host: 'valid.example.com', port: 2222, username: 'alice', authMethod: 'password', password: 'leaked', passphrase: 'leaked' },
+        { host: 'bad-port.example.com', port: 70000, username: 'bob', authMethod: 'password' },
+        { host: 123, port: 22, username: 'nope' }
+      ])
+    )
+    setActivePinia(createPinia())
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+
+    expect(store.recentQuickConnects).toEqual([
+      {
+        host: 'valid.example.com',
+        port: 2222,
+        username: 'alice',
+        authMethod: 'password',
+        privateKeyPath: undefined,
+        proxyMode: undefined
+      }
+    ])
+
+    storageData.set('ferry:recentQuickConnect', '{not-valid-json')
+    vi.resetModules()
+    setActivePinia(createPinia())
+    const { useSessionsStore: useSessionsStoreCorrupt } = await import('../sessions.store')
+    expect(useSessionsStoreCorrupt().recentQuickConnects).toEqual([])
+  })
 })

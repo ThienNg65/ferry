@@ -122,6 +122,12 @@ function onCustomHexInput(val: string): void {
   }
 }
 
+function selectAccentPreset(hex: string): void {
+  ui.setAccentColor(hex)
+  customHexInput.value = hex
+  hexInputInvalid.value = false
+}
+
 function commitCustomHex(): void {
   const normalized = normalizeHex(customHexInput.value, true)
   if (normalized) {
@@ -268,7 +274,7 @@ const hostError = computed(() => (proxyEnabled.value && !proxyHost.value.trim() 
 const portError = computed(() => {
   const port = Number(proxyPort.value)
   return proxyEnabled.value && !(Number.isInteger(port) && port >= 1 && port <= 65535)
-    ? 'Port must be 1-65535'
+    ? 'Port must be 1–65535'
     : ''
 })
 const invalid = computed(() => Boolean(limitError.value || hostError.value || portError.value))
@@ -535,7 +541,7 @@ async function saveNetwork(): Promise<void> {
                       :style="{ backgroundColor: preset.hex }"
                       :aria-label="preset.label"
                       :aria-pressed="ui.accentColor === preset.hex"
-                      @click="ui.setAccentColor(preset.hex)"
+                      @click="selectAccentPreset(preset.hex)"
                     >
                       <UIcon v-if="ui.accentColor === preset.hex" name="i-lucide-check" class="size-3.5 text-white" />
                     </button>
@@ -556,6 +562,8 @@ async function saveNetwork(): Promise<void> {
                       :model-value="customHexInput"
                       aria-label="Custom accent hex color"
                       :aria-invalid="hexInputInvalid"
+                      :color="hexInputInvalid ? 'error' : undefined"
+                      :highlight="hexInputInvalid"
                       placeholder="#0a84ff"
                       size="xs"
                       class="w-24 font-mono"
@@ -563,6 +571,7 @@ async function saveNetwork(): Promise<void> {
                       @blur="commitCustomHex"
                       @keydown.enter.prevent="commitCustomHex"
                     />
+                    <span v-if="hexInputInvalid" role="alert" class="text-2xs text-error">Use #rrggbb</span>
                   </div>
                 </div>
               </SettingsRow>

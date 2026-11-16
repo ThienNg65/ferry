@@ -19,7 +19,6 @@ const collapsedMenuItems = computed(() =>
     onSelect: () => emit('navigate', seg.fullPath)
   }))
 )
-const strip = ref<HTMLElement | null>(null)
 
 function startEdit(): void {
   draft.value = props.path
@@ -71,7 +70,6 @@ async function copyCurrentPath(): Promise<void> {
     />
     <div v-else class="group flex min-w-0 flex-1 items-center gap-1 text-xs">
       <div
-        ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
         @click.self="startEdit"
       >
@@ -106,7 +104,7 @@ async function copyCurrentPath(): Promise<void> {
               …
             </button>
           </UDropdownMenu>
-          <span class="shrink-0 select-none text-dimmed">/</span>
+          <span class="shrink-0 select-none text-dimmed">{{ breadcrumbs.root?.label.endsWith('\\') ? '\\' : '/' }}</span>
         </template>
         <button
           v-if="breadcrumbs.current"

@@ -75,16 +75,17 @@ const quickAuthOptions: { label: string; value: AuthMethod }[] = [
 ]
 const savePassword = ref(false)
 const quickPasswordInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
+let pendingFocusQuickPassword = false
 
 const recentQuickMenuItems = computed(() =>
   sessions.recentQuickConnects.map((entry) => ({
     label: `${entry.username}@${entry.host}:${entry.port}`,
     icon: entry.authMethod === 'privateKey' ? 'i-lucide-key-round' : entry.authMethod === 'agent' ? 'i-lucide-shield-check' : 'i-lucide-terminal',
-    onSelect: () => void applyRecentQuickConnect(entry)
+    onSelect: () => applyRecentQuickConnect(entry)
   }))
 )
 
-async function applyRecentQuickConnect(entry: RecentQuickConnect): Promise<void> {
+function applyRecentQuickConnect(entry: RecentQuickConnect): void {
   form.host = entry.host
   form.port = entry.port
   form.username = entry.username
@@ -93,10 +94,14 @@ async function applyRecentQuickConnect(entry: RecentQuickConnect): Promise<void>
   form.password = ''
   form.passphrase = ''
   bypassDefaultProxy.value = entry.proxyMode === 'none'
-  if (entry.authMethod === 'password') {
-    await nextTick()
-    quickPasswordInput.value?.inputRef?.focus()
-  }
+  pendingFocusQuickPassword = entry.authMethod === 'password'
+}
+
+function onRecentMenuCloseAutoFocus(event: Event): void {
+  if (!pendingFocusQuickPassword) return
+  pendingFocusQuickPassword = false
+  event.preventDefault()
+  void nextTick(() => quickPasswordInput.value?.inputRef?.focus())
 }
 
 async function browseQuickKey(): Promise<void> {
@@ -518,7 +523,11 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           <template #header>
             <div class="flex items-center justify-between gap-2">
               <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
-              <UDropdownMenu v-if="sessions.recentQuickConnects.length > 0" :items="recentQuickMenuItems">
+              <UDropdownMenu
+                v-if="sessions.recentQuickConnects.length > 0"
+                :items="recentQuickMenuItems"
+                :content="{ onCloseAutoFocus: onRecentMenuCloseAutoFocus }"
+              >
                 <UButton
                   label="Recent"
                   icon="i-lucide-clock"

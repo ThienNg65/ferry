@@ -138,7 +138,8 @@ watch(
     if (isOpen) {
       resetForm(props.site ?? props.initialValues)
     }
-  }
+  },
+  { immediate: true }
 )
 
 function isValidPort(value: unknown): boolean {
