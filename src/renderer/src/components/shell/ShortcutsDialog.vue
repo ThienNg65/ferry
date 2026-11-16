@@ -34,6 +34,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: 'Terminal and logs',
     rows: [
+      ['Ctrl+`', 'Toggle terminal dock'],
       ['Ctrl+Shift+F', 'Search the terminal'],
       ['Ctrl+Shift+C / Ctrl+Shift+V', 'Copy / paste in the terminal']
     ]

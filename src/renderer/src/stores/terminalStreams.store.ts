@@ -211,6 +211,9 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         // Returning false stops xterm's own processing; preventDefault stops
         // Chromium's native paste from double-firing into the hidden textarea.
         term.attachCustomKeyEventHandler((ev) => {
+          if (ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.code === 'Backquote') {
+            return false
+          }
           if (ev.type === 'keydown' && ev.ctrlKey && ev.shiftKey && ev.key.toLowerCase() === 'f') {
             ev.preventDefault()
             window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))

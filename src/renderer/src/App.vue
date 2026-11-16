@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { en } from '@nuxt/ui/locale'
 import { extendLocale } from '@nuxt/ui/composables'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, LEGAL_POLICY_VERSION } from '@shared/contract'
@@ -10,6 +10,7 @@ import { useOperationsStore } from './stores/operations.store'
 import { useTransferQueueStore } from './stores/transferQueue.store'
 import { useEditSessionsStore } from './stores/editSessions.store'
 import { useSettingsStore } from './stores/settings.store'
+import { useTerminalStreamsStore } from './stores/terminalStreams.store'
 import { DEFAULT_LOCAL_PANE_WIDTH, useUiStore } from './stores/ui.store'
 import { clampLocalPaneWidth } from './utils/paneColumns'
 import { initWindowBoundsPersistence } from './utils/windowBounds'
@@ -75,7 +76,7 @@ watch(
   { immediate: true }
 )
 const { isBusy } = useGlobalActivity()
-const { collapsed: dockCollapsed, isMaximized: dockMaximized } = useDockState()
+const { collapsed: dockCollapsed, tab: dockTab, isMaximized: dockMaximized, openDock } = useDockState()
 const isDockFullHeight = computed(() => !dockCollapsed.value && dockMaximized.value)
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
@@ -158,6 +159,25 @@ function onTabShortcut(event: KeyboardEvent): void {
     return
   }
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
+    return
+  }
+  if (!event.shiftKey && event.code === 'Backquote') {
+    if (!isConnected.value) {
+      return
+    }
+    event.preventDefault()
+    if (!dockCollapsed.value && dockTab.value === 'terminal') {
+      dockCollapsed.value = true
+      const pane = ui.activePane === 'local' && ui.showLocalPane ? 'local' : 'remote'
+      document.querySelector<HTMLElement>(`[data-pane="${pane}"]`)?.focus()
+    } else {
+      openDock('terminal')
+      void nextTick(() => {
+        if (sessions.activeSessionId) {
+          useTerminalStreamsStore().focus(sessions.activeSessionId)
+        }
+      })
+    }
     return
   }
   const inTerminal = event.target instanceof HTMLElement && event.target.closest('.xterm') !== null
@@ -248,9 +268,14 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
         <Transition name="fade" mode="out-in">
           <SessionManagerView v-if="!isConnected" key="picker" />
         </Transition>
-        <div v-if="hasConnectedOnce" v-show="isConnected" class="flex h-full flex-col">
-          <!-- Not v-show: the dock animates to full height and squeezes this area, so it must stay laid out. -->
-          <div :inert="isDockFullHeight" class="flex min-h-0 flex-1 relative">
+        <div
+          v-if="hasConnectedOnce"
+          v-show="isConnected"
+          class="flex h-full"
+          :class="ui.dockPosition === 'right' ? 'flex-row' : 'flex-col'"
+        >
+          <!-- Not v-show: the dock animates to full height/width and squeezes this area, so it must stay laid out. -->
+          <div :inert="isDockFullHeight" class="flex min-h-0 min-w-0 flex-1 relative">
             <FilePane 
               side="local" 
               :style="ui.showLocalPane ? { width: `${effectiveLocalWidth}%` } : undefined"
