@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "js.ferry.app",
-  "version": "0.27.1",
+  "version": "0.28.0",
   "defaultMode": "window",
   "port": 0,
   "documentRoot": "/out/renderer/",
