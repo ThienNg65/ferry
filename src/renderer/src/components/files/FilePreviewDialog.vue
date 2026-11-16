@@ -65,22 +65,19 @@ watch(
 )
 
 function onTail(): void {
-  if (props.entry) {
-    emit('tail', props.entry)
-  }
+  if (!props.entry || loading.value || error.value || props.entry.symlinkBroken) return
+  emit('tail', props.entry)
 }
 
 function onDownload(): void {
-  if (props.entry) {
-    emit('download', props.entry)
-  }
+  if (!props.entry || loading.value || error.value || props.entry.symlinkBroken) return
+  emit('download', props.entry)
 }
 
 function onEdit(): void {
-  if (props.entry) {
-    emit('edit', props.entry)
-    emit('update:open', false)
-  }
+  if (!props.entry || loading.value || error.value || props.entry.symlinkBroken) return
+  emit('edit', props.entry)
+  emit('update:open', false)
 }
 </script>
 
@@ -99,6 +96,7 @@ function onEdit(): void {
         variant="ghost"
         size="xs"
         label="Tail"
+        :disabled="loading || Boolean(error) || Boolean(entry?.symlinkBroken)"
         @click="onTail"
       />
     </template>
@@ -107,7 +105,7 @@ function onEdit(): void {
       <div v-if="!previewable" class="flex flex-col items-center gap-3 py-8 text-center">
         <UIcon name="i-lucide-file-question" class="size-8 text-muted" />
         <p class="text-sm text-muted">Preview not available for this file type.</p>
-        <UButton v-if="canDownload" icon="i-lucide-download" @click="onDownload">Download instead</UButton>
+        <UButton v-if="canDownload" icon="i-lucide-download" :disabled="Boolean(entry?.symlinkBroken)" @click="onDownload">Download instead</UButton>
       </div>
       <div v-else-if="loading" role="status" aria-label="Loading file preview" class="flex flex-col gap-2 py-2">
         <USkeleton v-for="i in 6" :key="i" class="h-3.5" :style="{ width: `${60 + ((i * 19) % 35)}%` }" />
@@ -130,6 +128,7 @@ function onEdit(): void {
         v-if="previewable"
         color="primary"
         icon="i-lucide-file-pen"
+        :disabled="loading || Boolean(error) || Boolean(entry?.symlinkBroken)"
         @click="onEdit"
       >
         Edit
@@ -139,6 +138,7 @@ function onEdit(): void {
         color="neutral"
         variant="outline"
         icon="i-lucide-download"
+        :disabled="loading || Boolean(error) || Boolean(entry?.symlinkBroken)"
         @click="onDownload"
       >
         Download

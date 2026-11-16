@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppVersionResult, AuthMethod, QuickConnectInput, Site } from '@shared/contract'
 import { invoke } from '../../api'
-import { useSessionsStore } from '../../stores/sessions.store'
+import { useSessionsStore, type RecentQuickConnect } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
@@ -74,6 +74,35 @@ const quickAuthOptions: { label: string; value: AuthMethod }[] = [
   { label: 'SSH agent', value: 'agent' }
 ]
 const savePassword = ref(false)
+const quickPasswordInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
+let pendingFocusQuickPassword = false
+
+const recentQuickMenuItems = computed(() =>
+  sessions.recentQuickConnects.map((entry) => ({
+    label: `${entry.username}@${entry.host}:${entry.port}`,
+    icon: entry.authMethod === 'privateKey' ? 'i-lucide-key-round' : entry.authMethod === 'agent' ? 'i-lucide-shield-check' : 'i-lucide-terminal',
+    onSelect: () => applyRecentQuickConnect(entry)
+  }))
+)
+
+function applyRecentQuickConnect(entry: RecentQuickConnect): void {
+  form.host = entry.host
+  form.port = entry.port
+  form.username = entry.username
+  form.authMethod = entry.authMethod
+  form.privateKeyPath = entry.privateKeyPath ?? ''
+  form.password = ''
+  form.passphrase = ''
+  bypassDefaultProxy.value = entry.proxyMode === 'none'
+  pendingFocusQuickPassword = entry.authMethod === 'password'
+}
+
+function onRecentMenuCloseAutoFocus(event: Event): void {
+  if (!pendingFocusQuickPassword) return
+  pendingFocusQuickPassword = false
+  event.preventDefault()
+  void nextTick(() => quickPasswordInput.value?.inputRef?.focus())
+}
 
 async function browseQuickKey(): Promise<void> {
   const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
@@ -99,14 +128,16 @@ async function onSaveQuickAsSite(): Promise<void> {
   }
 }
 
-const canQuickConnect = computed(() => {
+const portError = computed(() => {
   const port = Number(form.port)
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be 1–65535'
+})
+
+const canQuickConnect = computed(() => {
   return (
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    Number.isInteger(port) &&
-    port >= 1 &&
-    port <= 65535
+    portError.value === ''
   )
 })
 const canConnect = canQuickConnect
@@ -326,7 +357,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <div class="truncate text-sm font-medium text-highlighted">
                 {{ sessions.status === 'error' ? 'Connection lost:' : 'Tab site:' }} {{ activeTabSite.name }}
               </div>
-              <div class="truncate text-xs text-muted">
+              <div class="break-words [overflow-wrap:anywhere] text-xs text-muted">
                 {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
                 <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
               </div>
@@ -490,7 +521,23 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 
         <UCard>
           <template #header>
-            <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
+              <UDropdownMenu
+                v-if="sessions.recentQuickConnects.length > 0"
+                :items="recentQuickMenuItems"
+                :content="{ onCloseAutoFocus: onRecentMenuCloseAutoFocus }"
+              >
+                <UButton
+                  label="Recent"
+                  icon="i-lucide-clock"
+                  trailing-icon="i-lucide-chevron-down"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                />
+              </UDropdownMenu>
+            </div>
           </template>
 
           <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
@@ -498,7 +545,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <UFormField label="Host" class="flex-1">
                 <UInput v-model="form.host" placeholder="example.com" class="w-full" />
               </UFormField>
-              <UFormField label="Port" class="w-24">
+              <UFormField label="Port" :error="portError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
                 <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
               </UFormField>
             </div>
@@ -509,7 +556,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <USelect v-model="form.authMethod" :items="quickAuthOptions" class="w-full" />
             </UFormField>
             <UFormField v-if="form.authMethod === 'password'" label="Password">
-              <UInput v-model="form.password" type="password" class="w-full" />
+              <UInput ref="quickPasswordInput" v-model="form.password" type="password" class="w-full" />
             </UFormField>
             <template v-else-if="form.authMethod === 'privateKey'">
               <UFormField label="Private key file">
@@ -539,6 +586,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               color="error"
               variant="soft"
               :title="sessions.statusMessage ?? 'Connection failed'"
+              :ui="{ title: 'break-words [overflow-wrap:anywhere]', description: 'break-words [overflow-wrap:anywhere]' }"
             />
           </form>
 
@@ -609,7 +657,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             icon="i-lucide-shield-alert"
             title="This could mean a man-in-the-middle attack"
           />
-          <p class="text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
+          <p class="break-words [overflow-wrap:anywhere] text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
           <p class="text-xs text-muted">
             Only continue if you're certain the change is legitimate — e.g. the server was reinstalled or its key was
             deliberately rotated.

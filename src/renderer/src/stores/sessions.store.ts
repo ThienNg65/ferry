@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type {
   AppSettings,
+  AuthMethod,
   HostKeyPromptEvent,
   KeyboardInteractiveRequestEvent,
   QuickConnectInput,
@@ -18,6 +19,87 @@ import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useSitesStore } from './sites.store'
 import { useMonitorStore } from './monitor.store'
+
+export interface RecentQuickConnect {
+  host: string
+  port: number
+  username: string
+  authMethod: AuthMethod
+  privateKeyPath?: string
+  proxyMode?: 'inherit' | 'none' | 'custom'
+}
+
+const RECENT_QUICK_CONNECT_KEY = 'ferry:recentQuickConnect'
+const MAX_RECENT_QUICK_CONNECTS = 8
+
+/** Volatile in-memory Quick Connect credentials keyed by tabId — never persisted to localStorage. */
+const ephemeralQuickSecrets = new Map<string, { password?: string; passphrase?: string }>()
+
+function sanitizeQuickConnectInput(
+  input: QuickConnectInput
+): Omit<QuickConnectInput, 'password' | 'passphrase'> {
+  const { password: _pw, passphrase: _pp, ...rest } = input
+  return { ...rest }
+}
+
+function toRecentEntry(
+  input: Pick<RecentQuickConnect, 'host' | 'port' | 'username' | 'authMethod' | 'privateKeyPath' | 'proxyMode'>
+): RecentQuickConnect {
+  return {
+    host: input.host,
+    port: input.port,
+    username: input.username,
+    authMethod: input.authMethod,
+    privateKeyPath: input.authMethod === 'privateKey' ? input.privateKeyPath || undefined : undefined,
+    proxyMode: input.proxyMode
+  }
+}
+
+function loadRecentQuickConnects(): RecentQuickConnect[] {
+  try {
+    if (typeof localStorage === 'undefined') return []
+    const raw = localStorage.getItem(RECENT_QUICK_CONNECT_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const entries: RecentQuickConnect[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const rec = item as Record<string, unknown>
+      if (typeof rec.host !== 'string' || typeof rec.username !== 'string') continue
+      const port = Number(rec.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) continue
+      const authMethod: AuthMethod =
+        rec.authMethod === 'privateKey' || rec.authMethod === 'agent' ? rec.authMethod : 'password'
+      entries.push(
+        toRecentEntry({
+          host: rec.host,
+          port,
+          username: rec.username,
+          authMethod,
+          privateKeyPath: typeof rec.privateKeyPath === 'string' ? rec.privateKeyPath : undefined,
+          proxyMode:
+            rec.proxyMode === 'inherit' || rec.proxyMode === 'none' || rec.proxyMode === 'custom'
+              ? rec.proxyMode
+              : undefined
+        })
+      )
+      if (entries.length >= MAX_RECENT_QUICK_CONNECTS) break
+    }
+    return entries
+  } catch {
+    return []
+  }
+}
+
+function saveRecentQuickConnects(entries: RecentQuickConnect[]): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(RECENT_QUICK_CONNECT_KEY, JSON.stringify(entries.slice(0, MAX_RECENT_QUICK_CONNECTS)))
+  } catch {
+    // Ignore storage quota / disabled localStorage errors.
+  }
+}
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
 export interface SessionTab {
@@ -40,6 +122,8 @@ export interface SessionTab {
   connectPromise: Promise<void> | null
   /** Set when the last connect attempt failed because the server's host key changed — surfaced as a warning dialog, not a plain toast, since accepting it needs an explicit user decision. */
   pendingHostKeyMismatch: PendingHostKeyMismatch | null
+  /** Sanitized Quick Connect parameters (secrets stripped) for promoting an active Quick Connect session to a saved site. */
+  quickConnectInput?: Omit<QuickConnectInput, 'password' | 'passphrase'>
 }
 
 type ConnectRequest = { siteId: string } | { quickConnect: QuickConnectInput }
@@ -57,6 +141,7 @@ interface PendingHostKeyMismatch {
 interface SessionsState {
   tabs: SessionTab[]
   activeTabId: string
+  recentQuickConnects: RecentQuickConnect[]
   unsubscribeStatus: (() => void) | null
   unsubscribeProgress: (() => void) | null
   unsubscribeKeyboardInteractive: (() => void) | null
@@ -88,6 +173,7 @@ export const useSessionsStore = defineStore('sessions', {
     return {
       tabs: [initial],
       activeTabId: initial.tabId,
+      recentQuickConnects: loadRecentQuickConnects(),
       unsubscribeStatus: null,
       unsubscribeProgress: null,
       unsubscribeKeyboardInteractive: null,
@@ -266,6 +352,10 @@ export const useSessionsStore = defineStore('sessions', {
       tab.label = label
       tab.hostLabel = hostLabel
       tab.siteId = siteId
+      if (siteId !== null) {
+        tab.quickConnectInput = undefined
+        ephemeralQuickSecrets.delete(tab.tabId)
+      }
       void this.persistOpenTabs()
       // Tracked on the tab itself so closeTab() can await this exact attempt instead of
       // detaching the tab while a session is still being opened underneath it (which would
@@ -340,7 +430,38 @@ export const useSessionsStore = defineStore('sessions', {
       }
     },
 
+    recordRecentQuickConnect(input: Omit<QuickConnectInput, 'password' | 'passphrase'>): void {
+      const entry = toRecentEntry(input)
+      const filtered = this.recentQuickConnects.filter(
+        (item) => !(item.host === entry.host && item.port === entry.port && item.username === entry.username)
+      )
+      this.recentQuickConnects = [entry, ...filtered].slice(0, MAX_RECENT_QUICK_CONNECTS)
+      saveRecentQuickConnects(this.recentQuickConnects)
+    },
+
+    promoteTabToSite(tabId: string, site: Site): void {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab) {
+        return
+      }
+      tab.siteId = site.id
+      tab.label = site.name
+      void this.persistOpenTabs()
+    },
+
     async connect(input: QuickConnectInput): Promise<void> {
+      const tab = this.activeTab
+      const sanitized = sanitizeQuickConnectInput(input)
+      tab.quickConnectInput = sanitized
+      if (input.password || input.passphrase) {
+        ephemeralQuickSecrets.set(tab.tabId, {
+          password: input.password || undefined,
+          passphrase: input.passphrase || undefined
+        })
+      } else {
+        ephemeralQuickSecrets.delete(tab.tabId)
+      }
+      this.recordRecentQuickConnect(sanitized)
       await this.openSession(
         { quickConnect: input },
         input.name || input.host,
@@ -444,6 +565,7 @@ export const useSessionsStore = defineStore('sessions', {
         void useTerminalStreamsStore().disposeForSession(tab.sessionId).catch(() => {})
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
+      ephemeralQuickSecrets.delete(tabId)
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
       void this.persistOpenTabs()
       if (this.tabs.length === 0) {

@@ -41,6 +41,10 @@ const passwordPlaceholder = computed(() => (props.hasPassword ? 'Leave blank to 
 const passphrasePlaceholder = computed(() =>
   props.hasPassphrase ? 'Leave blank to keep current passphrase' : 'Passphrase (optional)'
 )
+const hopPortError = computed(() => {
+  const port = Number(props.modelValue.port)
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be 1–65535'
+})
 
 async function browsePrivateKey(): Promise<void> {
   const path = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
@@ -88,10 +92,12 @@ async function browsePrivateKey(): Promise<void> {
       <UFormField label="Host" class="flex-1">
         <UInput :model-value="modelValue.host" placeholder="bastion.example.com" class="w-full" @update:model-value="(v: unknown) => set('host', String(v))" />
       </UFormField>
-      <UFormField label="Port" class="w-24">
+      <UFormField label="Port" :error="hopPortError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
         <UInput
           :model-value="modelValue.port"
           type="number"
+          min="1"
+          max="65535"
           class="w-full"
           @update:model-value="(v: unknown) => set('port', Number(v))"
         />

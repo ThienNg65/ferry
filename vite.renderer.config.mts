@@ -14,7 +14,13 @@ export default defineConfig({
   base: './',
   plugins: [
     vue(),
-    ui({ router: false, ui: { colors: { primary: 'brand', neutral: 'zinc' } } })
+    ui({
+      router: false,
+      ui: {
+        colors: { primary: 'brand', neutral: 'zinc' },
+        checkbox: { slots: { base: 'rounded-[3px]' } }
+      }
+    })
   ],
   resolve: {
     alias: {

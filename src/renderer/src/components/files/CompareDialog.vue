@@ -125,10 +125,7 @@ function sizeText(size?: number): string {
         </div>
         <div class="flex items-center gap-3">
           <UButton color="neutral" variant="outline" :loading="loading" @click="compare">Compare</UButton>
-          <label class="flex items-center gap-1.5 text-xs text-muted">
-            <input v-model="showSame" type="checkbox" />
-            Show identical files
-          </label>
+          <UCheckbox v-model="showSame" label="Show identical files" size="xs" />
         </div>
         <UAlert v-if="error" color="error" variant="soft" :title="error" />
         <div v-if="rows" class="max-h-[50vh] overflow-y-auto rounded-md border border-default">

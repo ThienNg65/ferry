@@ -60,6 +60,15 @@ setCustomIconLoader(async () => {
 // bridge synchronously before Vue stores initialize.
 installNeutralinoApi()
 
+// Benign Chromium ResizeObserver notification raised by virtualized tables
+// during rapid splitter drags — never reflects an actual error.
+window.addEventListener('error', (event) => {
+  if (event.message?.includes('ResizeObserver loop')) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+})
+
 createApp(App).use(createPinia()).use(ui).mount('#app')
 
 function scheduleIdle(cb: () => void): void {
