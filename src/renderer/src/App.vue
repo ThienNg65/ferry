@@ -78,6 +78,9 @@ watch(
 const { isBusy } = useGlobalActivity()
 const { collapsed: dockCollapsed, tab: dockTab, isMaximized: dockMaximized, openDock } = useDockState()
 const isDockFullHeight = computed(() => !dockCollapsed.value && dockMaximized.value)
+const toasterViewportClass = computed(() =>
+  isConnected.value && ui.dockPosition === 'right' && dockCollapsed.value ? 'bottom-4 right-12' : 'bottom-12 right-4'
+)
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const shortcutsDialog = useShortcutsDialog()
@@ -251,7 +254,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
       duration: 3500,
       max: 3,
       expand: false,
-      ui: { viewport: 'bottom-12 right-4' }
+      ui: { viewport: toasterViewportClass }
     }"
   >
     <div class="flex h-screen flex-col bg-default text-default">
