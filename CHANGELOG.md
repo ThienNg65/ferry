@@ -28,6 +28,24 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.27.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.26.1...ferry-v0.27.0) (2026-11-16)
+
+
+### Features
+
+* save active Quick Connect session as site and add recent connections dropdown ([8bd76ec](https://github.com/ThienNg65/ferry/commit/8bd76ec96022dbc18cdddb45adb0ca8dab5c47f6))
+
+
+### Bug Fixes
+
+* add inline port validation and aria-invalid across port fields ([3aff2cb](https://github.com/ThienNg65/ferry/commit/3aff2cb4fad8ff27daced77b3169887624c126fb))
+* collapse middle breadcrumb segments and wrap long fingerprint errors ([f107d95](https://github.com/ThienNg65/ferry/commit/f107d95d27f3a0809c75a431e8088f1d44697780))
+* disable preview actions on error, loading, and broken symlinks ([b050344](https://github.com/ThienNg65/ferry/commit/b0503448698a0529ef68de9885d3331fd1f59b93))
+* Fix/p2 ux polish and a11y ([5858758](https://github.com/ThienNg65/ferry/commit/5858758b5940490062a826954ba285ec25e0a23a))
+* improve color picker accessibility, modal close labels, and checkbox shape ([2d92cff](https://github.com/ThienNg65/ferry/commit/2d92cffa00afb1009e3dfd14a173d77776d1c5af))
+* offset toaster above bottom dock and suppress benign ResizeObserver loop errors ([8802f67](https://github.com/ThienNg65/ferry/commit/8802f671cf819e5a7a36fbb60b41996f542c81ad))
+* polish hex error state, dropdown close focus, and breadcrumb edge cases ([36bd71b](https://github.com/ThienNg65/ferry/commit/36bd71bc1f8aa852d6b213d3d65f1f63ef4730c9))
+
 ## [0.26.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.26.0...ferry-v0.26.1) (2026-11-15)
 
 
