@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useNotify } from '../../composables/useNotify'
+import { useUiStore } from '../../stores/ui.store'
 import { collapseBreadcrumbSegments, parseBreadcrumbSegments, type BreadcrumbSegment } from '../../utils/pathBreadcrumb'
 
 const props = defineProps<{ path: string }>()
 const emit = defineEmits<{ navigate: [path: string] }>()
 
 const notify = useNotify()
+const ui = useUiStore()
 const editing = ref(false)
 const draft = ref(props.path)
 
@@ -19,6 +21,16 @@ const collapsedMenuItems = computed(() =>
     onSelect: () => emit('navigate', seg.fullPath)
   }))
 )
+const strip = ref<HTMLElement | null>(null)
+
+function scrollToEnd(): void {
+  if (!ui.shortenPath && strip.value) {
+    strip.value.scrollLeft = strip.value.scrollWidth
+  }
+}
+
+watch(() => [props.path, editing.value, ui.shortenPath], () => void nextTick(scrollToEnd), { flush: 'post' })
+onMounted(scrollToEnd)
 
 function startEdit(): void {
   draft.value = props.path
@@ -70,51 +82,78 @@ async function copyCurrentPath(): Promise<void> {
     />
     <div v-else class="group flex min-w-0 flex-1 items-center gap-1 text-xs">
       <div
-        class="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
+        ref="strip"
+        class="flex min-w-0 flex-1 items-center gap-0.5"
+        :class="ui.shortenPath ? 'overflow-hidden' : 'overflow-x-auto scrollbar-none'"
         @click.self="startEdit"
       >
-        <button
-          v-if="breadcrumbs.root"
-          type="button"
-          class="shrink-0 rounded px-1 py-0.5 transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
-          :class="
-            !breadcrumbs.current
-              ? 'font-medium text-highlighted'
-              : 'text-muted hover:text-default'
-          "
-          :title="!breadcrumbs.current ? 'Click to edit path' : `Go to ${breadcrumbs.root.fullPath}`"
-          @click="onSegmentClick(breadcrumbs.root, !breadcrumbs.current)"
-        >
-          {{ breadcrumbs.root.label }}
-        </button>
-        <template v-if="breadcrumbs.collapsed.length > 0">
-          <span
-            v-if="breadcrumbs.root && breadcrumbs.root.label !== '/' && !breadcrumbs.root.label.endsWith('\\')"
-            class="shrink-0 select-none text-dimmed"
+        <template v-if="ui.shortenPath">
+          <button
+            v-if="breadcrumbs.root"
+            type="button"
+            class="shrink-0 rounded px-1 py-0.5 transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
+            :class="
+              !breadcrumbs.current
+                ? 'font-medium text-highlighted'
+                : 'text-muted hover:text-default'
+            "
+            :title="!breadcrumbs.current ? 'Click to edit path' : `Go to ${breadcrumbs.root.fullPath}`"
+            @click="onSegmentClick(breadcrumbs.root, !breadcrumbs.current)"
           >
-            /
-          </span>
-          <UDropdownMenu :items="collapsedMenuItems">
+            {{ breadcrumbs.root.label }}
+          </button>
+          <template v-if="breadcrumbs.collapsed.length > 0">
+            <span
+              v-if="breadcrumbs.root && breadcrumbs.root.label !== '/' && !breadcrumbs.root.label.endsWith('\\')"
+              class="shrink-0 select-none text-dimmed"
+            >
+              /
+            </span>
+            <UDropdownMenu :items="collapsedMenuItems">
+              <button
+                type="button"
+                aria-label="Parent directories"
+                title="Parent directories"
+                class="shrink-0 rounded px-1 py-0.5 text-muted transition-colors hover:bg-elevated hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+              >
+                …
+              </button>
+            </UDropdownMenu>
+            <span class="shrink-0 select-none text-dimmed">{{ breadcrumbs.root?.label.endsWith('\\') ? '\\' : '/' }}</span>
+          </template>
+          <button
+            v-if="breadcrumbs.current"
+            type="button"
+            class="min-w-0 truncate rounded px-1 py-0.5 font-medium text-highlighted transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
+            :title="`${breadcrumbs.current.fullPath} (click to edit path)`"
+            @click="onSegmentClick(breadcrumbs.current, true)"
+          >
+            {{ breadcrumbs.current.label }}
+          </button>
+        </template>
+        <template v-else>
+          <template v-for="(seg, idx) in segments" :key="seg.fullPath">
             <button
               type="button"
-              aria-label="Parent directories"
-              title="Parent directories"
-              class="shrink-0 rounded px-1 py-0.5 text-muted transition-colors hover:bg-elevated hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+              class="shrink-0 rounded px-1 py-0.5 transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
+              :class="
+                idx === segments.length - 1
+                  ? 'font-medium text-highlighted'
+                  : 'text-muted hover:text-default'
+              "
+              :title="idx === segments.length - 1 ? 'Click to edit path' : `Go to ${seg.fullPath}`"
+              @click="onSegmentClick(seg, idx === segments.length - 1)"
             >
-              …
+              {{ seg.label }}
             </button>
-          </UDropdownMenu>
-          <span class="shrink-0 select-none text-dimmed">{{ breadcrumbs.root?.label.endsWith('\\') ? '\\' : '/' }}</span>
+            <span
+              v-if="idx < segments.length - 1 && seg.label !== '/' && !seg.label.endsWith('\\')"
+              class="shrink-0 select-none text-dimmed"
+            >
+              {{ segments[0]?.label.endsWith('\\') ? '\\' : '/' }}
+            </span>
+          </template>
         </template>
-        <button
-          v-if="breadcrumbs.current"
-          type="button"
-          class="min-w-0 truncate rounded px-1 py-0.5 font-medium text-highlighted transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
-          :title="`${breadcrumbs.current.fullPath} (click to edit path)`"
-          @click="onSegmentClick(breadcrumbs.current, true)"
-        >
-          {{ breadcrumbs.current.label }}
-        </button>
         <button
           type="button"
           aria-label="Edit path"

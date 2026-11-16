@@ -61,6 +61,14 @@ describe('ui store layout state', () => {
     expect(ui.density).toBe('compact')
   })
 
+  it('defaults shortenPath to false and persists setShortenPath', async () => {
+    const { ui, data } = await freshStore()
+    expect(ui.shortenPath).toBe(false)
+    ui.setShortenPath(true)
+    expect(ui.shortenPath).toBe(true)
+    expect(data.get('ferry:ui:shortenPath')).toBe('true')
+  })
+
   it('defaults terminal appearance and persists setters', async () => {
     const { ui, data } = await freshStore()
     expect(ui.terminalScheme).toBe('ferry')

@@ -46,6 +46,7 @@ function readStored(key: string): string | null {
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
+const SHORTEN_PATH_KEY = 'ferry:ui:shortenPath'
 const SHOW_HIDDEN_KEY = 'ferry:ui:showHidden'
 const TERM_SCROLLBACK_KEY = 'ferry:ui:terminalScrollback'
 export const SCROLLBACK_OPTIONS = [1000, 5000, 10000, 50000]
@@ -92,6 +93,7 @@ interface UiState {
   showLocalPane: boolean
   permissionsDisplay: PermissionsDisplay
   density: Density
+  shortenPath: boolean
   showHidden: boolean
   terminalScrollback: number
   columns: ColumnPrefs
@@ -202,6 +204,7 @@ export const useUiStore = defineStore('ui', {
     showLocalPane: localStorage.getItem(STORAGE_KEY) !== 'false',
     permissionsDisplay: loadPermissionsDisplay(),
     density: loadDensity(),
+    shortenPath: localStorage.getItem(SHORTEN_PATH_KEY) === 'true',
     showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
     terminalScrollback: loadScrollback(),
     columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
@@ -301,6 +304,11 @@ export const useUiStore = defineStore('ui', {
     setDensity(density: Density): void {
       this.density = density
       localStorage.setItem(DENSITY_KEY, density)
+    },
+
+    setShortenPath(shorten: boolean): void {
+      this.shortenPath = shorten
+      localStorage.setItem(SHORTEN_PATH_KEY, String(shorten))
     },
 
     /** Applies the persisted theme to the document and OS window frame — call once on app start. */

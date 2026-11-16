@@ -531,22 +531,47 @@ async function saveNetwork(): Promise<void> {
               aria-labelledby="settings-tab-appearance"
             >
               <h2 class="text-base font-semibold text-highlighted">Appearance</h2>
-              <SettingsRow label="Accent color" description="Used for focus rings, selection and primary actions.">
-                <div class="flex flex-wrap items-center gap-2">
-                  <UTooltip v-for="preset in ACCENT_PRESETS" :key="preset.hex" :text="preset.label">
-                    <button
-                      type="button"
-                      class="flex size-6 shrink-0 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-default focus-visible:outline-2 focus-visible:outline-primary"
-                      :class="ui.accentColor === preset.hex ? 'ring-primary' : 'ring-transparent'"
-                      :style="{ backgroundColor: preset.hex }"
-                      :aria-label="preset.label"
-                      :aria-pressed="ui.accentColor === preset.hex"
-                      @click="selectAccentPreset(preset.hex)"
-                    >
-                      <UIcon v-if="ui.accentColor === preset.hex" name="i-lucide-check" class="size-3.5 text-white" />
-                    </button>
-                  </UTooltip>
-                  <div ref="colorPickerHostRef" class="flex items-center gap-2">
+              <SettingsRow label="Accent color" description="Used for focus rings, selection and primary actions." stacked>
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                  <div class="flex flex-col gap-2.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <UTooltip v-for="preset in ACCENT_PRESETS" :key="preset.hex" :text="preset.label">
+                        <button
+                          type="button"
+                          class="flex size-6 shrink-0 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-default focus-visible:outline-2 focus-visible:outline-primary"
+                          :class="ui.accentColor === preset.hex ? 'ring-primary' : 'ring-transparent'"
+                          :style="{ backgroundColor: preset.hex }"
+                          :aria-label="preset.label"
+                          :aria-pressed="ui.accentColor === preset.hex"
+                          @click="selectAccentPreset(preset.hex)"
+                        >
+                          <UIcon v-if="ui.accentColor === preset.hex" name="i-lucide-check" class="size-3.5 text-white" />
+                        </button>
+                      </UTooltip>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span
+                        class="size-5 shrink-0 rounded-md border border-default"
+                        :style="{ backgroundColor: ui.accentColor }"
+                        aria-hidden="true"
+                      />
+                      <UInput
+                        :model-value="customHexInput"
+                        aria-label="Custom accent hex color"
+                        :aria-invalid="hexInputInvalid"
+                        :color="hexInputInvalid ? 'error' : undefined"
+                        :highlight="hexInputInvalid"
+                        placeholder="#0a84ff"
+                        size="xs"
+                        class="w-28 font-mono"
+                        @update:model-value="(v: string) => onCustomHexInput(v)"
+                        @blur="commitCustomHex"
+                        @keydown.enter.prevent="commitCustomHex"
+                      />
+                      <span v-if="hexInputInvalid" role="alert" class="text-2xs text-error">Use #rrggbb</span>
+                    </div>
+                  </div>
+                  <div ref="colorPickerHostRef" class="shrink-0">
                     <ColorPicker
                       :model-value="ui.accentColor"
                       format="hex"
@@ -558,20 +583,6 @@ async function saveNetwork(): Promise<void> {
                       }"
                       @update:model-value="(v: string | undefined) => { if (v) ui.setAccentColor(v) }"
                     />
-                    <UInput
-                      :model-value="customHexInput"
-                      aria-label="Custom accent hex color"
-                      :aria-invalid="hexInputInvalid"
-                      :color="hexInputInvalid ? 'error' : undefined"
-                      :highlight="hexInputInvalid"
-                      placeholder="#0a84ff"
-                      size="xs"
-                      class="w-24 font-mono"
-                      @update:model-value="(v: string) => onCustomHexInput(v)"
-                      @blur="commitCustomHex"
-                      @keydown.enter.prevent="commitCustomHex"
-                    />
-                    <span v-if="hexInputInvalid" role="alert" class="text-2xs text-error">Use #rrggbb</span>
                   </div>
                 </div>
               </SettingsRow>
@@ -581,6 +592,16 @@ async function saveNetwork(): Promise<void> {
                   :items="densityOptions"
                   orientation="horizontal"
                   @update:model-value="(v: string) => ui.setDensity(v as Density)"
+                />
+              </SettingsRow>
+              <SettingsRow
+                label="Shorten location path"
+                description="Collapse middle folders in the path bar into a menu."
+              >
+                <USwitch
+                  :model-value="ui.shortenPath"
+                  aria-label="Shorten location path"
+                  @update:model-value="(v: boolean) => ui.setShortenPath(v)"
                 />
               </SettingsRow>
             </div>
