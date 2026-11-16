@@ -133,7 +133,12 @@ const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 const unregisterPaneActions = registerPaneActions(props.side, {
   rename: () => {
     if (store.selected.size === 1) {
-      renamingPath.value = [...store.selected][0]
+      const [path] = store.selected
+      const idx = filteredEntries.value.findIndex((e) => e.path === path)
+      if (idx >= 0) {
+        fileListRef.value?.scrollToIndex(idx)
+        renamingPath.value = path
+      }
     }
   },
   remove: () => void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path))),

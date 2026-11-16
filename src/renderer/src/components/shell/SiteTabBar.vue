@@ -66,7 +66,7 @@ function tabMenuItems(tab: SessionTab): ContextMenuItem[] {
       label: 'Duplicate Tab',
       icon: 'i-lucide-copy',
       disabled: tab.connecting,
-      onSelect: () => void sessions.duplicateTab(tab.tabId)
+      onSelect: () => void sessions.duplicateTab(tab.tabId).catch(() => undefined)
     }
   ]
   if (tab.status === 'connected') {
@@ -82,7 +82,7 @@ function tabMenuItems(tab: SessionTab): ContextMenuItem[] {
     items.push({
       label: 'Reconnect',
       icon: 'i-lucide-refresh-cw',
-      onSelect: () => void sessions.reconnectTab(tab.tabId)
+      onSelect: () => void sessions.reconnectTab(tab.tabId).catch(() => undefined)
     })
   }
   if (!tab.siteId && tab.quickConnectInput) {

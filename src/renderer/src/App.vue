@@ -162,7 +162,7 @@ function onTabShortcut(event: KeyboardEvent): void {
     return
   }
   if (!event.shiftKey && event.code === 'Backquote') {
-    if (!isConnected.value) {
+    if (!isConnected.value || document.querySelector('[role="dialog"]')) {
       return
     }
     event.preventDefault()

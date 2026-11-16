@@ -447,6 +447,8 @@ export const useSessionsStore = defineStore('sessions', {
       }
       tab.siteId = site.id
       tab.label = site.name
+      tab.quickConnectInput = undefined
+      ephemeralQuickSecrets.delete(tabId)
       void this.persistOpenTabs()
     },
 
