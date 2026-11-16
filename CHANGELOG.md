@@ -28,6 +28,14 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.27.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.27.0...ferry-v0.27.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* default to full location paths with shorten toggle and clean accent picker layout ([992de71](https://github.com/ThienNg65/ferry/commit/992de7100761d3a07291fdacf6bff7fb661ba1cb))
+* default to full location paths with shorten toggle and clean accent picker layout ([47a0f24](https://github.com/ThienNg65/ferry/commit/47a0f24f0e0fd7728fc85ce446fc00c59eee4e2f))
+
 ## [0.27.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.26.1...ferry-v0.27.0) (2026-11-16)
 
 
