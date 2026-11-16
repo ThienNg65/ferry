@@ -84,7 +84,11 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       event.preventDefault()
       if (ctx.store.selected.size === 1) {
         const [path] = ctx.store.selected
-        ctx.renamingPath.value = path
+        const idx = ctx.filteredEntries.value.findIndex((e) => e.path === path)
+        if (idx >= 0) {
+          ctx.fileListRef.value?.scrollToIndex(idx)
+          ctx.renamingPath.value = path
+        }
       }
       return
     }

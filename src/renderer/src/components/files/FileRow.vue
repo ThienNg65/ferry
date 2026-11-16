@@ -141,9 +141,14 @@ watch(
     if (active) {
       draftName.value = props.entry.name
       await nextTick()
-      renameInput.value?.inputRef?.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
+      const inputEl = renameInput.value?.inputRef
+      if (inputEl) {
+        inputEl.focus()
+        inputEl.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
+      }
     }
-  }
+  },
+  { immediate: true }
 )
 
 function focusPane(): void {

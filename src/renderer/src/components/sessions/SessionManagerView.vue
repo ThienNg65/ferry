@@ -149,6 +149,53 @@ const activeTabSite = computed<Site | null>(() => {
   return sites.sites.find((s) => s.id === siteId) ?? null
 })
 
+const activeTabQuickConnect = computed(() => {
+  if (activeTabSite.value) return null
+  return sessions.activeTab?.quickConnectInput ?? null
+})
+
+const showQuickConnectBanner = computed(() =>
+  Boolean(activeTabQuickConnect.value && (sessions.status === 'error' || sessions.status === 'disconnected'))
+)
+
+function prefillQuickConnect(qc: NonNullable<typeof activeTabQuickConnect.value>): void {
+  form.host = qc.host
+  form.port = qc.port
+  form.username = qc.username
+  form.authMethod = qc.authMethod
+  form.privateKeyPath = qc.privateKeyPath ?? ''
+  form.password = ''
+  form.passphrase = ''
+  bypassDefaultProxy.value = qc.proxyMode === 'none'
+  if (qc.authMethod === 'password') {
+    void nextTick(() => quickPasswordInput.value?.inputRef?.focus())
+  }
+}
+
+function editQuickConnectFromBanner(): void {
+  if (activeTabQuickConnect.value) {
+    prefillQuickConnect(activeTabQuickConnect.value)
+  }
+}
+
+watch(
+  () => [sessions.activeTabId, sessions.status] as const,
+  ([, status]) => {
+    if (status === null && activeTabQuickConnect.value) {
+      prefillQuickConnect(activeTabQuickConnect.value)
+    }
+  },
+  { immediate: true }
+)
+
+async function onReconnectQuickConnect(): Promise<void> {
+  try {
+    await sessions.reconnectTab(sessions.activeTabId)
+  } catch {
+    // Surfaced via sessions.status/statusMessage in the template below.
+  }
+}
+
 async function onConnect(): Promise<void> {
   if (!canQuickConnect.value || sessions.connecting) return
   try {
@@ -349,35 +396,64 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 <template>
   <div class="flex h-full items-start justify-center overflow-y-auto bg-default px-6 py-8">
     <div class="my-auto flex w-full max-w-4xl flex-col gap-4">
-      <UCard v-if="activeTabSite" class="border-primary/40 bg-primary/5">
+      <UCard v-if="activeTabSite || showQuickConnectBanner" class="border-primary/40 bg-primary/5">
         <div class="flex items-center justify-between gap-4">
           <div class="flex min-w-0 items-center gap-3">
             <UIcon name="i-lucide-plug-zap" class="size-5 shrink-0 text-primary" />
             <div class="min-w-0">
               <div class="truncate text-sm font-medium text-highlighted">
-                {{ sessions.status === 'error' ? 'Connection lost:' : 'Tab site:' }} {{ activeTabSite.name }}
+                {{
+                  sessions.status === 'error'
+                    ? 'Connection lost:'
+                    : sessions.status === 'disconnected'
+                      ? 'Disconnected:'
+                      : 'Tab site:'
+                }}
+                {{ activeTabSite ? activeTabSite.name : (sessions.activeTab.label || activeTabQuickConnect?.host) }}
               </div>
               <div class="break-words [overflow-wrap:anywhere] text-xs text-muted">
-                {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
+                <template v-if="activeTabSite">
+                  {{ activeTabSite.username }}@{{ activeTabSite.host }}:{{ activeTabSite.port }}
+                </template>
+                <template v-else-if="activeTabQuickConnect">
+                  {{ activeTabQuickConnect.username }}@{{ activeTabQuickConnect.host }}:{{ activeTabQuickConnect.port }}
+                </template>
                 <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
               </div>
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-2">
-            <UButton
-              v-if="sessions.restoredSiteTabs.length > 1"
-              icon="i-lucide-plug-zap"
-              size="sm"
-              color="neutral"
-              variant="outline"
-              :disabled="sessions.connecting"
-              @click="sessions.reconnectAll()"
-            >
-              Reconnect all ({{ sessions.restoredSiteTabs.length }})
-            </UButton>
-            <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
-              {{ sessions.status === 'error' ? 'Reconnect' : 'Connect' }}
-            </UButton>
+            <template v-if="activeTabSite">
+              <UButton
+                v-if="sessions.restoredSiteTabs.length > 1"
+                icon="i-lucide-plug-zap"
+                size="sm"
+                color="neutral"
+                variant="outline"
+                :disabled="sessions.connecting"
+                @click="sessions.reconnectAll()"
+              >
+                Reconnect all ({{ sessions.restoredSiteTabs.length }})
+              </UButton>
+              <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
+                {{ sessions.status === 'error' || sessions.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
+              </UButton>
+            </template>
+            <template v-else>
+              <UButton
+                icon="i-lucide-pencil"
+                size="sm"
+                color="neutral"
+                variant="outline"
+                :disabled="sessions.connecting"
+                @click="editQuickConnectFromBanner"
+              >
+                Edit Quick Connect
+              </UButton>
+              <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onReconnectQuickConnect">
+                Reconnect
+              </UButton>
+            </template>
           </div>
         </div>
       </UCard>
