@@ -141,9 +141,14 @@ watch(
     if (active) {
       draftName.value = props.entry.name
       await nextTick()
-      renameInput.value?.inputRef?.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
+      const inputEl = renameInput.value?.inputRef
+      if (inputEl) {
+        inputEl.focus()
+        inputEl.setSelectionRange(0, renameSelectionEnd(props.entry.name, props.entry.isDir))
+      }
     }
-  }
+  },
+  { immediate: true }
 )
 
 function focusPane(): void {
@@ -284,7 +289,19 @@ function onMouseLeave(): void {
       @keyup.esc="onRenameEscape"
       @blur="cancelRename"
     />
-    <span v-else class="min-w-24 flex-1 truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
+    <div v-else class="flex min-w-24 flex-1 items-center gap-1.5 overflow-hidden">
+      <span class="truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
+      <span
+        v-if="entry.isSymlink && entry.symlinkTarget"
+        class="truncate text-xs font-normal text-muted"
+        :title="entry.symlinkTarget"
+      >
+        → {{ entry.symlinkTarget }}
+      </span>
+      <UBadge v-if="entry.symlinkBroken" color="error" variant="subtle" size="xs" class="shrink-0">
+        broken
+      </UBadge>
+    </div>
     <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
     <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">

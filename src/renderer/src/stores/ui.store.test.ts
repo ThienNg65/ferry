@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampDockHeight, MIN_DOCK_HEIGHT } from './ui.store'
+import { clampDockHeight, clampDockWidth, DEFAULT_DOCK_WIDTH, MIN_DOCK_HEIGHT, MIN_DOCK_WIDTH } from './ui.store'
 
 describe('clampDockHeight', () => {
   it('floors a too-small value at MIN_DOCK_HEIGHT', () => {
@@ -24,6 +24,25 @@ describe('clampDockHeight', () => {
 
   it('passes through an in-range value unchanged', () => {
     expect(clampDockHeight(300, 1200)).toBe(300)
+  })
+})
+
+describe('clampDockWidth', () => {
+  it('floors a too-small value at MIN_DOCK_WIDTH', () => {
+    expect(clampDockWidth(0, 1400)).toBe(MIN_DOCK_WIDTH)
+    expect(clampDockWidth(-50, 1400)).toBe(MIN_DOCK_WIDTH)
+  })
+
+  it('caps at 60% of window width', () => {
+    expect(clampDockWidth(2000, 1500)).toBe(900)
+  })
+
+  it('still yields at least MIN_DOCK_WIDTH on a narrow window', () => {
+    expect(clampDockWidth(500, 400)).toBe(MIN_DOCK_WIDTH)
+  })
+
+  it('passes through an in-range value unchanged', () => {
+    expect(clampDockWidth(DEFAULT_DOCK_WIDTH, 1400)).toBe(DEFAULT_DOCK_WIDTH)
   })
 })
 
@@ -130,5 +149,48 @@ describe('ui store layout state', () => {
     await ui.initTheme()
     expect(toggleMock).toHaveBeenCalledWith('dark', true)
     expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, { theme: 'dark', captionColor: 0x262626 })
+  })
+
+  it('defaults dockPosition to bottom and dockWidth to 460, and persists toggles and clamped widths', async () => {
+    const { vi } = await import('vitest')
+    const { ui, data } = await freshStore()
+    expect(ui.dockPosition).toBe('bottom')
+    expect(ui.dockWidth).toBe(DEFAULT_DOCK_WIDTH)
+
+    ui.toggleDockPosition()
+    expect(ui.dockPosition).toBe('right')
+    expect(data.get('ferry:ui:dockPosition')).toBe('right')
+
+    ui.toggleDockPosition()
+    expect(ui.dockPosition).toBe('bottom')
+    expect(data.get('ferry:ui:dockPosition')).toBe('bottom')
+
+    vi.stubGlobal('window', { innerHeight: 900, innerWidth: 1000 })
+    ui.setDockWidth(800)
+    expect(ui.dockWidth).toBe(600)
+    expect(data.get('ferry:ui:dockWidth')).toBe('600')
+
+    ui.setDockWidth(100)
+    expect(ui.dockWidth).toBe(MIN_DOCK_WIDTH)
+    expect(data.get('ferry:ui:dockWidth')).toBe(String(MIN_DOCK_WIDTH))
+  })
+
+  it('restores persisted dockPosition and clamped dockWidth on startup', async () => {
+    const { vi } = await import('vitest')
+    const { createPinia, setActivePinia } = await import('pinia')
+    const data = new Map<string, string>([
+      ['ferry:ui:dockPosition', 'right'],
+      ['ferry:ui:dockWidth', '950']
+    ])
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v)
+    })
+    vi.stubGlobal('window', { innerHeight: 900, innerWidth: 1000 })
+    setActivePinia(createPinia())
+    const { useUiStore } = await import('./ui.store')
+    const ui = useUiStore()
+    expect(ui.dockPosition).toBe('right')
+    expect(ui.dockWidth).toBe(600)
   })
 })

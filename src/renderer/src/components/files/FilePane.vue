@@ -54,6 +54,7 @@ const {
 
 const store = props.side === 'local' ? localFs : remoteFs
 
+const paneEl = ref<HTMLElement | null>(null)
 const toolbarRef = ref<InstanceType<typeof FileToolbar> | null>(null)
 const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
 const showNewFolder = ref(false)
@@ -132,7 +133,12 @@ const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 const unregisterPaneActions = registerPaneActions(props.side, {
   rename: () => {
     if (store.selected.size === 1) {
-      renamingPath.value = [...store.selected][0]
+      const [path] = store.selected
+      const idx = filteredEntries.value.findIndex((e) => e.path === path)
+      if (idx >= 0) {
+        fileListRef.value?.scrollToIndex(idx)
+        renamingPath.value = path
+      }
     }
   },
   remove: () => void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path))),
@@ -278,6 +284,7 @@ function onSelect(path: string, event: MouseEvent): void {
   } else {
     store.selectOnly(path)
   }
+  paneEl.value?.focus({ preventScroll: true })
 }
 
 function onMkdirClick(): void {
@@ -757,6 +764,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
 
 <template>
   <div
+    ref="paneEl"
     class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',

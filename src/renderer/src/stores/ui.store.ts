@@ -53,6 +53,8 @@ export const SCROLLBACK_OPTIONS = [1000, 5000, 10000, 50000]
 const COLUMNS_KEY = 'ferry:ui:columns'
 const THEME_KEY = 'ferry:ui:theme'
 const DOCK_HEIGHT_KEY = 'ferry:ui:dockHeight'
+const DOCK_POSITION_KEY = 'ferry:ui:dockPosition'
+const DOCK_WIDTH_KEY = 'ferry:ui:dockWidth'
 const ACCENT_KEY = 'ferry:ui:accentColor'
 const LOCAL_PANE_WIDTH_KEY = 'ferry:ui:localPaneWidth'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
@@ -62,6 +64,7 @@ export const DEFAULT_LOCAL_PANE_WIDTH = 33.33
 export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
 export type Density = 'compact' | 'comfortable'
+export type DockPosition = 'bottom' | 'right'
 
 /** The dock's pre-resize default (matches the old fixed `h-56`) — zero regression for existing users. */
 export const MIN_DOCK_HEIGHT = 224
@@ -69,6 +72,10 @@ export const MIN_DOCK_HEIGHT = 224
 export const MAX_DOCK_HEIGHT_RATIO = 0.7
 /** Reserve space for site tab bar + toolbar/path bar + status bar above the dock. */
 const RESERVED_CHROME_HEIGHT = 224
+
+export const MIN_DOCK_WIDTH = 320
+export const DEFAULT_DOCK_WIDTH = 460
+export const MAX_DOCK_WIDTH_RATIO = 0.6
 
 /**
  * Clamps a candidate dock height to [MIN_DOCK_HEIGHT, the smaller of 70% of
@@ -83,10 +90,29 @@ export function clampDockHeight(value: number, windowInnerHeight: number): numbe
   return Math.min(Math.max(value, MIN_DOCK_HEIGHT), max)
 }
 
+/** Clamps a candidate right-dock width to [MIN_DOCK_WIDTH, round(60% of window width)]. */
+export function clampDockWidth(value: number, windowInnerWidth: number): number {
+  const safeWindowWidth = Number.isFinite(windowInnerWidth) && windowInnerWidth > 0 ? windowInnerWidth : 1280
+  const max = Math.max(MIN_DOCK_WIDTH, Math.round(safeWindowWidth * MAX_DOCK_WIDTH_RATIO))
+  const safeValue = Number.isFinite(value) ? value : DEFAULT_DOCK_WIDTH
+  return Math.min(Math.max(safeValue, MIN_DOCK_WIDTH), max)
+}
+
 function loadDockHeight(): number {
   const stored = Number(localStorage.getItem(DOCK_HEIGHT_KEY))
   const initial = Number.isFinite(stored) && stored > 0 ? stored : MIN_DOCK_HEIGHT
   return clampDockHeight(initial, window.innerHeight)
+}
+
+function loadDockPosition(): DockPosition {
+  return readStored(DOCK_POSITION_KEY) === 'right' ? 'right' : 'bottom'
+}
+
+function loadDockWidth(): number {
+  const stored = Number(readStored(DOCK_WIDTH_KEY))
+  const initial = Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_DOCK_WIDTH
+  const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
+  return clampDockWidth(initial, width)
 }
 
 interface UiState {
@@ -99,6 +125,8 @@ interface UiState {
   columns: ColumnPrefs
   theme: Theme
   dockHeight: number
+  dockPosition: DockPosition
+  dockWidth: number
   accentColor: string
   localPaneWidth: number
   terminalScheme: string
@@ -210,6 +238,8 @@ export const useUiStore = defineStore('ui', {
     columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
+    dockPosition: loadDockPosition(),
+    dockWidth: loadDockWidth(),
     accentColor: loadAccentColor(),
     localPaneWidth: loadLocalPaneWidth(),
     terminalScheme: loadTerminalScheme(),
@@ -337,6 +367,18 @@ export const useUiStore = defineStore('ui', {
     setDockHeight(px: number): void {
       this.dockHeight = clampDockHeight(px, window.innerHeight)
       localStorage.setItem(DOCK_HEIGHT_KEY, String(this.dockHeight))
+    },
+
+    toggleDockPosition(): void {
+      this.dockPosition = this.dockPosition === 'bottom' ? 'right' : 'bottom'
+      localStorage.setItem(DOCK_POSITION_KEY, this.dockPosition)
+    },
+
+    /** Clamps + persists a new right-dock width. */
+    setDockWidth(px: number): void {
+      const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
+      this.dockWidth = clampDockWidth(px, width)
+      localStorage.setItem(DOCK_WIDTH_KEY, String(this.dockWidth))
     },
 
     setLocalPaneWidth(percent: number): void {

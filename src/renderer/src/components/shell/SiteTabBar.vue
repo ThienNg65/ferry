@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
+import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { Site, SiteInput, WindowStateEvent, WindowStateResult } from '@shared/contract'
 import { invoke, onEvent } from '../../api'
@@ -10,7 +11,7 @@ import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useSettingsDialog } from '../../composables/useSettingsDialog'
 import { useNotify } from '../../composables/useNotify'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
-import { useSessionsStore } from '../../stores/sessions.store'
+import { useSessionsStore, type SessionTab } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
@@ -39,19 +40,71 @@ const canSaveActiveQuickConnect = computed(() =>
   Boolean(!sessions.activeTab.siteId && sessions.status === 'connected' && sessions.activeTab.quickConnectInput)
 )
 
-function openSaveQuickSite(): void {
-  const tab = sessions.activeTab
-  const qc = tab.quickConnectInput
-  if (!qc || tab.siteId) {
+function openSaveQuickSite(targetTab: SessionTab = sessions.activeTab): void {
+  const qc = targetTab.quickConnectInput
+  if (!qc || targetTab.siteId) {
     return
   }
-  saveQuickTabId.value = tab.tabId
+  const remotePath =
+    targetTab.tabId === sessions.activeTabId
+      ? remoteFs.currentPath
+      : targetTab.sessionId
+        ? remoteFs.bySession[targetTab.sessionId]?.currentPath
+        : undefined
+  saveQuickTabId.value = targetTab.tabId
   saveQuickInitialValues.value = {
     ...qc,
     name: `${qc.username}@${qc.host}`,
-    remoteInitialPath: remoteFs.currentPath || undefined
+    remoteInitialPath: remotePath || undefined
   }
   saveQuickOpen.value = true
+}
+
+function tabMenuItems(tab: SessionTab): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [
+    {
+      label: 'Duplicate Tab',
+      icon: 'i-lucide-copy',
+      disabled: tab.connecting,
+      onSelect: () => void sessions.duplicateTab(tab.tabId).catch(() => undefined)
+    }
+  ]
+  if (tab.status === 'connected') {
+    items.push({
+      label: 'Disconnect',
+      icon: 'i-lucide-unplug',
+      onSelect: () => void sessions.disconnectTab(tab.tabId)
+    })
+  } else if (
+    !tab.connecting &&
+    (tab.status === 'error' || tab.status === 'disconnected' || tab.siteId !== null)
+  ) {
+    items.push({
+      label: 'Reconnect',
+      icon: 'i-lucide-refresh-cw',
+      onSelect: () => void sessions.reconnectTab(tab.tabId).catch(() => undefined)
+    })
+  }
+  if (!tab.siteId && tab.quickConnectInput) {
+    items.push({
+      label: 'Save as Site…',
+      icon: 'i-lucide-bookmark-plus',
+      onSelect: () => openSaveQuickSite(tab)
+    })
+  }
+  items.push({ type: 'separator' })
+  items.push({
+    label: 'Close Tab',
+    icon: 'i-lucide-x',
+    onSelect: () => void sessions.closeTab(tab.tabId)
+  })
+  items.push({
+    label: 'Close Other Tabs',
+    icon: 'i-lucide-list-x',
+    disabled: sessions.tabs.length <= 1,
+    onSelect: () => void sessions.closeOtherTabs(tab.tabId)
+  })
+  return items
 }
 
 function onQuickSiteSaved(site: Site): void {
@@ -119,7 +172,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           role="tab"
           :aria-selected="tab.tabId === sessions.activeTabId"
           :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
-          class="ferry-site-tab group flex max-w-64 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1 text-xs transition-colors"
+          class="ferry-site-tab group max-w-64 shrink-0 cursor-pointer select-none rounded-t-md border-t-2 text-xs transition-colors"
           :class="[
             envBorder(tab.siteId),
             tab.tabId === sessions.activeTabId
@@ -132,43 +185,47 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
-          <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
-          <UIcon
-            v-else-if="tab.status === 'error'"
-            name="i-lucide-circle-alert"
-            class="size-3.5 shrink-0 text-error"
-          />
-          <span
-            v-else-if="tab.status === 'connected'"
-            class="size-2 shrink-0 rounded-full bg-success"
-          />
-          <UIcon
-            v-else-if="tab.siteId"
-            name="i-lucide-server"
-            class="size-3 shrink-0 text-muted"
-          />
-          <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
-          <span
-            v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
-            class="min-w-0 truncate font-normal text-muted"
-          >
-            {{ tab.hostLabel }}
-          </span>
-          <UTooltip text="Close tab (Middle-click)">
-            <button
-              type="button"
-              aria-label="Close tab"
-              class="ml-0.5 shrink-0 rounded p-0.5 transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
-              :class="
-                tab.tabId === sessions.activeTabId
-                  ? 'opacity-70 hover:opacity-100'
-                  : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
-              "
-              @click="onCloseTab($event, tab.tabId)"
-            >
-              <UIcon name="i-lucide-x" class="size-3" />
-            </button>
-          </UTooltip>
+          <ContextMenu :items="tabMenuItems(tab)">
+            <div class="flex min-w-0 items-center gap-1.5 px-2.5 py-1">
+              <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
+              <UIcon
+                v-else-if="tab.status === 'error'"
+                name="i-lucide-circle-alert"
+                class="size-3.5 shrink-0 text-error"
+              />
+              <span
+                v-else-if="tab.status === 'connected'"
+                class="size-2 shrink-0 rounded-full bg-success"
+              />
+              <UIcon
+                v-else-if="tab.siteId"
+                name="i-lucide-server"
+                class="size-3 shrink-0 text-muted"
+              />
+              <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
+              <span
+                v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
+                class="min-w-0 truncate font-normal text-muted"
+              >
+                {{ tab.hostLabel }}
+              </span>
+              <UTooltip text="Close tab (Middle-click)">
+                <button
+                  type="button"
+                  aria-label="Close tab"
+                  class="ml-0.5 shrink-0 rounded p-0.5 transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
+                  :class="
+                    tab.tabId === sessions.activeTabId
+                      ? 'opacity-70 hover:opacity-100'
+                      : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                  "
+                  @click="onCloseTab($event, tab.tabId)"
+                >
+                  <UIcon name="i-lucide-x" class="size-3" />
+                </button>
+              </UTooltip>
+            </div>
+          </ContextMenu>
         </div>
       </TransitionGroup>
       <UTooltip text="New tab">
@@ -236,7 +293,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           color="neutral"
           icon="i-lucide-bookmark-plus"
           aria-label="Save as site"
-          @click="openSaveQuickSite"
+          @click="openSaveQuickSite()"
         />
       </UTooltip>
       <UTooltip text="Transfer History">

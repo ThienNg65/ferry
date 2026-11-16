@@ -143,7 +143,8 @@ body {
 /* The dock must change layout height once to give file panes their space back.
    Disable the easing during pointer-resize and maximize: never animate every drag frame. */
 .ferry-dock-shell.ferry-dock-expandable {
-  transition: height var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized);
+  transition: height var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized),
+              width var(--ferry-motion-panel) var(--ferry-motion-ease-emphasized);
 }
 
 /* Subtle, composited content changes. Never key/remount TerminalView or FilePane. */

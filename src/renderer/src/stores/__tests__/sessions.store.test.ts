@@ -23,37 +23,43 @@ vi.mock('../../composables/useNotify', () => ({
   })
 }))
 
+const mockRemoteFs = {
+  loadForSession: vi.fn().mockResolvedValue(undefined),
+  clearSession: vi.fn()
+}
+const mockTerminalStreams = {
+  ensureTerminal: vi.fn().mockResolvedValue('term-1'),
+  disposeForSession: vi.fn().mockResolvedValue(undefined)
+}
+const mockTailStreams = {
+  closeForSession: vi.fn().mockResolvedValue(undefined)
+}
+const mockMonitor = {
+  clearSession: vi.fn()
+}
+const mockSites = {
+  sites: [] as Site[],
+  fetchSites: vi.fn().mockResolvedValue(undefined)
+}
+
 vi.mock('../remoteFs.store', () => ({
-  useRemoteFsStore: () => ({
-    loadForSession: vi.fn().mockResolvedValue(undefined),
-    clearSession: vi.fn()
-  })
+  useRemoteFsStore: () => mockRemoteFs
 }))
 
 vi.mock('../terminalStreams.store', () => ({
-  useTerminalStreamsStore: () => ({
-    ensureTerminal: vi.fn().mockResolvedValue('term-1'),
-    disposeForSession: vi.fn().mockResolvedValue(undefined)
-  })
+  useTerminalStreamsStore: () => mockTerminalStreams
 }))
 
 vi.mock('../tailStreams.store', () => ({
-  useTailStreamsStore: () => ({
-    closeForSession: vi.fn().mockResolvedValue(undefined)
-  })
+  useTailStreamsStore: () => mockTailStreams
 }))
 
 vi.mock('../monitor.store', () => ({
-  useMonitorStore: () => ({
-    clearSession: vi.fn()
-  })
+  useMonitorStore: () => mockMonitor
 }))
 
 vi.mock('../sites.store', () => ({
-  useSitesStore: () => ({
-    sites: [],
-    fetchSites: vi.fn().mockResolvedValue(undefined)
-  })
+  useSitesStore: () => mockSites
 }))
 
 describe('sessions.store quick connect and promotion', () => {
@@ -72,6 +78,7 @@ describe('sessions.store quick connect and promotion', () => {
     })
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockSites.sites = []
     vi.mocked(api.invoke).mockImplementation(async (channel) => {
       if (channel === INVOKE_CHANNELS.sessionOpen) {
         return { sessionId: 'sess-1', status: 'connected' }
@@ -198,5 +205,171 @@ describe('sessions.store quick connect and promotion', () => {
     setActivePinia(createPinia())
     const { useSessionsStore: useSessionsStoreCorrupt } = await import('../sessions.store')
     expect(useSessionsStoreCorrupt().recentQuickConnects).toEqual([])
+  })
+
+  it('disconnectTab clears active state synchronously before session:close resolves, cleans up session stores, and preserves Quick Connect secrets for reconnectTab', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+
+    await store.connect({
+      name: 'Quick Connect',
+      host: '10.0.0.5',
+      port: 2222,
+      username: 'alice',
+      authMethod: 'password',
+      password: 'top-secret-password'
+    })
+
+    const tabId = store.activeTab.tabId
+    const sid = store.activeTab.sessionId
+    expect(sid).toBeTruthy()
+    expect(store.activeTab.status).toBe('connected')
+
+    let resolveClose!: () => void
+    let deferredFirstClose = false
+    vi.mocked(api.invoke).mockImplementation((channel) => {
+      if (channel === INVOKE_CHANNELS.sessionClose && !deferredFirstClose) {
+        deferredFirstClose = true
+        return new Promise<void>((resolve) => {
+          resolveClose = resolve
+        })
+      }
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        return Promise.resolve({ sessionId: 'sess-reconnected', status: 'connected' })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const disconnectPromise = store.disconnectTab(tabId)
+    // Synchronously cleared before sessionClose resolves:
+    expect(store.activeTab.sessionId).toBeNull()
+    expect(store.activeTab.status).toBe('disconnected')
+    expect(store.activeTab.connecting).toBe(false)
+
+    resolveClose()
+    await disconnectPromise
+
+    expect(api.invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.sessionClose, sid)
+    expect(mockRemoteFs.clearSession).toHaveBeenCalledWith(sid)
+    expect(mockMonitor.clearSession).toHaveBeenCalledWith(sid)
+    expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(sid)
+    expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sid)
+
+    // Reconnect reuses the in-memory Quick Connect secret directly:
+    await store.reconnectTab(tabId)
+    expect(api.invoke).toHaveBeenCalledWith(
+      INVOKE_CHANNELS.sessionOpen,
+      expect.objectContaining({
+        quickConnect: expect.objectContaining({
+          host: '10.0.0.5',
+          username: 'alice',
+          password: 'top-secret-password'
+        })
+      })
+    )
+    expect(store.activeTab.status).toBe('connected')
+
+    // closeTab clears the ephemeral secret so no secret lingers after tab close
+    await store.closeTab(tabId)
+    expect(store.tabs).toHaveLength(1)
+    expect(store.tabs[0].tabId).not.toBe(tabId)
+  })
+
+  it('reconnectTab reconnects saved sites and falls back to picker if Quick Connect password is missing', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+
+    const site: Site = {
+      id: 'site-1',
+      name: 'Prod Box',
+      host: 'prod.example.com',
+      port: 22,
+      username: 'deploy',
+      authMethod: 'agent',
+      hasPassword: false,
+      hasPassphrase: false,
+      createdAt: '2026-11-15T00:00:00.000Z',
+      updatedAt: '2026-11-15T00:00:00.000Z'
+    }
+    mockSites.sites = [site]
+
+    await store.connectToSite(site)
+    const siteTabId = store.activeTab.tabId
+    await store.disconnectTab(siteTabId)
+    expect(store.activeTab.status).toBe('disconnected')
+
+    await store.reconnectTab(siteTabId)
+    expect(store.activeTab.status).toBe('connected')
+    expect(api.invoke).toHaveBeenCalledWith(
+      INVOKE_CHANNELS.sessionOpen,
+      expect.objectContaining({ siteId: 'site-1' })
+    )
+
+    // Quick Connect tab without cached password drops to picker (status = null) instead of connecting empty
+    store.openNewTab()
+    const qcTab = store.activeTab
+    qcTab.quickConnectInput = {
+      name: 'Quick Connect',
+      host: 'qc.example.com',
+      port: 22,
+      username: 'bob',
+      authMethod: 'password'
+    }
+    qcTab.status = 'error'
+
+    vi.clearAllMocks()
+    await store.reconnectTab(qcTab.tabId)
+    expect(qcTab.status).toBeNull()
+    expect(api.invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.sessionOpen, expect.anything())
+  })
+
+  it('duplicateTab clones saved-site and Quick Connect tabs and closeOtherTabs closes all other tabs', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+
+    const site: Site = {
+      id: 'site-dup',
+      name: 'Dup Site',
+      host: 'dup.example.com',
+      port: 22,
+      username: 'root',
+      authMethod: 'agent',
+      hasPassword: false,
+      hasPassphrase: false,
+      createdAt: '2026-11-15T00:00:00.000Z',
+      updatedAt: '2026-11-15T00:00:00.000Z'
+    }
+    mockSites.sites = [site]
+
+    await store.connectToSite(site)
+    const firstTabId = store.activeTab.tabId
+
+    await store.duplicateTab(firstTabId)
+    expect(store.tabs).toHaveLength(2)
+    const dupSiteTabId = store.activeTab.tabId
+    expect(dupSiteTabId).not.toBe(firstTabId)
+    expect(store.activeTab.siteId).toBe('site-dup')
+    expect(store.activeTab.status).toBe('connected')
+
+    store.openNewTab()
+    await store.connect({
+      name: 'Quick Connect',
+      host: 'qc2.example.com',
+      port: 2222,
+      username: 'carol',
+      authMethod: 'password',
+      password: 'pw2'
+    })
+    const qcTabId = store.activeTab.tabId
+    await store.duplicateTab(qcTabId)
+    expect(store.tabs).toHaveLength(4)
+    const dupQcTabId = store.activeTab.tabId
+    expect(store.activeTab.status).toBe('connected')
+    expect(store.activeTab.quickConnectInput?.host).toBe('qc2.example.com')
+
+    await store.closeOtherTabs(dupQcTabId)
+    expect(store.tabs).toHaveLength(1)
+    expect(store.tabs[0].tabId).toBe(dupQcTabId)
+    expect(store.activeTabId).toBe(dupQcTabId)
   })
 })

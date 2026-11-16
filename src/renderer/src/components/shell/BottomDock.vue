@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useOperationsStore } from '../../stores/operations.store'
-import { useUiStore } from '../../stores/ui.store'
+import {
+  DEFAULT_DOCK_WIDTH,
+  MIN_DOCK_HEIGHT,
+  MIN_DOCK_WIDTH,
+  clampDockHeight,
+  clampDockWidth,
+  useUiStore
+} from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
-import { MIN_DOCK_HEIGHT, clampDockHeight } from '../../stores/ui.store'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
@@ -48,18 +54,22 @@ function onTabClick(target: DockTab): void {
   openDock(target)
 }
 
-const COLLAPSED_HEIGHT = 36
+const COLLAPSED_SIZE = 36
+const isRight = computed(() => ui.dockPosition === 'right')
 
-// Drag-to-resize: liveHeight tracks the drag in real time (bound directly to
-// the container's inline style) so localStorage only gets written once, at
-// drag-end, rather than on every pointermove. ui.dockHeight is the persisted
-// value read/written outside a drag.
+// Drag-to-resize: liveHeight / liveWidth track the drag in real time (bound
+// directly to the container's inline style) so localStorage only gets written
+// once, at drag-end, rather than on every pointermove.
 const dragging = ref(false)
 const liveHeight = ref(ui.dockHeight)
+const liveWidth = ref(ui.dockWidth)
 let dragStartY = 0
+let dragStartX = 0
 let dragStartHeight = 0
+let dragStartWidth = 0
 let dragRaf: number | null = null
 let latestPointerY = 0
+let latestPointerX = 0
 
 function onResizeStart(e: PointerEvent): void {
   if (e.button !== 0) return
@@ -67,8 +77,11 @@ function onResizeStart(e: PointerEvent): void {
   isMaximized.value = false
   dragging.value = true
   dragStartY = e.clientY
+  dragStartX = e.clientX
   latestPointerY = e.clientY
+  latestPointerX = e.clientX
   dragStartHeight = ui.dockHeight
+  dragStartWidth = ui.dockWidth
   window.addEventListener('pointermove', onResizeMove)
   window.addEventListener('pointerup', onResizeEnd)
   window.addEventListener('pointercancel', onResizeEnd)
@@ -79,14 +92,20 @@ function onResizeMove(e: PointerEvent): void {
     return
   }
   latestPointerY = e.clientY
+  latestPointerX = e.clientX
   if (dragRaf !== null) {
     return
   }
   dragRaf = requestAnimationFrame(() => {
     dragRaf = null
     if (!dragging.value) return
-    // Dragging the handle up should make the dock taller.
-    liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
+    if (isRight.value) {
+      // Dragging the left handle further left makes the right dock wider.
+      liveWidth.value = clampDockWidth(dragStartWidth + (dragStartX - latestPointerX), window.innerWidth)
+    } else {
+      // Dragging the handle up makes the bottom dock taller.
+      liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
+    }
   })
 }
 
@@ -106,9 +125,15 @@ function onResizeEnd(): void {
   }
   dragging.value = false
   detachResizeListeners()
-  liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
-  ui.setDockHeight(liveHeight.value)
-  liveHeight.value = ui.dockHeight
+  if (isRight.value) {
+    liveWidth.value = clampDockWidth(dragStartWidth + (dragStartX - latestPointerX), window.innerWidth)
+    ui.setDockWidth(liveWidth.value)
+    liveWidth.value = ui.dockWidth
+  } else {
+    liveHeight.value = clampDockHeight(dragStartHeight + (dragStartY - latestPointerY), window.innerHeight)
+    ui.setDockHeight(liveHeight.value)
+    liveHeight.value = ui.dockHeight
+  }
 }
 
 function setHeight(px: number): void {
@@ -117,20 +142,39 @@ function setHeight(px: number): void {
   liveHeight.value = ui.dockHeight
 }
 
+function setWidth(px: number): void {
+  isMaximized.value = false
+  ui.setDockWidth(px)
+  liveWidth.value = ui.dockWidth
+}
+
 function onResizeKey(e: KeyboardEvent): void {
+  if (isRight.value) {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      setWidth(clampDockWidth(ui.dockWidth + (e.key === 'ArrowLeft' ? 16 : -16), window.innerWidth))
+    }
+    return
+  }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault()
     setHeight(clampDockHeight(ui.dockHeight + (e.key === 'ArrowUp' ? 16 : -16), window.innerHeight))
   }
 }
 
-function resetHeight(): void {
-  setHeight(MIN_DOCK_HEIGHT)
+function resetSize(): void {
+  if (isRight.value) {
+    setWidth(DEFAULT_DOCK_WIDTH)
+  } else {
+    setHeight(MIN_DOCK_HEIGHT)
+  }
 }
 
 function onWindowResize(): void {
   ui.setDockHeight(ui.dockHeight)
   liveHeight.value = ui.dockHeight
+  ui.setDockWidth(ui.dockWidth)
+  liveWidth.value = ui.dockWidth
   if (isMaximized.value) measureMax()
 }
 
@@ -144,7 +188,7 @@ onBeforeUnmount(() => {
   }
 })
 
-// Maximize animates to a measured pixel height (everything the dock and its growing siblings share),
+// Maximize animates to a measured pixel size (everything the dock and its growing siblings share),
 // so it eases like a normal resize instead of snapping to `flex: 1`.
 const dockEl = ref<HTMLElement | null>(null)
 const maxPx = ref(0)
@@ -153,10 +197,11 @@ function measureMax(): void {
   const el = dockEl.value
   const parent = el?.parentElement
   if (!el || !parent) return
-  let available = parent.clientHeight
+  const horizontal = isRight.value
+  let available = horizontal ? parent.clientWidth : parent.clientHeight
   for (const child of Array.from(parent.children)) {
     if (child !== el && !(Number.parseFloat(getComputedStyle(child).flexGrow) > 0)) {
-      available -= (child as HTMLElement).offsetHeight
+      available -= horizontal ? (child as HTMLElement).offsetWidth : (child as HTMLElement).offsetHeight
     }
   }
   maxPx.value = Math.max(0, available)
@@ -166,6 +211,12 @@ watch(isMaximized, (on) => {
   if (on) measureMax()
 }, { flush: 'pre' })
 
+watch(isRight, () => {
+  if (isMaximized.value) {
+    void nextTick(measureMax)
+  }
+})
+
 function onDockKeydown(e: KeyboardEvent): void {
   // Esc restores a maximized dock; the terminal keeps Esc for the shell.
   if (e.key !== 'Escape' || e.defaultPrevented || !isMaximized.value || tab.value === 'terminal') return
@@ -173,11 +224,17 @@ function onDockKeydown(e: KeyboardEvent): void {
   isMaximized.value = false
 }
 
-const dockHeightPx = computed(() => {
-  if (collapsed.value) return COLLAPSED_HEIGHT
-  if (isMaximized.value) return maxPx.value || Math.round(window.innerHeight * 0.8)
-  return liveHeight.value
+const dockSizePx = computed(() => {
+  if (collapsed.value) return COLLAPSED_SIZE
+  if (isMaximized.value) {
+    return maxPx.value || Math.round((isRight.value ? window.innerWidth : window.innerHeight) * 0.8)
+  }
+  return isRight.value ? liveWidth.value : liveHeight.value
 })
+
+const dockShellStyle = computed(() =>
+  isRight.value ? { width: `${dockSizePx.value}px` } : { height: `${dockSizePx.value}px` }
+)
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
@@ -192,123 +249,223 @@ function sessionLabel(sessionId: string): string | null {
 <template>
   <div
     ref="dockEl"
-    class="ferry-dock-shell flex shrink-0 flex-col overflow-hidden border-t border-default"
-    :class="dragging ? '' : 'ferry-dock-expandable'"
-    :style="{ height: `${dockHeightPx}px` }"
+    class="ferry-dock-shell flex shrink-0 overflow-hidden border-default"
+    :class="[
+      dragging ? '' : 'ferry-dock-expandable',
+      isRight ? 'flex-row border-l' : 'flex-col border-t'
+    ]"
+    :style="dockShellStyle"
     @keydown="onDockKeydown"
   >
     <div
       v-if="!collapsed && !isMaximized"
       role="separator"
-      aria-orientation="horizontal"
+      :aria-orientation="isRight ? 'vertical' : 'horizontal'"
       aria-label="Resize dock"
       tabindex="0"
-      :aria-valuenow="liveHeight"
-      :aria-valuemin="MIN_DOCK_HEIGHT"
-      class="h-1.5 shrink-0 cursor-row-resize touch-none select-none hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
-      :class="dragging ? 'bg-primary' : ''"
+      :aria-valuenow="isRight ? liveWidth : liveHeight"
+      :aria-valuemin="isRight ? MIN_DOCK_WIDTH : MIN_DOCK_HEIGHT"
+      class="shrink-0 touch-none select-none hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none transition-colors"
+      :class="[
+        isRight ? 'h-full w-1.5 cursor-col-resize' : 'h-1.5 w-full cursor-row-resize',
+        dragging ? 'bg-primary' : ''
+      ]"
       @keydown="onResizeKey"
-      @dblclick="resetHeight"
+      @dblclick="resetSize"
       @pointerdown="onResizeStart"
     />
+
     <div
-      class="flex items-center justify-between bg-muted px-2 py-1 select-none"
-      @dblclick.self="collapsed = !collapsed"
+      v-if="isRight && collapsed"
+      class="flex h-full w-full flex-col items-center gap-1.5 bg-muted py-1.5 select-none"
     >
-      <div class="flex items-center gap-1" role="tablist" aria-label="Dock panels" @keydown="onTablistKeydown($event)">
+      <UTooltip text="Expand dock" :content="{ side: 'left' }">
+        <UButton
+          icon="i-lucide-chevron-left"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Expand dock"
+          @click="collapsed = false"
+        />
+      </UTooltip>
+      <UTooltip text="Dock to bottom" :content="{ side: 'left' }">
+        <UButton
+          icon="i-lucide-panel-bottom"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Toggle dock side (bottom / right)"
+          @click="ui.toggleDockPosition()"
+        />
+      </UTooltip>
+      <div class="my-0.5 h-px w-5 bg-default" />
+      <UTooltip text="Terminal (Ctrl+`)" :content="{ side: 'left' }">
+        <UButton
+          icon="i-lucide-terminal"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Terminal"
+          @click="openDock('terminal')"
+        />
+      </UTooltip>
+      <UTooltip text="Log Tail" :content="{ side: 'left' }">
+        <UButton
+          icon="i-lucide-scroll-text"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Log Tail"
+          @click="openDock('tail')"
+        />
+      </UTooltip>
+      <UTooltip text="Monitor" :content="{ side: 'left' }">
+        <UButton
+          icon="i-lucide-activity"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Monitor"
+          @click="openDock('monitor')"
+        />
+      </UTooltip>
+      <UTooltip text="Transfers" :content="{ side: 'left' }">
         <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
           <UButton
-            class="ferry-dock-tab"
-            label="Transfers"
-            role="tab"
-            :aria-selected="!collapsed && tab === 'transfers'"
-            size="xs"
-            :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
-            :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
-            @click="onTabClick('transfers')"
-          />
-        </UChip>
-        <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
-          <UButton
-            class="ferry-dock-tab"
-            label="Activity"
-            role="tab"
-            :aria-selected="!collapsed && tab === 'activity'"
-            size="xs"
-            :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
-            :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
-            @click="onTabClick('activity')"
-          />
-        </UChip>
-        <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
-          <UButton
-            class="ferry-dock-tab"
-            label="Log Tail"
-            role="tab"
-            :aria-selected="!collapsed && tab === 'tail'"
-            size="xs"
-            :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
-            :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
-            @click="onTabClick('tail')"
-          />
-        </UChip>
-        <UButton
-          class="ferry-dock-tab"
-            label="Terminal"
-          role="tab"
-          :aria-selected="!collapsed && tab === 'terminal'"
-          size="xs"
-          :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
-          :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
-          @click="onTabClick('terminal')"
-        />
-        <UButton
-          class="ferry-dock-tab"
-            label="Monitor"
-          role="tab"
-          :aria-selected="!collapsed && tab === 'monitor'"
-          size="xs"
-          :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
-          :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
-          @click="onTabClick('monitor')"
-        />
-        <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
-          <UButton
-            class="ferry-dock-tab"
-            label="Edits"
-            role="tab"
-            :aria-selected="!collapsed && tab === 'edits'"
-            size="xs"
-            :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
-            :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
-            @click="onTabClick('edits')"
-          />
-        </UChip>
-      </div>
-      <div class="flex items-center gap-0.5">
-        <UTooltip :text="isMaximized ? 'Restore dock size (Esc)' : 'Maximize dock'">
-          <UButton
-            :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
-            :color="isMaximized ? 'primary' : 'neutral'"
-            :variant="isMaximized ? 'soft' : 'ghost'"
-            size="xs"
-            :aria-label="isMaximized ? 'Restore dock size' : 'Maximize dock'"
-            :aria-pressed="isMaximized"
-            @click="toggleMaximize"
-          />
-        </UTooltip>
-        <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
-          <UButton
-            :icon="collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            icon="i-lucide-arrow-up-down"
             color="neutral"
             variant="ghost"
             size="xs"
-            :aria-label="collapsed ? 'Expand dock' : 'Collapse dock'"
-            @click="collapsed = !collapsed"
+            aria-label="Transfers"
+            @click="openDock('transfers')"
           />
-        </UTooltip>
-      </div>
+        </UChip>
+      </UTooltip>
     </div>
+
+    <div v-show="!(isRight && collapsed)" class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div
+        class="flex items-center justify-between gap-1 bg-muted px-2 py-1 select-none"
+        @dblclick.self="collapsed = !collapsed"
+      >
+        <div
+          class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none"
+          role="tablist"
+          aria-label="Dock panels"
+          @keydown="onTablistKeydown($event)"
+        >
+          <UTooltip text="File transfers">
+            <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
+              <UButton
+                class="ferry-dock-tab"
+                label="Transfers"
+                role="tab"
+                :aria-selected="!collapsed && tab === 'transfers'"
+                size="xs"
+                :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
+                :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
+                @click="onTabClick('transfers')"
+              />
+            </UChip>
+          </UTooltip>
+          <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
+            <UButton
+              class="ferry-dock-tab"
+              label="Activity"
+              role="tab"
+              :aria-selected="!collapsed && tab === 'activity'"
+              size="xs"
+              :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
+              :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
+              @click="onTabClick('activity')"
+            />
+          </UChip>
+          <UTooltip text="Live remote log tail">
+            <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
+              <UButton
+                class="ferry-dock-tab"
+                label="Log Tail"
+                role="tab"
+                :aria-selected="!collapsed && tab === 'tail'"
+                size="xs"
+                :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
+                :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
+                @click="onTabClick('tail')"
+              />
+            </UChip>
+          </UTooltip>
+          <UTooltip text="Terminal (Ctrl+`)">
+            <UButton
+              class="ferry-dock-tab"
+              label="Terminal"
+              role="tab"
+              :aria-selected="!collapsed && tab === 'terminal'"
+              size="xs"
+              :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
+              :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
+              @click="onTabClick('terminal')"
+            />
+          </UTooltip>
+          <UTooltip text="Remote resource monitor">
+            <UButton
+              class="ferry-dock-tab"
+              label="Monitor"
+              role="tab"
+              :aria-selected="!collapsed && tab === 'monitor'"
+              size="xs"
+              :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
+              :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
+              @click="onTabClick('monitor')"
+            />
+          </UTooltip>
+          <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
+            <UButton
+              class="ferry-dock-tab"
+              label="Edits"
+              role="tab"
+              :aria-selected="!collapsed && tab === 'edits'"
+              size="xs"
+              :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
+              :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
+              @click="onTabClick('edits')"
+            />
+          </UChip>
+        </div>
+        <div class="flex shrink-0 items-center gap-0.5">
+          <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">
+            <UButton
+              :icon="isRight ? 'i-lucide-panel-bottom' : 'i-lucide-panel-right'"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              aria-label="Toggle dock side (bottom / right)"
+              @click="ui.toggleDockPosition()"
+            />
+          </UTooltip>
+          <UTooltip :text="isMaximized ? 'Restore dock size (Esc)' : 'Maximize dock'">
+            <UButton
+              :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
+              :color="isMaximized ? 'primary' : 'neutral'"
+              :variant="isMaximized ? 'soft' : 'ghost'"
+              size="xs"
+              :aria-label="isMaximized ? 'Restore dock size' : 'Maximize dock'"
+              :aria-pressed="isMaximized"
+              @click="toggleMaximize"
+            />
+          </UTooltip>
+          <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
+            <UButton
+              :icon="isRight ? 'i-lucide-chevron-right' : (collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down')"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="collapsed ? 'Expand dock' : 'Collapse dock'"
+              @click="collapsed = !collapsed"
+            />
+          </UTooltip>
+        </div>
+      </div>
     <!-- Terminal uses v-show; removing the other flex pane immediately avoids
          briefly splitting the available height while xterm is being fitted. -->
     <Transition name="dock-fade" :css="tab !== 'terminal'">
@@ -443,6 +600,7 @@ function sessionLabel(sessionId: string): string | null {
     </Transition>
     <div v-show="terminalActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">
       <TerminalView v-if="terminalEverShown" :active="terminalActive" />
+    </div>
     </div>
   </div>
 </template>
