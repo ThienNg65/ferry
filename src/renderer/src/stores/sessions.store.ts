@@ -345,6 +345,7 @@ export const useSessionsStore = defineStore('sessions', {
       this.ensureHostKeySubscription()
       const tab = this.activeTab
       tab.connecting = true
+      tab.status = 'connecting'
       tab.sessionId = crypto.randomUUID()
       tab.progressMessages = []
       tab.statusMessage = null
@@ -540,6 +541,104 @@ export const useSessionsStore = defineStore('sessions', {
       }
       await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
       useRemoteFsStore().clearSession(sessionId)
+    },
+
+    /** Disconnects a tab's live SSH/SFTP session while keeping the tab (and any ephemeral Quick Connect secrets) for reconnect. */
+    async disconnectTab(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab || (!tab.sessionId && tab.status !== 'connected' && !tab.connecting)) {
+        return
+      }
+      const sid = tab.sessionId
+      if (sid && this.pendingKeyboardPrompt?.sessionId === sid) {
+        this.pendingKeyboardPrompt = null
+      }
+      if (sid && this.pendingHostKeyPrompt?.sessionId === sid) {
+        this.pendingHostKeyPrompt = null
+      }
+      tab.sessionId = null
+      tab.status = 'disconnected'
+      tab.connecting = false
+      tab.connectPromise = null
+      tab.statusMessage = null
+      tab.pendingHostKeyMismatch = null
+      if (sid) {
+        await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
+        useRemoteFsStore().clearSession(sid)
+        useMonitorStore().clearSession(sid)
+        await useTailStreamsStore().closeForSession(sid)
+        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
+      }
+    },
+
+    /** Reconnects a disconnected or errored tab (saved site or Quick Connect). */
+    async reconnectTab(tabId: string): Promise<void> {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab || tab.connecting) {
+        return
+      }
+      this.setActiveTab(tabId)
+      if (tab.siteId) {
+        const site = useSitesStore().sites.find((s) => s.id === tab.siteId)
+        if (site) {
+          await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
+        } else {
+          tab.status = null
+          tab.statusMessage = null
+        }
+        return
+      }
+      if (tab.quickConnectInput) {
+        const secret = ephemeralQuickSecrets.get(tabId)
+        if (tab.quickConnectInput.authMethod !== 'password' || secret?.password) {
+          await this.connect({ ...tab.quickConnectInput, ...secret })
+        } else {
+          tab.status = null
+          tab.statusMessage = null
+        }
+      }
+    },
+
+    /** Opens a new tab cloned from an existing tab and connects it (when backed by a site or reusable Quick Connect credentials). */
+    async duplicateTab(tabId: string): Promise<void> {
+      const source = this.tabs.find((t) => t.tabId === tabId)
+      if (!source) {
+        return
+      }
+      const newTab = freshTab()
+      this.tabs.push(newTab)
+      this.activeTabId = newTab.tabId
+      const secret = ephemeralQuickSecrets.get(tabId)
+      if (secret) {
+        ephemeralQuickSecrets.set(newTab.tabId, { ...secret })
+      }
+      if (source.siteId) {
+        const site = useSitesStore().sites.find((s) => s.id === source.siteId)
+        if (site) {
+          await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
+        }
+      } else if (source.quickConnectInput) {
+        if (source.quickConnectInput.authMethod !== 'password' || secret?.password) {
+          await this.connect({ ...source.quickConnectInput, ...secret })
+        } else {
+          newTab.quickConnectInput = { ...source.quickConnectInput }
+          newTab.label = source.label
+          newTab.hostLabel = source.hostLabel
+        }
+      }
+    },
+
+    /** Closes every open tab except `keepTabId`. */
+    async closeOtherTabs(keepTabId: string): Promise<void> {
+      if (!this.tabs.some((t) => t.tabId === keepTabId)) {
+        return
+      }
+      this.setActiveTab(keepTabId)
+      for (const tab of [...this.tabs]) {
+        if (tab.tabId !== keepTabId) {
+          await this.closeTab(tab.tabId)
+        }
+      }
     },
 
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */
