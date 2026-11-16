@@ -290,10 +290,17 @@ function onMouseLeave(): void {
       @blur="cancelRename"
     />
     <div v-else class="flex min-w-24 flex-1 items-center gap-1.5 overflow-hidden">
-      <span class="truncate" :class="entry.isDir ? 'font-medium' : ''" :title="entry.name">{{ entry.name }}</span>
+      <span
+        class="truncate"
+        :class="[
+          entry.isDir ? 'font-medium' : '',
+          entry.isSymlink && entry.symlinkTarget ? 'shrink-0 max-w-[60%]' : ''
+        ]"
+        :title="entry.name"
+      >{{ entry.name }}</span>
       <span
         v-if="entry.isSymlink && entry.symlinkTarget"
-        class="truncate text-xs font-normal text-muted"
+        class="min-w-0 flex-1 truncate text-xs font-normal text-muted"
         :title="entry.symlinkTarget"
       >
         → {{ entry.symlinkTarget }}

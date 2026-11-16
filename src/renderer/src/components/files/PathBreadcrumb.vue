@@ -154,15 +154,13 @@ async function copyCurrentPath(): Promise<void> {
             </span>
           </template>
         </template>
-        <button
-          type="button"
-          aria-label="Edit path"
+        <div
           title="Click to edit path"
           class="min-w-4 flex-1 self-stretch cursor-text"
           @click="startEdit"
         />
       </div>
-      <div class="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
+      <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <UTooltip text="Edit path">
           <UButton
             icon="i-lucide-pencil"

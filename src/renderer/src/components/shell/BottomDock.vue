@@ -57,6 +57,15 @@ function onTabClick(target: DockTab): void {
 const COLLAPSED_SIZE = 36
 const isRight = computed(() => ui.dockPosition === 'right')
 
+const dockTabs = computed(() => [
+  { id: 'transfers' as const, label: 'Transfers', icon: 'i-lucide-arrow-up-down', tooltip: 'File transfers', badge: transfers.activeCount },
+  { id: 'activity' as const, label: 'Activity', icon: 'i-lucide-list-checks', tooltip: 'Background operations', badge: operations.runningCount },
+  { id: 'tail' as const, label: 'Log Tail', icon: 'i-lucide-scroll-text', tooltip: 'Live remote log tail', badge: tailStreams.tabs.length },
+  { id: 'terminal' as const, label: 'Terminal', icon: 'i-lucide-terminal', tooltip: 'Terminal (Ctrl+`)', badge: 0 },
+  { id: 'monitor' as const, label: 'Monitor', icon: 'i-lucide-activity', tooltip: 'Remote resource monitor', badge: 0 },
+  { id: 'edits' as const, label: 'Edits', icon: 'i-lucide-file-pen', tooltip: 'External file edits', badge: editSessions.activeCount }
+])
+
 // Drag-to-resize: liveHeight / liveWidth track the drag in real time (bound
 // directly to the container's inline style) so localStorage only gets written
 // once, at drag-end, rather than on every pointermove.
@@ -236,6 +245,8 @@ const dockShellStyle = computed(() =>
   isRight.value ? { width: `${dockSizePx.value}px` } : { height: `${dockSizePx.value}px` }
 )
 
+const compactRightTabs = computed(() => isRight.value && !isMaximized.value && liveWidth.value < 500)
+
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path
 }
@@ -277,7 +288,7 @@ function sessionLabel(sessionId: string): string | null {
 
     <div
       v-if="isRight && collapsed"
-      class="flex h-full w-full flex-col items-center gap-1.5 bg-muted py-1.5 select-none"
+      class="ml-auto flex h-full w-9 shrink-0 flex-col items-center gap-1.5 bg-muted py-1.5 select-none"
     >
       <UTooltip text="Expand dock" :content="{ side: 'left' }">
         <UButton
@@ -300,45 +311,15 @@ function sessionLabel(sessionId: string): string | null {
         />
       </UTooltip>
       <div class="my-0.5 h-px w-5 bg-default" />
-      <UTooltip text="Terminal (Ctrl+`)" :content="{ side: 'left' }">
-        <UButton
-          icon="i-lucide-terminal"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          aria-label="Terminal"
-          @click="openDock('terminal')"
-        />
-      </UTooltip>
-      <UTooltip text="Log Tail" :content="{ side: 'left' }">
-        <UButton
-          icon="i-lucide-scroll-text"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          aria-label="Log Tail"
-          @click="openDock('tail')"
-        />
-      </UTooltip>
-      <UTooltip text="Monitor" :content="{ side: 'left' }">
-        <UButton
-          icon="i-lucide-activity"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          aria-label="Monitor"
-          @click="openDock('monitor')"
-        />
-      </UTooltip>
-      <UTooltip text="Transfers" :content="{ side: 'left' }">
-        <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
+      <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
+        <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
           <UButton
-            icon="i-lucide-arrow-up-down"
+            :icon="panel.icon"
             color="neutral"
             variant="ghost"
             size="xs"
-            aria-label="Transfers"
-            @click="openDock('transfers')"
+            :aria-label="panel.label"
+            @click="openDock(panel.id)"
           />
         </UChip>
       </UTooltip>
@@ -350,87 +331,28 @@ function sessionLabel(sessionId: string): string | null {
         @dblclick.self="collapsed = !collapsed"
       >
         <div
-          class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none"
+          class="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-none"
+          :class="compactRightTabs ? 'gap-0.5' : 'gap-1'"
           role="tablist"
           aria-label="Dock panels"
           @keydown="onTablistKeydown($event)"
         >
-          <UTooltip text="File transfers">
-            <UChip :text="transfers.activeCount" :show="transfers.activeCount > 0" size="lg" color="primary">
+          <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip">
+            <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
               <UButton
-                class="ferry-dock-tab"
-                label="Transfers"
+                class="ferry-dock-tab shrink-0"
+                :icon="compactRightTabs ? panel.icon : undefined"
+                :label="!compactRightTabs || (!collapsed && tab === panel.id) ? panel.label : undefined"
+                :aria-label="panel.label"
                 role="tab"
-                :aria-selected="!collapsed && tab === 'transfers'"
+                :aria-selected="!collapsed && tab === panel.id"
                 size="xs"
-                :color="!collapsed && tab === 'transfers' ? 'primary' : 'neutral'"
-                :variant="!collapsed && tab === 'transfers' ? 'soft' : 'ghost'"
-                @click="onTabClick('transfers')"
+                :color="!collapsed && tab === panel.id ? 'primary' : 'neutral'"
+                :variant="!collapsed && tab === panel.id ? 'soft' : 'ghost'"
+                @click="onTabClick(panel.id)"
               />
             </UChip>
           </UTooltip>
-          <UChip :text="operations.runningCount" :show="operations.runningCount > 0" size="lg" color="primary">
-            <UButton
-              class="ferry-dock-tab"
-              label="Activity"
-              role="tab"
-              :aria-selected="!collapsed && tab === 'activity'"
-              size="xs"
-              :color="!collapsed && tab === 'activity' ? 'primary' : 'neutral'"
-              :variant="!collapsed && tab === 'activity' ? 'soft' : 'ghost'"
-              @click="onTabClick('activity')"
-            />
-          </UChip>
-          <UTooltip text="Live remote log tail">
-            <UChip :text="tailStreams.tabs.length" :show="tailStreams.tabs.length > 0" size="lg" color="primary">
-              <UButton
-                class="ferry-dock-tab"
-                label="Log Tail"
-                role="tab"
-                :aria-selected="!collapsed && tab === 'tail'"
-                size="xs"
-                :color="!collapsed && tab === 'tail' ? 'primary' : 'neutral'"
-                :variant="!collapsed && tab === 'tail' ? 'soft' : 'ghost'"
-                @click="onTabClick('tail')"
-              />
-            </UChip>
-          </UTooltip>
-          <UTooltip text="Terminal (Ctrl+`)">
-            <UButton
-              class="ferry-dock-tab"
-              label="Terminal"
-              role="tab"
-              :aria-selected="!collapsed && tab === 'terminal'"
-              size="xs"
-              :color="!collapsed && tab === 'terminal' ? 'primary' : 'neutral'"
-              :variant="!collapsed && tab === 'terminal' ? 'soft' : 'ghost'"
-              @click="onTabClick('terminal')"
-            />
-          </UTooltip>
-          <UTooltip text="Remote resource monitor">
-            <UButton
-              class="ferry-dock-tab"
-              label="Monitor"
-              role="tab"
-              :aria-selected="!collapsed && tab === 'monitor'"
-              size="xs"
-              :color="!collapsed && tab === 'monitor' ? 'primary' : 'neutral'"
-              :variant="!collapsed && tab === 'monitor' ? 'soft' : 'ghost'"
-              @click="onTabClick('monitor')"
-            />
-          </UTooltip>
-          <UChip :text="editSessions.activeCount" :show="editSessions.activeCount > 0" size="lg" color="primary">
-            <UButton
-              class="ferry-dock-tab"
-              label="Edits"
-              role="tab"
-              :aria-selected="!collapsed && tab === 'edits'"
-              size="xs"
-              :color="!collapsed && tab === 'edits' ? 'primary' : 'neutral'"
-              :variant="!collapsed && tab === 'edits' ? 'soft' : 'ghost'"
-              @click="onTabClick('edits')"
-            />
-          </UChip>
         </div>
         <div class="flex shrink-0 items-center gap-0.5">
           <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">

@@ -74,6 +74,7 @@ const quickAuthOptions: { label: string; value: AuthMethod }[] = [
   { label: 'SSH agent', value: 'agent' }
 ]
 const savePassword = ref(false)
+const quickHostInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
 const quickPasswordInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
 let pendingFocusQuickPassword = false
 
@@ -167,9 +168,13 @@ function prefillQuickConnect(qc: NonNullable<typeof activeTabQuickConnect.value>
   form.password = ''
   form.passphrase = ''
   bypassDefaultProxy.value = qc.proxyMode === 'none'
-  if (qc.authMethod === 'password') {
-    void nextTick(() => quickPasswordInput.value?.inputRef?.focus())
-  }
+  void nextTick(() => {
+    if (qc.authMethod === 'password') {
+      quickPasswordInput.value?.inputRef?.focus()
+    } else {
+      quickHostInput.value?.inputRef?.focus()
+    }
+  })
 }
 
 function editQuickConnectFromBanner(): void {
@@ -619,7 +624,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
             <div class="flex gap-3">
               <UFormField label="Host" class="flex-1">
-                <UInput v-model="form.host" placeholder="example.com" class="w-full" />
+                <UInput ref="quickHostInput" v-model="form.host" placeholder="example.com" class="w-full" />
               </UFormField>
               <UFormField label="Port" :error="portError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
                 <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
@@ -658,7 +663,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             />
 
             <UAlert
-              v-if="sessions.status === 'error'"
+              v-if="sessions.status === 'error' && !activeTabSite && !showQuickConnectBanner"
               color="error"
               variant="soft"
               :title="sessions.statusMessage ?? 'Connection failed'"
