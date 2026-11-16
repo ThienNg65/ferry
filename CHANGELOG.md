@@ -28,6 +28,22 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.28.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.27.1...ferry-v0.28.0) (2026-11-16)
+
+
+### Features
+
+* add Ctrl+backtick terminal toggle, dock tooltips, and right-split dock layout ([f71df9a](https://github.com/ThienNg65/ferry/commit/f71df9a6210f161687cd1b7806925c75198e366a))
+* add session tab context menu with disconnect, reconnect, duplicate, and close others ([625a953](https://github.com/ThienNg65/ferry/commit/625a953673deb9fc1aab09686c9bb0e4864523a6))
+* display inline symlink targets and broken badge in file rows ([35851fe](https://github.com/ThienNg65/ferry/commit/35851fed9a01b3de82f73ccdf36d7ca1f7b8833a))
+* Feat/p3 power user enhancements ([5b56646](https://github.com/ThienNg65/ferry/commit/5b5664643e1f000b4eae8719dcde60b5830c7123))
+
+
+### Bug Fixes
+
+* catch tab context menu reconnect rejections and polish review findings ([bde5e58](https://github.com/ThienNg65/ferry/commit/bde5e5852b9a204e5909c8e664d83d97e9461e57))
+* focus F2 rename input reliably and add Quick Connect reconnect banner ([ed6a862](https://github.com/ThienNg65/ferry/commit/ed6a86287036382595472b8800beaf1982ee78b0))
+
 ## [0.27.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.27.0...ferry-v0.27.1) (2026-11-16)
 
 
