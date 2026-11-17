@@ -372,4 +372,38 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.tabs[0].tabId).toBe(dupQcTabId)
     expect(store.activeTabId).toBe(dupQcTabId)
   })
+
+  it('connectToSite ignores a second site while the first is still connecting', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    const mk = (id: string): Site => ({
+      id,
+      name: id,
+      host: `${id}.example.com`,
+      port: 22,
+      username: 'root',
+      authMethod: 'agent',
+      hasPassword: false,
+      hasPassphrase: false,
+      createdAt: '2026-11-17T00:00:00.000Z',
+      updatedAt: '2026-11-17T00:00:00.000Z'
+    })
+    let resolveOpen!: (v: { sessionId: string; status: string }) => void
+    vi.mocked(api.invoke).mockImplementation((channel) =>
+      channel === INVOKE_CHANNELS.sessionOpen
+        ? new Promise((resolve) => {
+            resolveOpen = resolve as typeof resolveOpen
+          })
+        : Promise.resolve(undefined)
+    )
+
+    const first = store.connectToSite(mk('site-a'))
+    await store.connectToSite(mk('site-b'))
+    resolveOpen({ sessionId: 'sess-a', status: 'connected' })
+    await first
+
+    const opens = vi.mocked(api.invoke).mock.calls.filter(([c]) => c === INVOKE_CHANNELS.sessionOpen)
+    expect(opens).toHaveLength(1)
+    expect(opens[0][1]).toMatchObject({ siteId: 'site-a' })
+  })
 })

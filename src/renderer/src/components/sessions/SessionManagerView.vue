@@ -9,7 +9,9 @@ import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { useDebouncedRef } from '../../composables/useDebouncedRef'
-import { ENVIRONMENT_DOT } from '../../utils/environment'
+import { onTablistKeydown } from '../../utils/tablistKeys'
+import SiteRow from './SiteRow.vue'
+import SiteDetailsPanel from './SiteDetailsPanel.vue'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
@@ -211,6 +213,7 @@ async function onConnect(): Promise<void> {
 }
 
 async function onConnectSite(site: Site): Promise<void> {
+  if (sessions.connecting) return
   try {
     await sessions.connectToSite(site)
   } catch {
@@ -228,6 +231,13 @@ function siteIcon(site: Site): string {
 function isSiteOpenInTab(siteId: string): boolean {
   return sessions.tabs.some((t) => t.siteId === siteId && t.status === 'connected')
 }
+
+function isSiteConnecting(siteId: string): boolean {
+  return sessions.tabs.some((t) => t.siteId === siteId && t.connecting)
+}
+
+const selectedSiteId = ref<string | null>(null)
+const selectedSite = computed(() => sites.sites.find((s) => s.id === selectedSiteId.value) ?? null)
 
 const formOpen = ref(false)
 const editingSite = ref<Site | null>(null)
@@ -314,6 +324,7 @@ async function onImportSitesJson(): Promise<void> {
 
 function toggleSelectMode(): void {
   selectMode.value = !selectMode.value
+  selectedSiteId.value = null
   selectedIds.clear()
 }
 
@@ -575,74 +586,32 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 @click="openBulkDeleteConfirm"
               />
             </div>
-            <div class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5">
+            <div
+              class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5"
+              @keydown="!selectMode && onTablistKeydown($event, true, true, '[data-site-row]')"
+              @keydown.esc="selectedSiteId = null"
+            >
               <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
                 <div v-if="section.name" class="mt-2 px-2 text-2xs font-medium uppercase tracking-wide text-muted first:mt-0">
                   {{ section.name }}
                 </div>
                 <ul class="flex flex-col gap-1">
                   <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
-                  <li
-                    class="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
-                    :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
-                  >
-                    <UCheckbox
-                      v-if="selectMode"
-                      :model-value="selectedIds.has(site.id)"
-                      @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
-                    />
-                    <div
-                      v-else
-                      class="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted transition-colors group-hover:bg-default group-hover:text-highlighted"
-                    >
-                      <UIcon :name="siteIcon(site)" class="size-3.5" />
-                    </div>
-                    <button
-                      type="button"
-                      class="min-w-0 flex-1 rounded-xs text-left focus-visible:outline-2 focus-visible:outline-primary"
-                      @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
-                    >
-                      <div class="flex min-w-0 items-center gap-1.5">
-                        <span
-                          v-if="site.environment"
-                          class="size-2 shrink-0 rounded-full"
-                          :class="ENVIRONMENT_DOT[site.environment]"
-                          :title="site.environment"
-                        />
-                        <span class="truncate text-sm font-medium text-highlighted">{{ site.name }}</span>
-                        <span
-                          v-if="site.jumpHosts?.length"
-                          class="shrink-0 rounded bg-muted px-1 py-0.2 font-mono text-3xs text-muted"
-                        >
-                          Jump ×{{ site.jumpHosts.length }}
-                        </span>
-                        <span
-                          v-if="isSiteOpenInTab(site.id)"
-                          class="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-1.5 py-0.2 text-3xs font-medium text-success"
-                        >
-                          <span class="size-1.5 rounded-full bg-success" />
-                          Connected
-                        </span>
-                      </div>
-                      <div class="truncate font-mono text-2xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
-                    </button>
-                    <UIcon
-                      v-if="!selectMode"
-                      name="i-lucide-arrow-right"
-                      class="size-3.5 shrink-0 -translate-x-1 text-muted opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100"
-                      aria-hidden="true"
-                    />
-                    <UDropdownMenu v-if="!selectMode" :items="siteMenuItems(site)">
-                      <UButton
-                        icon="i-lucide-ellipsis"
-                        color="neutral"
-                        variant="ghost"
-                        size="xs"
-                        :aria-label="`Actions for ${site.name}`"
-                        :loading="duplicatingId === site.id"
-                      />
-                    </UDropdownMenu>
-                  </li>
+                  <SiteRow
+                    :site="site"
+                    :icon="siteIcon(site)"
+                    :selected="selectedSiteId === site.id"
+                    :select-mode="selectMode"
+                    :checked="selectedIds.has(site.id)"
+                    :connected="isSiteOpenInTab(site.id)"
+                    :connecting="isSiteConnecting(site.id)"
+                    :active="activeTabSite?.id === site.id"
+                    :busy="duplicatingId === site.id"
+                    :menu-items="siteMenuItems(site)"
+                    @select="selectedSiteId = site.id"
+                    @connect="onConnectSite(site)"
+                    @toggle="(v) => toggleSelected(site.id, v)"
+                  />
                   </ContextMenu>
                 </ul>
               </div>
@@ -650,7 +619,16 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           </template>
         </UCard>
 
-        <UCard>
+        <SiteDetailsPanel
+          v-if="selectedSite"
+          :site="selectedSite"
+          :connected="isSiteOpenInTab(selectedSite.id)"
+          :connecting="sessions.connecting"
+          @connect="onConnectSite(selectedSite)"
+          @edit="openEditDialog(selectedSite)"
+          @close="selectedSiteId = null"
+        />
+        <UCard v-else>
           <template #header>
             <div class="flex items-center justify-between gap-2">
               <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>

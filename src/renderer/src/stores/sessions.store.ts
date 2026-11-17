@@ -511,6 +511,10 @@ export const useSessionsStore = defineStore('sessions', {
         }
         return
       }
+      // A second request would redirect the in-flight picker tab to a different site.
+      if (this.activeTab.connecting) {
+        return
+      }
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
