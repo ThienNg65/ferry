@@ -75,7 +75,57 @@ describe('usePaneKeyboard Home/End/PageUp/PageDown', () => {
     expect(selectOnly).toHaveBeenLastCalledWith('/dir/file-0.txt')
 
     await onKeydown(makeKeyEvent('End', true))
-    expect(selectRange).toHaveBeenLastCalledWith('/dir/file-24.txt')
+    expect(selectRange).toHaveBeenLastCalledWith('/dir/file-24.txt', entries)
     expect(scrollToIndex).toHaveBeenLastCalledWith(24)
+  })
+
+  it('Delete only targets visible selected entries and ignores hidden selections', async () => {
+    const allEntries = makeEntries(3)
+    const visibleEntries = [allEntries[0], allEntries[2]]
+    const selected = new Set<string>(['/dir/file-0.txt', '/dir/file-1.txt'])
+    const confirmDeleteEntries = vi.fn().mockResolvedValue(undefined)
+
+    const onKeydown = usePaneKeyboard({
+      side: 'remote',
+      store: { entries: allEntries, selected } as never,
+      renamingPath: ref(null),
+      filterText: ref(''),
+      filteredEntries: ref(visibleEntries),
+      toolbarRef: ref(null),
+      fileListRef: ref(null),
+      onTransferSelected: vi.fn(),
+      onOpen: vi.fn(),
+      confirmDeleteEntries
+    })
+
+    await onKeydown(makeKeyEvent('Delete'))
+    expect(confirmDeleteEntries).toHaveBeenCalledWith([allEntries[0]])
+  })
+
+  it('Escape clears search filterText or selection without clearing external visibility filter state', async () => {
+    const entries = makeEntries(2)
+    const selected = new Set<string>(['/dir/file-0.txt'])
+    const selectAll = vi.fn(() => selected.clear())
+    const filterText = ref('file')
+
+    const onKeydown = usePaneKeyboard({
+      side: 'remote',
+      store: { entries, selected, selectAll } as never,
+      renamingPath: ref(null),
+      filterText,
+      filteredEntries: ref(entries),
+      toolbarRef: ref(null),
+      fileListRef: ref(null),
+      onTransferSelected: vi.fn(),
+      onOpen: vi.fn(),
+      confirmDeleteEntries: vi.fn()
+    })
+
+    await onKeydown(makeKeyEvent('Escape'))
+    expect(filterText.value).toBe('')
+    expect(selectAll).not.toHaveBeenCalled()
+
+    await onKeydown(makeKeyEvent('Escape'))
+    expect(selectAll).toHaveBeenCalledWith([])
   })
 })

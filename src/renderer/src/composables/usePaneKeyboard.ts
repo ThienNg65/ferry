@@ -143,7 +143,7 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       }
       const nextPath = list[nextIdx].path
       if (event.shiftKey) {
-        ctx.store.selectRange(nextPath)
+        ctx.store.selectRange(nextPath, ctx.filteredEntries.value)
       } else {
         ctx.store.selectOnly(nextPath)
       }
@@ -164,10 +164,11 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
     if (event.key !== 'Delete') {
       return
     }
-    if (ctx.store.selected.size === 0) {
+    const visibleSelected = ctx.filteredEntries.value.filter((e) => ctx.store.selected.has(e.path))
+    if (visibleSelected.length === 0) {
       return
     }
     event.preventDefault()
-    void ctx.confirmDeleteEntries(ctx.store.entries.filter((e) => ctx.store.selected.has(e.path)))
+    void ctx.confirmDeleteEntries(visibleSelected)
   }
 }
