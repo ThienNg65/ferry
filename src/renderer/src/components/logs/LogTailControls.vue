@@ -50,7 +50,7 @@ import { tailControls } from '../../composables/useTailControls'
 
     <span
       v-if="!tailControls.ended && !tailControls.error"
-      class="hidden font-mono text-[10px] tabular-nums text-muted sm:inline"
+      class="hidden font-mono text-3xs tabular-nums text-muted sm:inline"
       :class="{ 'opacity-50': tailControls.linesPerSec === 0 }"
     >
       {{ tailControls.linesPerSec.toLocaleString() }}/s
@@ -59,7 +59,7 @@ import { tailControls } from '../../composables/useTailControls'
     <UTooltip
       :text="`Rolling buffer: ${tailControls.totalCount.toLocaleString()} / ${tailControls.maxLines.toLocaleString()} lines (${tailControls.bufferPct}%)`"
     >
-      <div class="flex items-center gap-1.5 font-mono text-[10px] tabular-nums text-muted">
+      <div class="flex items-center gap-1.5 font-mono text-3xs tabular-nums text-muted">
         <span>
           <span class="font-semibold text-default">{{ tailControls.visibleCount.toLocaleString() }}</span>
           <span v-if="tailControls.visibleCount !== tailControls.totalCount">

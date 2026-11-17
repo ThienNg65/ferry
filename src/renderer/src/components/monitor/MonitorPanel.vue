@@ -171,7 +171,7 @@ const sampleAgeLabel = computed(() => {
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
     <!-- Top Toolbar -->
-    <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-muted bg-muted/30 px-3 py-1.5">
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-muted bg-muted/30 px-3 py-1">
       <div class="flex items-center gap-3 text-xs">
         <div class="flex items-center gap-1.5">
           <span
@@ -324,9 +324,9 @@ const sampleAgeLabel = computed(() => {
           @click="sessions.activeSessionId && monitor.start(sessions.activeSessionId)"
         />
       </div>
-      <div class="grid shrink-0 grid-cols-1 gap-2.5 p-2.5 md:grid-cols-3">
+      <div class="grid shrink-0 grid-cols-1 gap-2 px-2.5 py-1.5 md:grid-cols-3">
         <!-- CPU Card -->
-        <div class="flex flex-col justify-between gap-2 rounded-lg border border-default bg-muted/25 p-2.5">
+        <div class="flex flex-col justify-between gap-1 rounded-md border border-muted bg-muted/20 px-2.5 py-1.5">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5">
               <UIcon name="i-lucide-cpu" class="size-3.5 text-muted" />
@@ -354,58 +354,57 @@ const sampleAgeLabel = computed(() => {
             </div>
           </div>
 
-          <!-- Interactive Area Sparkline -->
-          <div class="relative h-10 w-full overflow-hidden rounded bg-default/40 px-1 py-0.5 ring-1 ring-default/20">
-            <svg
-              v-if="cpuSparkline.linePoints"
-              :viewBox="`0 0 ${SPARKLINE_W} ${SPARKLINE_H}`"
-              class="h-full w-full cursor-crosshair text-primary"
-              preserveAspectRatio="none"
-              @pointermove="onSparklineMove"
-              @pointerleave="hoveredIndex = null"
-            >
-              <defs>
-                <linearGradient :id="cpuGradId" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="currentColor" stop-opacity="0.28" />
-                  <stop offset="100%" stop-color="currentColor" stop-opacity="0.02" />
-                </linearGradient>
-              </defs>
-              <polygon :points="cpuSparkline.areaPoints" :fill="`url(#${cpuGradId})`" />
-              <polyline
-                :points="cpuSparkline.linePoints"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linejoin="round"
-                stroke-linecap="round"
-              />
-              <line
-                v-if="hoveredCpu"
-                :x1="hoveredCpu.x"
-                y1="0"
-                :x2="hoveredCpu.x"
-                :y2="SPARKLINE_H"
-                stroke="currentColor"
-                stroke-opacity="0.35"
-                stroke-dasharray="2 2"
-                stroke-width="1"
-              />
-              <circle v-if="hoveredCpu" :cx="hoveredCpu.x" :cy="hoveredCpu.y" r="2.5" fill="currentColor" />
-            </svg>
-            <div v-else class="flex h-full items-center justify-center text-2xs text-muted">
-              Collecting CPU history…
+          <!-- Interactive Area Sparkline & Per-core Utilization -->
+          <div class="flex items-center gap-2">
+            <div class="relative h-6 min-w-0 flex-1 overflow-hidden rounded bg-default/40 px-1 py-0.5 ring-1 ring-default/20">
+              <svg
+                v-if="cpuSparkline.linePoints"
+                :viewBox="`0 0 ${SPARKLINE_W} ${SPARKLINE_H}`"
+                class="h-full w-full cursor-crosshair text-primary"
+                preserveAspectRatio="none"
+                @pointermove="onSparklineMove"
+                @pointerleave="hoveredIndex = null"
+              >
+                <defs>
+                  <linearGradient :id="cpuGradId" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="currentColor" stop-opacity="0.28" />
+                    <stop offset="100%" stop-color="currentColor" stop-opacity="0.02" />
+                  </linearGradient>
+                </defs>
+                <polygon :points="cpuSparkline.areaPoints" :fill="`url(#${cpuGradId})`" />
+                <polyline
+                  :points="cpuSparkline.linePoints"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+                <line
+                  v-if="hoveredCpu"
+                  :x1="hoveredCpu.x"
+                  y1="0"
+                  :x2="hoveredCpu.x"
+                  :y2="SPARKLINE_H"
+                  stroke="currentColor"
+                  stroke-opacity="0.35"
+                  stroke-dasharray="2 2"
+                  stroke-width="1"
+                />
+                <circle v-if="hoveredCpu" :cx="hoveredCpu.x" :cy="hoveredCpu.y" r="2.5" fill="currentColor" />
+              </svg>
+              <div v-else class="flex h-full items-center justify-center text-2xs text-muted">
+                Collecting CPU history…
+              </div>
             </div>
-          </div>
 
-          <!-- Per-core utilization strip -->
-          <div class="flex items-center gap-1.5">
-            <div class="flex flex-1 flex-wrap items-end gap-0.5">
+            <div v-if="visibleCores.length > 0" class="flex max-w-[48%] shrink-0 items-end gap-0.5">
               <UTooltip
                 v-for="(pct, i) in visibleCores"
                 :key="i"
                 :text="`Core ${i}: ${Math.round(pct)}%`"
               >
-                <div class="h-3.5 w-1.5 overflow-hidden rounded-xs bg-elevated">
+                <div class="h-4 w-1.5 overflow-hidden rounded-xs bg-elevated">
                   <div
                     class="h-full w-full origin-bottom transform-gpu transition-transform duration-500 ease-out motion-reduce:transition-none"
                     :class="toneBgClass(usageTone(pct))"
@@ -413,16 +412,15 @@ const sampleAgeLabel = computed(() => {
                   />
                 </div>
               </UTooltip>
-              <span v-if="hiddenCoreCount > 0" class="ml-0.5 text-[10px] text-muted tabular-nums">
+              <span v-if="hiddenCoreCount > 0" class="ml-0.5 text-3xs text-muted tabular-nums">
                 +{{ hiddenCoreCount }}
               </span>
             </div>
-            <span class="shrink-0 text-[10px] text-muted">per-core</span>
           </div>
         </div>
 
         <!-- Memory & Swap Card -->
-        <div class="flex flex-col justify-between gap-2 rounded-lg border border-default bg-muted/25 p-2.5">
+        <div class="flex flex-col justify-between gap-1 rounded-md border border-muted bg-muted/20 px-2.5 py-1.5">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5">
               <UIcon name="i-lucide-memory-stick" class="size-3.5 text-muted" />
@@ -439,8 +437,8 @@ const sampleAgeLabel = computed(() => {
           </div>
 
           <!-- Segmented Memory Breakdown Bar -->
-          <div v-if="memoryBreakdown" class="flex flex-col gap-1.5">
-            <div class="flex h-2.5 w-full overflow-hidden rounded-full bg-elevated ring-1 ring-default/20">
+          <div v-if="memoryBreakdown" class="flex flex-col gap-1">
+            <div class="flex h-2 w-full overflow-hidden rounded-full bg-elevated ring-1 ring-default/20">
               <UTooltip :text="`Active used: ${formatBytes(memoryBreakdown.activeBytes)} (${memoryBreakdown.activePct}%)`">
                 <div
                   class="h-full transition-[width] duration-300"
@@ -461,7 +459,7 @@ const sampleAgeLabel = computed(() => {
                 />
               </UTooltip>
             </div>
-            <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[10px] text-muted tabular-nums">
+            <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-3xs text-muted tabular-nums">
               <span class="flex items-center gap-1">
                 <span class="size-1.5 rounded-full" :class="toneBgClass(usageTone(memPercent))" />
                 Used {{ formatBytes(monitor.latest.memory.usedBytes) }}
@@ -471,38 +469,24 @@ const sampleAgeLabel = computed(() => {
                 Cache {{ formatBytes(monitor.latest.memory.cachedBytes) }}
               </span>
               <span class="flex items-center gap-1">
-                <span class="size-1.5 rounded-full bg-primary/20" />
-                Buf {{ formatBytes(monitor.latest.memory.buffersBytes) }}
-              </span>
-              <span class="flex items-center gap-1">
                 <span class="size-1.5 rounded-full bg-elevated ring-1 ring-default/30" />
                 Avail {{ formatBytes(monitor.latest.memory.availableBytes) }}
               </span>
-            </div>
-          </div>
-
-          <!-- Swap Footer -->
-          <div class="flex items-center justify-between gap-2 border-t border-muted/60 pt-1.5 text-[10px] text-muted">
-            <span>Swap</span>
-            <template v-if="monitor.latest.swap.totalBytes > 0">
-              <div class="flex flex-1 items-center gap-2">
-                <UProgress
-                  :model-value="swapPercent"
-                  :color="usageTone(swapPercent)"
-                  size="xs"
-                  class="flex-1"
-                />
-                <span class="shrink-0 font-mono tabular-nums">
-                  {{ formatBytes(monitor.latest.swap.usedBytes) }} ({{ swapPercent }}%)
+              <UTooltip
+                v-if="monitor.latest.swap.totalBytes > 0"
+                :text="`Swap: ${formatBytes(monitor.latest.swap.usedBytes)} / ${formatBytes(monitor.latest.swap.totalBytes)}`"
+              >
+                <span class="flex items-center gap-1">
+                  <span class="size-1.5 rounded-full" :class="toneBgClass(usageTone(swapPercent))" />
+                  Swap {{ swapPercent }}%
                 </span>
-              </div>
-            </template>
-            <span v-else class="text-muted">Not configured</span>
+              </UTooltip>
+            </div>
           </div>
         </div>
 
-        <!-- Storage (/) & Trend Card -->
-        <div class="flex flex-col justify-between gap-2 rounded-lg border border-default bg-muted/25 p-2.5">
+        <!-- Storage (/) Card -->
+        <div class="flex flex-col justify-between gap-1 rounded-md border border-muted bg-muted/20 px-2.5 py-1.5">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5">
               <UIcon name="i-lucide-hard-drive" class="size-3.5 text-muted" />
@@ -519,8 +503,8 @@ const sampleAgeLabel = computed(() => {
           </div>
 
           <template v-if="monitor.latest.disk">
-            <div class="flex flex-col gap-1.5">
-              <UProgress :model-value="diskPercent" :color="usageTone(diskPercent)" size="sm" />
+            <div class="flex flex-col gap-1">
+              <UProgress :model-value="diskPercent" :color="usageTone(diskPercent)" size="xs" />
               <div class="flex items-center justify-between text-2xs text-muted tabular-nums">
                 <span>
                   {{ formatBytes(monitor.latest.disk.usedBytes) }} / {{ formatBytes(monitor.latest.disk.totalBytes) }}
@@ -530,14 +514,6 @@ const sampleAgeLabel = computed(() => {
             </div>
           </template>
           <p v-else class="text-2xs text-muted">Disk usage unavailable on this host</p>
-
-          <!-- Host Process Count Footer -->
-          <div class="flex items-center justify-between gap-2 border-t border-muted/60 pt-1.5 text-[10px] text-muted">
-            <span>Processes</span>
-            <span class="font-mono text-default tabular-nums">
-              {{ monitor.latest.processTotalCount }} running
-            </span>
-          </div>
         </div>
       </div>
 

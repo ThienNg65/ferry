@@ -12,6 +12,7 @@ const props = defineProps<{
   regexError?: string | null
   keywords?: string[]
   searchPending?: boolean
+  placeholder?: string
 }>()
 
 const emit = defineEmits<{
@@ -107,7 +108,7 @@ function onKeydown(e: KeyboardEvent): void {
       <UInput
         ref="inputRef"
         :model-value="modelValue"
-        placeholder="Find or filter log (Ctrl+F)…"
+        :placeholder="placeholder || 'Find or filter log (Ctrl+F)…'"
         icon="i-lucide-search"
         size="xs"
         class="w-full"

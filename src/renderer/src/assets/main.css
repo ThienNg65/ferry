@@ -8,6 +8,10 @@
   --text-meta--line-height: 1rem;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: 0.875rem;
+  --text-row: 0.8125rem;
+  --text-row--line-height: 1.125rem;
 }
 
 @theme static {
@@ -26,6 +30,7 @@
 }
 
 :root {
+  color-scheme: light;
   /* Interaction motion: shared, restrained timings for desktop affordances. */
   --ferry-motion-fast: 120ms;
   --ferry-motion-standard: 170ms;
@@ -36,9 +41,12 @@
   --ui-primary: var(--ui-color-primary-600);
   --ui-text-muted: var(--ui-color-neutral-600);
   --ui-text-dimmed: var(--ui-color-neutral-600);
+  --ferry-surface-bar: color-mix(in oklab, var(--ui-bg-muted) 55%, var(--ui-bg));
+  --ferry-surface-subtle: color-mix(in oklab, var(--ui-bg-muted) 35%, var(--ui-bg));
 }
 
 .dark {
+  color-scheme: dark;
   --ui-primary: var(--ui-color-primary-400);
   --ui-text-muted: var(--ui-color-neutral-400);
   --ui-text-dimmed: var(--ui-color-neutral-400);
@@ -186,17 +194,15 @@ body {
 }
 
 /* Active indicators use transforms, not width/position animations. */
-.ferry-site-tab,
 .ferry-dock-tab {
   position: relative;
 }
-.ferry-site-tab::after,
 .ferry-dock-tab::after {
   content: '';
   position: absolute;
   height: 2px;
-  left: 10px;
-  right: 10px;
+  left: 8px;
+  right: 8px;
   bottom: 0;
   border-radius: 2px;
   background: var(--ui-primary);
@@ -204,7 +210,6 @@ body {
   transform: scaleX(0);
   transition: transform var(--ferry-motion-standard) var(--ferry-motion-ease-emphasized);
 }
-.ferry-site-tab[aria-selected='true']::after,
 .ferry-dock-tab[aria-selected='true']::after {
   transform: scaleX(1);
 }

@@ -230,12 +230,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full w-full flex-col">
-    <div
-      v-if="sessions.activeTab.hostLabel"
-      class="shrink-0 border-b border-muted px-3 py-1 text-xs text-muted"
-    >
-      {{ sessions.activeTab.hostLabel }}
-    </div>
     <div ref="containerRef" class="relative min-h-0 flex-1">
       <div
         v-if="sessions.activeSessionId && terminalStreams.exitedSessionIds.includes(sessions.activeSessionId)"
@@ -252,6 +246,7 @@ onBeforeUnmount(() => {
           v-model:is-regex="isRegex"
           :match-count="matchCount"
           :current-match="currentMatch"
+          placeholder="Find in terminal…"
           @next="runSearch(true)"
           @prev="runSearch(false)"
           @close="closeSearch"
@@ -270,7 +265,7 @@ onBeforeUnmount(() => {
         v-for="sessionId in terminalStreams.knownSessionIds"
         :key="sessionId"
         v-show="sessionId === sessions.activeSessionId"
-        class="h-full w-full px-1"
+        class="h-full w-full px-1.5 py-0.5"
         :style="{ backgroundColor: ui.terminalAppearance.theme.background }"
         :ref="(el) => attachContainer(sessionId, el as Element | null)"
       />

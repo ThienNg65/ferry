@@ -89,7 +89,7 @@ async function copyText(label: string, value: string): Promise<void> {
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
     <!-- Filter & Count Toolbar -->
-    <div class="flex shrink-0 items-center justify-between gap-2 border-b border-muted bg-muted/20 px-3 py-1.5">
+    <div class="flex shrink-0 items-center justify-between gap-2 border-b border-muted bg-muted/20 px-3 py-0.5">
       <div class="flex items-center gap-1.5">
         <UInput
           v-model="searchQuery"
@@ -109,7 +109,7 @@ async function copyText(label: string, value: string): Promise<void> {
           @click="searchQuery = ''"
         />
       </div>
-      <span class="text-[11px] text-muted tabular-nums">
+      <span class="text-2xs text-muted tabular-nums">
         <template v-if="searchQuery.trim()">
           {{ shownCount }} matching · top {{ capturedCount }} of {{ totalCount }}
         </template>
@@ -124,7 +124,7 @@ async function copyText(label: string, value: string): Promise<void> {
 
     <!-- Sortable Table Header -->
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-1.5 text-2xs font-medium uppercase tracking-wide text-muted select-none"
+      class="flex shrink-0 items-center gap-2 border-b border-muted px-3 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted select-none"
     >
       <button
         type="button"
@@ -234,7 +234,7 @@ async function copyText(label: string, value: string): Promise<void> {
             <span class="shrink-0 whitespace-nowrap font-mono text-default">
               {{ formatBytes(sortedProcesses[virtualRow.index].rssBytes) }}
             </span>
-            <span v-if="totalMemBytes > 0" class="w-10 shrink-0 text-right font-mono text-[10px] text-muted">
+            <span v-if="totalMemBytes > 0" class="w-10 shrink-0 text-right font-mono text-3xs text-muted">
               {{ ramPercent(sortedProcesses[virtualRow.index].rssBytes).toFixed(1) }}%
             </span>
             <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">

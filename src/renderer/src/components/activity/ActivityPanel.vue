@@ -48,9 +48,12 @@ const hasFinished = computed(() => operations.list.some((op) => op.state !== 'st
       />
     </div>
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <div v-if="operations.list.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
-        <UIcon name="i-lucide-activity" class="size-5 text-dimmed" />
-        <p class="text-xs text-muted">Long-running operations (extract, compress, delete) appear here</p>
+      <div v-if="operations.list.length === 0" class="flex h-full flex-col items-center justify-center gap-1.5 px-3 py-6 text-center select-none">
+        <div class="rounded-full bg-muted/50 p-2.5 ring-1 ring-default/15">
+          <UIcon name="i-lucide-activity" class="size-5 text-muted" />
+        </div>
+        <p class="text-xs font-medium text-default">No active operations</p>
+        <p class="max-w-sm text-2xs text-muted">Long-running operations (extract, compress, delete) appear here.</p>
       </div>
       <ActivityItem
         v-for="op in operations.list"

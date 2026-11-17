@@ -145,9 +145,10 @@ function exitFullScreen(): void {
   void invoke(INVOKE_CHANNELS.windowFullScreenToggle)
 }
 
-function envBorder(siteId: string | null): string {
+function envBorder(siteId: string | null, isActive = false): string {
   const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
-  return env ? ENVIRONMENT_TAB_BORDER[env] : 'border-transparent'
+  if (env) return ENVIRONMENT_TAB_BORDER[env]
+  return isActive ? 'border-primary' : 'border-transparent'
 }
 
 /** Hide `user@host` when the tab's label already is (or contains) the host, e.g. a site named after its IP. */
@@ -174,7 +175,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
           class="ferry-site-tab group max-w-64 shrink-0 cursor-pointer select-none rounded-t-md border-t-2 text-xs transition-colors"
           :class="[
-            envBorder(tab.siteId),
+            envBorder(tab.siteId, tab.tabId === sessions.activeTabId),
             tab.tabId === sessions.activeTabId
               ? 'bg-default font-medium text-highlighted'
               : 'text-muted hover:bg-elevated hover:text-default'
@@ -273,7 +274,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         >
           <UIcon name="i-lucide-search" class="size-3" />
           <span class="hidden sm:inline">Search</span>
-          <kbd class="rounded bg-muted px-1 py-0.2 font-mono text-[10px] text-muted">Ctrl+K</kbd>
+          <kbd class="rounded bg-muted px-1 py-0.2 font-mono text-3xs text-muted">Ctrl+K</kbd>
         </button>
       </UTooltip>
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">

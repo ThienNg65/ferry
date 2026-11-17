@@ -68,9 +68,9 @@ function toggleWrap(): void {
 const fontSizeClass = computed(() => {
   switch (fontSize.value) {
     case 'sm':
-      return 'text-[10px]'
+      return 'text-3xs'
     case 'lg':
-      return 'text-[13px]'
+      return 'text-row'
     default:
       return 'text-2xs'
   }
@@ -771,7 +771,7 @@ watchEffect(() => {
 
             <!-- Line number gutter -->
             <div
-              class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-[10px] tabular-nums text-muted border-r border-default/20"
+              class="w-12 shrink-0 select-none pr-2.5 text-right font-mono text-3xs tabular-nums text-muted border-r border-default/20"
             >
               {{ filteredLines[virtualRow.index].originalIndex + 1 }}
             </div>
@@ -802,7 +802,7 @@ watchEffect(() => {
               <!-- JSON Indicator Chip -->
               <span
                 v-if="hasJsonLine(filteredLines[virtualRow.index].text)"
-                class="inline-block rounded bg-primary/10 px-1 py-0.2 mr-1.5 font-mono text-[9px] font-semibold text-primary ring-1 ring-primary/20 align-middle select-none"
+                class="inline-block rounded bg-primary/10 px-1 py-0.2 mr-1.5 font-mono text-3xs leading-none font-semibold text-primary ring-1 ring-primary/20 align-middle select-none"
               >
                 JSON
               </span>
@@ -820,7 +820,7 @@ watchEffect(() => {
                 ]"
                 :key="'tok'"
               >
-                <span v-if="tokenized.timestamp" class="text-muted text-[10px] font-mono mr-1.5 select-text tracking-tight inline-block">
+                <span v-if="tokenized.timestamp" class="text-muted text-3xs font-mono mr-1.5 select-text tracking-tight inline-block">
                   <template v-for="(tTok, tIdx) in tokenized.timestampTokens" :key="tIdx">
                     <mark
                       v-if="tTok.isMatch"

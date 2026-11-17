@@ -233,7 +233,7 @@ function onMouseLeave(): void {
   <div
     role="row"
     :aria-selected="selected"
-    class="group flex cursor-default select-none items-center gap-2 px-3 text-[13px]"
+    class="group flex cursor-default select-none items-center gap-2 px-3 text-row"
     :data-row-path="entry.path"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
@@ -312,11 +312,15 @@ function onMouseLeave(): void {
     <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
     <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
-      <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions})`">
-        <span v-if="ui.permissionsDisplay === 'technical'" class="font-mono text-xs text-muted">
-          {{ technicalPermissions }}
-        </span>
-        <UBadge v-else color="neutral" variant="subtle" size="sm" class="truncate text-toned">{{ friendlyPermissions }}</UBadge>
+      <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions}) — click to edit`">
+        <button
+          type="button"
+          class="max-w-full cursor-pointer truncate rounded px-1.5 py-0.5 text-2xs transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          :class="ui.permissionsDisplay === 'technical' ? 'font-mono text-muted' : 'text-muted'"
+          @click.stop="emit('chmod', entry)"
+        >
+          {{ ui.permissionsDisplay === 'technical' ? technicalPermissions : friendlyPermissions }}
+        </button>
       </UTooltip>
     </div>
     <div v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
@@ -328,7 +332,8 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           :aria-label="transferTooltip"
-          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="transition-opacity"
+          :class="selected ? 'opacity-75 hover:opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'"
           @click.stop="emit('transfer', entry)"
         />
       </UTooltip>
@@ -339,7 +344,8 @@ function onMouseLeave(): void {
           variant="ghost"
           size="xs"
           aria-label="Delete"
-          class="opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+          class="transition-opacity"
+          :class="selected ? 'opacity-75 hover:opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'"
           @click.stop="emit('remove', entry)"
         />
       </UTooltip>

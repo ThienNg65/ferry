@@ -788,7 +788,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
       @click="ui.toggleLocalPane()"
     >
       <UIcon name="i-lucide-panel-left-open" class="size-4 shrink-0" />
-      <span class="select-none text-[10px] font-semibold uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">
+      <span class="select-none text-3xs font-semibold uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">
         Local
       </span>
     </button>
@@ -797,13 +797,17 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         class="@container flex h-9 min-w-0 shrink-0 items-center overflow-hidden border-b border-muted pl-2"
         :class="ui.activePane === side ? 'bg-elevated shadow-[inset_3px_0_0_var(--ui-primary)]' : 'bg-default'"
       >
-        <UIcon
-          :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"
-          class="size-3.5 shrink-0"
-          :class="ui.activePane === side ? 'text-highlighted' : 'text-muted'"
-          :title="side === 'local' ? 'Local' : 'Remote'"
-        />
-        <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
+        <div
+          class="my-1 mr-1 flex min-w-0 flex-1 items-center gap-1 rounded-md bg-muted/35 py-0.5 pl-2 pr-1 ring-1 ring-inset ring-muted/60 transition-colors hover:bg-muted/55 focus-within:bg-default focus-within:ring-primary/50"
+        >
+          <UIcon
+            :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"
+            class="size-3.5 shrink-0"
+            :class="ui.activePane === side ? 'text-primary' : 'text-muted'"
+            :title="side === 'local' ? 'Local' : 'Remote'"
+          />
+          <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
+        </div>
         <FileToolbar
         ref="toolbarRef"
         :side="side"
@@ -893,9 +897,27 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @edit-root="onEditAsRoot"
         @clear-filter="filterText = ''"
       />
-      <div class="flex h-6 shrink-0 select-none items-center justify-between border-t border-muted bg-muted/30 px-3 text-2xs text-muted">
-        <span class="truncate">{{ paneSummary }}</span>
-        <div v-if="selectionSummary" class="flex items-center gap-1.5">
+      <div class="flex h-6 shrink-0 select-none items-center justify-between gap-2 border-t border-muted bg-muted/30 px-3 text-2xs text-muted">
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="truncate">{{ paneSummary }}</span>
+          <button
+            v-if="isFiltered"
+            type="button"
+            class="shrink-0 rounded-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="filterText = ''"
+          >
+            Clear filter
+          </button>
+          <button
+            v-if="!ui.showHidden"
+            type="button"
+            class="shrink-0 rounded-xs text-muted hover:text-default hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="ui.toggleShowHidden()"
+          >
+            Hidden off
+          </button>
+        </div>
+        <div v-if="selectionSummary" class="flex shrink-0 items-center gap-1.5">
           <span class="font-medium text-default">{{ selectionSummary }}</span>
           <button
             type="button"
