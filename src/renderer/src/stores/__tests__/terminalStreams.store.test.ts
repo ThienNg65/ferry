@@ -502,6 +502,21 @@ describe('terminalStreams.store', () => {
     expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingCount).toBe(0)
   })
 
+  it('streams multibyte UTF-8 byte chunks without replacement characters', async () => {
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+
+    const openPromise = store.ensureTerminal('sess-1')
+    resolveOpen!({ terminalId: 'term-1' })
+    await openPromise
+
+    const checkBytes = new TextEncoder().encode('✓')
+    emitTerminalData('term-1', checkBytes.slice(0, 1))
+    emitTerminalData('term-1', checkBytes.slice(1))
+
+    expect(store.getInstance('sess-1')?.unacked).toBe(3)
+  })
+
   it('ignores in-flight term.write callbacks from before restart without corrupting pendingServerWrites', async () => {
     const { useTerminalStreamsStore } = await import('../terminalStreams.store')
     const store = useTerminalStreamsStore()

@@ -25,6 +25,7 @@ interface TerminalInstance {
   evictedOffset: number
   scrollMarker: IMarker | null
   scrollMarkerLastLine: number
+  decoder: TextDecoder
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -32,7 +33,6 @@ const MAX_EARLY_BUFFER_BYTES = 64 * 1024
 const PREDICTIVE_UNDERLINE_MS = 100
 const PREDICTIVE_UNDERLINE_RETRY_MS = 10
 const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder()
 export const TERMINAL_SEARCH_EVENT = 'ferry:terminal-search'
 
 /**
@@ -93,6 +93,7 @@ function resetScrollTracker(inst: TerminalInstance): void {
   inst.scrollMarker = null
   inst.scrollMarkerLastLine = 0
   inst.evictedOffset = 0
+  inst.decoder = new TextDecoder('utf-8', { fatal: false })
 }
 
 function syncScrollOffset(inst: TerminalInstance): number {
@@ -252,7 +253,7 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
   const serverData = predictive
     ? typeof data === 'string'
       ? data
-      : textDecoder.decode(data, { stream: false })
+      : inst.decoder.decode(data, { stream: true })
     : undefined
   inst.term.write(prependPrefix(prefix, data), () => {
     if (inst.terminalId === targetTerminalId) {
@@ -452,7 +453,8 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             writeGeneration: 0,
             evictedOffset: 0,
             scrollMarker: null,
-            scrollMarkerLastLine: 0
+            scrollMarkerLastLine: 0,
+            decoder: new TextDecoder('utf-8', { fatal: false })
           }
           term.onData((data) => {
             const input: TerminalInputEvent = { terminalId: inst.terminalId, data }
