@@ -329,7 +329,12 @@ export class TerminalEchoPredictor {
         const cols = buf.cols
         const nowIdx = nowPos.absY * cols + nowPos.x
         const anchorIdx = this.anchor ? this.anchor.absY * cols + this.anchor.x : -1
-        if (!this.anchor || nowPos.absY > this.anchor.absY || nowIdx < anchorIdx) {
+        const anchorRow = this.anchor
+          ? this.anchorWrapPending
+            ? this.anchor.absY - 1
+            : this.anchor.absY
+          : -1
+        if (!this.anchor || nowPos.absY > anchorRow || nowIdx < anchorIdx) {
           this.awaitingNewlineConfirm = false
           this.anchor = null
           this.anchorWrapPending = false
@@ -397,6 +402,10 @@ export class TerminalEchoPredictor {
         return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
       }
 
+      if (this.awaitingNewlineConfirm && this.anchorWrapPending && nowPos.absY === this.anchor.absY && nowPos.x === 0) {
+        return this.enterPausedMode('paused_noecho')
+      }
+
       if (nowIdx > anchorIdx) {
         const expectedPending = this.pending.map((p) => p.ch).join('')
         const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos, expectedPending)
@@ -440,12 +449,7 @@ export class TerminalEchoPredictor {
 
         if (this.pending.length === 0) {
           if (this.awaitingNewlineConfirm) {
-            this.confirmedLineChars = 0
-            this.renderedPos = null
-            this.maxTouchedAbsY = 0
-            this.wrapPending = false
-            this.underlined = false
-            this.predictionsRendered = false
+            this.resetTailKeepNewlineWait()
             return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
           }
           this.clearAllPendingState(false)
@@ -455,11 +459,24 @@ export class TerminalEchoPredictor {
     }
 
     if (this.pendingBackspaces === 0 && this.pending.length === 0) {
-      this.clearAllPendingState(false)
+      if (this.awaitingNewlineConfirm) {
+        this.resetTailKeepNewlineWait()
+      } else {
+        this.clearAllPendingState(false)
+      }
       return emptyResult()
     }
 
     return this.renderRemainingTail(nowPos, cols, matched > 0)
+  }
+
+  private resetTailKeepNewlineWait(): void {
+    this.confirmedLineChars = 0
+    this.renderedPos = null
+    this.maxTouchedAbsY = 0
+    this.wrapPending = false
+    this.underlined = false
+    this.predictionsRendered = false
   }
 
   reset(): void {

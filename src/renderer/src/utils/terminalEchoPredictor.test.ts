@@ -726,6 +726,74 @@ describe('TerminalEchoPredictor', () => {
     expect(predictor.onInput('p', buf).write).toBe('p')
   })
 
+  it('chunked_command_echo_filling_cols_to_deferred_wrap_clears_awaiting_newline_on_crlf', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(10, ['$ '], { absY: 0, x: 2 })
+
+    // Type 8 chars to fill cols = 10 into deferred wrap (0, 10), then press Enter
+    for (const ch of '01234567') {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    expect(buf.cursor).toEqual({ absY: 0, x: 10 })
+    expect(predictor.onInput('\r', buf).write).toBe('')
+
+    // Chunk 1 echoes '01234567' (cursor lands at deferred wrap (0, 10))
+    buf.apply(predictor.beforeServerWrite(10) + '01234567')
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(buf.cursor).toEqual({ absY: 0, x: 10 })
+
+    // Idle chunk at deferred wrap before '\r\n' must keep awaitingNewlineConfirm active
+    expect(predictor.beforeServerWrite(10)).toBe('')
+    expect(predictor.afterServerWrite(buf)).toEqual({
+      write: '',
+      armUnderlineTimer: false,
+      cancelUnderlineTimer: false,
+    })
+    expect(predictor.onInput('x', buf).write).toBe('')
+
+    // Chunk 2 sends '\r\n$ ' -> moves onto row 1, clears awaitingNewlineConfirm
+    expect(predictor.beforeServerWrite(10)).toBe('')
+    buf.apply('\r\n$ ')
+    expect(buf.cursor).toEqual({ absY: 1, x: 2 })
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+
+    // Prediction works normally on the new prompt
+    const next = predictor.onInput('p', buf)
+    expect(next.write).toBe('p')
+    expect(next.armUnderlineTimer).toBe(true)
+  })
+
+  it('chunked_confirmed_backspace_before_newline_keeps_awaiting_newline_confirm', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['l', 's']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(80) + 'ls')
+    predictor.afterServerWrite(buf)
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    expect(predictor.onInput('\r', buf).write).toBe('')
+
+    // Chunk 1 applies '\b \b' before '\r\n$ ' arrives
+    buf.apply(predictor.beforeServerWrite(80) + '\b \b')
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+
+    // Keystrokes before '\r\n' must wait rather than predicting onto the submitted line
+    expect(predictor.onInput('x', buf).write).toBe('')
+
+    // Chunk 2 arrives with '\r\n$ ' -> re-enables prediction
+    expect(predictor.beforeServerWrite(80)).toBe('')
+    buf.apply('\r\n$ ')
+    predictor.afterServerWrite(buf)
+    expect(predictor.onInput('p', buf).write).toBe('p')
+  })
+
   it('confirmed_backspace_rewind_from_deferred_wrap_preserves_wrap_cursor', () => {
     let now = 1000
     const predictor = new TerminalEchoPredictor(() => now)
