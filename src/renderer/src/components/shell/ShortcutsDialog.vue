@@ -24,11 +24,11 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ['F6', 'Switch pane'],
       ['Ctrl+A', 'Select all'],
       ['Ctrl+R', 'Refresh'],
-      ['Ctrl+F', 'Filter'],
+      ['Ctrl+F', 'Search files'],
       ['Ctrl+H', 'Show / hide hidden files'],
       ['Alt+Left / Alt+Right', 'Back / forward'],
       ['Backspace', 'Up one level'],
-      ['Esc', 'Clear filter or selection']
+      ['Esc', 'Clear search or selection']
     ]
   },
   {

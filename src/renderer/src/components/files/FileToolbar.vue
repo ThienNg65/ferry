@@ -3,6 +3,8 @@ import { computed, nextTick, ref } from 'vue'
 import Popover from '@nuxt/ui/components/Popover.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Bookmark } from '@shared/contract'
+import type { FileVisibilityFilter } from '../../utils/fileVisibilityFilter'
+import FileVisibilityPopover from './FileVisibilityPopover.vue'
 
 const props = defineProps<{
   side: 'local' | 'remote'
@@ -10,6 +12,7 @@ const props = defineProps<{
   selectedCount?: number
   transferIcon?: string
   filterText?: string
+  visibilityFilter?: FileVisibilityFilter
   bookmarks?: Bookmark[]
   /** False hides the bookmark button entirely — e.g. a quick-connect tab with no saved site to attach a remote bookmark to. */
   canBookmark?: boolean
@@ -31,6 +34,8 @@ const emit = defineEmits<{
   'toggle-permissions': []
   'transfer-selected': []
   'update:filterText': [value: string]
+  'update:visibilityFilter': [value: FileVisibilityFilter]
+  'clear-visibility-filter': []
   bookmark: []
   'jump-bookmark': [path: string]
   'remove-bookmark': [id: string]
@@ -135,7 +140,7 @@ function onFilterInput(value: string | number): void {
       ref="filterInputRef"
       :model-value="filterText ?? ''"
       icon="i-lucide-search"
-      placeholder="Filter…"
+      placeholder="Search…"
       size="xs"
       class="w-28 @[440px]:w-36 focus-within:w-40 transition-[width]"
       :ui="{ trailing: 'pointer-events-auto' }"
@@ -149,23 +154,29 @@ function onFilterInput(value: string | number): void {
           color="neutral"
           variant="link"
           size="xs"
-          aria-label="Clear filter"
+          aria-label="Clear search"
           :padded="false"
           @mousedown.prevent
           @click="clearAndCollapseFilter"
         />
       </template>
     </UInput>
-    <UTooltip v-else text="Filter (Ctrl+F)">
+    <UTooltip v-else text="Search (Ctrl+F)">
       <UButton
         icon="i-lucide-search"
         color="neutral"
         variant="ghost"
         size="xs"
-        aria-label="Filter files"
+        aria-label="Search files"
         @click="focusFilter()"
       />
     </UTooltip>
+    <FileVisibilityPopover
+      v-if="side === 'remote' && visibilityFilter"
+      :model-value="visibilityFilter"
+      @update:model-value="emit('update:visibilityFilter', $event)"
+      @clear="emit('clear-visibility-filter')"
+    />
     <UTooltip
       v-if="selectedCount && transferIcon"
       :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"
