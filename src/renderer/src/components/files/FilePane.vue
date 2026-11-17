@@ -165,6 +165,7 @@ const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 
 const unregisterPaneActions = registerPaneActions(props.side, {
+  selectedCount: () => visibleSelectedEntries.value.length,
   rename: () => {
     if (visibleSelectedEntries.value.length === 1) {
       const target = visibleSelectedEntries.value[0]
@@ -764,6 +765,7 @@ function onRemoveEntry(entry: FileEntry): void {
 }
 
 async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
+  if (entries.length === 0) return
   const single = entries.length === 1 ? entries[0] : null
   await confirm({
     title: 'Delete',

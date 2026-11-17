@@ -1,4 +1,5 @@
 export interface PaneActions {
+  selectedCount: () => number
   rename: () => void
   remove: () => void
   transfer: () => void
