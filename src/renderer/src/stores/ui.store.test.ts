@@ -193,4 +193,24 @@ describe('ui store layout state', () => {
     expect(ui.dockPosition).toBe('right')
     expect(ui.dockWidth).toBe(600)
   })
+
+  it('defaults terminalPredictiveEcho to true and persists setTerminalPredictiveEcho', async () => {
+    const { ui, data } = await freshStore()
+    expect(ui.terminalPredictiveEcho).toBe(true)
+    ui.setTerminalPredictiveEcho(false)
+    expect(ui.terminalPredictiveEcho).toBe(false)
+    expect(data.get('ferry:ui:terminalPredictiveEcho')).toBe('false')
+  })
+
+  it('restores stored false terminalPredictiveEcho', async () => {
+    const { ui } = await freshStore({ 'ferry:ui:terminalPredictiveEcho': 'false' })
+    expect(ui.terminalPredictiveEcho).toBe(false)
+  })
+
+  it('resetTerminalAppearance leaves terminalPredictiveEcho unchanged', async () => {
+    const { ui } = await freshStore()
+    ui.setTerminalPredictiveEcho(false)
+    ui.resetTerminalAppearance()
+    expect(ui.terminalPredictiveEcho).toBe(false)
+  })
 })
