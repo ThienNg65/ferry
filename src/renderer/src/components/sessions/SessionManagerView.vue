@@ -622,8 +622,10 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
         <SiteDetailsPanel
           v-if="selectedSite"
           :site="selectedSite"
+          :icon="siteIcon(selectedSite)"
           :connected="isSiteOpenInTab(selectedSite.id)"
-          :connecting="sessions.connecting"
+          :connecting="isSiteConnecting(selectedSite.id)"
+          :busy="sessions.connecting"
           @connect="onConnectSite(selectedSite)"
           @edit="openEditDialog(selectedSite)"
           @close="selectedSiteId = null"

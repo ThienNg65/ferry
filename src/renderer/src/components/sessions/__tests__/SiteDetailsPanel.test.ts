@@ -29,8 +29,8 @@ const stubs = {
 
 function mountPanel(props: Record<string, unknown> = {}) {
   return mount(SiteDetailsPanel, {
-    props: { site, connected: false, connecting: false, ...props },
-    global: { stubs }
+    props: { site, icon: 'i-lucide-key-round', connected: false, connecting: false, busy: false, ...props },
+    global: { stubs: { ...stubs, UIcon: true, UTooltip: { template: '<div><slot /></div>' } } }
   })
 }
 
@@ -55,14 +55,14 @@ describe('SiteDetailsPanel', () => {
     expect(findBtn(mountPanel({ connected: true }), 'Switch to tab')).toBeTruthy()
   })
 
-  it('Connect is disabled while connecting', () => {
-    expect(findBtn(mountPanel({ connecting: true }), 'Connect').attributes('disabled')).toBeDefined()
+  it('Connect is disabled while any connection is opening', () => {
+    expect(findBtn(mountPanel({ busy: true }), 'Connect').attributes('disabled')).toBeDefined()
   })
 
-  it('Edit and Quick Connect emit edit / close', async () => {
+  it('Edit and the close button emit edit / close', async () => {
     const w = mountPanel()
     await findBtn(w, 'Edit').trigger('click')
-    await findBtn(w, 'Quick Connect').trigger('click')
+    await w.get('[aria-label="Back to Quick Connect"]').trigger('click')
     expect(w.emitted('edit')).toHaveLength(1)
     expect(w.emitted('close')).toHaveLength(1)
   })

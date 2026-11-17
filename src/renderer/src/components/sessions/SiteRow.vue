@@ -46,6 +46,7 @@ const emit = defineEmits<{
       type="button"
       data-site-row
       class="min-w-0 flex-1 rounded-xs text-left focus-visible:outline-2 focus-visible:outline-primary"
+      :title="selectMode ? undefined : 'Double-click to connect'"
       :aria-current="selected ? 'true' : undefined"
       :aria-describedby="selectMode ? undefined : `site-hint-${site.id}`"
       @click="selectMode ? emit('toggle', !checked) : emit('select')"
@@ -65,7 +66,7 @@ const emit = defineEmits<{
         </span>
         <span
           v-if="connecting"
-          class="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.2 text-3xs font-medium text-muted"
+          class="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.2 text-3xs font-medium text-default"
         >
           <UIcon name="i-lucide-loader-circle" class="size-2.5 animate-spin" />
           Connecting…
