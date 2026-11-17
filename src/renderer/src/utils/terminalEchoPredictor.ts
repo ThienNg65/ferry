@@ -168,6 +168,169 @@ function extractEchoedText(raw: string): string {
     .replace(/[\x00-\x1f\x7f]/g, '')
 }
 
+export function updatePendingUtf8(prevPending: number, chunk: Uint8Array): number {
+  const start = chunk.length >= 4 ? chunk.length - 4 : 0
+  let pending = chunk.length >= 4 ? 0 : prevPending
+  for (let i = start; i < chunk.length; i++) {
+    const b = chunk[i]
+    if (pending > 0) {
+      if ((b & 0xc0) === 0x80) {
+        pending--
+        continue
+      }
+      pending = 0
+    }
+    if (b < 0x80) {
+      pending = 0
+    } else if ((b & 0xe0) === 0xc0) {
+      pending = 1
+    } else if ((b & 0xf0) === 0xe0) {
+      pending = 2
+    } else if ((b & 0xf8) === 0xf0) {
+      pending = 3
+    } else {
+      pending = 0
+    }
+  }
+  return pending
+}
+
+type VtState = 'ground' | 'esc' | 'esc_inter' | 'csi' | 'osc' | 'osc_esc' | 'string' | 'string_esc'
+
+class VtStreamTracker {
+  private state: VtState = 'ground'
+  private csiBuf = ''
+  private sgrStack: string[] = []
+
+  isIncomplete(): boolean {
+    return this.state !== 'ground'
+  }
+
+  getActiveSgr(): string {
+    return this.sgrStack.join('')
+  }
+
+  reset(): void {
+    this.state = 'ground'
+    this.csiBuf = ''
+    this.sgrStack = []
+  }
+
+  feed(data: string): void {
+    for (let i = 0; i < data.length; i++) {
+      const ch = data[i]
+      const code = data.charCodeAt(i)
+
+      if (code === 0x18 || code === 0x1a) {
+        this.state = 'ground'
+        this.csiBuf = ''
+        continue
+      }
+
+      switch (this.state) {
+        case 'ground':
+          if (code === 0x1b) {
+            this.state = 'esc'
+          }
+          break
+        case 'esc':
+          if (ch === '[') {
+            this.state = 'csi'
+            this.csiBuf = ''
+          } else if (ch === ']') {
+            this.state = 'osc'
+          } else if (ch === 'P' || ch === 'X' || ch === '^' || ch === '_') {
+            this.state = 'string'
+          } else if (code >= 0x20 && code <= 0x2f) {
+            this.state = 'esc_inter'
+          } else if (code >= 0x30 && code <= 0x7e) {
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.state = 'esc'
+          }
+          break
+        case 'esc_inter':
+          if (code >= 0x20 && code <= 0x2f) {
+            // stay in esc_inter
+          } else if (code >= 0x30 && code <= 0x7e) {
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.state = 'esc'
+          }
+          break
+        case 'csi':
+          if (code >= 0x20 && code <= 0x3f) {
+            if (this.csiBuf.length < 64) {
+              this.csiBuf += ch
+            }
+          } else if (code >= 0x40 && code <= 0x7e) {
+            if (ch === 'm') {
+              this.applySgr(this.csiBuf)
+            }
+            this.csiBuf = ''
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.csiBuf = ''
+            this.state = 'esc'
+          }
+          break
+        case 'osc':
+          if (code === 0x07) {
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.state = 'osc_esc'
+          }
+          break
+        case 'osc_esc':
+          if (ch === '\\' || code === 0x07) {
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.state = 'osc_esc'
+          } else {
+            this.state = 'osc'
+          }
+          break
+        case 'string':
+          if (code === 0x1b) {
+            this.state = 'string_esc'
+          }
+          break
+        case 'string_esc':
+          if (ch === '\\') {
+            this.state = 'ground'
+          } else if (code === 0x1b) {
+            this.state = 'string_esc'
+          } else {
+            this.state = 'string'
+          }
+          break
+      }
+    }
+  }
+
+  private applySgr(params: string): void {
+    if (params.length > 0 && (params[0] < '0' || params[0] > '9') && params[0] !== ';') {
+      return
+    }
+    if (params === '' || params === '0') {
+      this.sgrStack = []
+      return
+    }
+    if (params.startsWith('0;')) {
+      this.sgrStack = []
+      const rest = params.slice(2)
+      if (rest && rest !== '0') {
+        this.sgrStack.push(`\x1b[${rest}m`)
+      }
+      return
+    }
+    if (this.sgrStack.length >= 16) {
+      this.sgrStack = [this.sgrStack.join('')]
+    }
+    this.sgrStack.push(`\x1b[${params}m`)
+  }
+}
+
 /**
  * Pure Mosh-style predictive local echo state machine for xterm.js over SSH.
  */
@@ -190,6 +353,9 @@ export class TerminalEchoPredictor {
   private awaitingNewlineConfirm = false
   private submittedWhilePaused = false
   private silentProbe: string[] = []
+  private vtTracker = new VtStreamTracker()
+  private serverStreamUnsafe = false
+  private savedRowSuffixes = new Map<number, string>()
 
   constructor(nowFn: () => number = () => Date.now()) {
     this.nowFn = nowFn
@@ -276,6 +442,7 @@ export class TerminalEchoPredictor {
       this.mode !== 'active' ||
       this.pending.length === 0 ||
       this.pendingServerWrites > 0 ||
+      this.serverStreamUnsafe ||
       !this.predictionsRendered ||
       this.underlined
     ) {
@@ -296,7 +463,8 @@ export class TerminalEchoPredictor {
       }
     }
     const text = this.pending.map((p) => p.ch).join('')
-    return `${rewind}${eraseReapply}\x1b[4m${text}\x1b[24m`
+    const activeSgr = this.vtTracker.getActiveSgr()
+    return `${rewind}${eraseReapply}\x1b[4m${text}\x1b[24m${activeSgr}`
   }
 
   resetForFlush(buf: BufferSnapshot): string {
@@ -312,13 +480,15 @@ export class TerminalEchoPredictor {
     return write
   }
 
-  afterServerWrite(buf: BufferSnapshot, serverData?: string): PredictionResult {
+  afterServerWrite(buf: BufferSnapshot, serverData?: string, hasIncompleteMultibyte = false): PredictionResult {
     if (this.pendingServerWrites > 0) {
       this.pendingServerWrites--
     }
     if (serverData !== undefined) {
       this.inFlightServerData = (this.inFlightServerData ?? '') + serverData
+      this.vtTracker.feed(serverData)
     }
+    this.serverStreamUnsafe = this.vtTracker.isIncomplete() || hasIncompleteMultibyte
 
     if (buf.type === 'alternate') {
       return this.enterPausedMode('paused_alt')
@@ -327,7 +497,7 @@ export class TerminalEchoPredictor {
       this.mode = 'active'
     }
 
-    if (this.pendingServerWrites > 0) {
+    if (this.pendingServerWrites > 0 || this.serverStreamUnsafe) {
       return emptyResult()
     }
 
@@ -367,7 +537,7 @@ export class TerminalEchoPredictor {
     if (!this.anchor) {
       this.anchor = this.normalizeWritePos(nowPos, buf.cols)
       this.anchorWrapPending = buf.cols > 0 && nowPos.x >= buf.cols
-      return this.renderRemainingTail(nowPos, buf.cols, false)
+      return this.renderRemainingTail(nowPos, buf.cols, false, buf)
     }
 
     const cols = buf.cols
@@ -490,7 +660,7 @@ export class TerminalEchoPredictor {
       return emptyResult()
     }
 
-    return this.renderRemainingTail(nowPos, cols, matched > 0)
+    return this.renderRemainingTail(nowPos, cols, matched > 0, buf)
   }
 
   private resetTailKeepNewlineWait(): void {
@@ -500,6 +670,7 @@ export class TerminalEchoPredictor {
     this.wrapPending = false
     this.underlined = false
     this.predictionsRendered = false
+    this.savedRowSuffixes.clear()
   }
 
   reset(): void {
@@ -508,23 +679,33 @@ export class TerminalEchoPredictor {
     this.inFlightServerData = null
     this.submittedWhilePaused = false
     this.silentProbe = []
+    this.vtTracker.reset()
+    this.serverStreamUnsafe = false
     this.clearAllPendingState(true)
+  }
+
+  private captureRowSuffix(buf: BufferSnapshot | undefined, absY: number, fromX: number): void {
+    if (!buf || this.savedRowSuffixes.has(absY)) return
+    const line = buf.getLineText(absY)
+    this.savedRowSuffixes.set(absY, fromX < line.length ? line.slice(fromX) : '')
   }
 
   private handlePrintable(raw: string, scalars: string[], buf: BufferSnapshot): PredictionResult {
     const now = this.nowFn()
     const wasPendingEmpty = this.pending.length === 0
+    const canRender = this.pendingServerWrites === 0 && !this.serverStreamUnsafe
 
     if (
       this.pending.length === 0 &&
       this.pendingBackspaces === 0 &&
-      this.pendingServerWrites === 0
+      canRender
     ) {
       const writePos = this.normalizeWritePos(buf.cursor, buf.cols)
       this.anchor = writePos
       this.renderedPos = { ...writePos }
       this.maxTouchedAbsY = writePos.absY
       this.wrapPending = false
+      this.captureRowSuffix(buf, writePos.absY, writePos.x)
     }
 
     for (const ch of scalars) {
@@ -532,24 +713,30 @@ export class TerminalEchoPredictor {
     }
 
     let write = ''
-    if (this.pendingServerWrites === 0 && this.renderedPos) {
-      write = this.underlined ? `\x1b[4m${raw}\x1b[24m` : raw
+    if (canRender && this.renderedPos) {
+      const activeSgr = this.vtTracker.getActiveSgr()
+      write = this.underlined ? `\x1b[4m${raw}\x1b[24m${activeSgr}` : raw
+      const prevMaxY = this.maxTouchedAbsY
       this.advanceRenderedPos(scalars.length, buf.cols)
+      for (let y = prevMaxY + 1; y <= this.maxTouchedAbsY; y++) {
+        this.captureRowSuffix(buf, y, 0)
+      }
       this.predictionsRendered = true
     }
 
     return {
       write,
-      armUnderlineTimer: wasPendingEmpty && !this.underlined,
+      armUnderlineTimer: canRender && wasPendingEmpty && !this.underlined,
       cancelUnderlineTimer: false,
     }
   }
 
   private handleBackspace(buf: BufferSnapshot): PredictionResult {
+    const canRender = this.pendingServerWrites === 0 && !this.serverStreamUnsafe
     if (this.pending.length > 0) {
       this.pending.pop()
       let write = ''
-      if (this.pendingServerWrites === 0 && this.predictionsRendered && this.renderedPos) {
+      if (canRender && this.predictionsRendered && this.renderedPos) {
         write = this.buildBackspaceErase(this.renderedPos, this.wrapPending, buf.cols)
         this.wrapPending = false
         this.renderedPos = retreatCursor(this.renderedPos, buf.cols)
@@ -567,7 +754,7 @@ export class TerminalEchoPredictor {
       }
     }
 
-    if (this.confirmedLineChars > 0 && this.pendingServerWrites === 0) {
+    if (this.confirmedLineChars > 0 && canRender) {
       const startWrapPending = this.pendingBackspaces === 0 && buf.cols > 0 && buf.cursor.x >= buf.cols
       if (this.pendingBackspaces === 0) {
         const writePos = this.normalizeWritePos(buf.cursor, buf.cols)
@@ -576,6 +763,7 @@ export class TerminalEchoPredictor {
         this.renderedPos = { ...writePos }
         this.maxTouchedAbsY = writePos.absY
         this.wrapPending = startWrapPending
+        this.captureRowSuffix(buf, writePos.absY, writePos.x)
       }
       const curPos = this.renderedPos ?? this.normalizeWritePos(buf.cursor, buf.cols)
       const prevPos = retreatCursor(curPos, buf.cols)
@@ -627,7 +815,7 @@ export class TerminalEchoPredictor {
       const now = this.nowFn()
       this.anchor = this.normalizeWritePos(nowPos, cols)
       this.pending = remaining.map((ch) => ({ ch, sentAt: now }))
-      return this.renderRemainingTail(nowPos, cols, true)
+      return this.renderRemainingTail(nowPos, cols, true, buf)
     }
 
     this.silentProbe = []
@@ -648,7 +836,8 @@ export class TerminalEchoPredictor {
   private renderRemainingTail(
     nowPos: CursorPos,
     cols: number,
-    armTimerIfPending: boolean
+    armTimerIfPending: boolean,
+    buf?: BufferSnapshot
   ): PredictionResult {
     const wasUnderlined = this.underlined
     if (
@@ -663,6 +852,7 @@ export class TerminalEchoPredictor {
     this.renderedPos = { ...writePos }
     this.maxTouchedAbsY = writePos.absY
     this.wrapPending = cols > 0 && nowPos.x >= cols
+    this.captureRowSuffix(buf, writePos.absY, writePos.x)
 
     let write = ''
     for (let i = 0; i < this.pendingBackspaces; i++) {
@@ -673,8 +863,13 @@ export class TerminalEchoPredictor {
 
     if (this.pending.length > 0) {
       const tail = this.pending.map((p) => p.ch).join('')
-      write += this.underlined ? `\x1b[4m${tail}\x1b[24m` : tail
+      const activeSgr = this.vtTracker.getActiveSgr()
+      write += this.underlined ? `\x1b[4m${tail}\x1b[24m${activeSgr}` : tail
+      const prevMaxY = this.maxTouchedAbsY
       this.advanceRenderedPos(this.pending.length, cols)
+      for (let y = prevMaxY + 1; y <= this.maxTouchedAbsY; y++) {
+        this.captureRowSuffix(buf, y, 0)
+      }
     }
 
     this.predictionsRendered = true
@@ -813,6 +1008,36 @@ export class TerminalEchoPredictor {
       }
     }
 
+    const anchorSuffix = this.savedRowSuffixes.get(this.anchor.absY) ?? ''
+    let hasTrailingRows = false
+    for (let y = this.anchor.absY + 1; y <= maxRow; y++) {
+      if (this.savedRowSuffixes.get(y)) {
+        hasTrailingRows = true
+        break
+      }
+    }
+    if (anchorSuffix) {
+      seq += anchorSuffix
+      if (!hasTrailingRows) {
+        seq += `\x1b[${this.anchor.x + 1}G`
+      }
+    }
+    if (hasTrailingRows) {
+      for (let y = this.anchor.absY + 1; y <= maxRow; y++) {
+        seq += '\x1b[1B\x1b[1G'
+        const rowText = this.savedRowSuffixes.get(y)
+        if (rowText) {
+          seq += rowText
+        }
+      }
+      seq += `\x1b[${maxRow - this.anchor.absY}A\x1b[${this.anchor.x + 1}G`
+    }
+
+    const activeSgr = this.vtTracker.getActiveSgr()
+    if (activeSgr) {
+      seq += activeSgr
+    }
+
     return seq
   }
 
@@ -831,5 +1056,6 @@ export class TerminalEchoPredictor {
     this.underlined = false
     this.predictionsRendered = false
     this.awaitingNewlineConfirm = false
+    this.savedRowSuffixes.clear()
   }
 }

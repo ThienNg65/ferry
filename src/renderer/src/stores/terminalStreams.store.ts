@@ -6,7 +6,7 @@ import type { WebglAddon } from '@xterm/addon-webgl'
 import { INVOKE_CHANNELS, EVENT_CHANNELS, SEND_CHANNELS } from '@shared/contract'
 import type { ClipboardTextResult, TerminalAckEvent, TerminalInputEvent, TerminalResizeEvent, TerminalDataEvent, TerminalExitEvent, TerminalOpenResult } from '@shared/contract'
 import { invoke, onEvent } from '../api'
-import { TerminalEchoPredictor, type BufferSnapshot } from '../utils/terminalEchoPredictor'
+import { TerminalEchoPredictor, updatePendingUtf8, type BufferSnapshot } from '../utils/terminalEchoPredictor'
 import { terminalKeyAction } from '../utils/terminalKeys'
 import { useUiStore } from './ui.store'
 
@@ -26,6 +26,7 @@ interface TerminalInstance {
   scrollMarker: IMarker | null
   scrollMarkerLastLine: number
   decoder: TextDecoder
+  pendingUtf8Bytes: number
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -94,6 +95,7 @@ function resetScrollTracker(inst: TerminalInstance): void {
   inst.scrollMarkerLastLine = 0
   inst.evictedOffset = 0
   inst.decoder = new TextDecoder('utf-8', { fatal: false })
+  inst.pendingUtf8Bytes = 0
 }
 
 function syncScrollOffset(inst: TerminalInstance): number {
@@ -235,11 +237,16 @@ function prependPrefix(prefix: string, data: string | Uint8Array): string | Uint
   return combined
 }
 
-function handleAfterServerWrite(sessionId: string, inst: TerminalInstance, serverData?: string): void {
+function handleAfterServerWrite(
+  sessionId: string,
+  inst: TerminalInstance,
+  serverData?: string,
+  hasIncompleteMultibyte = false
+): void {
   if (instances.get(sessionId) !== inst) {
     return
   }
-  const res = inst.predictor.afterServerWrite(snapshotBuffer(inst), serverData)
+  const res = inst.predictor.afterServerWrite(snapshotBuffer(inst), serverData, hasIncompleteMultibyte)
   applyPredictionResult(sessionId, inst, res)
 }
 
@@ -250,11 +257,18 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
   const gen = inst.writeGeneration
   const predictive = useUiStore().terminalPredictiveEcho
   const prefix = predictive ? inst.predictor.beforeServerWrite(inst.term.cols) : ''
-  const serverData = predictive
-    ? typeof data === 'string'
-      ? data
-      : inst.decoder.decode(data, { stream: true })
-    : undefined
+  let serverData: string | undefined
+  let hasIncompleteMultibyte = false
+  if (predictive) {
+    if (typeof data === 'string') {
+      serverData = data
+      inst.pendingUtf8Bytes = 0
+    } else {
+      inst.pendingUtf8Bytes = updatePendingUtf8(inst.pendingUtf8Bytes, data)
+      hasIncompleteMultibyte = inst.pendingUtf8Bytes > 0
+      serverData = inst.decoder.decode(data, { stream: true })
+    }
+  }
   inst.term.write(prependPrefix(prefix, data), () => {
     if (inst.terminalId === targetTerminalId) {
       inst.unacked += bytes
@@ -270,7 +284,7 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
       instances.get(sessionId) === inst &&
       inst.terminalId === targetTerminalId
     ) {
-      handleAfterServerWrite(sessionId, inst, serverData)
+      handleAfterServerWrite(sessionId, inst, serverData, hasIncompleteMultibyte)
     }
   })
 }
@@ -454,7 +468,8 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             evictedOffset: 0,
             scrollMarker: null,
             scrollMarkerLastLine: 0,
-            decoder: new TextDecoder('utf-8', { fatal: false })
+            decoder: new TextDecoder('utf-8', { fatal: false }),
+            pendingUtf8Bytes: 0
           }
           term.onData((data) => {
             const input: TerminalInputEvent = { terminalId: inst.terminalId, data }

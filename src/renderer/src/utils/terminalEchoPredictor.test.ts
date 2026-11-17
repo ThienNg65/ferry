@@ -1025,4 +1025,72 @@ describe('TerminalEchoPredictor', () => {
     expect(predictor.getSnapshot().pendingCount).toBe(0)
     expect(predictor.getSnapshot().predictionsRendered).toBe(false)
   })
+
+  it('defers_predictive_writes_until_incomplete_server_escape_sequence_finishes', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('x', buf).write)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+
+    const rewind1 = predictor.beforeServerWrite(80)
+    buf.apply(rewind1)
+    const afterIncomplete = predictor.afterServerWrite(buf, '\x1b[3')
+    expect(afterIncomplete.write).toBe('')
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+
+    // Typing while server parser is mid-CSI queues without writing into the escape sequence
+    const midInput = predictor.onInput('y', buf)
+    expect(midInput.write).toBe('')
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+
+    // Next server chunk completes the CSI sequence without a rewind injected
+    const rewind2 = predictor.beforeServerWrite(80)
+    expect(rewind2).toBe('')
+    buf.apply('\x1b[31m')
+    const afterComplete = predictor.afterServerWrite(buf, '1m')
+    expect(afterComplete.write).toBe('xy')
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+  })
+
+  it('restores_existing_line_suffix_erased_by_predictive_rewind', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ echo hello'], { absY: 0, x: 7 })
+
+    const pred = predictor.onInput('X', buf)
+    expect(pred.write).toBe('X')
+    buf.apply(pred.write)
+    expect(buf.getLineText(0)).toBe('$ echo Xello')
+
+    const rewind = predictor.beforeServerWrite(80)
+    buf.apply(rewind + 'X')
+    expect(buf.getLineText(0)).toBe('$ echo Xello')
+
+    const after = predictor.afterServerWrite(buf, 'X')
+    expect(after.write).toBe('')
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+  })
+
+  it('preserves_active_server_sgr_attributes_across_rewinds_and_underline_timeout', () => {
+    let now = 1000
+    const predictor = new TerminalEchoPredictor(() => now)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.beforeServerWrite(80) + '\x1b[38;2;0;128;255m')
+    predictor.afterServerWrite(buf, '\x1b[38;2;0;128;255m')
+
+    const pred = predictor.onInput('a', buf)
+    expect(pred.write).toBe('a')
+    buf.apply(pred.write)
+
+    now = 1150
+    const underline = predictor.applyUnderlineTimeout(80)
+    expect(underline).toContain('\x1b[0m')
+    expect(underline).toContain('\x1b[38;2;0;128;255m')
+    expect(underline).toContain('\x1b[4ma\x1b[24m\x1b[38;2;0;128;255m')
+
+    const rewind = predictor.beforeServerWrite(80)
+    expect(rewind).toContain('\x1b[0m')
+    expect(rewind.endsWith('\x1b[38;2;0;128;255m')).toBe(true)
+  })
 })
