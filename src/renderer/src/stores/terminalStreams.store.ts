@@ -21,6 +21,7 @@ interface TerminalInstance {
   rows: number
   predictor: TerminalEchoPredictor
   underlineTimer: ReturnType<typeof setTimeout> | null
+  writeGeneration: number
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -181,18 +182,26 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
   // Flow control counts only raw server payload bytes, never local predictive/rewind escapes.
   const bytes = data.length
   const targetTerminalId = inst.terminalId
-  const prefix = inst.predictor.beforeServerWrite(inst.term.cols)
+  const gen = inst.writeGeneration
+  const predictive = useUiStore().terminalPredictiveEcho
+  const prefix = predictive ? inst.predictor.beforeServerWrite(inst.term.cols) : ''
   inst.term.write(prependPrefix(prefix, data), () => {
-    if (inst.terminalId !== targetTerminalId) {
-      return
+    if (inst.terminalId === targetTerminalId) {
+      inst.unacked += bytes
+      if (inst.unacked >= ACK_BATCH_BYTES) {
+        const ack: TerminalAckEvent = { terminalId: inst.terminalId, bytes: inst.unacked }
+        inst.unacked = 0
+        window.api.send(SEND_CHANNELS.terminalAck, ack)
+      }
     }
-    inst.unacked += bytes
-    if (inst.unacked >= ACK_BATCH_BYTES) {
-      const ack: TerminalAckEvent = { terminalId: inst.terminalId, bytes: inst.unacked }
-      inst.unacked = 0
-      window.api.send(SEND_CHANNELS.terminalAck, ack)
+    if (
+      predictive &&
+      inst.writeGeneration === gen &&
+      instances.get(sessionId) === inst &&
+      inst.terminalId === targetTerminalId
+    ) {
+      handleAfterServerWrite(sessionId, inst)
     }
-    handleAfterServerWrite(sessionId, inst)
   })
 }
 
@@ -243,6 +252,7 @@ function ensureSubscriptions(): void {
     clearUnderlineTimer(inst)
     const prefix = inst.predictor.beforeServerWrite(inst.term.cols)
     inst.predictor.reset()
+    inst.writeGeneration++
     inst.term.write(`${prefix}\r\n[Process exited]\r\n`)
     onShellExited?.(sessionId)
   })
@@ -271,6 +281,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       }
       clearUnderlineTimer(inst)
       inst.predictor.reset()
+      inst.writeGeneration++
       opensInFlight++
       try {
         const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
@@ -285,10 +296,11 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         inst.unacked = 0
         inst.cols = inst.term.cols
         inst.rows = inst.term.rows
-        clearUnderlineTimer(inst)
-        inst.predictor.reset()
         this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
         inst.term.write('\r\n[Shell restarted]\r\n')
+        clearUnderlineTimer(inst)
+        inst.predictor.reset()
+        inst.writeGeneration++
         drainEarlyOutput(sessionId, inst)
         inst.term.focus()
       } finally {
@@ -364,7 +376,8 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             cols: 80,
             rows: 24,
             predictor: new TerminalEchoPredictor(),
-            underlineTimer: null
+            underlineTimer: null,
+            writeGeneration: 0
           }
           term.onData((data) => {
             const input: TerminalInputEvent = { terminalId: inst.terminalId, data }
@@ -469,6 +482,8 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       }
       for (const inst of instances.values()) {
         flushInstancePredictions(inst)
+        inst.predictor.reset()
+        inst.writeGeneration++
       }
     },
 
@@ -508,6 +523,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         instances.delete(sessionId)
         clearUnderlineTimer(inst)
         inst.predictor.reset()
+        inst.writeGeneration++
         this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
         this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
         try {

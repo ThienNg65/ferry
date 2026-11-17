@@ -6,6 +6,8 @@ const eventListeners = new Map<string, Set<(payload: unknown) => void>>()
 const writtenChunks: string[] = []
 const sentMessages: Array<{ channel: string; payload: unknown }> = []
 const onDataCallbacks: Array<(data: string) => void> = []
+const pendingWriteCallbacks: Array<() => void> = []
+let deferWriteCallbacks = false
 let resolveOpen: ((res: { terminalId: string }) => void) | null = null
 
 const mockUiState = {
@@ -166,6 +168,13 @@ vi.mock('@xterm/xterm', () => ({
     write(data: string | Uint8Array, cb?: () => void) {
       const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf8')
       writtenChunks.push(text)
+      if (deferWriteCallbacks && cb) {
+        pendingWriteCallbacks.push(() => {
+          this.fakeBuffer.apply(text)
+          cb()
+        })
+        return
+      }
       this.fakeBuffer.apply(text)
       cb?.()
     }
@@ -204,6 +213,8 @@ describe('terminalStreams.store', () => {
     writtenChunks.length = 0
     sentMessages.length = 0
     onDataCallbacks.length = 0
+    pendingWriteCallbacks.length = 0
+    deferWriteCallbacks = false
     resolveOpen = null
     mockUiState.terminalPredictiveEcho = true
     vi.stubGlobal('window', {
@@ -389,5 +400,101 @@ describe('terminalStreams.store', () => {
     expect(writtenChunks).toEqual(['\x1b[0m\x1b[1G\x1b[Ka'])
     expect(store.getInstance('sess-1')?.unacked).toBe(1)
     expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingCount).toBe(0)
+  })
+
+  it('ignores in-flight term.write callbacks from before restart without corrupting pendingServerWrites', async () => {
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+
+    const openPromise = store.ensureTerminal('sess-1')
+    resolveOpen!({ terminalId: 'term-1' })
+    await openPromise
+
+    emitTerminalData('term-1', 'user@host:~$ ')
+
+    // Defer term-1's server write callback so it stays in flight across restart()
+    deferWriteCallbacks = true
+    emitTerminalData('term-1', 'ls')
+    expect(pendingWriteCallbacks).toHaveLength(1)
+    expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingServerWrites).toBe(1)
+
+    const restartPromise = store.restart('sess-1')
+    resolveOpen!({ terminalId: 'term-2' })
+    await restartPromise
+
+    expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingServerWrites).toBe(0)
+
+    // Queue a new write on term-2, then resolve the stale term-1 callback first
+    emitTerminalData('term-2', 'user@host:~$ ')
+    expect(pendingWriteCallbacks).toHaveLength(2)
+    expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingServerWrites).toBe(1)
+
+    // Resolving stale term-1 callback must not decrement term-2's pendingServerWrites
+    pendingWriteCallbacks.shift()!()
+    expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingServerWrites).toBe(1)
+    expect(store.getInstance('sess-1')?.unacked).toBe(0)
+
+    // Resolving term-2's callback completes cleanly and subsequent keystrokes predict at 0ms
+    pendingWriteCallbacks.shift()!()
+    expect(store.getInstance('sess-1')?.predictor.getSnapshot().pendingServerWrites).toBe(0)
+
+    deferWriteCallbacks = false
+    writtenChunks.length = 0
+    typeKeystrokes('a')
+    expect(writtenChunks).toEqual(['a'])
+  })
+
+  it('skips predictor hooks while terminalPredictiveEcho is false and discards stale pre-disable callbacks', async () => {
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+
+    const openPromise = store.ensureTerminal('sess-1')
+    resolveOpen!({ terminalId: 'term-1' })
+    await openPromise
+
+    const inst = store.getInstance('sess-1')!
+    const beforeSpy = vi.spyOn(inst.predictor, 'beforeServerWrite')
+    const afterSpy = vi.spyOn(inst.predictor, 'afterServerWrite')
+
+    // Disable predictive echo: server password prompt arriving while disabled must not update predictor mode/state
+    mockUiState.terminalPredictiveEcho = false
+    store.syncPredictiveEchoSetting()
+
+    emitTerminalData('term-1', 'Password: ')
+    expect(beforeSpy).not.toHaveBeenCalled()
+    expect(afterSpy).not.toHaveBeenCalled()
+    expect(inst.predictor.getSnapshot().mode).toBe('active')
+    expect(inst.unacked).toBe('Password: '.length)
+
+    // Re-enable and verify typing predicts immediately with no stale paused_password state
+    mockUiState.terminalPredictiveEcho = true
+    store.syncPredictiveEchoSetting()
+    writtenChunks.length = 0
+    typeKeystrokes('a')
+    expect(writtenChunks).toEqual(['a'])
+
+    // Verify in-flight callback started while enabled is ignored after disabling, while ACK still counts bytes
+    emitTerminalData('term-1', 'a')
+    deferWriteCallbacks = true
+    emitTerminalData('term-1', 'bc')
+    expect(pendingWriteCallbacks).toHaveLength(1)
+
+    mockUiState.terminalPredictiveEcho = false
+    store.syncPredictiveEchoSetting()
+    const unackedBeforeCb = inst.unacked
+
+    afterSpy.mockClear()
+    pendingWriteCallbacks.shift()!()
+    expect(afterSpy).not.toHaveBeenCalled()
+    expect(inst.unacked).toBe(unackedBeforeCb + 'bc'.length)
+
+    // Re-enable once more: predictor stays clean (pendingServerWrites === 0) and predicts immediately
+    deferWriteCallbacks = false
+    mockUiState.terminalPredictiveEcho = true
+    store.syncPredictiveEchoSetting()
+    writtenChunks.length = 0
+    typeKeystrokes('z')
+    expect(inst.predictor.getSnapshot().pendingServerWrites).toBe(0)
+    expect(writtenChunks).toEqual(['z'])
   })
 })
