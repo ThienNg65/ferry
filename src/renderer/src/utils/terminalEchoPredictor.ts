@@ -26,8 +26,20 @@ interface PendingChar {
   sentAt: number
 }
 
+interface PredictionResult {
+  write: string
+  armUnderlineTimer: boolean
+  cancelUnderlineTimer: boolean
+}
+
+function emptyResult(): PredictionResult {
+  return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: false }
+}
+
 const UNDERLINE_THRESHOLD_MS = 100
 const MAX_PRINTABLE_CHUNK = 128
+const PASSWORD_PROMPT_RE =
+  /(?:password|passphrase|pin|passcode|otp|verification code|enter secret)\s*(?:for [^:\n]+)?:\s*$|^\[sudo\] password[^\n]*:\s*$/i
 
 const ZERO_WIDTH_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x0300, 0x036f],
@@ -178,18 +190,11 @@ export class TerminalEchoPredictor {
     }
   }
 
-  onInput(
-    data: string,
-    buf: BufferSnapshot
-  ): { write: string; armUnderlineTimer: boolean; cancelUnderlineTimer: boolean } {
-    const emptyResult = { write: '', armUnderlineTimer: false, cancelUnderlineTimer: false }
-    if (!data) return emptyResult
+  onInput(data: string, buf: BufferSnapshot): PredictionResult {
+    if (!data) return emptyResult()
 
     if (buf.type === 'alternate') {
-      const hadPending = this.pending.length > 0
-      this.mode = 'paused_alt'
-      this.clearAllPendingState(true)
-      return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
+      return this.enterPausedMode('paused_alt')
     }
     if (this.mode === 'paused_alt') {
       this.mode = 'active'
@@ -200,18 +205,19 @@ export class TerminalEchoPredictor {
         this.submittedWhilePaused = true
         this.silentProbe = []
         this.anchor = null
-        return emptyResult
+        return emptyResult()
       }
       const probeScalars = this.submittedWhilePaused ? splitPrintableScalars(data) : null
       if (probeScalars) {
         if (this.silentProbe.length === 0) {
-          this.anchor = { ...buf.cursor }
+          this.anchor = this.normalizeWritePos(buf.cursor, buf.cols)
         }
         this.silentProbe.push(...probeScalars)
       } else {
         this.silentProbe = []
+        this.anchor = null
       }
-      return emptyResult
+      return emptyResult()
     }
 
     if (data === '\r' || data === '\n' || data === '\r\n') {
@@ -222,7 +228,7 @@ export class TerminalEchoPredictor {
         this.anchor = null
         this.renderedPos = null
       }
-      return emptyResult
+      return emptyResult()
     }
 
     if (this.awaitingNewlineConfirm) {
@@ -232,7 +238,7 @@ export class TerminalEchoPredictor {
         const write = this.resetForFlush(buf)
         return { write, armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
       }
-      return emptyResult
+      return emptyResult()
     }
 
     if (data === '\x7f' || data === '\b') {
@@ -284,18 +290,157 @@ export class TerminalEchoPredictor {
     return write
   }
 
-  private handlePrintable(
-    raw: string,
-    scalars: string[],
-    buf: BufferSnapshot
-  ): { write: string; armUnderlineTimer: boolean; cancelUnderlineTimer: boolean } {
+  beforeServerWrite(cols: number): string {
+    const write = this.predictionsRendered ? this.buildRewindSequence(cols) : ''
+    this.predictionsRendered = false
+    this.pendingServerWrites++
+    return write
+  }
+
+  afterServerWrite(buf: BufferSnapshot): PredictionResult {
+    if (this.pendingServerWrites > 0) {
+      this.pendingServerWrites--
+    }
+
+    if (buf.type === 'alternate') {
+      return this.enterPausedMode('paused_alt')
+    }
+    if (this.mode === 'paused_alt') {
+      this.mode = 'active'
+    }
+
+    if (this.pendingServerWrites > 0) {
+      return emptyResult()
+    }
+
+    const nowPos: CursorPos = { ...buf.cursor }
+    const lineUpToCursor = buf.getLineText(nowPos.absY).slice(0, nowPos.x)
+    if (PASSWORD_PROMPT_RE.test(lineUpToCursor)) {
+      return this.enterPausedMode('paused_password')
+    }
+
+    if (this.mode === 'paused_password' || this.mode === 'paused_noecho') {
+      return this.reconcilePausedProbe(buf, nowPos)
+    }
+
+    if (this.pending.length === 0 && this.pendingBackspaces === 0) {
+      this.awaitingNewlineConfirm = false
+      return emptyResult()
+    }
+
+    // Pending chars queued while a server write was already in flight anchor to post-write cursor
+    if (!this.anchor) {
+      this.anchor = this.normalizeWritePos(nowPos, buf.cols)
+      return this.renderRemainingTail(nowPos, buf.cols, false)
+    }
+
+    const cols = buf.cols
+    const nowIdx = nowPos.absY * cols + nowPos.x
+    let anchorIdx = this.anchor.absY * cols + this.anchor.x
+
+    if (this.pendingBackspaces > 0) {
+      if (nowIdx < anchorIdx) {
+        const leftSteps = anchorIdx - nowIdx
+        if (leftSteps > this.pendingBackspaces) {
+          const hadPending = this.pending.length > 0
+          this.clearAllPendingState(true)
+          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
+        }
+        this.erasedConfirmedChars.splice(this.erasedConfirmedChars.length - leftSteps, leftSteps)
+        this.pendingBackspaces -= leftSteps
+        this.anchor = this.normalizeWritePos(nowPos, cols)
+        anchorIdx = nowIdx
+      } else {
+        const effectiveAnchor = retreatCursorN(this.anchor, this.pendingBackspaces, cols)
+        const replaced =
+          this.pending.length > 0 ? this.extractConfirmedText(buf, effectiveAnchor, nowPos) : ''
+        if (
+          this.pending.length > 0 &&
+          replaced.length > 0 &&
+          replaced !== this.erasedConfirmedChars.join('') &&
+          replaced[0] === this.pending[0].ch
+        ) {
+          this.pendingBackspaces = 0
+          this.erasedConfirmedChars = []
+          this.anchor = effectiveAnchor
+          anchorIdx = effectiveAnchor.absY * cols + effectiveAnchor.x
+        } else if (nowIdx > anchorIdx) {
+          const hadPending = this.pending.length > 0
+          this.clearAllPendingState(true)
+          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
+        }
+      }
+    }
+
+    let matched = 0
+    if (this.pendingBackspaces === 0 && this.pending.length > 0) {
+      if (nowIdx < anchorIdx) {
+        this.clearAllPendingState(true)
+        return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
+      }
+
+      if (nowIdx > anchorIdx) {
+        const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos)
+        while (
+          matched < this.pending.length &&
+          matched < confirmed.length &&
+          this.pending[matched].ch === confirmed[matched]
+        ) {
+          matched++
+        }
+
+        if (this.awaitingNewlineConfirm && nowPos.absY > this.anchor.absY) {
+          if (matched === 0) {
+            return this.enterPausedMode('paused_noecho')
+          }
+          this.clearAllPendingState(true)
+          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
+        }
+
+        if (matched < confirmed.length) {
+          if (matched === 0) {
+            return this.enterPausedMode('paused_noecho')
+          }
+          this.confirmedLineChars += matched
+          this.clearAllPendingState(false)
+          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
+        }
+
+        this.pending.splice(0, matched)
+        this.confirmedLineChars += matched
+        this.anchor = this.normalizeWritePos(nowPos, cols)
+
+        if (this.pending.length === 0) {
+          this.clearAllPendingState(false)
+          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
+        }
+      }
+    }
+
+    return this.renderRemainingTail(nowPos, cols, matched > 0)
+  }
+
+  reset(): void {
+    this.mode = 'active'
+    this.pendingServerWrites = 0
+    this.submittedWhilePaused = false
+    this.silentProbe = []
+    this.clearAllPendingState(true)
+  }
+
+  private handlePrintable(raw: string, scalars: string[], buf: BufferSnapshot): PredictionResult {
     const now = this.nowFn()
     const wasPendingEmpty = this.pending.length === 0
 
-    if (this.pending.length === 0 && this.pendingBackspaces === 0) {
-      this.anchor = { ...buf.cursor }
-      this.renderedPos = { ...buf.cursor }
-      this.maxTouchedAbsY = buf.cursor.absY
+    if (
+      this.pending.length === 0 &&
+      this.pendingBackspaces === 0 &&
+      this.pendingServerWrites === 0
+    ) {
+      const writePos = this.normalizeWritePos(buf.cursor, buf.cols)
+      this.anchor = writePos
+      this.renderedPos = { ...writePos }
+      this.maxTouchedAbsY = writePos.absY
       this.wrapPending = false
     }
 
@@ -306,18 +451,7 @@ export class TerminalEchoPredictor {
     let write = ''
     if (this.pendingServerWrites === 0 && this.renderedPos) {
       write = this.underlined ? `\x1b[4m${raw}\x1b[24m` : raw
-      for (let i = 0; i < scalars.length; i++) {
-        const nextPos = advanceCursor(this.renderedPos, buf.cols)
-        if (nextPos.x === 0) {
-          // Writing into cols - 1 sets xterm's wrapnext flag without advancing row until next char
-          this.wrapPending = true
-          this.maxTouchedAbsY = Math.max(this.maxTouchedAbsY, this.renderedPos.absY)
-        } else {
-          this.wrapPending = false
-          this.maxTouchedAbsY = Math.max(this.maxTouchedAbsY, nextPos.absY)
-        }
-        this.renderedPos = nextPos
-      }
+      this.advanceRenderedPos(scalars.length, buf.cols)
       this.predictionsRendered = true
     }
 
@@ -328,9 +462,7 @@ export class TerminalEchoPredictor {
     }
   }
 
-  private handleBackspace(
-    buf: BufferSnapshot
-  ): { write: string; armUnderlineTimer: boolean; cancelUnderlineTimer: boolean } {
+  private handleBackspace(buf: BufferSnapshot): PredictionResult {
     if (this.pending.length > 0) {
       this.pending.pop()
       let write = ''
@@ -352,31 +484,167 @@ export class TerminalEchoPredictor {
       }
     }
 
-    if (this.confirmedLineChars > 0) {
+    if (this.confirmedLineChars > 0 && this.pendingServerWrites === 0) {
+      const startWrapPending = this.pendingBackspaces === 0 && buf.cols > 0 && buf.cursor.x >= buf.cols
       if (this.pendingBackspaces === 0) {
-        this.anchor = { ...buf.cursor }
-        this.renderedPos = { ...buf.cursor }
-        this.maxTouchedAbsY = buf.cursor.absY
-        this.wrapPending = false
+        const writePos = this.normalizeWritePos(buf.cursor, buf.cols)
+        this.anchor = writePos
+        this.renderedPos = { ...writePos }
+        this.maxTouchedAbsY = writePos.absY
+        this.wrapPending = startWrapPending
       }
-      const curPos = this.renderedPos ?? buf.cursor
+      const curPos = this.renderedPos ?? this.normalizeWritePos(buf.cursor, buf.cols)
       const prevPos = retreatCursor(curPos, buf.cols)
       const cell = buf.getCellText(prevPos.absY, prevPos.x)
       this.erasedConfirmedChars.unshift(cell || ' ')
       this.confirmedLineChars--
       this.pendingBackspaces++
 
-      let write = ''
-      if (this.pendingServerWrites === 0) {
-        write = this.buildBackspaceErase(curPos, this.wrapPending, buf.cols)
-        this.wrapPending = false
-        this.renderedPos = prevPos
-        this.predictionsRendered = true
-      }
+      const write = this.buildBackspaceErase(curPos, this.wrapPending, buf.cols)
+      this.wrapPending = false
+      this.renderedPos = prevPos
+      this.predictionsRendered = true
       return { write, armUnderlineTimer: false, cancelUnderlineTimer: false }
     }
 
     return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: false }
+  }
+
+  private reconcilePausedProbe(buf: BufferSnapshot, nowPos: CursorPos): PredictionResult {
+    if (!this.submittedWhilePaused || this.silentProbe.length === 0 || !this.anchor) {
+      return emptyResult()
+    }
+
+    const cols = buf.cols
+    const anchorIdx = this.anchor.absY * cols + this.anchor.x
+    const nowIdx = nowPos.absY * cols + nowPos.x
+
+    if (nowIdx === anchorIdx) {
+      return emptyResult()
+    }
+    if (nowIdx < anchorIdx) {
+      this.silentProbe = []
+      this.anchor = null
+      return emptyResult()
+    }
+
+    const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos)
+    const probeStr = this.silentProbe.join('')
+    if (confirmed.length > 0 && confirmed.length <= probeStr.length && probeStr.startsWith(confirmed)) {
+      const remaining = this.silentProbe.slice(confirmed.length)
+      this.mode = 'active'
+      this.submittedWhilePaused = false
+      this.silentProbe = []
+      this.confirmedLineChars = confirmed.length
+      this.anchor = null
+      if (remaining.length === 0) {
+        return emptyResult()
+      }
+      const now = this.nowFn()
+      this.anchor = this.normalizeWritePos(nowPos, cols)
+      this.pending = remaining.map((ch) => ({ ch, sentAt: now }))
+      return this.renderRemainingTail(nowPos, cols, true)
+    }
+
+    this.silentProbe = []
+    this.anchor = null
+    return emptyResult()
+  }
+
+  private enterPausedMode(mode: Exclude<PredictorMode, 'active'>): PredictionResult {
+    const hadPending = this.pending.length > 0
+    this.mode = mode
+    this.submittedWhilePaused = false
+    this.silentProbe = []
+    this.clearAllPendingState(true)
+    return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
+  }
+
+  private renderRemainingTail(
+    nowPos: CursorPos,
+    cols: number,
+    armTimerIfPending: boolean
+  ): PredictionResult {
+    const wasUnderlined = this.underlined
+    if (
+      !this.underlined &&
+      this.pending.length > 0 &&
+      this.nowFn() - this.pending[0].sentAt >= UNDERLINE_THRESHOLD_MS
+    ) {
+      this.underlined = true
+    }
+
+    const writePos = this.normalizeWritePos(nowPos, cols)
+    this.renderedPos = { ...writePos }
+    this.maxTouchedAbsY = writePos.absY
+    this.wrapPending = cols > 0 && nowPos.x >= cols
+
+    let write = ''
+    for (let i = 0; i < this.pendingBackspaces; i++) {
+      write += this.buildBackspaceErase(this.renderedPos, this.wrapPending, cols)
+      this.wrapPending = false
+      this.renderedPos = retreatCursor(this.renderedPos, cols)
+    }
+
+    if (this.pending.length > 0) {
+      const tail = this.pending.map((p) => p.ch).join('')
+      write += this.underlined ? `\x1b[4m${tail}\x1b[24m` : tail
+      this.advanceRenderedPos(this.pending.length, cols)
+    }
+
+    this.predictionsRendered = true
+    return {
+      write,
+      armUnderlineTimer: armTimerIfPending && this.pending.length > 0 && !this.underlined,
+      cancelUnderlineTimer: !wasUnderlined && this.underlined,
+    }
+  }
+
+  private normalizeWritePos(pos: CursorPos, cols: number): CursorPos {
+    if (cols > 0 && pos.x >= cols) {
+      return { absY: pos.absY + 1, x: 0 }
+    }
+    return { ...pos }
+  }
+
+  private advanceRenderedPos(count: number, cols: number): void {
+    if (!this.renderedPos) return
+    for (let i = 0; i < count; i++) {
+      const nextPos = advanceCursor(this.renderedPos, cols)
+      if (nextPos.x === 0) {
+        // Writing into cols - 1 sets xterm's wrapnext flag without advancing row until next char
+        this.wrapPending = true
+        this.maxTouchedAbsY = Math.max(this.maxTouchedAbsY, this.renderedPos.absY)
+      } else {
+        this.wrapPending = false
+        this.maxTouchedAbsY = Math.max(this.maxTouchedAbsY, nextPos.absY)
+      }
+      this.renderedPos = nextPos
+    }
+  }
+
+  private extractConfirmedText(buf: BufferSnapshot, from: CursorPos, to: CursorPos): string {
+    if (from.absY === to.absY) {
+      if (to.x <= from.x) return ''
+      const line = buf.getLineText(from.absY)
+      const padded = line.length < to.x ? line.padEnd(to.x, ' ') : line
+      return padded.slice(from.x, to.x)
+    }
+
+    const firstLine = buf.getLineText(from.absY)
+    if (firstLine.slice(from.x) === '' && from.x < buf.cols - 1) {
+      // Server issued a newline right at anchor without echoing anything on anchor's row
+      return ''
+    }
+
+    let text = firstLine.slice(from.x)
+    for (let y = from.absY + 1; y < to.absY; y++) {
+      text += buf.getLineText(y)
+    }
+    const lastLine = buf.getLineText(to.absY)
+    const lastPadded = lastLine.length < to.x ? lastLine.padEnd(to.x, ' ') : lastLine
+    text += lastPadded.slice(0, to.x)
+    return text
   }
 
   private buildBackspaceErase(pos: CursorPos, wrapPending: boolean, cols: number): string {

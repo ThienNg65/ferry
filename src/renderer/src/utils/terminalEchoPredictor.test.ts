@@ -30,8 +30,7 @@ class FakeBuffer implements BufferSnapshot {
 
   getCellText(absY: number, x: number): string {
     const line = this.lines[absY] ?? ''
-    const ch = line[x] ?? ''
-    return ch === ' ' ? ' ' : ch
+    return line[x] ?? ''
   }
 
   /** Minimal ANSI/VT applier for verifying rendered + rewound buffer state in tests. */
@@ -48,9 +47,11 @@ class FakeBuffer implements BufferSnapshot {
           if (cmd !== 'm') this.wrapPending = false
           if (cmd === 'A') {
             this.cursor.absY = Math.max(0, this.cursor.absY - n)
+            if (this.cursor.x >= this.cols) this.cursor.x = this.cols - 1
           } else if (cmd === 'B') {
             this.cursor.absY += n
             this.ensureRow(this.cursor.absY)
+            if (this.cursor.x >= this.cols) this.cursor.x = this.cols - 1
           } else if (cmd === 'G') {
             this.cursor.x = Math.max(0, Math.min(this.cols - 1, n - 1))
           } else if (cmd === 'K') {
@@ -71,6 +72,7 @@ class FakeBuffer implements BufferSnapshot {
       }
       if (ch === '\b') {
         this.wrapPending = false
+        if (this.cursor.x >= this.cols) this.cursor.x = this.cols - 1
         if (this.cursor.x > 0) this.cursor.x -= 1
         i++
         continue
@@ -88,7 +90,7 @@ class FakeBuffer implements BufferSnapshot {
         i++
         continue
       }
-      if (this.wrapPending) {
+      if (this.wrapPending || this.cursor.x >= this.cols) {
         this.cursor.absY += 1
         this.cursor.x = 0
         this.wrapPending = false
@@ -97,10 +99,9 @@ class FakeBuffer implements BufferSnapshot {
       const row = this.lines[this.cursor.absY].split('')
       row[this.cursor.x] = ch
       this.lines[this.cursor.absY] = row.join('')
-      if (this.cursor.x + 1 >= this.cols) {
+      this.cursor.x += 1
+      if (this.cursor.x >= this.cols) {
         this.wrapPending = true
-      } else {
-        this.cursor.x += 1
       }
       i++
     }
@@ -207,12 +208,9 @@ describe('TerminalEchoPredictor', () => {
     // Now test wrap-back from x === 0 to previous row cols - 1
     const wrapBuf = new FakeBuffer(10, ['01234567'], { absY: 0, x: 8 })
     const wrapPredictor = new TerminalEchoPredictor(() => 1000)
-    wrapPredictor.onInput('a', wrapBuf)
-    wrapBuf.apply('a')
-    wrapPredictor.onInput('b', wrapBuf)
-    wrapBuf.apply('b')
-    wrapPredictor.onInput('c', wrapBuf)
-    wrapBuf.apply('c')
+    for (const ch of ['a', 'b', 'c']) {
+      wrapBuf.apply(wrapPredictor.onInput(ch, wrapBuf).write)
+    }
     expect(wrapBuf.cursor).toEqual({ absY: 1, x: 1 })
 
     // Backspace 'c' -> cursor lands at (1, 0)
@@ -283,5 +281,352 @@ describe('TerminalEchoPredictor', () => {
     expect(altRes.write).toBe('')
     expect(predictor.getSnapshot().mode).toBe('paused_alt')
     expect(predictor.getSnapshot().pendingCount).toBe(0)
+  })
+
+  it('reconciles_partial_and_ansi_colored_server_echoes', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['g', 'i', 't']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    expect(buf.getLineText(0)).toBe('$ git')
+
+    // Server sends ANSI-colored partial echo 'gi'
+    const prefix1 = predictor.beforeServerWrite(80)
+    expect(prefix1.length).toBeGreaterThan(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(1)
+
+    buf.apply(prefix1 + '\x1b[32mgi\x1b[0m')
+    expect(buf.getLineText(0)).toBe('$ gi')
+    expect(buf.cursor).toEqual({ absY: 0, x: 4 })
+
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1.write).toBe('t')
+    expect(after1.cancelUnderlineTimer).toBe(false)
+    expect(predictor.getSnapshot().pendingCount).toBe(1)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+    buf.apply(after1.write)
+    expect(buf.getLineText(0)).toBe('$ git')
+    expect(buf.cursor).toEqual({ absY: 0, x: 5 })
+
+    // Server sends final colored 't'
+    const prefix2 = predictor.beforeServerWrite(80)
+    buf.apply(prefix2 + '\x1b[32mt\x1b[0m')
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(buf.getLineText(0)).toBe('$ git')
+    expect(buf.cursor).toEqual({ absY: 0, x: 5 })
+  })
+
+  it('wraps_across_cols_on_beforeServerWrite_and_reconciles_tail', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(10, ['01234567'], { absY: 0, x: 8 })
+
+    buf.apply(predictor.onInput('abcd', buf).write)
+    expect(buf.getLineText(0)).toBe('01234567ab')
+    expect(buf.getLineText(1)).toBe('cd')
+
+    const prefix1 = predictor.beforeServerWrite(10)
+    buf.apply(prefix1 + 'ab')
+    expect(buf.getLineText(0)).toBe('01234567ab')
+    expect(buf.getLineText(1)).toBe('')
+
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1.write).toBe('cd')
+    buf.apply(after1.write)
+    expect(buf.getLineText(1)).toBe('cd')
+    expect(buf.cursor).toEqual({ absY: 1, x: 2 })
+
+    const prefix2 = predictor.beforeServerWrite(10)
+    buf.apply(prefix2 + 'cd')
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2.write).toBe('')
+    expect(after2.cancelUnderlineTimer).toBe(true)
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+  })
+
+  it('backspace_over_confirmed_chars_losslessly_restores_on_rewind', () => {
+    let now = 1000
+    const predictor = new TerminalEchoPredictor(() => now)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    // Confirm 'ls' so confirmedLineChars === 2
+    for (const ch of ['l', 's']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    const pConfirm = predictor.beforeServerWrite(80)
+    buf.apply(pConfirm + 'ls')
+    predictor.afterServerWrite(buf)
+    expect(buf.getLineText(0)).toBe('$ ls')
+    expect(buf.cursor).toEqual({ absY: 0, x: 4 })
+
+    // Speculative backspace with '\x7f' erases 's' locally
+    const bs1 = predictor.onInput('\x7f', buf)
+    expect(bs1.write).toBe('\b \b')
+    buf.apply(bs1.write)
+    expect(buf.getLineText(0)).toBe('$ l')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Rewind before server's real '\b \b' arrives must restore 's'
+    const prefix1 = predictor.beforeServerWrite(80)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(1)
+    buf.apply(prefix1)
+    expect(buf.getLineText(0)).toBe('$ ls')
+    expect(buf.cursor).toEqual({ absY: 0, x: 4 })
+
+    // Server applies real backspace and reconciles cleanly
+    buf.apply('\b \b')
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(buf.getLineText(0)).toBe('$ l')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Now test '\b' over remaining confirmed char 'l', plus underline timeout with pendingBackspaces
+    const bs2 = predictor.onInput('\b', buf)
+    expect(bs2.write).toBe('\b \b')
+    buf.apply(bs2.write)
+    expect(buf.getLineText(0)).toBe('$')
+    expect(buf.cursor).toEqual({ absY: 0, x: 2 })
+
+    // At confirmedLineChars === 0, another '\b' must NOT erase the prompt
+    const bsPrompt = predictor.onInput('\b', buf)
+    expect(bsPrompt.write).toBe('')
+    expect(buf.getLineText(0)).toBe('$')
+
+    // Type 'a' after confirmed backspace and trigger 100ms underline timeout
+    buf.apply(predictor.onInput('a', buf).write)
+    expect(buf.getLineText(0)).toBe('$ a')
+    now += 100
+    const ul = predictor.applyUnderlineTimeout(80)
+    expect(ul).toContain('\x1b[4ma\x1b[24m')
+    buf.apply(ul)
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Rewind before server write still restores 'l' so server's '\b \ba' applies cleanly
+    const prefix2 = predictor.beforeServerWrite(80)
+    buf.apply(prefix2)
+    expect(buf.getLineText(0)).toBe('$ l')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    buf.apply('\b \ba')
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2.write).toBe('')
+    expect(after2.cancelUnderlineTimer).toBe(true)
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+  })
+
+  it('overlapping_server_writes_do_not_double_rewind_or_prematurely_render', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['g', 'i', 't']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+
+    const prefix1 = predictor.beforeServerWrite(80)
+    expect(prefix1.length).toBeGreaterThan(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(1)
+
+    const prefix2 = predictor.beforeServerWrite(80)
+    expect(prefix2).toBe('')
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(2)
+
+    buf.apply(prefix1 + 'g')
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(1)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+
+    buf.apply(prefix2 + 'i')
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2.write).toBe('t')
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+    expect(predictor.getSnapshot().pendingCount).toBe(1)
+
+    buf.apply(after2.write)
+    expect(buf.getLineText(0)).toBe('$ git')
+  })
+
+  it('enter_keeps_pending_command_visible_until_server_newline_arrives', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('l', buf).write)
+    buf.apply(predictor.onInput('s', buf).write)
+
+    const enter = predictor.onInput('\r', buf)
+    expect(enter).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(buf.getLineText(0)).toBe('$ ls')
+
+    const prefix = predictor.beforeServerWrite(80)
+    expect(prefix.length).toBeGreaterThan(0)
+    buf.apply(prefix + 'ls\r\nfile.txt\r\n$ ')
+
+    const after = predictor.afterServerWrite(buf)
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot()).toEqual({
+      mode: 'active',
+      pendingCount: 0,
+      underlined: false,
+      predictionsRendered: false,
+      pendingServerWrites: 0,
+    })
+
+    // Subsequent typing predicts immediately
+    const next = predictor.onInput('p', buf)
+    expect(next.write).toBe('p')
+  })
+
+  it('pauses_on_alternate_buffer_and_resumes_on_normal_buffer', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('v', buf).write)
+
+    const prefix1 = predictor.beforeServerWrite(80)
+    buf.apply(prefix1)
+    buf.type = 'alternate'
+    const altAfter = predictor.afterServerWrite(buf)
+    expect(altAfter.cancelUnderlineTimer).toBe(true)
+    expect(predictor.getSnapshot().mode).toBe('paused_alt')
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+
+    expect(predictor.onInput('j', buf).write).toBe('')
+    expect(predictor.getSnapshot().mode).toBe('paused_alt')
+
+    const prefix2 = predictor.beforeServerWrite(80)
+    expect(prefix2).toBe('')
+    buf.type = 'normal'
+    const normAfter = predictor.afterServerWrite(buf)
+    expect(normAfter).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().mode).toBe('active')
+
+    expect(predictor.onInput('l', buf).write).toBe('l')
+  })
+
+  it('pauses_on_password_prompt_and_multi_chunk_sudo_retry_never_leaks', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, [''], { absY: 0, x: 0 })
+
+    // Server prints sudo password prompt
+    buf.apply(predictor.beforeServerWrite(80) + '[sudo] password for dev: ')
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    // User enters first secret + Enter -> zero local echo
+    for (const ch of ['b', 'a', 'd', '\r']) {
+      expect(predictor.onInput(ch, buf).write).toBe('')
+    }
+
+    // Chunk 1 of retry: 'Sorry, try again.\r\n'
+    buf.apply(predictor.beforeServerWrite(80) + '\r\nSorry, try again.\r\n')
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    // Even if user types before Chunk 2 arrives (then hits Ctrl+C or Chunk 2 arrives), never leaks
+    expect(predictor.onInput('x', buf).write).toBe('')
+    expect(predictor.onInput('\x03', buf).write).toBe('')
+
+    // Chunk 2 of retry: '[sudo] password for dev: '
+    buf.apply(predictor.beforeServerWrite(80) + '[sudo] password for dev: ')
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    // Retried secret + Enter -> zero local echo
+    for (const ch of ['g', 'o', 'o', 'd', '\r']) {
+      expect(predictor.onInput(ch, buf).write).toBe('')
+    }
+
+    // Normal shell prompt returns -> stays paused until silentProbe confirms echo
+    buf.apply(predictor.beforeServerWrite(80) + '\r\ndev@box:~$ ')
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    // Non-printable input after a silentProbe char resets both probe and anchor cleanly
+    expect(predictor.onInput('q', buf).write).toBe('')
+    expect(predictor.onInput('\x7f', buf).write).toBe('')
+    buf.apply(predictor.beforeServerWrite(80) + ' ')
+    predictor.afterServerWrite(buf)
+
+    // Typing 'l' re-records anchor at new cursor and waits silently for server echo
+    const firstChar = predictor.onInput('l', buf)
+    expect(firstChar.write).toBe('')
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    // Server echoes 'l' -> re-arms 'active'
+    buf.apply(predictor.beforeServerWrite(80) + 'l')
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('active')
+
+    // Typing 's' now predicts at 0ms
+    const secondChar = predictor.onInput('s', buf)
+    expect(secondChar.write).toBe('s')
+    expect(secondChar.armUnderlineTimer).toBe(true)
+  })
+
+  it('output_only_paused_noecho_on_unrecognized_secret_prompt', () => {
+    let now = 1000
+    const predictor = new TerminalEchoPredictor(() => now)
+    const buf = new FakeBuffer(80, ['Custom key: '], { absY: 0, x: 12 })
+
+    for (const ch of ['s', 'e', 'c']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+
+    // Slow server (>2s) never switches to paused_noecho without output
+    now += 2500
+    const ul = predictor.applyUnderlineTimeout(80)
+    expect(ul).toContain('\x1b[4msec\x1b[24m')
+    buf.apply(ul)
+    expect(predictor.getSnapshot().mode).toBe('active')
+
+    expect(predictor.onInput('\r', buf).write).toBe('')
+
+    // Server responds with newline only (echo disabled)
+    const prefix = predictor.beforeServerWrite(80)
+    buf.apply(prefix + '\r\n')
+    expect(buf.getLineText(0)).toBe('Custom key:')
+
+    const after = predictor.afterServerWrite(buf)
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().mode).toBe('paused_noecho')
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+
+    // Subsequent typing does not echo locally
+    expect(predictor.onInput('x', buf).write).toBe('')
+  })
+
+  it('reset_clears_all_state_to_active_for_shell_restart', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['[sudo] password for dev: '], { absY: 0, x: 25 })
+
+    predictor.beforeServerWrite(80)
+    predictor.afterServerWrite(buf)
+    expect(predictor.getSnapshot().mode).toBe('paused_password')
+
+    predictor.beforeServerWrite(80)
+    expect(predictor.getSnapshot().pendingServerWrites).toBe(1)
+
+    predictor.reset()
+    expect(predictor.getSnapshot()).toEqual({
+      mode: 'active',
+      pendingCount: 0,
+      underlined: false,
+      predictionsRendered: false,
+      pendingServerWrites: 0,
+    })
+
+    const promptBuf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+    expect(predictor.onInput('a', promptBuf).write).toBe('a')
   })
 })
