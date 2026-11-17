@@ -30,6 +30,13 @@ watch(
   }
 )
 
+watch(
+  () => ui.terminalPredictiveEcho,
+  () => {
+    terminalStreams.syncPredictiveEchoSetting()
+  }
+)
+
 /** Session ids whose container `<div>` has already had `term.open()` called on it — never call it twice. */
 const attachedSessions = new Set<string>()
 
@@ -74,6 +81,7 @@ async function fitAndResize(sessionId: string): Promise<void> {
   if (!inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
     return
   }
+  terminalStreams.flushPredictions(sessionId)
   inst.fit.fit()
   terminalStreams.resize(sessionId, inst.term.cols, inst.term.rows)
 }
@@ -134,6 +142,7 @@ function onWindowResize(): void {
     if (!props.active || !sessionId || !inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
       return
     }
+    terminalStreams.flushPredictions(sessionId)
     inst.fit.fit()
     if (remoteResizeTimer !== null) {
       clearTimeout(remoteResizeTimer)
