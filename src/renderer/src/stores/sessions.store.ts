@@ -19,6 +19,7 @@ import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useSitesStore } from './sites.store'
 import { useMonitorStore } from './monitor.store'
+import { useFileFiltersStore } from './fileFilters.store'
 
 export interface RecentQuickConnect {
   host: string
@@ -448,6 +449,9 @@ export const useSessionsStore = defineStore('sessions', {
       if (!tab) {
         return
       }
+      if (tab.hostLabel) {
+        useFileFiltersStore().migrateConnectionFilter(`host:${tab.hostLabel}`, `site:${site.id}`)
+      }
       tab.siteId = site.id
       tab.label = site.name
       tab.quickConnectInput = undefined
@@ -550,6 +554,7 @@ export const useSessionsStore = defineStore('sessions', {
       }
       await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
       useRemoteFsStore().clearSession(sessionId)
+      useFileFiltersStore().clearEphemeralSession(sessionId)
     },
 
     /** Disconnects a tab's live SSH/SFTP session while keeping the tab (and any ephemeral Quick Connect secrets) for reconnect. */
@@ -574,6 +579,7 @@ export const useSessionsStore = defineStore('sessions', {
       if (sid) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
         useRemoteFsStore().clearSession(sid)
+        useFileFiltersStore().clearEphemeralSession(sid)
         useMonitorStore().clearSession(sid)
         await useTailStreamsStore().closeForSession(sid)
         void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
@@ -665,6 +671,7 @@ export const useSessionsStore = defineStore('sessions', {
       if (tab.sessionId) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
         useRemoteFsStore().clearSession(tab.sessionId)
+        useFileFiltersStore().clearEphemeralSession(tab.sessionId)
         useMonitorStore().clearSession(tab.sessionId)
         await useTailStreamsStore().closeForSession(tab.sessionId)
         // Fire-and-forget: documented as no-op-safe today, but caught so a

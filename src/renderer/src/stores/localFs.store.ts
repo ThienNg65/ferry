@@ -199,8 +199,8 @@ export const useLocalFsStore = defineStore('localFs', {
     },
 
     /** Shift+click — selects every entry between the last-clicked row and `path`. */
-    selectRange(path: string): void {
-      const result = selectRange(this.entries, this.selectAnchor, path)
+    selectRange(path: string, visibleEntries?: FileEntry[]): void {
+      const result = selectRange(visibleEntries ?? this.entries, this.selectAnchor, path)
       this.selected = result.selected
       this.selectAnchor = result.anchor
     },

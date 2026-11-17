@@ -406,4 +406,44 @@ describe('sessions.store quick connect and promotion', () => {
     expect(opens).toHaveLength(1)
     expect(opens[0][1]).toMatchObject({ siteId: 'site-a' })
   })
+
+  it('promoteTabToSite copies active Quick Connect visibility filters to the promoted site without overwriting existing site filters', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const { useFileFiltersStore } = await import('../fileFilters.store')
+    const sessions = useSessionsStore()
+    const filters = useFileFiltersStore()
+
+    await sessions.connect({
+      name: 'QC Logs',
+      host: 'logs.example.com',
+      port: 22,
+      username: 'ops',
+      authMethod: 'password',
+      password: 'pw'
+    })
+    const tabId = sessions.activeTab.tabId
+    filters.setFilter('host:ops@logs.example.com', {
+      include: ['*.log'],
+      exclude: ['*.log.????-??-??']
+    })
+
+    const savedSite: Site = {
+      id: 'site-promoted-1',
+      name: 'Prod Logs',
+      host: 'logs.example.com',
+      port: 22,
+      username: 'ops',
+      authMethod: 'password',
+      hasPassword: true,
+      hasPassphrase: false,
+      createdAt: '2026-11-17T00:00:00.000Z',
+      updatedAt: '2026-11-17T00:00:00.000Z'
+    }
+    sessions.promoteTabToSite(tabId, savedSite)
+
+    expect(filters.getFilter('site:site-promoted-1')).toEqual({
+      include: ['*.log'],
+      exclude: ['*.log.????-??-??']
+    })
+  })
 })

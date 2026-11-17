@@ -5,8 +5,9 @@ FTP/FTPS/SCP.
 
 ## Features
 
-- Dual-pane local/remote file browser with sort, multi-select, and a right-click context menu
-  (transfer, tail, extract, compress, rename, copy path, delete, chmod)
+- Dual-pane local/remote file browser with sort, multi-select, quick search (`Ctrl+F`),
+  per-connection [File Visibility Filters](docs/file-visibility-filters.md) (include/exclude globs),
+  and a right-click context menu (transfer, tail, extract, compress, rename, copy path, delete, chmod)
 - Recursive folder transfers (upload/download whole directory trees), with retry on failure and an
   app-wide bandwidth cap
 - OS drag-and-drop: drop files from Explorer onto the remote pane to upload, or drag rows out to
