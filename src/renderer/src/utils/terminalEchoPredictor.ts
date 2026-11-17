@@ -166,6 +166,7 @@ export class TerminalEchoPredictor {
   private erasedConfirmedChars: string[] = []
   private confirmedLineChars = 0
   private anchor: CursorPos | null = null
+  private anchorWrapPending = false
   private renderedPos: CursorPos | null = null
   private maxTouchedAbsY = 0
   private wrapPending = false
@@ -276,7 +277,7 @@ export class TerminalEchoPredictor {
       // Rewind restored erasedConfirmedChars and parked at anchor; re-erase them before underlined tail
       let pos = { ...this.anchor }
       for (let i = 0; i < this.pendingBackspaces; i++) {
-        eraseReapply += this.buildBackspaceErase(pos, false, cols)
+        eraseReapply += this.buildBackspaceErase(pos, i === 0 && this.anchorWrapPending, cols)
         pos = retreatCursor(pos, cols)
       }
     }
@@ -324,13 +325,23 @@ export class TerminalEchoPredictor {
     }
 
     if (this.pending.length === 0 && this.pendingBackspaces === 0) {
-      this.awaitingNewlineConfirm = false
+      if (this.awaitingNewlineConfirm) {
+        const cols = buf.cols
+        const nowIdx = nowPos.absY * cols + nowPos.x
+        const anchorIdx = this.anchor ? this.anchor.absY * cols + this.anchor.x : -1
+        if (!this.anchor || nowPos.absY > this.anchor.absY || nowIdx < anchorIdx) {
+          this.awaitingNewlineConfirm = false
+          this.anchor = null
+          this.anchorWrapPending = false
+        }
+      }
       return emptyResult()
     }
 
     // Pending chars queued while a server write was already in flight anchor to post-write cursor
     if (!this.anchor) {
       this.anchor = this.normalizeWritePos(nowPos, buf.cols)
+      this.anchorWrapPending = buf.cols > 0 && nowPos.x >= buf.cols
       return this.renderRemainingTail(nowPos, buf.cols, false)
     }
 
@@ -339,7 +350,28 @@ export class TerminalEchoPredictor {
     let anchorIdx = this.anchor.absY * cols + this.anchor.x
 
     if (this.pendingBackspaces > 0) {
-      if (nowIdx < anchorIdx) {
+      const effectiveAnchor = retreatCursorN(this.anchor, this.pendingBackspaces, cols)
+      const effectiveAnchorIdx = effectiveAnchor.absY * cols + effectiveAnchor.x
+      const expectedPending = this.pending.map((p) => p.ch).join('')
+      const replaced =
+        this.pending.length > 0 && nowIdx > effectiveAnchorIdx
+          ? this.extractConfirmedText(buf, effectiveAnchor, nowPos, expectedPending)
+          : ''
+      const erasedPrefix = this.erasedConfirmedChars.slice(0, replaced.length).join('')
+
+      if (
+        this.pending.length > 0 &&
+        replaced.length > 0 &&
+        replaced !== erasedPrefix &&
+        replaced[0] === this.pending[0].ch
+      ) {
+        // Server applied all pendingBackspaces and started echoing pending chars in the same chunk
+        this.pendingBackspaces = 0
+        this.erasedConfirmedChars = []
+        this.anchor = effectiveAnchor
+        this.anchorWrapPending = false
+        anchorIdx = effectiveAnchorIdx
+      } else if (nowIdx < anchorIdx) {
         const leftSteps = anchorIdx - nowIdx
         if (leftSteps > this.pendingBackspaces) {
           const hadPending = this.pending.length > 0
@@ -349,26 +381,12 @@ export class TerminalEchoPredictor {
         this.erasedConfirmedChars.splice(this.erasedConfirmedChars.length - leftSteps, leftSteps)
         this.pendingBackspaces -= leftSteps
         this.anchor = this.normalizeWritePos(nowPos, cols)
+        this.anchorWrapPending = cols > 0 && nowPos.x >= cols
         anchorIdx = nowIdx
-      } else {
-        const effectiveAnchor = retreatCursorN(this.anchor, this.pendingBackspaces, cols)
-        const replaced =
-          this.pending.length > 0 ? this.extractConfirmedText(buf, effectiveAnchor, nowPos) : ''
-        if (
-          this.pending.length > 0 &&
-          replaced.length > 0 &&
-          replaced !== this.erasedConfirmedChars.join('') &&
-          replaced[0] === this.pending[0].ch
-        ) {
-          this.pendingBackspaces = 0
-          this.erasedConfirmedChars = []
-          this.anchor = effectiveAnchor
-          anchorIdx = effectiveAnchor.absY * cols + effectiveAnchor.x
-        } else if (nowIdx > anchorIdx) {
-          const hadPending = this.pending.length > 0
-          this.clearAllPendingState(true)
-          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
-        }
+      } else if (nowIdx > anchorIdx) {
+        const hadPending = this.pending.length > 0
+        this.clearAllPendingState(true)
+        return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: hadPending }
       }
     }
 
@@ -380,7 +398,8 @@ export class TerminalEchoPredictor {
       }
 
       if (nowIdx > anchorIdx) {
-        const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos)
+        const expectedPending = this.pending.map((p) => p.ch).join('')
+        const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos, expectedPending)
         while (
           matched < this.pending.length &&
           matched < confirmed.length &&
@@ -390,11 +409,17 @@ export class TerminalEchoPredictor {
         }
 
         if (this.awaitingNewlineConfirm && nowPos.absY > this.anchor.absY) {
-          if (matched === 0) {
-            return this.enterPausedMode('paused_noecho')
+          const wrappedOnly =
+            matched === confirmed.length &&
+            nowPos.x > 0 &&
+            nowPos.absY === this.anchor.absY + Math.floor((this.anchor.x + confirmed.length) / cols)
+          if (!wrappedOnly) {
+            if (matched === 0) {
+              return this.enterPausedMode('paused_noecho')
+            }
+            this.clearAllPendingState(true)
+            return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
           }
-          this.clearAllPendingState(true)
-          return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
         }
 
         if (matched < confirmed.length) {
@@ -407,14 +432,31 @@ export class TerminalEchoPredictor {
         }
 
         this.pending.splice(0, matched)
-        this.confirmedLineChars += matched
+        if (!this.awaitingNewlineConfirm) {
+          this.confirmedLineChars += matched
+        }
         this.anchor = this.normalizeWritePos(nowPos, cols)
+        this.anchorWrapPending = cols > 0 && nowPos.x >= cols
 
         if (this.pending.length === 0) {
+          if (this.awaitingNewlineConfirm) {
+            this.confirmedLineChars = 0
+            this.renderedPos = null
+            this.maxTouchedAbsY = 0
+            this.wrapPending = false
+            this.underlined = false
+            this.predictionsRendered = false
+            return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
+          }
           this.clearAllPendingState(false)
           return { write: '', armUnderlineTimer: false, cancelUnderlineTimer: true }
         }
       }
+    }
+
+    if (this.pendingBackspaces === 0 && this.pending.length === 0) {
+      this.clearAllPendingState(false)
+      return emptyResult()
     }
 
     return this.renderRemainingTail(nowPos, cols, matched > 0)
@@ -489,6 +531,7 @@ export class TerminalEchoPredictor {
       if (this.pendingBackspaces === 0) {
         const writePos = this.normalizeWritePos(buf.cursor, buf.cols)
         this.anchor = writePos
+        this.anchorWrapPending = startWrapPending
         this.renderedPos = { ...writePos }
         this.maxTouchedAbsY = writePos.absY
         this.wrapPending = startWrapPending
@@ -528,8 +571,8 @@ export class TerminalEchoPredictor {
       return emptyResult()
     }
 
-    const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos)
     const probeStr = this.silentProbe.join('')
+    const confirmed = this.extractConfirmedText(buf, this.anchor, nowPos, probeStr)
     if (confirmed.length > 0 && confirmed.length <= probeStr.length && probeStr.startsWith(confirmed)) {
       const remaining = this.silentProbe.slice(confirmed.length)
       this.mode = 'active'
@@ -623,27 +666,55 @@ export class TerminalEchoPredictor {
     }
   }
 
-  private extractConfirmedText(buf: BufferSnapshot, from: CursorPos, to: CursorPos): string {
+  private extractConfirmedText(
+    buf: BufferSnapshot,
+    from: CursorPos,
+    to: CursorPos,
+    expected: string
+  ): string {
     if (from.absY === to.absY) {
-      if (to.x <= from.x) return ''
-      const line = buf.getLineText(from.absY)
-      const padded = line.length < to.x ? line.padEnd(to.x, ' ') : line
-      return padded.slice(from.x, to.x)
+      let text = ''
+      for (let x = from.x; x < to.x; x++) {
+        text += buf.getCellText(from.absY, x) || ' '
+      }
+      return text
     }
 
-    const firstLine = buf.getLineText(from.absY)
-    if (firstLine.slice(from.x) === '' && from.x < buf.cols - 1) {
-      // Server issued a newline right at anchor without echoing anything on anchor's row
-      return ''
+    let text = ''
+    for (let y = from.absY; y < to.absY; y++) {
+      const startX = y === from.absY ? from.x : 0
+      const lineLen = Math.min(buf.cols, buf.getLineText(y).length)
+      for (let x = startX; x < lineLen; x++) {
+        text += buf.getCellText(y, x) || ' '
+      }
+
+      const rowWrappedPastMargin = y + 1 < to.absY || to.x > 0
+      if (rowWrappedPastMargin && lineLen < buf.cols) {
+        let idx = text.length
+        let canReachMargin = true
+        for (let x = Math.max(startX, lineLen); x < buf.cols; x++) {
+          const cell = buf.getCellText(y, x) || ' '
+          if (expected[idx] !== ' ' || cell !== ' ') {
+            canReachMargin = false
+            break
+          }
+          idx++
+        }
+        if (canReachMargin) {
+          for (let x = Math.max(startX, lineLen); x < buf.cols; x++) {
+            text += buf.getCellText(y, x) || ' '
+          }
+        } else if (y === from.absY && text.length === 0) {
+          return ''
+        }
+      } else if (y === from.absY && text.length === 0) {
+        return ''
+      }
     }
 
-    let text = firstLine.slice(from.x)
-    for (let y = from.absY + 1; y < to.absY; y++) {
-      text += buf.getLineText(y)
+    for (let x = 0; x < to.x; x++) {
+      text += buf.getCellText(to.absY, x) || ' '
     }
-    const lastLine = buf.getLineText(to.absY)
-    const lastPadded = lastLine.length < to.x ? lastLine.padEnd(to.x, ' ') : lastLine
-    text += lastPadded.slice(0, to.x)
     return text
   }
 
@@ -690,6 +761,7 @@ export class TerminalEchoPredictor {
     if (this.erasedConfirmedChars.length > 0) {
       seq += this.erasedConfirmedChars.join('')
       if (
+        !this.anchorWrapPending &&
         this.anchor.x === 0 &&
         this.anchor.absY > startPos.absY &&
         cols > 0 &&
@@ -710,6 +782,7 @@ export class TerminalEchoPredictor {
       this.confirmedLineChars = 0
     }
     this.anchor = null
+    this.anchorWrapPending = false
     this.renderedPos = null
     this.maxTouchedAbsY = 0
     this.wrapPending = false

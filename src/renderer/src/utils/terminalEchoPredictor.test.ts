@@ -383,6 +383,7 @@ describe('TerminalEchoPredictor', () => {
     buf.apply('\b \b')
     const after1 = predictor.afterServerWrite(buf)
     expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
     expect(buf.getLineText(0)).toBe('$ l')
     expect(buf.cursor).toEqual({ absY: 0, x: 3 })
 
@@ -628,5 +629,178 @@ describe('TerminalEchoPredictor', () => {
 
     const promptBuf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
     expect(predictor.onInput('a', promptBuf).write).toBe('a')
+  })
+
+  it('reconciles_multi_backspace_and_replacement_char_in_single_server_chunk', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['l', 's']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(80) + 'ls')
+    predictor.afterServerWrite(buf)
+
+    // Backspace both confirmed chars and type replacement 'c'
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('c', buf).write)
+    expect(buf.getLineText(0)).toBe('$ c')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Rewind restores 'ls', then server echoes '\b \b\b \bc' in one chunk
+    const prefix = predictor.beforeServerWrite(80)
+    buf.apply(prefix)
+    expect(buf.getLineText(0)).toBe('$ ls')
+    expect(buf.cursor).toEqual({ absY: 0, x: 4 })
+
+    buf.apply('\b \b\b \bc')
+    const after = predictor.afterServerWrite(buf)
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(buf.getLineText(0)).toBe('$ c')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Subsequent beforeServerWrite must not restore old 'l' over 'c'
+    expect(predictor.beforeServerWrite(80)).toBe('')
+    predictor.afterServerWrite(buf)
+    expect(buf.getLineText(0)).toBe('$ c')
+
+    // Confirmed budget is 1 ('c'), so one backspace is allowed and a second stops at '$ '
+    expect(predictor.onInput('\x7f', buf).write).toBe('\b \b')
+    expect(predictor.onInput('\x7f', buf).write).toBe('')
+  })
+
+  it('confirmed_backspace_reconciliation_clears_predictions_rendered_without_spurious_rewind', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['l', 's']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(80) + 'ls')
+    predictor.afterServerWrite(buf)
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    // Simulate server applying real backspace AND drawing RPROMPT to the right of the cursor
+    buf.apply(predictor.beforeServerWrite(80) + '\b \b\x1b[11GRPROMPT\x1b[4G')
+    const after = predictor.afterServerWrite(buf)
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(buf.getLineText(0)).toBe('$ l       RPROMPT')
+
+    // Next server write must not emit \x1b[K that would wipe RPROMPT
+    const nextPrefix = predictor.beforeServerWrite(80)
+    expect(nextPrefix).toBe('')
+    buf.apply(nextPrefix)
+    expect(buf.getLineText(0)).toBe('$ l       RPROMPT')
+  })
+
+  it('chunked_command_echo_before_newline_keeps_awaiting_newline_confirm', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('l', buf).write)
+    buf.apply(predictor.onInput('s', buf).write)
+    expect(predictor.onInput('\r', buf).write).toBe('')
+
+    // Chunk 1 echoes 'ls' before '\r\n' arrives
+    const prefix1 = predictor.beforeServerWrite(80)
+    buf.apply(prefix1 + 'ls')
+    const after1 = predictor.afterServerWrite(buf)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+
+    // Before '\r\n' arrives, keystrokes and backspaces must NOT predict onto or erase 'ls'
+    expect(predictor.onInput('x', buf).write).toBe('')
+    expect(predictor.onInput('\x7f', buf).write).toBe('')
+    expect(buf.getLineText(0)).toBe('$ ls')
+
+    // Chunk 2 delivers '\r\n$ ' -> re-enables prediction on the new prompt
+    expect(predictor.beforeServerWrite(80)).toBe('')
+    buf.apply('\r\n$ ')
+    const after2 = predictor.afterServerWrite(buf)
+    expect(after2).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.onInput('p', buf).write).toBe('p')
+  })
+
+  it('confirmed_backspace_rewind_from_deferred_wrap_preserves_wrap_cursor', () => {
+    let now = 1000
+    const predictor = new TerminalEchoPredictor(() => now)
+    const buf = new FakeBuffer(10, ['', ''], { absY: 1, x: 0 })
+
+    // Confirm 10 chars filling row 1 (cols = 10) -> cursor enters deferred wrap at (1, 10)
+    for (const ch of '0123456789') {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(10) + '0123456789')
+    predictor.afterServerWrite(buf)
+    expect(buf.cursor).toEqual({ absY: 1, x: 10 })
+
+    // Speculative backspace erases '9' at (1, 9)
+    const bs = predictor.onInput('\x7f', buf)
+    expect(bs.write).toBe('\x1b[10G \x1b[10G')
+    buf.apply(bs.write)
+    expect(buf.getLineText(1)).toBe('012345678')
+    expect(buf.cursor).toEqual({ absY: 1, x: 9 })
+
+    // Rewind restores '9' and must preserve deferred wrap at (1, 10), not move to (2, 0)
+    const prefix = predictor.beforeServerWrite(10)
+    buf.apply(prefix)
+    expect(buf.getLineText(1)).toBe('0123456789')
+    expect(buf.cursor).toEqual({ absY: 1, x: 10 })
+
+    // Server's real erase at col 10 reconciles cleanly
+    buf.apply('\x1b[10G \x1b[10G')
+    const after = predictor.afterServerWrite(buf)
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(buf.getLineText(1)).toBe('012345678')
+    expect(buf.cursor).toEqual({ absY: 1, x: 9 })
+
+    // Verify underline timeout with pendingBackspaces from deferred wrap on row 1 (absY = 1)
+    const buf2 = new FakeBuffer(10, ['', ''], { absY: 1, x: 0 })
+    const p2 = new TerminalEchoPredictor(() => now)
+    for (const ch of '0123456789') {
+      buf2.apply(p2.onInput(ch, buf2).write)
+    }
+    buf2.apply(p2.beforeServerWrite(10) + '0123456789')
+    p2.afterServerWrite(buf2)
+    buf2.apply(p2.onInput('\x7f', buf2).write)
+    buf2.apply(p2.onInput('x', buf2).write)
+    now += 100
+    const ul = p2.applyUnderlineTimeout(10)
+    buf2.apply(ul)
+    expect(buf2.getLineText(1)).toBe('012345678x')
+    expect(buf2.cursor).toEqual({ absY: 1, x: 10 })
+  })
+
+  it('extract_confirmed_text_preserves_trailing_spaces_across_line_wrap', () => {
+    // Case A: space right at cols - 1 wraps before 'a'
+    const p1 = new TerminalEchoPredictor(() => 1000)
+    const buf1 = new FakeBuffer(10, ['012345678'], { absY: 0, x: 9 })
+    buf1.apply(p1.onInput(' ', buf1).write)
+    buf1.apply(p1.onInput('a', buf1).write)
+    expect(buf1.cursor).toEqual({ absY: 1, x: 1 })
+
+    buf1.apply(p1.beforeServerWrite(10) + ' a')
+    const after1 = p1.afterServerWrite(buf1)
+    expect(after1).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(p1.getSnapshot().mode).toBe('active')
+    expect(p1.getSnapshot().pendingCount).toBe(0)
+
+    // Case B: 'a b' wraps with space at cols - 1 while 'c' remains pending
+    const p2 = new TerminalEchoPredictor(() => 1000)
+    const buf2 = new FakeBuffer(10, ['01234567'], { absY: 0, x: 8 })
+    for (const ch of ['a', ' ', 'b', 'c']) {
+      buf2.apply(p2.onInput(ch, buf2).write)
+    }
+    buf2.apply(p2.beforeServerWrite(10) + 'a b')
+    const after2 = p2.afterServerWrite(buf2)
+    expect(after2.write).toBe('c')
+    expect(p2.getSnapshot().mode).toBe('active')
+    expect(p2.getSnapshot().pendingCount).toBe(1)
   })
 })
