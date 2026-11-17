@@ -228,6 +228,7 @@ describe('terminalStreams.store', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
@@ -296,7 +297,7 @@ describe('terminalStreams.store', () => {
     typeKeystrokes('b')
     writtenChunks.length = 0
 
-    store.flushPredictions('sess-1')
+    await store.flushPredictions('sess-1')
     expect(writtenChunks.length).toBe(1)
     expect(writtenChunks[0]).toContain('\x1b[K')
 
@@ -496,5 +497,73 @@ describe('terminalStreams.store', () => {
     typeKeystrokes('z')
     expect(inst.predictor.getSnapshot().pendingServerWrites).toBe(0)
     expect(writtenChunks).toEqual(['z'])
+  })
+
+  it('flushPredictions waits for rewind term.write callback before resolving and bumps writeGeneration', async () => {
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+
+    const openPromise = store.ensureTerminal('sess-1')
+    resolveOpen!({ terminalId: 'term-1' })
+    await openPromise
+
+    const inst = store.getInstance('sess-1')!
+
+    // No active predictions -> resolves immediately without writing or bumping writeGeneration
+    const emptyGenBefore = inst.writeGeneration
+    writtenChunks.length = 0
+    await store.flushPredictions('sess-1')
+    expect(writtenChunks).toEqual([])
+    expect(inst.writeGeneration).toBe(emptyGenBefore)
+
+    // With active predictions -> defers resolution until rewind write callback fires and bumps writeGeneration
+    typeKeystrokes('a')
+    typeKeystrokes('b')
+    deferWriteCallbacks = true
+    writtenChunks.length = 0
+    const genBeforeFlush = inst.writeGeneration
+
+    let resolved = false
+    const flushPromise = store.flushPredictions('sess-1').then(() => {
+      resolved = true
+    })
+
+    expect(inst.writeGeneration).toBe(genBeforeFlush + 1)
+    expect(writtenChunks.length).toBe(1)
+    expect(writtenChunks[0]).toContain('\x1b[K')
+    expect(pendingWriteCallbacks).toHaveLength(1)
+
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+
+    pendingWriteCallbacks.shift()!()
+    await flushPromise
+    expect(resolved).toBe(true)
+  })
+
+  it('re-arms underlineTimer briefly when OS timer fires slightly before 100ms', async () => {
+    vi.useFakeTimers()
+    let mockNow = 1000
+    vi.spyOn(Date, 'now').mockImplementation(() => mockNow)
+
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+
+    const openPromise = store.ensureTerminal('sess-1')
+    resolveOpen!({ terminalId: 'term-1' })
+    await openPromise
+
+    typeKeystrokes('k')
+    expect(writtenChunks).toEqual(['k'])
+
+    // Simulate OS timer alignment firing the 100ms timeout 1ms early (elapsed = 99ms)
+    mockNow = 1099
+    vi.advanceTimersByTime(100)
+    expect(writtenChunks.some((chunk) => chunk.includes('\x1b[4mk\x1b[24m'))).toBe(false)
+
+    // Short 10ms retry timer applies underline once elapsed >= 100ms
+    mockNow = 1109
+    vi.advanceTimersByTime(10)
+    expect(writtenChunks.some((chunk) => chunk.includes('\x1b[4mk\x1b[24m'))).toBe(true)
   })
 })

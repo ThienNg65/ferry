@@ -27,6 +27,7 @@ interface TerminalInstance {
 const ACK_BATCH_BYTES = 100 * 1024
 const MAX_EARLY_BUFFER_BYTES = 64 * 1024
 const PREDICTIVE_UNDERLINE_MS = 100
+const PREDICTIVE_UNDERLINE_RETRY_MS = 10
 const textEncoder = new TextEncoder()
 export const TERMINAL_SEARCH_EVENT = 'ferry:terminal-search'
 
@@ -106,6 +107,29 @@ function clearUnderlineTimer(inst: TerminalInstance): void {
   }
 }
 
+function scheduleUnderlineTimer(sessionId: string, inst: TerminalInstance, delayMs: number): void {
+  clearUnderlineTimer(inst)
+  inst.underlineTimer = setTimeout(() => {
+    inst.underlineTimer = null
+    if (instances.get(sessionId) !== inst) {
+      return
+    }
+    const snap = inst.predictor.getSnapshot()
+    if (snap.pendingServerWrites !== 0) {
+      return
+    }
+    const underlineWrite = inst.predictor.applyUnderlineTimeout(inst.term.cols)
+    if (underlineWrite) {
+      inst.term.write(underlineWrite)
+      return
+    }
+    // Re-arm briefly if OS timer fired slightly before the 100ms threshold.
+    if (snap.mode === 'active' && snap.pendingCount > 0 && snap.predictionsRendered && !snap.underlined) {
+      scheduleUnderlineTimer(sessionId, inst, PREDICTIVE_UNDERLINE_RETRY_MS)
+    }
+  }, delayMs)
+}
+
 function applyPredictionResult(
   sessionId: string,
   inst: TerminalInstance,
@@ -118,29 +142,20 @@ function applyPredictionResult(
     inst.term.write(res.write)
   }
   if (res.armUnderlineTimer) {
-    clearUnderlineTimer(inst)
-    inst.underlineTimer = setTimeout(() => {
-      inst.underlineTimer = null
-      if (instances.get(sessionId) !== inst) {
-        return
-      }
-      if (inst.predictor.getSnapshot().pendingServerWrites !== 0) {
-        return
-      }
-      const underlineWrite = inst.predictor.applyUnderlineTimeout(inst.term.cols)
-      if (underlineWrite) {
-        inst.term.write(underlineWrite)
-      }
-    }, PREDICTIVE_UNDERLINE_MS)
+    scheduleUnderlineTimer(sessionId, inst, PREDICTIVE_UNDERLINE_MS)
   }
 }
 
-function flushInstancePredictions(inst: TerminalInstance): void {
+function flushInstancePredictions(inst: TerminalInstance): Promise<void> {
   clearUnderlineTimer(inst)
   const write = inst.predictor.resetForFlush(snapshotBuffer(inst.term))
-  if (write) {
-    inst.term.write(write)
+  if (!write) {
+    return Promise.resolve()
   }
+  inst.writeGeneration++
+  return new Promise<void>((resolve) => {
+    inst.term.write(write, () => resolve())
+  })
 }
 
 function findEntryByTerminalId(terminalId: string): [string, TerminalInstance] | undefined {
@@ -467,12 +482,12 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
     },
 
     /** Rewinds and clears unconfirmed local predictions before fit()/resize. */
-    flushPredictions(sessionId: string): void {
+    flushPredictions(sessionId: string): Promise<void> {
       const inst = instances.get(sessionId)
       if (!inst) {
-        return
+        return Promise.resolve()
       }
-      flushInstancePredictions(inst)
+      return flushInstancePredictions(inst)
     },
 
     /** Clears active predictions across open instances when predictive local echo is disabled. */
@@ -481,7 +496,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         return
       }
       for (const inst of instances.values()) {
-        flushInstancePredictions(inst)
+        void flushInstancePredictions(inst)
         inst.predictor.reset()
         inst.writeGeneration++
       }
