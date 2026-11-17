@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { FileEntry } from '@shared/contract'
 import {
   appendUniquePattern,
-  compileGlob,
   composePaneEntries,
   createVisibilityMatcher,
   emptyVisibilityFilter,
   formatPatternLines,
   hasActiveVisibilityFilter,
+  matchGlob,
   parsePatternLines,
   suggestPatternsFromFilename
 } from './fileVisibilityFilter'
@@ -96,21 +96,31 @@ describe('compileGlob and createVisibilityMatcher', () => {
   })
 
   it('uses case-sensitive basename matching', () => {
-    const re = compileGlob('App.log')
-    expect(re.test('App.log')).toBe(true)
-    expect(re.test('app.log')).toBe(false)
-    expect(re.test('/var/log/App.log')).toBe(false)
+    expect(matchGlob('App.log', 'App.log')).toBe(true)
+    expect(matchGlob('App.log', 'app.log')).toBe(false)
+    expect(matchGlob('App.log', '/var/log/App.log')).toBe(false)
 
     const matcher = createVisibilityMatcher({ include: ['*.log'], exclude: [] })
     expect(matcher(file('app.log', '/dir/app.log'))).toBe(true)
     expect(matcher(file('app.LOG', '/dir/app.LOG'))).toBe(false)
   })
 
-  it('escapes regex metacharacters in glob patterns', () => {
-    const re = compileGlob('report[1]+(v2).log')
-    expect(re.test('report[1]+(v2).log')).toBe(true)
-    expect(re.test('report1+(v2).log')).toBe(false)
-    expect(compileGlob('a.log').test('axlog')).toBe(false)
+  it('matches regex metacharacters literally in glob patterns', () => {
+    expect(matchGlob('report[1]+(v2).log', 'report[1]+(v2).log')).toBe(true)
+    expect(matchGlob('report[1]+(v2).log', 'report1+(v2).log')).toBe(false)
+    expect(matchGlob('a.log', 'axlog')).toBe(false)
+  })
+
+  it('bounds matching cost for wildcard-heavy nonmatching patterns', () => {
+    expect(matchGlob('*a*a*a*a*b', 'xxaayyazzab')).toBe(true)
+    expect(matchGlob('app***', 'app.log')).toBe(true)
+    expect(matchGlob('***', '')).toBe(true)
+
+    const start = performance.now()
+    expect(matchGlob('**********.log', `${'a'.repeat(100)}.txt`)).toBe(false)
+    expect(matchGlob('*a*a*a*a*a*a*a*a*a*a*a*a*b', `${'a'.repeat(100)}.txt`)).toBe(false)
+    const elapsedMs = performance.now() - start
+    expect(elapsedMs).toBeLessThan(50)
   })
 
   it('always keeps directories visible regardless of patterns', () => {

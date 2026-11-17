@@ -51,21 +51,52 @@ export function hasActiveVisibilityFilter(filter?: FileVisibilityFilter | null):
   return Boolean(filter && (filter.include.length > 0 || filter.exclude.length > 0))
 }
 
-/** Compiles a case-sensitive filename glob (`*` = any chars, `?` = one char) into an anchored RegExp. */
-export function compileGlob(pattern: string): RegExp {
-  let regexBody = ''
-  for (const ch of pattern) {
-    if (ch === '*') {
-      regexBody += '.*'
-    } else if (ch === '?') {
-      regexBody += '.'
-    } else if ('\\^$.|+()[]{}'.includes(ch)) {
-      regexBody += `\\${ch}`
+/** Collapses consecutive `*` wildcards into one to eliminate redundant backtracking steps. */
+function normalizeGlob(pattern: string): string {
+  return pattern.replace(/\*+/g, '*')
+}
+
+function matchNormalizedGlob(pat: string, text: string): boolean {
+  let p = 0
+  let t = 0
+  let starIdx = -1
+  let matchIdx = 0
+
+  while (t < text.length) {
+    if (p < pat.length && (pat[p] === '?' || pat[p] === text[t])) {
+      p++
+      t++
+    } else if (p < pat.length && pat[p] === '*') {
+      starIdx = p
+      matchIdx = t
+      p++
+    } else if (starIdx !== -1) {
+      p = starIdx + 1
+      matchIdx++
+      t = matchIdx
     } else {
-      regexBody += ch
+      return false
     }
   }
-  return new RegExp(`^${regexBody}$`)
+
+  while (p < pat.length && pat[p] === '*') {
+    p++
+  }
+  return p === pat.length
+}
+
+/**
+ * Bounded-cost case-sensitive filename glob matcher (`*` = any chars, `?` = one char).
+ * Runs in O(|pattern| * |text|) worst-case time without RegExp backtracking.
+ */
+export function matchGlob(pattern: string, text: string): boolean {
+  return matchNormalizedGlob(normalizeGlob(pattern), text)
+}
+
+/** Compiles a normalized, bounded-cost case-sensitive filename glob predicate. */
+export function compileGlob(pattern: string): (name: string) => boolean {
+  const normalized = normalizeGlob(pattern)
+  return (name: string) => matchNormalizedGlob(normalized, name)
 }
 
 /**
@@ -74,17 +105,17 @@ export function compileGlob(pattern: string): RegExp {
  * - `include` patterns are OR'ed; `exclude` patterns are OR'ed; excludes win.
  */
 export function createVisibilityMatcher(filter?: FileVisibilityFilter | null): (entry: FileEntry) => boolean {
-  const includeRegexes = (filter?.include ?? []).filter(Boolean).map(compileGlob)
-  const excludeRegexes = (filter?.exclude ?? []).filter(Boolean).map(compileGlob)
-  if (includeRegexes.length === 0 && excludeRegexes.length === 0) {
+  const includeMatchers = (filter?.include ?? []).filter(Boolean).map(compileGlob)
+  const excludeMatchers = (filter?.exclude ?? []).filter(Boolean).map(compileGlob)
+  if (includeMatchers.length === 0 && excludeMatchers.length === 0) {
     return () => true
   }
   return (entry: FileEntry): boolean => {
     if (entry.isDir) return true
-    if (includeRegexes.length > 0 && !includeRegexes.some((re) => re.test(entry.name))) {
+    if (includeMatchers.length > 0 && !includeMatchers.some((match) => match(entry.name))) {
       return false
     }
-    if (excludeRegexes.some((re) => re.test(entry.name))) {
+    if (excludeMatchers.some((match) => match(entry.name))) {
       return false
     }
     return true
