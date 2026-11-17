@@ -38,6 +38,13 @@ class FakeBuffer implements BufferSnapshot {
     let i = 0
     while (i < seq.length) {
       const ch = seq[i]
+      if (ch === '\x1b' && seq[i + 1] === ']') {
+        const oscMatch = /^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/.exec(seq.slice(i))
+        if (oscMatch) {
+          i += oscMatch[0].length
+          continue
+        }
+      }
       if (ch === '\x1b' && seq[i + 1] === '[') {
         const match = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(seq.slice(i))
         if (match) {
@@ -870,5 +877,152 @@ describe('TerminalEchoPredictor', () => {
     expect(after2.write).toBe('c')
     expect(p2.getSnapshot().mode).toBe('active')
     expect(p2.getSnapshot().pendingCount).toBe(1)
+  })
+
+  it('reconciles_single_confirmed_backspace_and_retyped_same_char_in_one_chunk', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('a', buf).write)
+    buf.apply(predictor.beforeServerWrite(80) + 'a')
+    predictor.afterServerWrite(buf, 'a')
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('a', buf).write)
+    expect(buf.getLineText(0)).toBe('$ a')
+
+    const prefix = predictor.beforeServerWrite(80)
+    buf.apply(prefix + '\b \ba')
+    const after = predictor.afterServerWrite(buf, '\b \ba')
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot()).toEqual({
+      mode: 'active',
+      pendingCount: 0,
+      underlined: false,
+      predictionsRendered: false,
+      pendingServerWrites: 0,
+    })
+    expect(predictor.beforeServerWrite(80)).toBe('')
+    predictor.afterServerWrite(buf, '')
+    expect(predictor.onInput('b', buf).write).toBe('b')
+  })
+
+  it('reconciles_multi_confirmed_backspace_and_retyped_erased_prefix_in_one_chunk', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['a', 't']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(80) + 'at')
+    predictor.afterServerWrite(buf, 'at')
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('a', buf).write)
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    buf.apply(predictor.beforeServerWrite(80) + '\b \b\b \ba')
+    const after = predictor.afterServerWrite(buf, '\b \b\b \ba')
+    expect(after).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Confirmed budget is now 1 ('a'): one backspace works, second stops at '$ '
+    expect(predictor.onInput('\x7f', buf).write).toBe('\b \b')
+    expect(predictor.onInput('\x7f', buf).write).toBe('')
+  })
+
+  it('does_not_prematurely_consume_erased_prefix_on_partial_backspace_chunk', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    for (const ch of ['a', 't']) {
+      buf.apply(predictor.onInput(ch, buf).write)
+    }
+    buf.apply(predictor.beforeServerWrite(80) + 'at')
+    predictor.afterServerWrite(buf, 'at')
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('a', buf).write)
+
+    // Chunk 1 applies only 1 of 2 backspaces ('\b \b') before 'a' is echoed
+    buf.apply(predictor.beforeServerWrite(80) + '\b \b')
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    const after1 = predictor.afterServerWrite(buf, '\b \b')
+    expect(after1).toEqual({ write: '\b \ba', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().pendingCount).toBe(1)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+    buf.apply(after1.write)
+    expect(buf.getLineText(0)).toBe('$ a')
+    expect(buf.cursor).toEqual({ absY: 0, x: 3 })
+
+    // Chunk 2 delivers remaining backspace and echoed 'a'
+    buf.apply(predictor.beforeServerWrite(80) + '\b \ba')
+    const after2 = predictor.afterServerWrite(buf, '\b \ba')
+    expect(after2).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+  })
+
+  it('preserves_pending_backspace_and_retyped_prefix_across_osc_only_chunk', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('a', buf).write)
+    buf.apply(predictor.beforeServerWrite(80) + 'a')
+    predictor.afterServerWrite(buf, 'a')
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('a', buf).write)
+
+    // OSC-only chunk contains 'a' in title payload without line-edit sequences or visible echo
+    buf.apply(predictor.beforeServerWrite(80) + '\x1b]0;a\x07')
+    const afterOsc = predictor.afterServerWrite(buf, '\x1b]0;a\x07')
+    expect(afterOsc).toEqual({ write: '\b \ba', armUnderlineTimer: false, cancelUnderlineTimer: false })
+    expect(predictor.getSnapshot().pendingCount).toBe(1)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(true)
+    buf.apply(afterOsc.write)
+
+    buf.apply(predictor.beforeServerWrite(80) + '\b \ba')
+    const afterEcho = predictor.afterServerWrite(buf, '\b \ba')
+    expect(afterEcho).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
+  })
+
+  it('reconciles_erased_prefix_when_backspace_and_retyped_char_split_across_overlapping_writes', () => {
+    const predictor = new TerminalEchoPredictor(() => 1000)
+    const buf = new FakeBuffer(80, ['$ '], { absY: 0, x: 2 })
+
+    buf.apply(predictor.onInput('a', buf).write)
+    buf.apply(predictor.beforeServerWrite(80) + 'a')
+    predictor.afterServerWrite(buf, 'a')
+
+    buf.apply(predictor.onInput('\x7f', buf).write)
+    buf.apply(predictor.onInput('a', buf).write)
+
+    const prefix1 = predictor.beforeServerWrite(80)
+    const prefix2 = predictor.beforeServerWrite(80)
+    expect(prefix2).toBe('')
+
+    buf.apply(prefix1 + '\b \b')
+    expect(predictor.afterServerWrite(buf, '\b \b')).toEqual({
+      write: '',
+      armUnderlineTimer: false,
+      cancelUnderlineTimer: false,
+    })
+
+    buf.apply('a')
+    const after2 = predictor.afterServerWrite(buf, 'a')
+    expect(after2).toEqual({ write: '', armUnderlineTimer: false, cancelUnderlineTimer: true })
+    expect(predictor.getSnapshot().pendingCount).toBe(0)
+    expect(predictor.getSnapshot().predictionsRendered).toBe(false)
   })
 })

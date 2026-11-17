@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Terminal } from '@xterm/xterm'
+import type { IMarker, Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { SearchAddon } from '@xterm/addon-search'
 import type { WebglAddon } from '@xterm/addon-webgl'
@@ -22,6 +22,9 @@ interface TerminalInstance {
   predictor: TerminalEchoPredictor
   underlineTimer: ReturnType<typeof setTimeout> | null
   writeGeneration: number
+  evictedOffset: number
+  scrollMarker: IMarker | null
+  scrollMarkerLastLine: number
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -29,6 +32,7 @@ const MAX_EARLY_BUFFER_BYTES = 64 * 1024
 const PREDICTIVE_UNDERLINE_MS = 100
 const PREDICTIVE_UNDERLINE_RETRY_MS = 10
 const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
 export const TERMINAL_SEARCH_EVENT = 'ferry:terminal-search'
 
 /**
@@ -82,20 +86,65 @@ async function pasteInto(term: Terminal): Promise<void> {
   }
 }
 
-function snapshotBuffer(term: Terminal): BufferSnapshot {
+function resetScrollTracker(inst: TerminalInstance): void {
+  if (inst.scrollMarker && !inst.scrollMarker.isDisposed) {
+    inst.scrollMarker.dispose()
+  }
+  inst.scrollMarker = null
+  inst.scrollMarkerLastLine = 0
+  inst.evictedOffset = 0
+}
+
+function syncScrollOffset(inst: TerminalInstance): number {
+  const active = inst.term.buffer.active
+  if (active.type !== 'normal' || typeof inst.term.registerMarker !== 'function') {
+    return inst.evictedOffset
+  }
+  if (inst.scrollMarker) {
+    if (inst.scrollMarker.isDisposed) {
+      inst.evictedOffset += inst.scrollMarkerLastLine + 1
+      inst.scrollMarker = null
+    } else {
+      if (inst.scrollMarker.line < inst.scrollMarkerLastLine) {
+        inst.evictedOffset += inst.scrollMarkerLastLine - inst.scrollMarker.line
+      }
+      inst.scrollMarker.dispose()
+      inst.scrollMarker = null
+    }
+  }
+  const marker = inst.term.registerMarker(0)
+  if (marker && !marker.isDisposed && marker.line >= 0) {
+    inst.scrollMarker = marker
+    inst.scrollMarkerLastLine = active.baseY + active.cursorY
+  } else {
+    if (marker && !marker.isDisposed) {
+      marker.dispose()
+    }
+    inst.scrollMarkerLastLine = 0
+  }
+  return inst.evictedOffset
+}
+
+function snapshotBuffer(inst: TerminalInstance): BufferSnapshot {
+  const term = inst.term
   const active = term.buffer.active
+  const offset = syncScrollOffset(inst)
   return {
     type: active.type,
     cols: term.cols,
     cursor: {
-      absY: active.baseY + active.cursorY,
+      absY: offset + active.baseY + active.cursorY,
       x: active.cursorX
     },
     getLineText(absY: number): string {
-      return active.getLine(absY)?.translateToString(true) ?? ''
+      const realY = absY - offset
+      if (realY < 0) return ''
+      return active.getLine(realY)?.translateToString(true) ?? ''
     },
     getCellText(absY: number, x: number): string {
-      return active.getLine(absY)?.getCell(x)?.getChars() ?? ''
+      const realY = absY - offset
+      if (realY < 0) return ''
+      return active.getLine(realY)?.getCell(x)?.getChars() ?? ''
     }
   }
 }
@@ -148,7 +197,7 @@ function applyPredictionResult(
 
 function flushInstancePredictions(inst: TerminalInstance): Promise<void> {
   clearUnderlineTimer(inst)
-  const write = inst.predictor.resetForFlush(snapshotBuffer(inst.term))
+  const write = inst.predictor.resetForFlush(snapshotBuffer(inst))
   if (!write) {
     return Promise.resolve()
   }
@@ -185,11 +234,11 @@ function prependPrefix(prefix: string, data: string | Uint8Array): string | Uint
   return combined
 }
 
-function handleAfterServerWrite(sessionId: string, inst: TerminalInstance): void {
+function handleAfterServerWrite(sessionId: string, inst: TerminalInstance, serverData?: string): void {
   if (instances.get(sessionId) !== inst) {
     return
   }
-  const res = inst.predictor.afterServerWrite(snapshotBuffer(inst.term))
+  const res = inst.predictor.afterServerWrite(snapshotBuffer(inst), serverData)
   applyPredictionResult(sessionId, inst, res)
 }
 
@@ -200,6 +249,11 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
   const gen = inst.writeGeneration
   const predictive = useUiStore().terminalPredictiveEcho
   const prefix = predictive ? inst.predictor.beforeServerWrite(inst.term.cols) : ''
+  const serverData = predictive
+    ? typeof data === 'string'
+      ? data
+      : textDecoder.decode(data, { stream: false })
+    : undefined
   inst.term.write(prependPrefix(prefix, data), () => {
     if (inst.terminalId === targetTerminalId) {
       inst.unacked += bytes
@@ -215,7 +269,7 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
       instances.get(sessionId) === inst &&
       inst.terminalId === targetTerminalId
     ) {
-      handleAfterServerWrite(sessionId, inst)
+      handleAfterServerWrite(sessionId, inst, serverData)
     }
   })
 }
@@ -267,6 +321,7 @@ function ensureSubscriptions(): void {
     clearUnderlineTimer(inst)
     const prefix = inst.predictor.beforeServerWrite(inst.term.cols)
     inst.predictor.reset()
+    resetScrollTracker(inst)
     inst.writeGeneration++
     inst.term.write(`${prefix}\r\n[Process exited]\r\n`)
     onShellExited?.(sessionId)
@@ -296,6 +351,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       }
       clearUnderlineTimer(inst)
       inst.predictor.reset()
+      resetScrollTracker(inst)
       inst.writeGeneration++
       opensInFlight++
       try {
@@ -315,6 +371,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         inst.term.write('\r\n[Shell restarted]\r\n')
         clearUnderlineTimer(inst)
         inst.predictor.reset()
+        resetScrollTracker(inst)
         inst.writeGeneration++
         drainEarlyOutput(sessionId, inst)
         inst.term.focus()
@@ -392,7 +449,10 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             rows: 24,
             predictor: new TerminalEchoPredictor(),
             underlineTimer: null,
-            writeGeneration: 0
+            writeGeneration: 0,
+            evictedOffset: 0,
+            scrollMarker: null,
+            scrollMarkerLastLine: 0
           }
           term.onData((data) => {
             const input: TerminalInputEvent = { terminalId: inst.terminalId, data }
@@ -400,7 +460,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             if (!useUiStore().terminalPredictiveEcho) {
               return
             }
-            const res = inst.predictor.onInput(data, snapshotBuffer(inst.term))
+            const res = inst.predictor.onInput(data, snapshotBuffer(inst))
             applyPredictionResult(sessionId, inst, res)
           })
           // Clipboard shortcuts (Ctrl+C copies only when a selection exists —
@@ -498,6 +558,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       for (const inst of instances.values()) {
         void flushInstancePredictions(inst)
         inst.predictor.reset()
+        resetScrollTracker(inst)
         inst.writeGeneration++
       }
     },
@@ -538,6 +599,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         instances.delete(sessionId)
         clearUnderlineTimer(inst)
         inst.predictor.reset()
+        resetScrollTracker(inst)
         inst.writeGeneration++
         this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
         this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)

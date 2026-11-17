@@ -85,6 +85,7 @@ async function fitAndResize(sessionId: string): Promise<void> {
   const latestInst = terminalStreams.getInstance(sessionId)
   const latestContainer = containerRef.value
   if (
+    unmounted ||
     isStale(sessionId) ||
     latestInst !== inst ||
     !latestContainer ||

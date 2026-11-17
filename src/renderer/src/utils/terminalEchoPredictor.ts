@@ -155,6 +155,19 @@ function splitPrintableScalars(data: string): string[] | null {
   return scalars
 }
 
+function hasLineEditSequence(raw: string): boolean {
+  return /\x08|\r|\n|\x1b\[[0-9;]*[ABCDGHJKPX]/.test(raw)
+}
+
+function extractEchoedText(raw: string): string {
+  return raw
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/(?:\x08 +\x08|\x08 +\x1b\[[0-9;]*D|\x1b\[[0-9;]*D +\x1b\[[0-9;]*D)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b(?:[ -/]+[@-~]|[@-~])/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+}
+
 /**
  * Pure Mosh-style predictive local echo state machine for xterm.js over SSH.
  */
@@ -173,6 +186,7 @@ export class TerminalEchoPredictor {
   private underlined = false
   private predictionsRendered = false
   private pendingServerWrites = 0
+  private inFlightServerData: string | null = null
   private awaitingNewlineConfirm = false
   private submittedWhilePaused = false
   private silentProbe: string[] = []
@@ -298,9 +312,12 @@ export class TerminalEchoPredictor {
     return write
   }
 
-  afterServerWrite(buf: BufferSnapshot): PredictionResult {
+  afterServerWrite(buf: BufferSnapshot, serverData?: string): PredictionResult {
     if (this.pendingServerWrites > 0) {
       this.pendingServerWrites--
+    }
+    if (serverData !== undefined) {
+      this.inFlightServerData = (this.inFlightServerData ?? '') + serverData
     }
 
     if (buf.type === 'alternate') {
@@ -313,6 +330,9 @@ export class TerminalEchoPredictor {
     if (this.pendingServerWrites > 0) {
       return emptyResult()
     }
+
+    const chunkData = this.inFlightServerData ?? undefined
+    this.inFlightServerData = null
 
     const nowPos: CursorPos = { ...buf.cursor }
     const lineUpToCursor = buf.getLineText(nowPos.absY).slice(0, nowPos.x)
@@ -367,8 +387,11 @@ export class TerminalEchoPredictor {
       if (
         this.pending.length > 0 &&
         replaced.length > 0 &&
-        replaced !== erasedPrefix &&
-        replaced[0] === this.pending[0].ch
+        replaced[0] === this.pending[0].ch &&
+        (replaced !== erasedPrefix ||
+          (chunkData !== undefined &&
+            hasLineEditSequence(chunkData) &&
+            extractEchoedText(chunkData).startsWith(replaced)))
       ) {
         // Server applied all pendingBackspaces and started echoing pending chars in the same chunk
         this.pendingBackspaces = 0
@@ -482,6 +505,7 @@ export class TerminalEchoPredictor {
   reset(): void {
     this.mode = 'active'
     this.pendingServerWrites = 0
+    this.inFlightServerData = null
     this.submittedWhilePaused = false
     this.silentProbe = []
     this.clearAllPendingState(true)
@@ -614,6 +638,7 @@ export class TerminalEchoPredictor {
   private enterPausedMode(mode: Exclude<PredictorMode, 'active'>): PredictionResult {
     const hadPending = this.pending.length > 0
     this.mode = mode
+    this.inFlightServerData = null
     this.submittedWhilePaused = false
     this.silentProbe = []
     this.clearAllPendingState(true)
