@@ -13,6 +13,7 @@ import {
   useUiStore
 } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
+import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
@@ -255,6 +256,10 @@ function sessionLabel(sessionId: string): string | null {
   const tab = sessions.tabs.find((t) => t.sessionId === sessionId)
   return tab?.label ?? tab?.hostLabel ?? null
 }
+
+function openTerminalSearch(): void {
+  window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))
+}
 </script>
 
 <template>
@@ -338,23 +343,56 @@ function sessionLabel(sessionId: string): string | null {
           @keydown="onTablistKeydown($event)"
         >
           <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip">
-            <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
-              <UButton
-                class="ferry-dock-tab shrink-0"
-                :icon="compactRightTabs ? panel.icon : undefined"
-                :label="!compactRightTabs || (!collapsed && tab === panel.id) ? panel.label : undefined"
-                :aria-label="panel.label"
-                role="tab"
-                :aria-selected="!collapsed && tab === panel.id"
-                size="xs"
-                :color="!collapsed && tab === panel.id ? 'primary' : 'neutral'"
-                :variant="!collapsed && tab === panel.id ? 'soft' : 'ghost'"
-                @click="onTabClick(panel.id)"
+            <button
+              type="button"
+              class="ferry-dock-tab inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+              :class="!collapsed && tab === panel.id ? 'font-medium text-highlighted' : 'text-muted hover:bg-elevated/60 hover:text-default'"
+              role="tab"
+              :aria-selected="!collapsed && tab === panel.id"
+              :aria-label="panel.label"
+              @click="onTabClick(panel.id)"
+            >
+              <UIcon
+                :name="panel.icon"
+                class="size-3.5 shrink-0"
+                :class="!collapsed && tab === panel.id ? 'text-primary' : 'text-muted'"
               />
-            </UChip>
+              <span v-if="!compactRightTabs || (!collapsed && tab === panel.id)">{{ panel.label }}</span>
+              <span
+                v-if="panel.badge > 0"
+                class="rounded-full bg-primary/15 px-1.5 py-0.2 font-mono text-3xs font-semibold tabular-nums text-primary"
+              >
+                {{ panel.badge }}
+              </span>
+            </button>
           </UTooltip>
         </div>
         <div class="flex shrink-0 items-center gap-0.5">
+          <template v-if="!collapsed && tab === 'terminal'">
+            <span
+              v-if="sessions.activeTab.hostLabel"
+              class="mr-1 hidden max-w-44 truncate font-mono text-2xs text-muted sm:inline"
+              :title="sessions.activeTab.hostLabel"
+            >
+              {{ sessions.activeTab.hostLabel }}
+            </span>
+            <UTooltip text="Find in terminal (Ctrl+Shift+F)">
+              <UButton
+                icon="i-lucide-search"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                aria-label="Search terminal"
+                @click="openTerminalSearch"
+              />
+            </UTooltip>
+          </template>
+          <kbd
+            v-if="collapsed && !isRight"
+            class="mr-1.5 hidden rounded bg-default/70 px-1.5 py-0.5 font-mono text-3xs text-muted sm:inline-block"
+          >
+            Ctrl+`
+          </kbd>
           <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">
             <UButton
               :icon="isRight ? 'i-lucide-panel-bottom' : 'i-lucide-panel-right'"
@@ -445,7 +483,7 @@ function sessionLabel(sessionId: string): string | null {
 
                 <span
                   v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
-                  class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-[10px] font-mono text-muted"
+                  class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-3xs font-mono text-muted"
                 >
                   {{ sessionLabel(openTail.sessionId) }}
                 </span>

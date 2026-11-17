@@ -49,7 +49,14 @@ const hasFinished = computed(() =>
       />
     </div>
     <div ref="scrollEl" class="min-h-0 flex-1 overflow-y-auto">
-      <div class="relative w-full" :style="{ height: `${rowVirtualizer.getTotalSize()}px` }">
+      <div v-if="store.list.length === 0" class="flex h-full flex-col items-center justify-center gap-1.5 px-3 py-6 text-center select-none">
+        <div class="rounded-full bg-muted/50 p-2.5 ring-1 ring-default/15">
+          <UIcon name="i-lucide-arrow-down-up" class="size-5 text-muted" />
+        </div>
+        <p class="text-xs font-medium text-default">No transfers yet</p>
+        <p class="max-w-sm text-2xs text-muted">Drag files between panes or press F5 on selected items to upload or download.</p>
+      </div>
+      <div v-else class="relative w-full" :style="{ height: `${rowVirtualizer.getTotalSize()}px` }">
         <div
           v-for="row in virtualRows"
           :key="row.key as string | number"
@@ -74,10 +81,6 @@ const hasFinished = computed(() =>
             @pause="store.pause(store.list[row.index].transferId)"
           />
         </div>
-      </div>
-      <div v-if="store.list.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
-        <UIcon name="i-lucide-arrow-down-up" class="size-5 text-dimmed" />
-        <p class="text-xs text-muted">No transfers yet</p>
       </div>
     </div>
   </div>

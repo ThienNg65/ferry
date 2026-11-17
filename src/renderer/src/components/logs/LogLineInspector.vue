@@ -120,7 +120,7 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
         </span>
         <span
           v-if="jsonPayload"
-          class="inline-block rounded bg-primary/10 px-1 py-0.2 font-mono text-[10px] font-semibold text-primary ring-1 ring-primary/20"
+          class="inline-block rounded bg-primary/10 px-1 py-0.2 font-mono text-3xs font-semibold text-primary ring-1 ring-primary/20"
         >
           JSON
         </span>
@@ -206,7 +206,7 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
       <div v-if="jsonFields.length > 0" class="space-y-1.5">
         <div class="flex items-center justify-between">
           <span class="text-2xs font-medium uppercase tracking-wider text-muted">Fields ({{ jsonFields.length }})</span>
-          <span class="text-[10px] text-muted">Click value to copy</span>
+          <span class="text-3xs text-muted">Click value to copy</span>
         </div>
         <div class="divide-y divide-muted rounded-md border border-muted overflow-hidden">
           <div

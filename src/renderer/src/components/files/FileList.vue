@@ -207,7 +207,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       role="row"
-      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
+      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted bg-muted/20 px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
     >
       <span class="size-4 shrink-0" />
       <button
@@ -234,7 +234,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
         @click="emit('sort', 'size')"
       >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('size', $event)" />
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @click.stop @pointerdown.stop.prevent="startResize('size', $event)" />
         Size
         <UIcon
           v-if="sortColumn === 'size'"
@@ -251,7 +251,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
         @click="emit('sort', 'modified')"
       >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @click.stop @pointerdown.stop.prevent="startResize('modified', $event)" />
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @click.stop @pointerdown.stop.prevent="startResize('modified', $event)" />
         Modified
         <UIcon
           v-if="sortColumn === 'modified'"
@@ -264,7 +264,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         class="relative w-[var(--col-permissions)] shrink-0 text-right"
         :class="COLUMN_HIDE.remote.permissions"
       >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize" @pointerdown.stop.prevent="startResize('permissions', $event)" />
+        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @pointerdown.stop.prevent="startResize('permissions', $event)" />
         Permissions
       </span>
       <span class="flex w-14 shrink-0 justify-end">

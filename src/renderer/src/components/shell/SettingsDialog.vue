@@ -72,6 +72,10 @@ const densityOptions: { label: string; value: Density }[] = [
   { label: 'Comfortable', value: 'comfortable' },
   { label: 'Compact', value: 'compact' }
 ]
+const dockPositionOptions: { label: string; value: 'bottom' | 'right' }[] = [
+  { label: 'Bottom', value: 'bottom' },
+  { label: 'Right', value: 'right' }
+]
 const proxyTypeOptions: { label: string; value: ProxyType }[] = [
   { label: 'SOCKS5', value: 'socks5' },
   { label: 'HTTP CONNECT', value: 'http' }
@@ -492,7 +496,7 @@ async function saveNetwork(): Promise<void> {
   <UModal
     :open="open"
     title="Settings"
-    :ui="{ content: 'max-w-3xl h-[32rem] max-h-[85vh]', body: 'min-h-0 p-0 sm:p-0 overflow-hidden' }"
+    :ui="{ content: 'max-w-3xl h-[35rem] max-h-[85vh]', body: 'min-h-0 p-0 sm:p-0 overflow-hidden' }"
     @update:open="(v: boolean) => { if (!v) close() }"
   >
     <template #body>
@@ -501,7 +505,7 @@ async function saveNetwork(): Promise<void> {
           role="tablist"
           aria-label="Settings sections"
           :aria-orientation="verticalTabs ? 'vertical' : 'horizontal'"
-          class="flex shrink-0 gap-1 overflow-x-auto border-b border-muted p-2 sm:w-52 sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r sm:p-3"
+          class="flex shrink-0 gap-1 overflow-x-auto border-b border-muted bg-muted/30 p-2 sm:w-52 sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r sm:p-3"
           @keydown="onTablistKeydown($event, true, verticalTabs)"
         >
           <button
@@ -513,8 +517,8 @@ async function saveNetwork(): Promise<void> {
             :aria-selected="activeTab === tab.id"
             :aria-controls="`settings-panel-${tab.id}`"
             :tabindex="activeTab === tab.id ? 0 : -1"
-            class="flex items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-            :class="activeTab === tab.id ? 'bg-primary/10 font-medium text-primary' : 'text-toned hover:bg-muted'"
+            class="flex items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+            :class="activeTab === tab.id ? 'bg-primary/15 font-semibold text-primary' : 'text-muted hover:bg-muted/70 hover:text-default'"
             @click="activeTab = tab.id"
           >
             <UIcon :name="tab.icon" class="size-4 shrink-0" />
@@ -571,7 +575,7 @@ async function saveNetwork(): Promise<void> {
                       <span v-if="hexInputInvalid" role="alert" class="text-2xs text-error">Use #rrggbb</span>
                     </div>
                   </div>
-                  <div ref="colorPickerHostRef" class="shrink-0">
+                  <div ref="colorPickerHostRef" class="shrink-0 rounded-md border border-muted bg-muted/20 p-2">
                     <ColorPicker
                       :model-value="ui.accentColor"
                       format="hex"
@@ -592,6 +596,14 @@ async function saveNetwork(): Promise<void> {
                   :items="densityOptions"
                   orientation="horizontal"
                   @update:model-value="(v: string) => ui.setDensity(v as Density)"
+                />
+              </SettingsRow>
+              <SettingsRow label="Dock position" description="Where Transfers, Log Tail, Terminal, and Monitor appear.">
+                <URadioGroup
+                  :model-value="ui.dockPosition"
+                  :items="dockPositionOptions"
+                  orientation="horizontal"
+                  @update:model-value="(v: string) => { if (v !== ui.dockPosition) ui.toggleDockPosition() }"
                 />
               </SettingsRow>
               <SettingsRow
@@ -771,7 +783,7 @@ async function saveNetwork(): Promise<void> {
                   <div v-for="entry in knownHosts" :key="entry.hostPort" class="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
                     <div class="min-w-0 flex-1">
                       <div class="truncate font-medium text-default">{{ entry.hostPort }}</div>
-                      <div class="truncate font-mono text-[11px] text-muted">{{ entry.fingerprint }}</div>
+                      <div class="truncate font-mono text-2xs text-muted">{{ entry.fingerprint }}</div>
                     </div>
                     <UButton size="xs" variant="ghost" color="neutral" @click="onForgetHost(entry.hostPort)">
                       Forget

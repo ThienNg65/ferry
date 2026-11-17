@@ -218,6 +218,17 @@ async function onConnectSite(site: Site): Promise<void> {
   }
 }
 
+function siteIcon(site: Site): string {
+  if (site.jumpHosts && site.jumpHosts.length > 0) return 'i-lucide-waypoints'
+  if (site.authMethod === 'privateKey') return 'i-lucide-key-round'
+  if (site.authMethod === 'agent') return 'i-lucide-shield-check'
+  return 'i-lucide-server'
+}
+
+function isSiteOpenInTab(siteId: string): boolean {
+  return sessions.tabs.some((t) => t.siteId === siteId && t.status === 'connected')
+}
+
 const formOpen = ref(false)
 const editingSite = ref<Site | null>(null)
 
@@ -521,9 +532,22 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
             </div>
           </div>
-          <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-2 py-6 text-center">
-            <UIcon name="i-lucide-server" class="size-6 text-dimmed" />
-            <p class="text-xs text-muted">No saved sites yet — add one, import from WinSCP/PuTTY, or use Quick Connect.</p>
+          <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-2.5 py-7 text-center">
+            <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/15">
+              <UIcon name="i-lucide-server" class="size-5 text-muted" />
+            </div>
+            <div class="space-y-1">
+              <p class="text-xs font-medium text-default">No saved sites yet</p>
+              <p class="max-w-xs text-2xs text-muted">
+                Save a server for one-click access, import existing sessions from WinSCP, PuTTY, or ~/.ssh/config, or use Quick Connect.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center justify-center gap-2 pt-0.5">
+              <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
+              <UButton icon="i-lucide-import" size="xs" color="neutral" variant="outline" @click="importOpen = true">
+                Import sessions
+              </UButton>
+            </div>
           </div>
           <template v-else>
             <UInput
@@ -559,7 +583,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 <ul class="flex flex-col gap-1">
                   <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
                   <li
-                    class="group flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
+                    class="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
                     :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
                   >
                     <UCheckbox
@@ -567,21 +591,47 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                       :model-value="selectedIds.has(site.id)"
                       @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
                     />
-                    <UIcon v-else name="i-lucide-server" class="size-4 shrink-0 text-muted" />
-                    <span
-                      v-if="site.environment"
-                      class="size-2 shrink-0 rounded-full"
-                      :class="ENVIRONMENT_DOT[site.environment]"
-                      :title="site.environment"
-                    />
+                    <div
+                      v-else
+                      class="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted transition-colors group-hover:bg-default group-hover:text-highlighted"
+                    >
+                      <UIcon :name="siteIcon(site)" class="size-3.5" />
+                    </div>
                     <button
                       type="button"
-                      class="min-w-0 flex-1 text-left rounded-xs focus-visible:outline-2 focus-visible:outline-primary"
+                      class="min-w-0 flex-1 rounded-xs text-left focus-visible:outline-2 focus-visible:outline-primary"
                       @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
                     >
-                      <div class="truncate text-sm font-medium text-highlighted">{{ site.name }}</div>
-                      <div class="truncate text-xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <span
+                          v-if="site.environment"
+                          class="size-2 shrink-0 rounded-full"
+                          :class="ENVIRONMENT_DOT[site.environment]"
+                          :title="site.environment"
+                        />
+                        <span class="truncate text-sm font-medium text-highlighted">{{ site.name }}</span>
+                        <span
+                          v-if="site.jumpHosts?.length"
+                          class="shrink-0 rounded bg-muted px-1 py-0.2 font-mono text-3xs text-muted"
+                        >
+                          Jump ×{{ site.jumpHosts.length }}
+                        </span>
+                        <span
+                          v-if="isSiteOpenInTab(site.id)"
+                          class="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-1.5 py-0.2 text-3xs font-medium text-success"
+                        >
+                          <span class="size-1.5 rounded-full bg-success" />
+                          Connected
+                        </span>
+                      </div>
+                      <div class="truncate font-mono text-2xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
                     </button>
+                    <UIcon
+                      v-if="!selectMode"
+                      name="i-lucide-arrow-right"
+                      class="size-3.5 shrink-0 -translate-x-1 text-muted opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100"
+                      aria-hidden="true"
+                    />
                     <UDropdownMenu v-if="!selectMode" :items="siteMenuItems(site)">
                       <UButton
                         icon="i-lucide-ellipsis"
@@ -634,7 +684,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               <UInput v-model="form.username" placeholder="e.g. root" class="w-full" />
             </UFormField>
             <UFormField label="Authentication">
-              <USelect v-model="form.authMethod" :items="quickAuthOptions" class="w-full" />
+              <URadioGroup v-model="form.authMethod" :items="quickAuthOptions" orientation="horizontal" />
             </UFormField>
             <UFormField v-if="form.authMethod === 'password'" label="Password">
               <UInput ref="quickPasswordInput" v-model="form.password" type="password" class="w-full" />

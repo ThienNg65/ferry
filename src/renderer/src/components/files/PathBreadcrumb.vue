@@ -22,14 +22,32 @@ const collapsedMenuItems = computed(() =>
   }))
 )
 const strip = ref<HTMLElement | null>(null)
+const stripWidth = ref(0)
+const effectiveShorten = computed(
+  () => ui.shortenPath || (stripWidth.value > 0 && stripWidth.value < 240 && segments.value.length > 2)
+)
 
 function scrollToEnd(): void {
-  if (!ui.shortenPath && strip.value) {
+  if (!effectiveShorten.value && strip.value) {
     strip.value.scrollLeft = strip.value.scrollWidth
   }
 }
 
-watch(() => [props.path, editing.value, ui.shortenPath], () => void nextTick(scrollToEnd), { flush: 'post' })
+watch(() => [props.path, editing.value, effectiveShorten.value], () => void nextTick(scrollToEnd), { flush: 'post' })
+watch(
+  strip,
+  (el, _prev, onCleanup) => {
+    if (!el || typeof ResizeObserver === 'undefined') return
+    stripWidth.value = el.clientWidth
+    const observer = new ResizeObserver(() => {
+      stripWidth.value = el.clientWidth
+      scrollToEnd()
+    })
+    observer.observe(el)
+    onCleanup(() => observer.disconnect())
+  },
+  { flush: 'post', immediate: true }
+)
 onMounted(scrollToEnd)
 
 function startEdit(): void {
@@ -69,7 +87,7 @@ async function copyCurrentPath(): Promise<void> {
 </script>
 
 <template>
-  <div class="min-w-0 flex-1 px-1">
+  <div class="min-w-0 flex-1 px-0.5">
     <UInput
       v-if="editing"
       v-model="draft"
@@ -80,14 +98,14 @@ async function copyCurrentPath(): Promise<void> {
       @keyup.esc="cancelEdit"
       @blur="cancelEdit"
     />
-    <div v-else class="group flex min-w-0 flex-1 items-center gap-1 text-xs">
+    <div v-else class="relative group flex min-w-0 flex-1 items-center text-xs">
       <div
         ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5"
-        :class="ui.shortenPath ? 'overflow-hidden' : 'overflow-x-auto scrollbar-none'"
+        :class="effectiveShorten ? 'overflow-hidden' : 'overflow-x-auto scrollbar-none'"
         @click.self="startEdit"
       >
-        <template v-if="ui.shortenPath">
+        <template v-if="effectiveShorten">
           <button
             v-if="breadcrumbs.root"
             type="button"
@@ -160,7 +178,9 @@ async function copyCurrentPath(): Promise<void> {
           @click="startEdit"
         />
       </div>
-      <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <div
+        class="pointer-events-none absolute right-0 flex items-center gap-0.5 rounded bg-elevated/95 px-0.5 opacity-0 shadow-xs backdrop-blur-xs transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      >
         <UTooltip text="Edit path">
           <UButton
             icon="i-lucide-pencil"

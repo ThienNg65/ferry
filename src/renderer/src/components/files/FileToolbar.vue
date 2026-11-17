@@ -94,7 +94,7 @@ function onFilterInput(value: string | number): void {
 </script>
 
 <template>
-  <div class="flex shrink-0 items-center gap-1 pr-2">
+  <div class="flex shrink-0 items-center gap-0.5 pr-1.5">
     <UTooltip text="Back (Alt+Left)">
       <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
     </UTooltip>
@@ -115,6 +115,7 @@ function onFilterInput(value: string | number): void {
         @click="emit('refresh')"
       />
     </UTooltip>
+    <span class="mx-0.5 h-3.5 w-px shrink-0 bg-muted" aria-hidden="true" />
     <UTooltip text="New folder">
       <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
     </UTooltip>
@@ -125,7 +126,7 @@ function onFilterInput(value: string | number): void {
         variant="ghost"
         size="xs"
         aria-label="New file"
-        class="hidden @[340px]:inline-flex"
+        class="hidden @[480px]:inline-flex"
         @click="emit('touch')"
       />
     </UTooltip>
