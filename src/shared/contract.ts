@@ -653,10 +653,10 @@ export interface TerminalOpenResult {
   terminalId: string
 }
 
-/** Payload for the `terminal:data` channel — raw output bytes from the remote shell. */
+/** Payload for the `terminal:data` channel — UTF-8 decoded terminal output (or raw bytes). */
 export interface TerminalDataEvent {
   terminalId: string
-  data: Uint8Array
+  data: string | Uint8Array
 }
 
 /** Payload for the `terminal:exit` channel. */

@@ -388,6 +388,9 @@ export const useSessionsStore = defineStore('sessions', {
         if (isAbandoned()) {
           return
         }
+        // Pre-open the interactive shell in parallel with the initial SFTP/exec listing so
+        // default connections use direct client.shell() and the terminal is ready sooner.
+        void useTerminalStreamsStore().ensureTerminal(result.sessionId).catch(() => {})
         // tab.sessionId is already set during openSession prep
         // Preload the initial listing before flipping `status` — App.vue's
         // picker→file-browser swap is gated on `status`, so this keeps the
@@ -408,10 +411,10 @@ export const useSessionsStore = defineStore('sessions', {
           tab.status = result.status
           notify.success(`Connected to ${label}`)
         }
-        // Pre-open the interactive shell in the background so it's already
-        // connected by the time the user clicks the Terminal dock tab.
-        void useTerminalStreamsStore().ensureTerminal(result.sessionId)
       } catch (e) {
+        if (startedSessionId) {
+          void useTerminalStreamsStore().disposeForSession(startedSessionId).catch(() => {})
+        }
         if (isAbandoned()) {
           return
         }

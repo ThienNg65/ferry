@@ -43,13 +43,23 @@ function attachContainer(sessionId: string, el: Element | null): void {
   }
   inst.term.open(el as HTMLElement)
   attachedSessions.add(sessionId)
-  void import('@xterm/addon-webgl')
-    .then(({ WebglAddon }) => {
-      const webgl = new WebglAddon()
+  if (inst.WebglAddonCtor) {
+    try {
+      const webgl = new inst.WebglAddonCtor()
       webgl.onContextLoss(() => webgl.dispose())
       inst.term.loadAddon(webgl)
-    })
-    .catch(() => undefined)
+    } catch {
+      // Fall back to default DOM renderer when WebGL context creation fails.
+    }
+  } else {
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        inst.term.loadAddon(webgl)
+      })
+      .catch(() => undefined)
+  }
   // Terminal convention: right-click copies the selection if there is one,
   // otherwise pastes. The listener lives exactly as long as the container div.
   el.addEventListener('contextmenu', (e) => {
@@ -60,7 +70,8 @@ function attachContainer(sessionId: string, el: Element | null): void {
 
 async function fitAndResize(sessionId: string): Promise<void> {
   const inst = terminalStreams.getInstance(sessionId)
-  if (!inst) {
+  const container = containerRef.value
+  if (!inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
     return
   }
   inst.fit.fit()
@@ -106,17 +117,35 @@ watch(() => [props.active, sessions.activeSessionId] as const, () => void syncAc
 })
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
+let remoteResizeTimer: ReturnType<typeof setTimeout> | null = null
 
 function onWindowResize(): void {
   if (resizeTimer !== null) {
     clearTimeout(resizeTimer)
   }
+  if (remoteResizeTimer !== null) {
+    clearTimeout(remoteResizeTimer)
+  }
   resizeTimer = setTimeout(() => {
     resizeTimer = null
     const sessionId = sessions.activeSessionId
-    if (props.active && sessionId) {
-      void fitAndResize(sessionId)
+    const inst = sessionId ? terminalStreams.getInstance(sessionId) : undefined
+    const container = containerRef.value
+    if (!props.active || !sessionId || !inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
+      return
     }
+    inst.fit.fit()
+    if (remoteResizeTimer !== null) {
+      clearTimeout(remoteResizeTimer)
+    }
+    remoteResizeTimer = setTimeout(() => {
+      remoteResizeTimer = null
+      const activeId = sessions.activeSessionId
+      const activeInst = activeId ? terminalStreams.getInstance(activeId) : undefined
+      if (props.active && activeId && activeInst) {
+        terminalStreams.resize(activeId, activeInst.term.cols, activeInst.term.rows)
+      }
+    }, 150)
   }, 50)
 }
 
@@ -224,6 +253,9 @@ onBeforeUnmount(() => {
   }
   if (resizeTimer !== null) {
     clearTimeout(resizeTimer)
+  }
+  if (remoteResizeTimer !== null) {
+    clearTimeout(remoteResizeTimer)
   }
 })
 </script>

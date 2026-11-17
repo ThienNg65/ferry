@@ -197,7 +197,12 @@ describe('neutralinoApi', () => {
       channel: EVENT_CHANNELS.terminalData,
       payload: { terminalId: 't1', data: { __b64: Buffer.from('ls\n').toString('base64') } }
     })
-    expect(received).toHaveLength(2)
+    emit('rpc_event', {
+      channel: EVENT_CHANNELS.terminalData,
+      payload: { terminalId: 't1', data: 'utf8-fast-path\n' }
+    })
+    expect(received).toHaveLength(4)
+    expect(received[2]).toEqual(['dispose', { terminalId: 't1', data: 'utf8-fast-path\n' }])
 
     dispose()
     api.off(EVENT_CHANNELS.terminalData, offFn)
@@ -205,7 +210,7 @@ describe('neutralinoApi', () => {
       channel: EVENT_CHANNELS.terminalData,
       payload: { terminalId: 't1', data: 'ignored' }
     })
-    expect(received).toHaveLength(2)
+    expect(received).toHaveLength(4)
 
     api.send(SEND_CHANNELS.terminalInput, { terminalId: 't1', data: 'pwd\n' })
     await vi.waitFor(() => expect(dispatched).toHaveLength(1))

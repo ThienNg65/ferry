@@ -29,6 +29,7 @@ async function connectSocks5(
       },
       timeout: timeoutMs
     })
+    socket.setNoDelay(true)
     return socket
   } catch (e) {
     throw new SshError(
@@ -61,6 +62,7 @@ function connectHttp(proxy: ProxyConfig, targetHost: string, targetPort: number,
   }
   return new Promise((resolve, reject) => {
     const socket: Socket = netConnect({ host: proxy.host, port: proxy.port })
+    socket.setNoDelay(true)
     let settled = false
 
     const timer = setTimeout(() => {

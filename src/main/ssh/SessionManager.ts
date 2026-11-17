@@ -578,6 +578,8 @@ export class SessionManager {
             autoSelectFamily: true,
             autoSelectFamilyAttemptTimeout: 250
           })
+          // Disable Nagle's algorithm so interactive terminal keystrokes are sent immediately.
+          s.setNoDelay(true)
           sock = s
           const timeoutId = setTimeout(() => {
             s.destroy()

@@ -75,7 +75,24 @@ describe('TerminalManager', () => {
 
     stream!.emit('data', Buffer.from('hello'))
     await vi.waitFor(() =>
-      expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: new Uint8Array(Buffer.from('hello')) }])
+      expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: 'hello' }])
+    )
+  })
+
+  it('decodes multi-byte UTF-8 sequences split across chunks cleanly', async () => {
+    let stream: FakeStream | undefined
+    openShellImpl = async () => {
+      stream = new FakeStream()
+      return stream
+    }
+    const manager = TerminalManager.getInstance()
+    await manager.open('term-utf8', 'session-1', 80, 24)
+
+    const rocket = Buffer.from('🚀', 'utf8')
+    stream!.emit('data', rocket.subarray(0, 2))
+    stream!.emit('data', rocket.subarray(2))
+    await vi.waitFor(() =>
+      expect(dataEvents()).toEqual([{ terminalId: 'term-utf8', data: '🚀' }])
     )
   })
 

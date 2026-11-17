@@ -1,3 +1,4 @@
+import { StringDecoder } from 'string_decoder'
 import type { ClientChannel } from 'ssh2'
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
@@ -32,7 +33,7 @@ export class TerminalManager {
     return TerminalManager.instance
   }
 
-  private broadcastData(terminalId: string, data: Uint8Array): void {
+  private broadcastData(terminalId: string, data: string): void {
     const payload: TerminalDataEvent = { terminalId, data }
     host().broadcast(EVENT_CHANNELS.terminalData, payload)
   }
@@ -78,10 +79,15 @@ export class TerminalManager {
     const entry: TerminalEntry = { sessionId, stream, exitCode: null, flow }
     this.terminals.set(terminalId, entry)
 
-    const batcher = new OutputBatcher((data) => {
-      flow.sent(data.length)
-      this.broadcastData(terminalId, data)
-    })
+    const decoder = new StringDecoder('utf8')
+    const emitText = (text: string): void => {
+      if (text.length === 0) {
+        return
+      }
+      flow.sent(text.length)
+      this.broadcastData(terminalId, text)
+    }
+    const batcher = new OutputBatcher((buf) => emitText(decoder.write(buf)))
     stream.on('data', (chunk: Buffer) => {
       sawData = true
       batcher.push(chunk)
@@ -91,6 +97,7 @@ export class TerminalManager {
     })
     stream.on('close', () => {
       batcher.flush()
+      emitText(decoder.end())
       const closedByUser = this.terminals.get(terminalId) !== entry
       this.terminals.delete(terminalId)
       if (fallback && !closedByUser && !sawData && Date.now() - startedAt < EARLY_EXIT_MS) {

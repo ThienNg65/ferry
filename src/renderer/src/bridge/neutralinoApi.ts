@@ -34,6 +34,11 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>(Object.values(INVOKE_CHANNELS))
 const ALLOWED_SEND_CHANNELS = new Set<string>(Object.values(SEND_CHANNELS))
 const ALLOWED_ON_CHANNELS = new Set<string>(Object.values(EVENT_CHANNELS))
 const HOST_CHANNEL_SET = new Set<string>(HOST_INVOKE_CHANNELS)
+const PLAIN_SEND_CHANNELS = new Set<string>([
+  SEND_CHANNELS.terminalInput,
+  SEND_CHANNELS.terminalResize,
+  SEND_CHANNELS.terminalAck
+])
 
 export interface NeutralinoTransport {
   init: () => void
@@ -68,17 +73,163 @@ export interface NeutralinoTransport {
 }
 
 function createDefaultTransport(): NeutralinoTransport {
+  const directListeners = new Map<string, Set<(detail: unknown) => void>>()
+  let directWs: WebSocket | null = null
+  let directOpen = false
+  let helloSent = false
+  let connectQueue: Array<{
+    event: string
+    data: unknown
+    resolve: () => void
+    reject: (err: unknown) => void
+  }> = []
+
+  const flushQueueViaNeutralino = (): void => {
+    if (connectQueue.length === 0) {
+      return
+    }
+    const queued = connectQueue
+    connectQueue = []
+    for (const item of queued) {
+      extensions.dispatch(SIDECAR_EXTENSION_ID, item.event, item.data).then(item.resolve, item.reject)
+    }
+  }
+
+  const requestDirectInfo = (): void => {
+    if (directWs || helloSent) {
+      return
+    }
+    helloSent = true
+    void extensions.dispatch(SIDECAR_EXTENSION_ID, 'sidecar:hello', {}).catch(() => {
+      helloSent = false
+    })
+  }
+
+  const emitDirect = (event: string, detail: unknown): void => {
+    const handlers = directListeners.get(event)
+    if (!handlers) {
+      return
+    }
+    for (const h of [...handlers]) {
+      h(detail)
+    }
+  }
+
+  const connectDirect = (detail: unknown): void => {
+    if (!detail || typeof detail !== 'object' || typeof WebSocket === 'undefined') {
+      return
+    }
+    const { directPort, directToken } = detail as { directPort?: unknown; directToken?: unknown }
+    if (typeof directPort !== 'number' || directPort <= 0 || typeof directToken !== 'string' || !directToken) {
+      return
+    }
+    if (directWs && (directWs.readyState === WebSocket.OPEN || directWs.readyState === WebSocket.CONNECTING)) {
+      return
+    }
+    const sock = new WebSocket(`ws://127.0.0.1:${directPort}?token=${encodeURIComponent(directToken)}`)
+    directWs = sock
+    sock.addEventListener('open', () => {
+      if (directWs !== sock) {
+        return
+      }
+      directOpen = true
+      const queued = connectQueue
+      connectQueue = []
+      for (const item of queued) {
+        try {
+          sock.send(JSON.stringify({ event: item.event, data: item.data }))
+          item.resolve()
+        } catch (err) {
+          item.reject(err)
+        }
+      }
+    })
+    sock.addEventListener('message', (ev) => {
+      if (typeof ev.data !== 'string') {
+        return
+      }
+      let msg: { event?: unknown; data?: unknown }
+      try {
+        msg = JSON.parse(ev.data) as { event?: unknown; data?: unknown }
+      } catch {
+        return
+      }
+      if (msg.event === RPC_EVENT || msg.event === RPC_REPLY_EVENT) {
+        emitDirect(msg.event, msg.data)
+      }
+    })
+    sock.addEventListener('close', () => {
+      if (directWs === sock) {
+        directWs = null
+        directOpen = false
+        helloSent = false
+        flushQueueViaNeutralino()
+      }
+    })
+    sock.addEventListener('error', () => {
+      if (directWs === sock) {
+        directOpen = false
+        flushQueueViaNeutralino()
+      }
+    })
+  }
+
   return {
     init: () => neutralinoInit(),
     onEvent: (event, handler) => {
-      const listener = (ev: CustomEvent) => handler(ev.detail)
+      const wrapped =
+        event === SIDECAR_READY_EVENT
+          ? (detail: unknown) => {
+              connectDirect(detail)
+              handler(detail)
+            }
+          : event === 'extensionReady'
+            ? (detail: unknown) => {
+                if (detail === SIDECAR_EXTENSION_ID) {
+                  requestDirectInfo()
+                }
+                handler(detail)
+              }
+            : handler
+      const listener = (ev: CustomEvent) => wrapped(ev.detail)
       void events.on(event, listener)
+      const trackDirect = event === RPC_EVENT || event === RPC_REPLY_EVENT
+      if (trackDirect) {
+        let set = directListeners.get(event)
+        if (!set) {
+          set = new Set()
+          directListeners.set(event, set)
+        }
+        set.add(handler)
+      }
       return () => {
         void events.off(event, listener)
+        if (trackDirect) {
+          directListeners.get(event)?.delete(handler)
+        }
       }
     },
-    dispatchExtension: (extensionId, event, data) => extensions.dispatch(extensionId, event, data),
-    getExtensionStats: () => extensions.getStats(),
+    dispatchExtension: (extensionId, event, data) => {
+      if (extensionId === SIDECAR_EXTENSION_ID) {
+        if (directOpen && directWs?.readyState === WebSocket.OPEN) {
+          directWs.send(JSON.stringify({ event, data }))
+          return Promise.resolve()
+        }
+        if (directWs && directWs.readyState === WebSocket.CONNECTING) {
+          return new Promise<void>((resolve, reject) => {
+            connectQueue.push({ event, data, resolve, reject })
+          })
+        }
+      }
+      return extensions.dispatch(extensionId, event, data)
+    },
+    getExtensionStats: async () => {
+      const stats = await extensions.getStats()
+      if (stats.connected.includes(SIDECAR_EXTENSION_ID)) {
+        requestDirectInfo()
+      }
+      return stats
+    },
     minimizeWindow: () => nlWindow.minimize(),
     isWindowMinimized: () => nlWindow.isMinimized(),
     maximizeWindow: () => nlWindow.maximize(),
@@ -109,27 +260,27 @@ function createDefaultTransport(): NeutralinoTransport {
 
 /** Reconstructs Uint8Arrays from `{ __b64 }` markers emitted by the sidecar wire protocol. */
 export function decodeB64Deep(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value
+  }
   if (Array.isArray(value)) {
     return value.map(decodeB64Deep)
   }
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>
-    const keys = Object.keys(record)
-    if (keys.length === 1 && keys[0] === '__b64' && typeof record.__b64 === 'string') {
-      const binary = atob(record.__b64)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i)
-      }
-      return bytes
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
+  if (keys.length === 1 && keys[0] === '__b64' && typeof record.__b64 === 'string') {
+    const binary = atob(record.__b64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
     }
-    const out: Record<string, unknown> = {}
-    for (const key of keys) {
-      out[key] = decodeB64Deep(record[key])
-    }
-    return out
+    return bytes
   }
-  return value
+  const out: Record<string, unknown> = {}
+  for (const key of keys) {
+    out[key] = decodeB64Deep(record[key])
+  }
+  return out
 }
 
 /** Encodes Uint8Arrays into `{ __b64 }` markers before JSON serialization over Neutralino WebSocket RPC. */
@@ -353,7 +504,12 @@ export function createNeutralinoApi(
     }
     const { channel, payload } = detail as { channel?: unknown; payload?: unknown }
     if (typeof channel === 'string' && ALLOWED_ON_CHANNELS.has(channel)) {
-      emitLocal(channel, decodeB64Deep(payload))
+      // UTF-8 terminal output strings carry no { __b64 } markers; skip recursive object walk.
+      if (channel === EVENT_CHANNELS.terminalData && payload && typeof (payload as { data?: unknown }).data === 'string') {
+        emitLocal(channel, payload)
+      } else {
+        emitLocal(channel, decodeB64Deep(payload))
+      }
     }
   })
 
@@ -520,11 +676,23 @@ export function createNeutralinoApi(
     if (!ALLOWED_SEND_CHANNELS.has(channel)) {
       throw new Error(`Blocked send on non-whitelisted channel: ${channel}`)
     }
+    const payload = PLAIN_SEND_CHANNELS.has(channel) ? args[0] : encodeB64Deep(args[0])
+    if (sidecarReady) {
+      void transport
+        .dispatchExtension(SIDECAR_EXTENSION_ID, RPC_SEND_EVENT, {
+          channel,
+          payload
+        })
+        .catch(() => {
+          // Best-effort fire-and-forget; errors are surfaced through invoke/status channels.
+        })
+      return
+    }
     void ensureSidecarReady()
       .then(() =>
         transport.dispatchExtension(SIDECAR_EXTENSION_ID, RPC_SEND_EVENT, {
           channel,
-          payload: encodeB64Deep(args[0])
+          payload
         })
       )
       .catch(() => {

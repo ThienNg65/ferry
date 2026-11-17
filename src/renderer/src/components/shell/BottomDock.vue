@@ -267,7 +267,7 @@ function openTerminalSearch(): void {
     ref="dockEl"
     class="ferry-dock-shell flex shrink-0 overflow-hidden border-default"
     :class="[
-      dragging ? '' : 'ferry-dock-expandable',
+      dragging || tab === 'terminal' ? '' : 'ferry-dock-expandable',
       isRight ? 'flex-row border-l' : 'flex-col border-t'
     ]"
     :style="dockShellStyle"
