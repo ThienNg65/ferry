@@ -10,6 +10,7 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
+import { resolveConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
@@ -17,6 +18,11 @@ import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
 import { formatBytes, formatShortDate } from '../../utils/format'
+import {
+  composePaneEntries,
+  emptyVisibilityFilter,
+  type FileVisibilityFilter
+} from '../../utils/fileVisibilityFilter'
 import type { TransferIntent } from '../../composables/useTransferIntents'
 import { useTransferIntents } from '../../composables/useTransferIntents'
 import { usePaneKeyboard } from '../../composables/usePaneKeyboard'
@@ -40,6 +46,7 @@ const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
+const fileFilters = useFileFiltersStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
 const confirm = useConfirm()
@@ -63,37 +70,64 @@ const newFolderName = ref('')
 const isDropTarget = ref(false)
 const filterText = ref('')
 const { debounced: debouncedFilter } = useDebouncedRef(filterText, 120)
-const isFiltered = computed(() => debouncedFilter.value.trim().length > 0)
-const filteredEntries = computed(() => {
-  const needle = debouncedFilter.value.trim().toLowerCase()
-  const visible = ui.showHidden ? store.entries : store.entries.filter((e) => !e.name.startsWith('.'))
-  if (!needle) {
-    return visible
-  }
-  return visible.filter((e) => e.name.toLowerCase().includes(needle))
-})
+const connectionFilterKey = computed(() =>
+  props.side === 'remote' ? resolveConnectionFilterKey(sessions.activeTab) : null
+)
+const activeVisibilityFilter = computed<FileVisibilityFilter>(() =>
+  props.side === 'remote' ? fileFilters.getFilter(connectionFilterKey.value) : emptyVisibilityFilter()
+)
+const paneEntriesResult = computed(() =>
+  composePaneEntries(store.entries, {
+    showHidden: ui.showHidden,
+    visibilityFilter: props.side === 'remote' ? activeVisibilityFilter.value : undefined,
+    searchQuery: debouncedFilter.value
+  })
+)
+const isVisibilityFiltered = computed(() => paneEntriesResult.value.visibilityActive)
+const isSearchFiltered = computed(() => paneEntriesResult.value.searchActive)
+const isFiltered = computed(() => isVisibilityFiltered.value || isSearchFiltered.value)
+const filteredEntries = computed(() => paneEntriesResult.value.entries)
+
+function updateVisibilityFilter(next: FileVisibilityFilter): void {
+  if (props.side !== 'remote') return
+  fileFilters.setFilter(connectionFilterKey.value, next)
+}
+
+function clearVisibilityFilter(): void {
+  if (props.side !== 'remote') return
+  fileFilters.clearFilter(connectionFilterKey.value)
+}
 
 const paneSummary = computed(() => {
-  const list = filteredEntries.value
+  const { entries: list, totalFiles, visibleFiles, visibilityActive, searchActive } = paneEntriesResult.value
   let folders = 0
-  let files = 0
   for (const e of list) {
     if (e.isDir) folders++
-    else files++
   }
   const parts: string[] = []
   if (folders > 0) parts.push(`${folders} ${folders === 1 ? 'folder' : 'folders'}`)
-  if (files > 0) parts.push(`${files} ${files === 1 ? 'file' : 'files'}`)
+  if (visibilityActive) {
+    parts.push(`${visibleFiles} of ${totalFiles} ${totalFiles === 1 ? 'file' : 'files'}`)
+  } else if (visibleFiles > 0) {
+    parts.push(`${visibleFiles} ${visibleFiles === 1 ? 'file' : 'files'}`)
+  }
   const base = parts.length > 0 ? parts.join(', ') : '0 items'
-  return isFiltered.value ? `${base} (filtered from ${store.entries.length})` : base
+  if (visibilityActive && searchActive) return `${base} (search active)`
+  if (!visibilityActive && searchActive) return `${base} (filtered from ${store.entries.length})`
+  return base
 })
 
+const visibleSelectedEntries = computed(() =>
+  filteredEntries.value.filter((e) => store.selected.has(e.path))
+)
+
 const selectionSummary = computed(() => {
-  const count = store.selected.size
+  const selected = visibleSelectedEntries.value
+  const count = selected.length
   if (count === 0) return ''
   let bytes = 0
-  for (const e of store.entries) {
-    if (store.selected.has(e.path) && !e.isDir) {
+  for (const e of selected) {
+    if (!e.isDir) {
       bytes += e.size
     }
   }
@@ -131,21 +165,22 @@ const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 
 const unregisterPaneActions = registerPaneActions(props.side, {
+  selectedCount: () => visibleSelectedEntries.value.length,
   rename: () => {
-    if (store.selected.size === 1) {
-      const [path] = store.selected
-      const idx = filteredEntries.value.findIndex((e) => e.path === path)
+    if (visibleSelectedEntries.value.length === 1) {
+      const target = visibleSelectedEntries.value[0]
+      const idx = filteredEntries.value.findIndex((e) => e.path === target.path)
       if (idx >= 0) {
         fileListRef.value?.scrollToIndex(idx)
-        renamingPath.value = path
+        renamingPath.value = target.path
       }
     }
   },
-  remove: () => void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path))),
+  remove: () => void confirmDeleteEntries(visibleSelectedEntries.value),
   transfer: () => void onTransferSelected(),
   edit: () => {
-    const entry = store.entries.find((e) => store.selected.has(e.path))
-    if (store.selected.size === 1 && entry && !entry.isDir) {
+    const entry = visibleSelectedEntries.value.length === 1 ? visibleSelectedEntries.value[0] : undefined
+    if (entry && !entry.isDir) {
       void onEdit(entry)
     }
   }
@@ -278,7 +313,7 @@ function onHoverDir(path: string): void {
 /** Plain click selects only this row; Ctrl/Cmd toggles it; Shift extends from the last-clicked row. */
 function onSelect(path: string, event: MouseEvent): void {
   if (event.shiftKey) {
-    store.selectRange(path)
+    store.selectRange(path, filteredEntries.value)
   } else if (event.ctrlKey || event.metaKey) {
     store.toggleSelect(path)
   } else {
@@ -322,7 +357,7 @@ async function onTransfer(entry: FileEntry): Promise<void> {
 async function onTransferSelected(): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId) return
-  const targets = store.entries.filter((e) => store.selected.has(e.path))
+  const targets = visibleSelectedEntries.value
   const intents: TransferIntent[] = []
   for (const entry of targets) {
     const intent = buildTransferIntent(props.side, entry, sessionId)
@@ -722,14 +757,15 @@ function onStartRename(entry: FileEntry): void {
  * selection (matching the keyboard Delete path); otherwise it removes just that one row. Unlike the
  * keyboard shortcut, this path always confirms first — it's a deliberate click, not a fast-path key. */
 function onRemoveEntry(entry: FileEntry): void {
-  if (store.selected.size > 1 && store.selected.has(entry.path)) {
-    void confirmDeleteEntries(store.entries.filter((e) => store.selected.has(e.path)))
+  if (visibleSelectedEntries.value.length > 1 && store.selected.has(entry.path)) {
+    void confirmDeleteEntries(visibleSelectedEntries.value)
     return
   }
   void confirmDeleteEntries([entry])
 }
 
 async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
+  if (entries.length === 0) return
   const single = entries.length === 1 ? entries[0] : null
   await confirm({
     title: 'Delete',
@@ -812,14 +848,17 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         ref="toolbarRef"
         :side="side"
         :loading="store.loading"
-        :selected-count="store.selected.size"
+        :selected-count="visibleSelectedEntries.length"
         :transfer-icon="transferIcon"
         v-model:filter-text="filterText"
+        :visibility-filter="side === 'remote' ? activeVisibilityFilter : undefined"
         :bookmarks="currentBookmarks"
         :can-bookmark="canBookmark"
         :show-sync="showTail"
         :can-go-back="store.canGoBack"
         :can-go-forward="store.canGoForward"
+        @update:visibility-filter="updateVisibilityFilter"
+        @clear-visibility-filter="clearVisibilityFilter"
         @back="store.goBack"
         @forward="store.goForward"
         @up="store.goUp"
@@ -872,6 +911,8 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :active="ui.activePane === side"
         :loading="store.loading"
         :filtered="isFiltered"
+        :visibility-filtered="isVisibilityFiltered"
+        :search-filtered="isSearchFiltered"
         :transfer-icon="transferIcon"
         :show-tail="showTail"
         :allow-extract="showTail"
@@ -896,17 +937,26 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @drop-on="onDropOnFolder"
         @edit-root="onEditAsRoot"
         @clear-filter="filterText = ''"
+        @clear-visibility-filter="clearVisibilityFilter"
       />
       <div class="flex h-6 shrink-0 select-none items-center justify-between gap-2 border-t border-muted bg-muted/30 px-3 text-2xs text-muted">
         <div class="flex min-w-0 items-center gap-2">
           <span class="truncate">{{ paneSummary }}</span>
           <button
-            v-if="isFiltered"
+            v-if="isVisibilityFiltered"
+            type="button"
+            class="shrink-0 rounded-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="clearVisibilityFilter"
+          >
+            Clear filters
+          </button>
+          <button
+            v-if="filterText"
             type="button"
             class="shrink-0 rounded-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
             @click="filterText = ''"
           >
-            Clear filter
+            Clear search
           </button>
           <button
             v-if="!ui.showHidden"

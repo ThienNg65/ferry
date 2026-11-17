@@ -19,6 +19,8 @@ export interface PaneKeyboardContext {
 
 export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent) => Promise<void> {
   const ui = useUiStore()
+  const getVisibleSelected = (): FileEntry[] =>
+    ctx.filteredEntries.value.filter((e) => ctx.store.selected.has(e.path))
   return async function onKeydown(event: KeyboardEvent): Promise<void> {
     // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
     // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
@@ -66,8 +68,9 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       return
     }
     if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-      const [path] = ctx.store.selected
-      const row = [...document.querySelectorAll<HTMLElement>(`[data-pane="${ctx.side}"] [data-row-path]`)].find((el) => el.dataset.rowPath === path)
+      const target = getVisibleSelected()[0]
+      if (!target) return
+      const row = [...document.querySelectorAll<HTMLElement>(`[data-pane="${ctx.side}"] [data-row-path]`)].find((el) => el.dataset.rowPath === target.path)
       if (row) {
         event.preventDefault()
         const rect = row.getBoundingClientRect()
@@ -82,8 +85,9 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
     }
     if (event.key === 'F2') {
       event.preventDefault()
-      if (ctx.store.selected.size === 1) {
-        const [path] = ctx.store.selected
+      const visibleSelected = getVisibleSelected()
+      if (visibleSelected.length === 1) {
+        const path = visibleSelected[0].path
         const idx = ctx.filteredEntries.value.findIndex((e) => e.path === path)
         if (idx >= 0) {
           ctx.fileListRef.value?.scrollToIndex(idx)
@@ -123,7 +127,8 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       const list = ctx.filteredEntries.value
       if (list.length === 0) return
       event.preventDefault()
-      const selectedPaths = Array.from(ctx.store.selected)
+      const visiblePaths = new Set(list.map((e) => e.path))
+      const selectedPaths = Array.from(ctx.store.selected).filter((p) => visiblePaths.has(p))
       const lastSelectedPath = selectedPaths[selectedPaths.length - 1]
       const currentIdx = lastSelectedPath ? list.findIndex((e) => e.path === lastSelectedPath) : -1
       const pageStep = 10
@@ -143,7 +148,7 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       }
       const nextPath = list[nextIdx].path
       if (event.shiftKey) {
-        ctx.store.selectRange(nextPath)
+        ctx.store.selectRange(nextPath, ctx.filteredEntries.value)
       } else {
         ctx.store.selectOnly(nextPath)
       }
@@ -151,23 +156,21 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       return
     }
     if (event.key === 'Enter') {
-      if (ctx.store.selected.size === 1) {
-        const [path] = ctx.store.selected
-        const entry = ctx.filteredEntries.value.find((e) => e.path === path)
-        if (entry) {
-          event.preventDefault()
-          ctx.onOpen(entry)
-        }
+      const visibleSelected = getVisibleSelected()
+      if (visibleSelected.length === 1) {
+        event.preventDefault()
+        ctx.onOpen(visibleSelected[0])
       }
       return
     }
     if (event.key !== 'Delete') {
       return
     }
-    if (ctx.store.selected.size === 0) {
+    const visibleSelected = getVisibleSelected()
+    if (visibleSelected.length === 0) {
       return
     }
     event.preventDefault()
-    void ctx.confirmDeleteEntries(ctx.store.entries.filter((e) => ctx.store.selected.has(e.path)))
+    void ctx.confirmDeleteEntries(visibleSelected)
   }
 }

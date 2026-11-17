@@ -17,8 +17,6 @@ import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
 import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
 import { getPaneActions } from '../../composables/usePaneActions'
-import { useLocalFsStore } from '../../stores/localFs.store'
-import { useRemoteFsStore } from '../../stores/remoteFs.store'
 
 const { isOpen: open } = useCommandPalette()
 const sessions = useSessionsStore()
@@ -30,8 +28,6 @@ const { openDock } = useDockState()
 const updateStore = useUpdateStore()
 const notify = useNotify()
 const shortcutsDialog = useShortcutsDialog()
-const localFs = useLocalFsStore()
-const remoteFs = useRemoteFsStore()
 
 function onKeydown(event: KeyboardEvent): void {
   // Terminal-first: while the xterm textarea is focused, Ctrl+K belongs to the
@@ -121,11 +117,10 @@ const groups = computed(() => {
   }
 
   const side = ui.activePane
-  const selection = side === 'local' ? localFs.selected : remoteFs.selected
   const paneActions = getPaneActions(side)
+  const count = paneActions?.selectedCount() ?? 0
   const fileItems: { label: string; icon: string; onSelect: () => void }[] = []
-  if (paneActions && selection.size > 0) {
-    const count = selection.size
+  if (paneActions && count > 0) {
     if (count === 1) {
       fileItems.push({ label: 'Rename selected', icon: 'i-lucide-pencil', onSelect: () => run(paneActions.rename) })
       fileItems.push({ label: 'Edit selected', icon: 'i-lucide-file-pen', onSelect: () => run(paneActions.edit) })

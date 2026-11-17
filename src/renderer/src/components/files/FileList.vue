@@ -14,6 +14,8 @@ const props = defineProps<{
   active: boolean
   loading?: boolean
   filtered?: boolean
+  visibilityFiltered?: boolean
+  searchFiltered?: boolean
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
@@ -108,6 +110,7 @@ const emit = defineEmits<{
   'edit-root': [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
+  'clear-visibility-filter': []
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
   'select-many': [paths: string[]]
@@ -291,10 +294,24 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           <USkeleton class="h-3 w-20 shrink-0" />
         </div>
       </div>
-      <div v-else-if="entries.length === 0 && filtered" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
+      <div v-else-if="entries.length === 0 && (visibilityFiltered || searchFiltered || filtered)" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
         <UIcon name="i-lucide-search-x" class="size-5 text-muted" />
-        <p class="text-xs text-muted">No files match the current filter</p>
-        <UButton size="xs" color="neutral" variant="soft" @click="emit('clear-filter')">Clear filter</UButton>
+        <p class="text-xs text-muted">
+          <template v-if="visibilityFiltered && searchFiltered">No files match the active visibility filters and search</template>
+          <template v-else-if="visibilityFiltered">No files match the active visibility filters</template>
+          <template v-else>No files match the current search</template>
+        </p>
+        <p v-if="visibilityFiltered" class="text-2xs text-muted">
+          Directories stay visible; adjust or clear your include/exclude patterns.
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-1.5">
+          <UButton v-if="visibilityFiltered" size="xs" color="neutral" variant="soft" @click="emit('clear-visibility-filter')">
+            Clear filters
+          </UButton>
+          <UButton v-if="searchFiltered || (!visibilityFiltered && filtered)" size="xs" color="neutral" variant="soft" @click="emit('clear-filter')">
+            Clear search
+          </UButton>
+        </div>
       </div>
       <div v-else-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-folder-open" class="size-5 text-muted" />

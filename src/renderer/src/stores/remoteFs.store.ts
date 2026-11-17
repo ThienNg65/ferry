@@ -486,9 +486,9 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     /** Shift+click — selects every entry between the last-clicked row and `path`. */
-    selectRange(path: string): void {
+    selectRange(path: string, visibleEntries?: FileEntry[]): void {
       const bucket = this.ensureBucket(this.activeSessionId())
-      const result = selectRange(bucket.entries, bucket.selectAnchor, path)
+      const result = selectRange(visibleEntries ?? bucket.entries, bucket.selectAnchor, path)
       bucket.selected = result.selected
       bucket.selectAnchor = result.anchor
     },

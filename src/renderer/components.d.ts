@@ -24,6 +24,7 @@ declare module 'vue' {
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']
     FileRow: typeof import('./src/components/files/FileRow.vue')['default']
     FileToolbar: typeof import('./src/components/files/FileToolbar.vue')['default']
+    FileVisibilityPopover: typeof import('./src/components/files/FileVisibilityPopover.vue')['default']
     GenerateKeyDialog: typeof import('./src/components/sessions/GenerateKeyDialog.vue')['default']
     HistoryDialog: typeof import('./src/components/history/HistoryDialog.vue')['default']
     ImportSessionsDialog: typeof import('./src/components/sessions/ImportSessionsDialog.vue')['default']
