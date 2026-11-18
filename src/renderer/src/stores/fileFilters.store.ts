@@ -61,16 +61,35 @@ function writeStoredFilter(key: string, filter: FileVisibilityFilter): void {
   }
 }
 
-/** Resolves a stable per-connection filter key (`site:<id>`, `host:<username@host>`, or ephemeral `session:<id>`). */
-export function resolveConnectionFilterKey(tab: {
+interface ConnectionFilterTab {
   siteId: string | null
   hostLabel: string | null
   sessionId: string | null
-}): string | null {
+  quickConnectInput?: { username: string; host: string; port: number }
+}
+
+/** Saved sites retain their existing keys; Quick Connect identity includes the SSH port. */
+export function resolveConnectionFilterKey(tab: ConnectionFilterTab): string | null {
   if (tab.siteId) return `site:${tab.siteId}`
+  if (tab.quickConnectInput) {
+    const { username, host, port } = tab.quickConnectInput
+    // Escape delimiters (including IPv6 colons) without changing case-sensitive SSH usernames.
+    return `host:v2:${encodeURIComponent(username)}@${encodeURIComponent(host.trim().toLowerCase())}:${port}`
+  }
   if (tab.hostLabel) return `host:${tab.hostLabel}`
   if (tab.sessionId) return `session:${tab.sessionId}`
   return null
+}
+
+/**
+ * Legacy Quick Connect keys omitted port. Transfer those rules to port 22 only,
+ * never to another endpoint; the old key is removed after migration.
+ */
+export function resolveLegacyConnectionFilterKey(tab: ConnectionFilterTab): string | null {
+  if (tab.siteId || !tab.hostLabel || !tab.quickConnectInput || tab.quickConnectInput.port !== 22) {
+    return null
+  }
+  return `host:${tab.hostLabel}`
 }
 
 interface FileFiltersState {
@@ -83,8 +102,18 @@ export const useFileFiltersStore = defineStore('fileFilters', {
   }),
 
   actions: {
-    getFilter(key: string | null): FileVisibilityFilter {
+    getFilter(key: string | null, legacyKey?: string | null): FileVisibilityFilter {
       if (!key) return emptyVisibilityFilter()
+      if (legacyKey && legacyKey !== key) {
+        const existing = this.byKey[key] ?? readStoredFilter(key)
+        const legacy = this.byKey[legacyKey] ?? readStoredFilter(legacyKey)
+        if ((!existing || !hasActiveVisibilityFilter(existing)) && legacy && hasActiveVisibilityFilter(legacy)) {
+          this.setFilter(key, legacy)
+        }
+        // Consume the old shared key once, so clearing a migrated filter cannot restore it.
+        delete this.byKey[legacyKey]
+        writeStoredFilter(legacyKey, emptyVisibilityFilter())
+      }
       if (!this.byKey[key]) {
         const stored = readStoredFilter(key)
         if (stored && hasActiveVisibilityFilter(stored)) {
