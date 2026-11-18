@@ -70,6 +70,7 @@ export interface NeutralinoTransport {
   getKnownPath: (name: 'downloads') => Promise<string>
   logDebug: (message: string) => Promise<void>
   getAppVersion: () => string
+  waitForDirectEndpoint?: (timeoutMs?: number) => Promise<{ port: number; token: string } | null>
 }
 
 function createDefaultTransport(): NeutralinoTransport {
@@ -77,6 +78,8 @@ function createDefaultTransport(): NeutralinoTransport {
   let directWs: WebSocket | null = null
   let directOpen = false
   let helloSent = false
+  let directEndpoint: { port: number; token: string } | null = null
+  let directEndpointWaiters: Array<(endpoint: { port: number; token: string } | null) => void> = []
   let connectQueue: Array<{
     event: string
     data: unknown
@@ -122,6 +125,14 @@ function createDefaultTransport(): NeutralinoTransport {
     const { directPort, directToken } = detail as { directPort?: unknown; directToken?: unknown }
     if (typeof directPort !== 'number' || directPort <= 0 || typeof directToken !== 'string' || !directToken) {
       return
+    }
+    directEndpoint = { port: directPort, token: directToken }
+    if (directEndpointWaiters.length > 0) {
+      const waiters = directEndpointWaiters
+      directEndpointWaiters = []
+      for (const resolve of waiters) {
+        resolve(directEndpoint)
+      }
     }
     if (directWs && (directWs.readyState === WebSocket.OPEN || directWs.readyState === WebSocket.CONNECTING)) {
       return
@@ -254,7 +265,29 @@ function createDefaultTransport(): NeutralinoTransport {
     readClipboardText: () => clipboard.readText(),
     getKnownPath: (name) => nlOs.getPath(name),
     logDebug: (message) => debug.log(message),
-    getAppVersion: () => (window as unknown as { NL_APPVERSION?: string }).NL_APPVERSION || BUNDLED_APP_VERSION
+    getAppVersion: () => (window as unknown as { NL_APPVERSION?: string }).NL_APPVERSION || BUNDLED_APP_VERSION,
+    waitForDirectEndpoint: (timeoutMs = 3000) => {
+      if (directEndpoint) {
+        return Promise.resolve(directEndpoint)
+      }
+      requestDirectInfo()
+      return new Promise((resolve) => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          directEndpointWaiters = directEndpointWaiters.filter((w) => w !== onReady)
+          resolve(directEndpoint)
+        }, timeoutMs)
+        const onReady = (endpoint: { port: number; token: string } | null): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve(endpoint)
+        }
+        directEndpointWaiters.push(onReady)
+      })
+    }
   }
 }
 
@@ -722,12 +755,39 @@ export function createNeutralinoApi(
     listeners.get(channel)?.delete(listener)
   }
 
+  const stageDroppedFile = async (
+    stageId: string,
+    relativePath: string,
+    file: File,
+    modifiedAt?: string
+  ): Promise<void> => {
+    await ensureSidecarReady()
+    const endpoint = await transport.waitForDirectEndpoint?.()
+    if (!endpoint) {
+      throw new Error('Direct sidecar streaming endpoint is unavailable')
+    }
+    const params = new URLSearchParams({ stageId, relativePath })
+    if (modifiedAt) {
+      params.set('modifiedAt', modifiedAt)
+    }
+    const res = await fetch(`http://127.0.0.1:${endpoint.port}/stage-drop?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'X-Ferry-Token': endpoint.token },
+      body: file
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null
+      throw new Error(body?.error || `Staging upload failed (${res.status})`)
+    }
+  }
+
   return {
     invoke,
     on,
     off,
     send,
     getPathForFile: (file: File) => (file as File & { path?: string }).path ?? '',
+    ...(transport.waitForDirectEndpoint ? { stageDroppedFile } : {}),
     getPreloadTime: () => ({ start: apiStartTime, timeOrigin: apiTimeOrigin })
   }
 }

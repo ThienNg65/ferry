@@ -2,13 +2,17 @@ import * as path from 'path'
 import { handle } from './envelope'
 import {
   INVOKE_CHANNELS,
+  type CleanupStagedDropRequest,
   type DeleteManyRequest,
   type DeleteManyResult,
   type FileEntry,
   type FileListResult,
   type FileReadResult,
   type RemoteAdminRequest,
-  type StageDropRequest
+  type StageDropBeginRequest,
+  type StageDropBeginResult,
+  type StageDropRequest,
+  type StageDropSessionRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -42,6 +46,21 @@ export function registerFsHandlers(): void {
   handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) =>
     LocalFs.stageDroppedEntries(req as StageDropRequest)
   )
+  handle<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, (req) =>
+    LocalFs.beginStageDrop(req as StageDropBeginRequest | undefined)
+  )
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, (req) =>
+    LocalFs.finishStageDrop((req as StageDropSessionRequest).stageId)
+  )
+  handle<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, (req) =>
+    LocalFs.abortStageDrop((req as StageDropSessionRequest).stageId)
+  )
+  handle<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, (req) => {
+    const paths = Array.isArray((req as CleanupStagedDropRequest)?.paths)
+      ? (req as CleanupStagedDropRequest).paths.map(String)
+      : []
+    return LocalFs.cleanupStagedDropPaths(paths)
+  })
   handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
     const request = req as { path: string; content: string }

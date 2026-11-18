@@ -1,5 +1,6 @@
 import { ref } from 'vue'
-import type { FileEntry } from '@shared/contract'
+import { INVOKE_CHANNELS, type FileEntry } from '@shared/contract'
+import { invoke } from '../api'
 import { useLocalFsStore } from '../stores/localFs.store'
 import { useRemoteFsStore } from '../stores/remoteFs.store'
 import { useSessionsStore } from '../stores/sessions.store'
@@ -70,11 +71,30 @@ export function useTransferIntents() {
     }
   }
 
+  function cleanupUnusedStagedPaths(allIntents: TransferIntent[], keptIntents: TransferIntent[]): void {
+    const keptPaths = new Set(keptIntents.map((i) => i.localPath))
+    const unusedPaths = allIntents
+      .filter((i) => i.direction === 'upload' && !keptPaths.has(i.localPath))
+      .map((i) => i.localPath)
+    if (unusedPaths.length > 0) {
+      void invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedPaths }).catch(() => undefined)
+    }
+  }
+
+  function dismissTransferConflict(): void {
+    const conflict = transferConflict.value
+    if (!conflict) return
+    transferConflict.value = null
+    cleanupUnusedStagedPaths(conflict.intents, [])
+  }
+
   async function resolveTransferConflict(choice: ConflictChoice): Promise<void> {
     const conflict = transferConflict.value
     if (!conflict) return
     transferConflict.value = null
-    await enqueueIntents(resolveConflicts(conflict.intents, conflict.targets, choice))
+    const resolved = resolveConflicts(conflict.intents, conflict.targets, choice)
+    cleanupUnusedStagedPaths(conflict.intents, resolved)
+    await enqueueIntents(resolved)
   }
 
   /** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
@@ -93,6 +113,7 @@ export function useTransferIntents() {
     buildTransferIntent,
     checkAndQueueTransfers,
     enqueueIntents,
+    dismissTransferConflict,
     resolveTransferConflict,
     transferEntry
   }

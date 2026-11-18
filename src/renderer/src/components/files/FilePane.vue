@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, FileListResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -55,9 +55,12 @@ const {
   buildTransferIntent,
   checkAndQueueTransfers,
   enqueueIntents,
+  dismissTransferConflict,
   resolveTransferConflict,
   transferEntry
 } = useTransferIntents()
+
+const toast = useToast()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
@@ -254,7 +257,9 @@ async function onRemoveBookmark(id: string): Promise<void> {
 
 if (props.side === 'local') {
   onMounted(() => {
-    void store.load()
+    if (!store.currentPath && !store.loading && !store.error) {
+      void store.load()
+    }
   })
 } else {
   // One remote FilePane instance is shared by every open site tab — load lazily
@@ -547,6 +552,8 @@ function onDragLeave(): void {
 }
 
 const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
+const STAGE_STREAM_CONCURRENCY = 4
+const LARGE_DROP_TOAST_BYTES = 32 * 1024 * 1024
 
 interface MinimalFsEntry {
   isFile: boolean
@@ -556,10 +563,17 @@ interface MinimalFsEntry {
   createReader?: () => { readEntries: (success: (entries: MinimalFsEntry[]) => void, error?: (err: unknown) => void) => void }
 }
 
+interface CollectedDropEntry {
+  relativePath: string
+  isDir: boolean
+  file?: File
+  modifiedAt?: string
+}
+
 async function collectDroppedEntry(
   fsEntry: MinimalFsEntry,
   relPath: string,
-  out: StageDropEntryInput[],
+  out: CollectedDropEntry[],
   state: { totalBytes: number }
 ): Promise<void> {
   if (fsEntry.isFile && fsEntry.file) {
@@ -567,13 +581,10 @@ async function collectDroppedEntry(
       fsEntry.file!(resolve, reject)
     })
     state.totalBytes += file.size
-    if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
-      throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
-    }
     out.push({
       relativePath: relPath,
       isDir: false,
-      data: new Uint8Array(await file.arrayBuffer()),
+      file,
       modifiedAt: new Date(file.lastModified).toISOString()
     })
     return
@@ -593,9 +604,49 @@ async function collectDroppedEntry(
   }
 }
 
+async function stageCollectedEntriesStreaming(
+  collected: CollectedDropEntry[],
+  totalBytes: number,
+  stageDroppedFile: NonNullable<Window['api']['stageDroppedFile']>
+): Promise<FileEntry[]> {
+  const dirs = collected.filter((e) => e.isDir).map((e) => e.relativePath)
+  const files = collected.filter((e): e is CollectedDropEntry & { file: File } => !e.isDir && Boolean(e.file))
+  const { stageId } = await invoke<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, { dirs })
+  const toastId =
+    totalBytes > LARGE_DROP_TOAST_BYTES
+      ? toast.add({
+          title: 'Preparing dropped files…',
+          description: `Staging ${formatBytes(totalBytes)} for upload`,
+          icon: 'i-lucide-loader-2',
+          duration: 0
+        }).id
+      : null
+
+  try {
+    let cursor = 0
+    const workerCount = Math.min(STAGE_STREAM_CONCURRENCY, files.length)
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (cursor < files.length) {
+          const item = files[cursor++]
+          await stageDroppedFile(stageId, item.relativePath, item.file, item.modifiedAt)
+        }
+      })
+    )
+    return await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, { stageId })
+  } catch (err) {
+    await invoke<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, { stageId }).catch(() => undefined)
+    throw err
+  } finally {
+    if (toastId !== null) {
+      toast.remove(toastId)
+    }
+  }
+}
+
 /**
- * Resolves external OS drops to real local `FileEntry` items, staging dropped
- * files/folders via `fs:local:stage-drop` when WebView2 hides host paths.
+ * Resolves external OS drops to real local `FileEntry` items, streaming dropped
+ * files/folders over authenticated localhost HTTP when WebView2 hides host paths.
  */
 async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<FileEntry[]> {
   const direct: FileEntry[] = []
@@ -626,28 +677,43 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
     return direct
   }
 
-  const stageInputs: StageDropEntryInput[] = []
+  const collected: CollectedDropEntry[] = []
   const state = { totalBytes: 0 }
   for (const { file, fsEntry } of unresolved) {
     if (fsEntry) {
-      await collectDroppedEntry(fsEntry, fsEntry.name, stageInputs, state)
+      await collectDroppedEntry(fsEntry, fsEntry.name, collected, state)
     } else {
       state.totalBytes += file.size
-      if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
-        throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
-      }
-      stageInputs.push({
+      collected.push({
         relativePath: file.name,
         isDir: false,
-        data: new Uint8Array(await file.arrayBuffer()),
+        file,
         modifiedAt: new Date(file.lastModified).toISOString()
       })
     }
   }
 
-  if (stageInputs.length === 0) {
+  if (collected.length === 0) {
     return direct
   }
+
+  const streamUpload = window.api.stageDroppedFile
+  if (streamUpload) {
+    const staged = await stageCollectedEntriesStreaming(collected, state.totalBytes, streamUpload)
+    return [...direct, ...staged]
+  }
+
+  if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
+    throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
+  }
+  const stageInputs: StageDropEntryInput[] = await Promise.all(
+    collected.map(async (item) => ({
+      relativePath: item.relativePath,
+      isDir: item.isDir,
+      ...(item.isDir || !item.file ? {} : { data: new Uint8Array(await item.file.arrayBuffer()) }),
+      modifiedAt: item.modifiedAt
+    }))
+  )
   const staged = await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, { entries: stageInputs })
   return [...direct, ...staged]
 }
@@ -1059,7 +1125,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :open="Boolean(transferConflict)"
         title="File Conflict"
         :ui="{ footer: 'flex-wrap justify-end' }"
-        @update:open="(v: boolean) => { if (!v) transferConflict = null }"
+        @update:open="(v: boolean) => { if (!v) dismissTransferConflict() }"
       >
         <template #body>
           <p class="mb-2 text-sm text-default">These items already exist in the target directory:</p>
@@ -1076,7 +1142,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           </ul>
         </template>
         <template #footer>
-          <UButton color="neutral" variant="outline" @click="transferConflict = null">Cancel</UButton>
+          <UButton color="neutral" variant="outline" @click="dismissTransferConflict">Cancel</UButton>
           <UButton color="neutral" variant="outline" @click="resolveTransferConflict('skip')">Skip existing</UButton>
           <UButton color="neutral" variant="outline" @click="resolveTransferConflict('rename')">Keep both</UButton>
           <UButton color="neutral" variant="outline" @click="resolveTransferConflict('newer')">Overwrite if newer</UButton>

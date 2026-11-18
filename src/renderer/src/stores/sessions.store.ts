@@ -14,6 +14,7 @@ import type {
 } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { useLocalFsStore } from './localFs.store'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useTailStreamsStore } from './tailStreams.store'
@@ -470,6 +471,27 @@ export const useSessionsStore = defineStore('sessions', {
         await useRemoteFsStore().loadForSession(result.sessionId)
         if (isAbandoned()) {
           return
+        }
+        const siteLocalPath =
+          result.localInitialPath ??
+          ('quickConnect' in request
+            ? request.quickConnect.localInitialPath
+            : useSitesStore().sites.find((s) => s.id === request.siteId)?.localInitialPath)
+        if (siteLocalPath && this.activeTabId === tab.tabId) {
+          const localFs = useLocalFsStore()
+          await localFs.load(siteLocalPath)
+          if (isAbandoned()) {
+            return
+          }
+          if (localFs.error) {
+            notify.error('Local start path unavailable', localFs.error)
+            if (!localFs.currentPath) {
+              await localFs.load()
+              if (isAbandoned()) {
+                return
+              }
+            }
+          }
         }
         // An intervening `sessionStatus` event (e.g. the connection dropping
         // mid-load) may already have moved this tab to a terminal state —
