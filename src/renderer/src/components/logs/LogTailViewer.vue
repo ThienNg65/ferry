@@ -815,7 +815,7 @@ watchEffect(() => {
           role="listbox"
           aria-label="Log output"
           tabindex="0"
-          class="relative min-h-0 min-w-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          class="relative min-h-0 min-w-0 flex-1 overflow-auto bg-transparent font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
           :class="fontSizeClass"
           @scroll="onScroll"
         >
@@ -956,7 +956,7 @@ watchEffect(() => {
 
             <!-- Row Quick Hover Actions (sticky right) -->
             <div
-              class="sticky right-1.5 ml-auto flex items-center gap-0.5 self-center rounded bg-default/90 px-1 py-0.5 shadow-xs ring-1 ring-muted backdrop-blur-xs transition-opacity"
+              class="sticky right-1.5 ml-auto flex items-center gap-0.5 self-center rounded bg-default/90 px-1 py-0.5 shadow-xs ring-1 ring-muted transition-opacity"
               :class="
                 pinnedSet.has(filteredLines[virtualRow.index].originalIndex)
                   ? 'opacity-100'
@@ -1033,7 +1033,7 @@ watchEffect(() => {
           <button
             v-if="!autoScroll && lines.length > 0 && !selectedItem"
             type="button"
-            class="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md ring-1 ring-primary/40 bg-primary text-inverted transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            class="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg ring-1 ring-primary/40 bg-primary text-inverted transition-all hover:scale-105 active:scale-95 cursor-pointer"
             @click="scrollToBottom"
           >
             <UIcon name="i-lucide-arrow-down" class="size-3.5" />

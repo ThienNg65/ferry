@@ -75,6 +75,7 @@ const commonStubs = {
     props: ['open', 'title'],
     template: '<div v-if="open" role="dialog"><slot name="body" /><slot name="content" /></div>'
   },
+  UBadge: { template: '<span><slot /></span>' },
   UButton: {
     props: ['label', 'disabled', 'loading'],
     template: '<button type="button" :disabled="disabled || loading"><slot>{{ label }}</slot></button>'

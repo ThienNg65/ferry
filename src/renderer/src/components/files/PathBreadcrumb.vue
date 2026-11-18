@@ -179,7 +179,7 @@ async function copyCurrentPath(): Promise<void> {
         />
       </div>
       <div
-        class="pointer-events-none absolute right-0 flex items-center gap-0.5 rounded bg-elevated/95 px-0.5 opacity-0 shadow-xs backdrop-blur-xs transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+        class="pointer-events-none absolute right-0 flex items-center gap-0.5 rounded bg-elevated/95 px-0.5 opacity-0 shadow-xs transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
       >
         <UTooltip text="Edit path">
           <UButton

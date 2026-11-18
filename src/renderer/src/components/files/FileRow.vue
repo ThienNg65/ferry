@@ -242,9 +242,9 @@ function onMouseLeave(): void {
       dropHover ? 'ring-2 ring-primary ring-inset' : '',
       selected
         ? active
-          ? 'bg-primary/25 text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]'
-          : 'bg-elevated text-highlighted shadow-[inset_2px_0_0_var(--ui-border-accented)]'
-        : 'text-default hover:bg-elevated/60'
+          ? [ui.glassUiEnabled ? 'bg-primary/14' : 'bg-primary/25', 'text-highlighted shadow-[inset_2px_0_0_var(--ui-primary)]']
+          : [ui.glassUiEnabled ? 'bg-muted/70' : 'bg-elevated', 'text-highlighted shadow-[inset_2px_0_0_var(--ui-border-accented)]']
+        : ['text-default', ui.glassUiEnabled ? 'hover:bg-muted/50' : 'hover:bg-elevated/60']
     ]"
     :draggable="!renaming"
     @click="emit('select', entry.path, $event)"

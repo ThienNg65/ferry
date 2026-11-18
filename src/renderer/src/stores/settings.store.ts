@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppSettings, KnownHostEntry, ProxyConfig, ProxyInfo, TermsAcceptance } from '@shared/contract'
 import { invoke } from '../api'
+import { useUiStore } from './ui.store'
 
 interface SettingsState {
   bandwidthLimitKBps: number | null
@@ -92,6 +93,7 @@ export const useSettingsStore = defineStore('settings', {
     async deleteAllLocalData(): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.privacyDeleteAllData)
       localStorage.clear()
+      useUiStore().resetGlassUi()
       await this.fetch()
     }
   }

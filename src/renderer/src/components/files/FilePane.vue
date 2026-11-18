@@ -805,9 +805,10 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
 <template>
   <div
     ref="paneEl"
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-200 ease-in-out last:border-r-0"
+    class="flex h-full flex-col overflow-hidden border-r outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-200 ease-in-out last:border-r-0"
     :class="[
       collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
+      ui.glassUiEnabled ? 'bg-transparent border-[var(--ferry-glass-chrome-border)]' : 'border-muted',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
@@ -824,7 +825,8 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
       type="button"
       aria-label="Show Local pane"
       title="Show Local pane"
-      class="flex h-full w-full flex-col items-center gap-3 bg-muted/40 py-2.5 text-muted transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+      class="flex h-full w-full flex-col items-center gap-3 py-2.5 text-muted transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+      :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted/40'"
       @click="ui.toggleLocalPane()"
     >
       <UIcon name="i-lucide-panel-left-open" class="size-4 shrink-0" />
@@ -834,11 +836,19 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
     </button>
     <template v-else>
       <div
-        class="@container flex h-9 min-w-0 shrink-0 items-center overflow-hidden border-b border-muted pl-2"
-        :class="ui.activePane === side ? 'bg-elevated shadow-[inset_3px_0_0_var(--ui-primary)]' : 'bg-default'"
+        class="@container flex min-h-9 min-w-0 shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-muted py-1 pr-2"
+        :class="[
+          ui.glassUiEnabled ? 'ferry-glass-chrome' : ui.activePane === side ? 'bg-elevated' : 'bg-default',
+          ui.activePane === side ? 'pl-2.5 shadow-[inset_3px_0_0_var(--ui-primary)]' : 'pl-2'
+        ]"
       >
         <div
-          class="my-1 mr-1 flex min-w-0 flex-1 items-center gap-1 rounded-md bg-muted/35 py-0.5 pl-2 pr-1 ring-1 ring-inset ring-muted/60 transition-colors hover:bg-muted/55 focus-within:bg-default focus-within:ring-primary/50"
+          class="flex h-7 min-w-[160px] flex-1 basis-full items-center gap-1.5 rounded-md pl-2 pr-1 transition-colors @[580px]:basis-0"
+          :class="
+            ui.glassUiEnabled
+              ? 'border border-[var(--ferry-glass-chrome-border)] bg-[var(--ferry-surface-subtle)] hover:bg-[var(--ui-bg)]/55 focus-within:border-[var(--ui-primary)]/50 focus-within:bg-[var(--ui-bg)]/90'
+              : 'bg-muted/35 ring-1 ring-inset ring-muted/60 hover:bg-muted/55 focus-within:bg-default focus-within:ring-primary/50'
+          "
         >
           <UIcon
             :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"
@@ -881,7 +891,11 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         />
       </div>
       <Transition name="slide-down">
-        <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
+        <div
+          v-if="showNewFolder"
+          class="flex items-center gap-2 border-b border-muted px-3 py-1.5"
+          :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+        >
           <UInput
             v-model="newFolderName"
             size="xs"
@@ -895,7 +909,12 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         </div>
       </Transition>
       <Transition name="slide-down">
-        <div v-if="store.error" role="alert" class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error">
+        <div
+          v-if="store.error"
+          role="alert"
+          class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error"
+          :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+        >
           <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
           <button
             type="button"
@@ -943,9 +962,12 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @clear-filter="filterText = ''"
         @clear-visibility-filter="clearVisibilityFilter"
       />
-      <div class="flex h-6 shrink-0 select-none items-center justify-between gap-2 border-t border-muted bg-muted/30 px-3 text-2xs text-muted">
+      <div
+        class="flex h-6 shrink-0 select-none items-center justify-between gap-2 border-t border-muted px-3 text-2xs text-muted"
+        :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted/30'"
+      >
         <div class="flex min-w-0 items-center gap-2">
-          <span class="truncate">{{ paneSummary }}</span>
+          <span class="truncate tabular-nums">{{ paneSummary }}</span>
           <button
             v-if="isVisibilityFiltered"
             type="button"
@@ -972,7 +994,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           </button>
         </div>
         <div v-if="selectionSummary" class="flex shrink-0 items-center gap-1.5">
-          <span class="font-medium text-default">{{ selectionSummary }}</span>
+          <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
           <button
             type="button"
             class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"

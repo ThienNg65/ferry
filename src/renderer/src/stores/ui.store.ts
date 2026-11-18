@@ -58,6 +58,8 @@ const DOCK_POSITION_KEY = 'ferry:ui:dockPosition'
 const DOCK_WIDTH_KEY = 'ferry:ui:dockWidth'
 const ACCENT_KEY = 'ferry:ui:accentColor'
 const LOCAL_PANE_WIDTH_KEY = 'ferry:ui:localPaneWidth'
+const GLASS_UI_KEY = 'ferry:ui:glassUi'
+const GLASS_PROMO_DISMISSED_KEY = 'ferry:ui:glassUiPromoDismissed'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
 export const DEFAULT_ACCENT_COLOR = '#0a84ff'
 export const DEFAULT_LOCAL_PANE_WIDTH = 33.33
@@ -131,6 +133,8 @@ interface UiState {
   dockWidth: number
   accentColor: string
   localPaneWidth: number
+  glassUiEnabled: boolean
+  glassUiPromoDismissed: boolean
   terminalScheme: string
   terminalFont: string
   terminalFontCustom: string
@@ -158,11 +162,17 @@ function loadTheme(): Theme {
   return systemPrefersDark() ? 'dark' : 'light'
 }
 
-/** Converts `--ui-bg-muted` (including `oklch(...)`) into a Win32 COLORREF (`0x00BBGGRR`) so the Win11 titlebar matches `SiteTabBar`. */
+/** Converts `--ferry-caption-bg` (when `.ferry-glass` is active) or `--ui-bg-muted` into a Win32 COLORREF (`0x00BBGGRR`) so the Win11 titlebar matches `SiteTabBar`. */
 function resolveCaptionColorRef(theme: Theme): number {
-  const fallback = theme === 'dark' ? 0x262626 : 0xfafafa
+  const isGlass = document.documentElement.classList.contains('ferry-glass')
+  const fallback = isGlass
+    ? (theme === 'dark' ? 0x160d09 : 0xfbf6f4)
+    : (theme === 'dark' ? 0x262626 : 0xfafafa)
   try {
-    const raw = getComputedStyle(document.documentElement).getPropertyValue('--ui-bg-muted').trim()
+    const styles = getComputedStyle(document.documentElement)
+    const raw =
+      (isGlass ? styles.getPropertyValue('--ferry-caption-bg').trim() : '') ||
+      styles.getPropertyValue('--ui-bg-muted').trim()
     if (!raw || (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports('color', raw))) {
       return fallback
     }
@@ -178,6 +188,21 @@ function resolveCaptionColorRef(theme: Theme): number {
     return ((b & 0xff) << 16) | ((g & 0xff) << 8) | (r & 0xff)
   } catch {
     return fallback
+  }
+}
+
+function applyGlassUiClass(enabled: boolean): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('ferry-glass', enabled)
+  }
+}
+
+let accentThemeSyncTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearAccentThemeSyncTimer(): void {
+  if (accentThemeSyncTimer !== null) {
+    clearTimeout(accentThemeSyncTimer)
+    accentThemeSyncTimer = null
   }
 }
 
@@ -211,6 +236,14 @@ function applyAccentColor(hex: string): void {
 function loadLocalPaneWidth(): number {
   const stored = Number(localStorage.getItem(LOCAL_PANE_WIDTH_KEY))
   return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : DEFAULT_LOCAL_PANE_WIDTH
+}
+
+function loadGlassUiEnabled(): boolean {
+  return readStored(GLASS_UI_KEY) === 'true'
+}
+
+function loadGlassUiPromoDismissed(): boolean {
+  return readStored(GLASS_PROMO_DISMISSED_KEY) === 'true'
 }
 
 function loadTerminalScheme(): string {
@@ -249,6 +282,8 @@ export const useUiStore = defineStore('ui', {
     dockWidth: loadDockWidth(),
     accentColor: loadAccentColor(),
     localPaneWidth: loadLocalPaneWidth(),
+    glassUiEnabled: loadGlassUiEnabled(),
+    glassUiPromoDismissed: loadGlassUiPromoDismissed(),
     terminalScheme: loadTerminalScheme(),
     terminalFont: loadTerminalFont(),
     terminalFontCustom: (localStorage.getItem(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
@@ -262,7 +297,7 @@ export const useUiStore = defineStore('ui', {
       fontFamily: buildFontFamily(state.terminalFont, state.terminalFontCustom),
       fontSize: state.terminalFontSize,
       lineHeight: state.terminalLineHeight,
-      theme: resolveTheme(state.terminalScheme, state.theme)
+      theme: resolveTheme(state.terminalScheme, state.theme, state.glassUiEnabled)
     })
   },
 
@@ -359,8 +394,35 @@ export const useUiStore = defineStore('ui', {
     },
 
     toggleTheme(): void {
+      clearAccentThemeSyncTimer()
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
       localStorage.setItem(THEME_KEY, this.theme)
+      void applyTheme(this.theme)
+    },
+
+    initGlassUi(): void {
+      applyGlassUiClass(this.glassUiEnabled)
+    },
+
+    setGlassUiEnabled(enabled: boolean): void {
+      clearAccentThemeSyncTimer()
+      this.glassUiEnabled = enabled
+      localStorage.setItem(GLASS_UI_KEY, String(enabled))
+      applyGlassUiClass(enabled)
+      void applyTheme(this.theme)
+    },
+
+    dismissGlassUiPromo(): void {
+      this.glassUiPromoDismissed = true
+      localStorage.setItem(GLASS_PROMO_DISMISSED_KEY, 'true')
+    },
+
+    /** Resets Glass UI state and root class after `localStorage.clear()` without re-writing storage keys. */
+    resetGlassUi(): void {
+      clearAccentThemeSyncTimer()
+      this.glassUiEnabled = false
+      this.glassUiPromoDismissed = false
+      applyGlassUiClass(false)
       void applyTheme(this.theme)
     },
 
@@ -373,6 +435,13 @@ export const useUiStore = defineStore('ui', {
       this.accentColor = hex
       localStorage.setItem(ACCENT_KEY, hex)
       applyAccentColor(hex)
+      if (this.glassUiEnabled) {
+        clearAccentThemeSyncTimer()
+        accentThemeSyncTimer = setTimeout(() => {
+          accentThemeSyncTimer = null
+          void applyTheme(this.theme)
+        }, 250)
+      }
     },
 
     /** Clamps + persists a new dock height — call once at drag-end, and again on window resize to re-clamp against the new viewport. */

@@ -6,6 +6,7 @@ import { invoke } from '../../api'
 import { useSessionsStore, type RecentQuickConnect } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useSettingsStore } from '../../stores/settings.store'
+import { useUiStore } from '../../stores/ui.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { useDebouncedRef } from '../../composables/useDebouncedRef'
@@ -25,6 +26,7 @@ import type { DropdownMenuItem } from '@nuxt/ui/components/DropdownMenu.vue'
 const sessions = useSessionsStore()
 const sites = useSitesStore()
 const settings = useSettingsStore()
+const ui = useUiStore()
 const notify = useNotify()
 const version = ref('')
 /** Only shown when an app-wide default proxy is actually configured — otherwise this control has nothing to bypass and would just be clutter. */
@@ -578,9 +580,16 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-full items-start justify-center overflow-y-auto bg-default px-4 py-6 sm:px-6 sm:py-8" @keydown.esc="onViewEsc">
+  <div
+    class="flex h-full items-start justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-8"
+    :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
+    @keydown.esc="onViewEsc"
+  >
     <div class="my-auto flex w-full max-w-4xl flex-col gap-4">
-      <UCard v-if="activeTabSite || showQuickConnectBanner" class="border-primary/40 bg-primary/5">
+      <UCard
+        v-if="activeTabSite || showQuickConnectBanner"
+        :class="ui.glassUiEnabled ? 'ferry-glass-card border-primary/40' : 'border-primary/40 bg-primary/5'"
+      >
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div class="flex min-w-0 items-center gap-3">
             <UIcon name="i-lucide-plug-zap" class="size-5 shrink-0 text-primary" />
@@ -646,7 +655,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 
       <div class="grid grid-cols-1 gap-6 md:grid-cols-[1.2fr_1fr] md:items-start">
         <section aria-labelledby="sites-heading">
-          <UCard>
+          <UCard :class="ui.glassUiEnabled ? 'ferry-glass-card' : ''">
             <template #header>
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h1 id="sites-heading" class="text-lg font-semibold text-highlighted">Sites</h1>
@@ -806,6 +815,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
         <Transition name="fade" mode="out-in">
           <section v-if="selectedSite" :key="selectedSite.id" aria-labelledby="connect-panel-heading">
             <SiteDetailsPanel
+              :class="ui.glassUiEnabled ? 'ferry-glass-card' : ''"
               :site="selectedSite"
               :icon="siteIcon(selectedSite)"
               :connected="isSiteOpenInTab(selectedSite.id)"
@@ -821,7 +831,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
             />
           </section>
           <section v-else key="quick-connect" aria-labelledby="connect-panel-heading">
-            <UCard>
+            <UCard :class="ui.glassUiEnabled ? 'ferry-glass-card' : ''">
               <template #header>
                 <div class="flex items-center justify-between gap-2">
                   <h2 id="connect-panel-heading" class="text-base font-medium text-highlighted">Quick Connect</h2>

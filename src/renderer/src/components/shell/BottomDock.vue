@@ -262,6 +262,13 @@ function sessionLabel(sessionId: string): string | null {
 function openTerminalSearch(): void {
   window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))
 }
+
+function onTabStripWheel(e: WheelEvent): void {
+  const el = e.currentTarget as HTMLElement | null
+  if (!el || el.scrollWidth <= el.clientWidth || e.deltaY === 0) return
+  el.scrollLeft += e.deltaY
+  e.preventDefault()
+}
 </script>
 
 <template>
@@ -295,7 +302,8 @@ function openTerminalSearch(): void {
 
     <div
       v-if="isRight && collapsed"
-      class="ml-auto flex h-full w-9 shrink-0 flex-col items-center gap-1.5 bg-muted py-1.5 select-none"
+      class="ml-auto flex h-full w-9 shrink-0 flex-col items-center gap-1.5 py-1.5 select-none"
+      :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
     >
       <UTooltip text="Expand dock" :content="{ side: 'left' }">
         <UButton
@@ -334,21 +342,30 @@ function openTerminalSearch(): void {
 
     <div v-show="!(isRight && collapsed)" class="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
-        class="flex items-center justify-between gap-1 bg-muted px-2 py-1 select-none"
+        class="@container flex min-h-9 items-center justify-between gap-1 px-2 py-1 select-none"
+        :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
         @dblclick.self="collapsed = !collapsed"
       >
         <div
-          class="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-none"
+          class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-1 items-center overflow-x-auto"
           :class="compactRightTabs ? 'gap-0.5' : 'gap-1'"
           role="tablist"
           aria-label="Dock panels"
           @keydown="onTablistKeydown($event)"
+          @wheel="onTabStripWheel"
         >
           <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip">
             <button
               type="button"
-              class="ferry-dock-tab inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-              :class="!collapsed && tab === panel.id ? 'font-medium text-highlighted' : 'text-muted hover:bg-elevated/60 hover:text-default'"
+              class="ferry-dock-tab inline-flex min-h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+              :class="[
+                !compactRightTabs
+                  ? 'px-2.5 py-1'
+                  : !collapsed && tab === panel.id
+                    ? 'px-2 py-1'
+                    : 'min-w-7 justify-center px-1.5 py-1',
+                !collapsed && tab === panel.id ? 'font-medium text-highlighted' : 'text-muted hover:bg-elevated/60 hover:text-default'
+              ]"
               role="tab"
               :aria-selected="!collapsed && tab === panel.id"
               :aria-label="panel.label"
@@ -369,11 +386,12 @@ function openTerminalSearch(): void {
             </button>
           </UTooltip>
         </div>
+        <span class="mx-0.5 h-3.5 w-px shrink-0 border-l border-muted/70" aria-hidden="true" />
         <div class="flex shrink-0 items-center gap-0.5">
           <template v-if="!collapsed && tab === 'terminal'">
             <span
               v-if="sessions.activeTab.hostLabel"
-              class="mr-1 hidden max-w-44 truncate font-mono text-2xs text-muted sm:inline"
+              class="mr-1 hidden max-w-44 truncate font-mono text-2xs text-muted @[560px]:inline"
               :title="sessions.activeTab.hostLabel"
             >
               {{ sessions.activeTab.hostLabel }}
@@ -391,7 +409,7 @@ function openTerminalSearch(): void {
           </template>
           <kbd
             v-if="collapsed && !isRight"
-            class="mr-1.5 hidden rounded bg-default/70 px-1.5 py-0.5 font-mono text-3xs text-muted sm:inline-block"
+            class="mr-1.5 hidden rounded bg-default/70 px-1.5 py-0.5 font-mono text-3xs text-muted @[460px]:inline-block"
           >
             Ctrl+`
           </kbd>
@@ -432,7 +450,11 @@ function openTerminalSearch(): void {
          briefly splitting the available height while xterm is being fitted, and keeps
          open tail viewers (scroll, filters, search) alive across collapse/tab switches. -->
     <Transition name="dock-fade" :css="tab !== 'terminal' && tab !== 'tail'">
-      <div v-if="!collapsed && tab !== 'terminal' && tab !== 'tail'" class="flex min-h-0 flex-1 flex-col border-t border-muted">
+      <div
+        v-if="!collapsed && tab !== 'terminal' && tab !== 'tail'"
+        class="flex min-h-0 flex-1 flex-col border-t border-muted"
+        :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+      >
         <Transition name="dock-panel" mode="out-in">
           <TransferQueue v-if="tab === 'transfers'" />
           <ActivityPanel v-else-if="tab === 'activity'" />
@@ -441,7 +463,12 @@ function openTerminalSearch(): void {
         </Transition>
       </div>
     </Transition>
-    <div v-if="tailMounted" v-show="tailActive" class="flex min-h-0 flex-1 flex-col border-t border-muted">
+    <div
+      v-if="tailMounted"
+      v-show="tailActive"
+      class="flex min-h-0 flex-1 flex-col border-t border-muted"
+      :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+    >
       <!-- Tail Tabs Header Bar -->
       <div v-if="tailStreams.tabs.length > 0" class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-muted bg-muted/30 px-2 py-1">
         <div class="flex min-w-[120px] flex-1 items-center gap-1 overflow-x-auto scrollbar-none" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">

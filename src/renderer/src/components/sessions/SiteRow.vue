@@ -29,8 +29,10 @@ const emit = defineEmits<{
 
 <template>
   <li
-    class="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
+    class="ferry-site-row group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
     :class="selected ? 'bg-primary/10 ring-1 ring-primary/40' : active ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
+    :data-selected="selected ? 'true' : undefined"
+    :data-active="active ? 'true' : undefined"
   >
     <UCheckbox
       v-if="selectMode"

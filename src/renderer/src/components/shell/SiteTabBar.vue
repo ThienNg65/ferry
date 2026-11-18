@@ -169,7 +169,10 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 
 <template>
   <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
-  <header class="relative flex items-end justify-between gap-2 bg-muted px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
+  <header
+    class="relative flex items-end justify-between gap-2 px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]"
+    :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
+  >
     <nav class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pb-px" aria-label="Open connections">
       <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-end gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
         <div
@@ -179,8 +182,10 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           :class="[
             envBorder(tab.siteId, tab.tabId === sessions.activeTabId),
             tab.tabId === sessions.activeTabId
-              ? 'bg-default font-medium text-highlighted'
-              : 'text-muted hover:bg-elevated hover:text-default'
+              ? ['bg-default font-medium text-highlighted', ui.glassUiEnabled ? 'ferry-glass-active-tab' : '']
+              : ui.glassUiEnabled
+                ? 'text-muted hover:bg-default/40 hover:text-default'
+                : 'text-muted hover:bg-elevated hover:text-default'
           ]"
           :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"

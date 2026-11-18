@@ -89,8 +89,9 @@ const historyDialog = useHistoryDialog()
 const shortcutsDialog = useShortcutsDialog()
 const notify = useNotify()
 
-const initialThemeSync = ui.initTheme()
+ui.initGlassUi()
 ui.initAccentColor()
+const initialThemeSync = ui.initTheme()
 
 // Defer non-essential tab restoration and IPC subscriptions until after initial paint frame
 if (typeof requestAnimationFrame === 'function') {
@@ -259,6 +260,56 @@ const unsubscribeUpdateDownloaded = onEvent<UpdateDownloadedEvent>(EVENT_CHANNEL
     ]
   })
 })
+
+let promoToastShown = false
+
+watch(
+  [() => settingsStore.loaded, needsLegalConsent],
+  ([loaded, consentNeeded]) => {
+    if (!loaded || consentNeeded || promoToastShown) return
+    if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
+    promoToastShown = true
+
+    const { id } = toast.add({
+      title: 'Modern Glass UI (In Development)',
+      description: 'Try Ferry’s new minimalist translucent design in Settings → Appearance.',
+      icon: 'i-lucide-sparkles',
+      color: 'primary',
+      duration: 0,
+      'onUpdate:open': (open: boolean) => {
+        if (!open) {
+          ui.dismissGlassUiPromo()
+        }
+      },
+      actions: [
+        {
+          label: 'Try Glass UI',
+          color: 'primary',
+          variant: 'solid',
+          onClick: () => {
+            ui.setGlassUiEnabled(true)
+            ui.dismissGlassUiPromo()
+            toast.remove(id)
+            notify.success(
+              'Modern Glass UI enabled',
+              'You can switch back anytime in Settings → Appearance.'
+            )
+          }
+        },
+        {
+          label: 'Dismiss',
+          color: 'neutral',
+          variant: 'ghost',
+          onClick: () => {
+            ui.dismissGlassUiPromo()
+            toast.remove(id)
+          }
+        }
+      ]
+    })
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -272,7 +323,11 @@ const unsubscribeUpdateDownloaded = onEvent<UpdateDownloadedEvent>(EVENT_CHANNEL
       ui: { viewport: toasterViewportClass }
     }"
   >
-    <div class="flex h-screen flex-col bg-default text-default">
+    <div v-if="ui.glassUiEnabled" class="ferry-ambient-canvas" aria-hidden="true" />
+    <div
+      class="relative z-10 flex h-screen flex-col text-default"
+      :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
+    >
       <SiteTabBar />
       <main class="relative min-h-0 flex-1">
         <!--
