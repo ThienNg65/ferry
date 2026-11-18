@@ -1,0 +1,34 @@
+name: Build MSIX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Build and pack MSIX
+        run: npm run package:msix
+
+      - name: Verify MSIX artifact exists
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem -Path dist -Filter 'FerryFileClient-*.msix'
+          if (-not $msix) {
+            throw 'Expected dist/FerryFileClient-*.msix to be generated'
+          }
+          $msix | Select-Object Name, Length
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferry-msix-win-x64
+          path: dist/FerryFileClient-*.msix
+          if-no-files-found: error
