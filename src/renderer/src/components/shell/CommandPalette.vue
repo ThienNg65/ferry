@@ -63,7 +63,13 @@ function run(action: () => void | Promise<void>): void {
 }
 
 const groups = computed(() => {
-  const actionItems = [
+  const actionItems: Array<{
+    label: string
+    icon: string
+    disabled?: boolean
+    suffix?: string
+    onSelect: () => void
+  }> = [
     { label: 'New tab', icon: 'i-lucide-plus', onSelect: () => run(() => sessions.openNewTab()) },
     {
       label: ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
@@ -96,11 +102,25 @@ const groups = computed(() => {
     {
       label: 'Check for updates…',
       icon: 'i-lucide-refresh-cw',
+      disabled: !updateStore.canCheck,
+      suffix: updateStore.isChecking
+        ? 'Checking…'
+        : updateStore.isDownloading
+          ? 'Downloading…'
+          : undefined,
       onSelect: () =>
         run(async () => {
+          if (!updateStore.canCheck) {
+            return
+          }
           const res = await updateStore.checkNow()
           if (res.status === 'not-available') {
-            notify.success('Up to date', `Ferry v${updateStore.currentVersion} is the latest version`)
+            notify.success(
+              'Up to date',
+              updateStore.currentVersion
+                ? `Ferry v${updateStore.currentVersion} is the latest version`
+                : 'You are running the latest version'
+            )
           } else if (res.status === 'disabled') {
             notify.error('Updates unavailable', 'Auto-update is disabled in development mode')
           } else if (res.status === 'error' && res.error) {
@@ -109,6 +129,17 @@ const groups = computed(() => {
         })
     }
   ]
+
+  if (updateStore.isDownloaded) {
+    actionItems.push({
+      label: updateStore.availableVersion
+        ? `Restart & install update (v${updateStore.availableVersion})`
+        : 'Restart & install update',
+      icon: 'i-lucide-arrow-up-circle',
+      disabled: updateStore.installing,
+      onSelect: () => run(() => updateStore.installNow())
+    })
+  }
 
   if (sessions.status === 'connected') {
     actionItems.push(
