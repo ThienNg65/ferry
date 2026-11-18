@@ -6,6 +6,9 @@ on:
       - main
     paths:
       - 'scripts/e2e-electron-migration.mjs'
+      - 'scripts/pack-neutralino.mjs'
+      - 'scripts/smoke-neutralino-package.mjs'
+      - 'src/main/update/**'
       - 'build/neutralino-installer.nsi'
       - '.github/workflows/release.yml'
       - '.github/workflows/migration-e2e.yml'

@@ -1,12 +1,16 @@
 import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createRequire } from 'module'
 import * as os from 'os'
 import { dirname, join, posix as pathPosix, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import ssh2Pkg from 'ssh2'
 import { WebSocketServer } from 'ws'
 import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
+
+const require = createRequire(import.meta.url)
+const { verifyUpdateYml } = require('../.github/scripts/regenerate-update-yml.js')
 
 const { Server: SshServer, utils: sshUtils } = ssh2Pkg
 const { STATUS_CODE } = sshUtils.sftp
@@ -279,6 +283,7 @@ async function startSmokeSshServer() {
 try {
   if (process.platform === 'win32' && existsSync(installerPath)) {
     assertExists(manifestPath, 'latest.yml')
+    verifyUpdateYml({ distDir, expectedVersion: version })
     const installDir = join(tempInstallRoot, 'FerryApp')
     mkdirSync(join(installDir, 'locales'), { recursive: true })
     mkdirSync(join(installDir, 'resources'), { recursive: true })
@@ -306,8 +311,28 @@ try {
     assertExists(join(installDir, 'Uninstall.exe'), 'Installed NSIS uninstaller')
     assertExists(join(installDir, 'extensions', 'js.ferry.sidecar', 'node.exe'), 'Installed Node sidecar runtime')
     assertExists(join(installDir, 'extensions', 'js.ferry.sidecar', 'index.cjs'), 'Installed Node sidecar bundle')
+
+    // Verify Neutralino -> Neutralino silent NSIS upgrade replaces existing Neutralino artifacts cleanly.
+    writeFileSync(join(installDir, 'ferry-win_x64.exe'), 'stale-neutralino-exe')
+    writeFileSync(join(installDir, 'resources.neu'), 'stale-neutralino-neu')
+    writeFileSync(join(installDir, 'extensions', 'js.ferry.sidecar', 'index.cjs'), 'stale-neutralino-sidecar')
+    execFileSync(installerPath, ['/S', `/D=${installDir}`], { stdio: 'inherit' })
+
+    if (existsSync(join(installDir, '_ferry_upgrade_backup'))) {
+      throw new Error('NSIS upgrade left behind _ferry_upgrade_backup directory')
+    }
+    for (const relPath of [
+      'ferry-win_x64.exe',
+      'resources.neu',
+      join('extensions', 'js.ferry.sidecar', 'index.cjs')
+    ]) {
+      if (!readFileSync(join(installDir, relPath)).equals(readFileSync(join(protoDir, relPath)))) {
+        throw new Error(`Neutralino -> Neutralino NSIS upgrade did not update ${relPath}`)
+      }
+    }
+
     runtimeDir = installDir
-    console.log(`NSIS upgrade & install smoke verified at ${installDir} (${statSync(installerPath).size} bytes installer).`)
+    console.log(`NSIS upgrade (Electron & Neutralino) smoke verified at ${installDir} (${statSync(installerPath).size} bytes installer).`)
   }
 
   const nodeBin = join(runtimeDir, 'extensions', 'js.ferry.sidecar', 'node.exe')

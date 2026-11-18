@@ -18,16 +18,28 @@ const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
 const version = String(pkg.version || '0.0.0')
 
 const nlConfigPath = join(rootDir, 'neutralino.config.json')
-const nlConfig = JSON.parse(readFileSync(nlConfigPath, 'utf8'))
-if (nlConfig.version !== version) {
-  nlConfig.version = version
-  writeFileSync(nlConfigPath, JSON.stringify(nlConfig, null, 2) + '\n', 'utf8')
-}
+const originalNlConfigText = readFileSync(nlConfigPath, 'utf8')
+const nlConfig = JSON.parse(originalNlConfigText)
+const nlConfigNeedsVersionSync = nlConfig.version !== version
 
 const rendererIndex = join(rootDir, 'out', 'renderer', 'index.html')
 const sidecarBundle = join(rootDir, 'out', 'sidecar', 'index.cjs')
 if (!existsSync(rendererIndex) || !existsSync(sidecarBundle)) {
   throw new Error('Missing built artifacts. Run "npm run build" before packaging.')
+}
+
+if (existsSync(distDir)) {
+  for (const entry of readdirSync(distDir)) {
+    if (
+      /^Ferry-Setup-.*\.exe$/i.test(entry) ||
+      /^Ferry-Portable-.*\.zip$/i.test(entry) ||
+      /\.blockmap$/i.test(entry) ||
+      entry === 'latest.yml' ||
+      entry === 'latest-neutralino.yml'
+    ) {
+      rmSync(join(distDir, entry), { force: true })
+    }
+  }
 }
 
 function brandWindowsExecutable(exePath, iconPath, appVersion) {
@@ -94,7 +106,17 @@ if (!existsSync(join(rootDir, 'bin', 'neutralino-win_x64.exe')) || cachedNlVersi
 }
 
 rmSync(join(distDir, 'ferry'), { recursive: true, force: true })
-runNpx(['@neutralinojs/neu', 'build'])
+if (nlConfigNeedsVersionSync) {
+  nlConfig.version = version
+  writeFileSync(nlConfigPath, JSON.stringify(nlConfig, null, 2) + '\n', 'utf8')
+}
+try {
+  runNpx(['@neutralinojs/neu', 'build'])
+} finally {
+  if (nlConfigNeedsVersionSync) {
+    writeFileSync(nlConfigPath, originalNlConfigText, 'utf8')
+  }
+}
 
 rmSync(protoDir, { recursive: true, force: true })
 mkdirSync(sidecarDistDir, { recursive: true })
