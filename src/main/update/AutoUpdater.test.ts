@@ -913,4 +913,24 @@ describe('SidecarUpdater', () => {
       total: payload.length
     })
   })
+
+  it('disables update checks when FERRY_STORE_BUILD=1 even if packaged', async () => {
+    const { checkForUpdates, getUpdateState, resetAutoUpdaterForTests } = await import('./AutoUpdater')
+    const prev = process.env['FERRY_STORE_BUILD']
+    process.env['FERRY_STORE_BUILD'] = '1'
+    hostState.isPackaged = true
+    resetAutoUpdaterForTests()
+    try {
+      const res = await checkForUpdates(true)
+      expect(res.status).toBe('disabled')
+      expect(getUpdateState().status).toBe('disabled')
+    } finally {
+      if (prev === undefined) {
+        delete process.env['FERRY_STORE_BUILD']
+      } else {
+        process.env['FERRY_STORE_BUILD'] = prev
+      }
+      resetAutoUpdaterForTests()
+    }
+  })
 })

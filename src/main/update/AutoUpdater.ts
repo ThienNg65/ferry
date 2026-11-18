@@ -25,6 +25,17 @@ function getIsPackaged(): boolean {
   return Boolean(host().isPackaged)
 }
 
+function isStoreManaged(): boolean {
+  return (
+    process.env['FERRY_STORE_BUILD'] === '1' ||
+    (process.platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(process.execPath))
+  )
+}
+
+function isAutoUpdateEnabled(): boolean {
+  return getIsPackaged() && !isStoreManaged()
+}
+
 function getAppVersion(): string {
   return host().appVersion ?? FALLBACK_APP_VERSION
 }
@@ -32,7 +43,7 @@ function getAppVersion(): string {
 function ensureState(): UpdateState {
   if (!currentState) {
     currentState = {
-      status: getIsPackaged() ? 'idle' : 'disabled',
+      status: isAutoUpdateEnabled() ? 'idle' : 'disabled',
       currentVersion: getAppVersion()
     }
   }
@@ -81,7 +92,7 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
   }
   initialized = true
 
-  if (!getIsPackaged()) {
+  if (!isAutoUpdateEnabled()) {
     updateState({ status: 'disabled' })
     return
   }
@@ -172,9 +183,14 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
 
 /** Checks for updates immediately. If isManual is true, returns status or error directly to caller. */
 export async function checkForUpdates(isManual = false): Promise<CheckUpdateResult> {
-  if (!getIsPackaged()) {
+  if (!isAutoUpdateEnabled()) {
     updateState({ status: 'disabled', availableVersion: undefined, progress: undefined, error: undefined })
-    return { status: 'disabled', error: 'Updates are disabled in development mode' }
+    return {
+      status: 'disabled',
+      error: isStoreManaged()
+        ? 'Updates are managed by the Microsoft Store'
+        : 'Updates are disabled in development mode'
+    }
   }
 
   await initAutoUpdater(false)
@@ -219,7 +235,7 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
 
 /** Re-verifies, launches the downloaded installer, and schedules clean sidecar shutdown after IPC reply. */
 export async function installUpdateNow(): Promise<void> {
-  if (installInFlight) {
+  if (isStoreManaged() || installInFlight) {
     return
   }
   installInFlight = true

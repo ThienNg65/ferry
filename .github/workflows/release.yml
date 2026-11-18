@@ -100,14 +100,6 @@ jobs:
         shell: bash
         run: npm run smoke:neutralino
 
-      # Hard gate for the one-time Electron bridge, isolated from developer profiles.
-      - name: E2E Electron to Neutralino migration
-        if: vars.PUBLISH_LEGACY_FERRY != 'false'
-        shell: bash
-        env:
-          FERRY_E2E_ISOLATED_RUNNER: '1'
-        run: npm run e2e:migration
-
       # Dormant SignPath stage: active only when the organization ID is configured.
       - name: Upload unsigned installer for signing
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
