@@ -103,15 +103,19 @@ function toStoredJumpHost(j: JumpHostConfig, existing?: StoredJumpHost): StoredJ
 
 /**
  * Maps an incoming jump-host chain to its stored form, matching each hop to
- * the existing hop at the same array index so an unchanged password/
- * passphrase is preserved rather than cleared (`pickSecret`'s usual
- * behavior). Reordering hops in the UI can momentarily attach the wrong
- * stored secret to the wrong hop for one save round-trip — an accepted,
- * documented risk, not a correctness bug: the user re-enters the secret if a
- * save happens to land oddly, same as any other stale-secret edge case here.
+ * its `sourceIndex` (when provided by the UI) or its current array index so
+ * unchanged passwords/passphrases are preserved even after reordering hops.
  */
 function toStoredJumpHosts(hops: JumpHostConfig[], existing: StoredJumpHost[]): StoredJumpHost[] {
-  return hops.map((hop, i) => toStoredJumpHost(hop, existing[i]))
+  return hops.map((hop, i) => {
+    const prev =
+      hop.sourceIndex === -1
+        ? undefined
+        : hop.sourceIndex !== undefined
+          ? existing[hop.sourceIndex]
+          : existing[i]
+    return toStoredJumpHost(hop, prev)
+  })
 }
 
 function toPublicProxy(p: StoredProxy): ProxyInfo {

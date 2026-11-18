@@ -30,6 +30,13 @@ watch(
   }
 )
 
+watch(
+  () => ui.terminalPredictiveEcho,
+  () => {
+    terminalStreams.syncPredictiveEchoSetting()
+  }
+)
+
 /** Session ids whose container `<div>` has already had `term.open()` called on it — never call it twice. */
 const attachedSessions = new Set<string>()
 
@@ -72,6 +79,19 @@ async function fitAndResize(sessionId: string): Promise<void> {
   const inst = terminalStreams.getInstance(sessionId)
   const container = containerRef.value
   if (!inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
+    return
+  }
+  await terminalStreams.flushPredictions(sessionId)
+  const latestInst = terminalStreams.getInstance(sessionId)
+  const latestContainer = containerRef.value
+  if (
+    unmounted ||
+    isStale(sessionId) ||
+    latestInst !== inst ||
+    !latestContainer ||
+    latestContainer.clientWidth === 0 ||
+    latestContainer.clientHeight === 0
+  ) {
     return
   }
   inst.fit.fit()
@@ -118,6 +138,7 @@ watch(() => [props.active, sessions.activeSessionId] as const, () => void syncAc
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null
 let remoteResizeTimer: ReturnType<typeof setTimeout> | null = null
+let unmounted = false
 
 function onWindowResize(): void {
   if (resizeTimer !== null) {
@@ -134,18 +155,33 @@ function onWindowResize(): void {
     if (!props.active || !sessionId || !inst || !container || container.clientWidth === 0 || container.clientHeight === 0) {
       return
     }
-    inst.fit.fit()
-    if (remoteResizeTimer !== null) {
-      clearTimeout(remoteResizeTimer)
-    }
-    remoteResizeTimer = setTimeout(() => {
-      remoteResizeTimer = null
-      const activeId = sessions.activeSessionId
-      const activeInst = activeId ? terminalStreams.getInstance(activeId) : undefined
-      if (props.active && activeId && activeInst) {
-        terminalStreams.resize(activeId, activeInst.term.cols, activeInst.term.rows)
+    void terminalStreams.flushPredictions(sessionId).then(() => {
+      const latestInst = terminalStreams.getInstance(sessionId)
+      const latestContainer = containerRef.value
+      if (
+        unmounted ||
+        !props.active ||
+        sessionId !== sessions.activeSessionId ||
+        latestInst !== inst ||
+        !latestContainer ||
+        latestContainer.clientWidth === 0 ||
+        latestContainer.clientHeight === 0
+      ) {
+        return
       }
-    }, 150)
+      inst.fit.fit()
+      if (remoteResizeTimer !== null) {
+        clearTimeout(remoteResizeTimer)
+      }
+      remoteResizeTimer = setTimeout(() => {
+        remoteResizeTimer = null
+        const activeId = sessions.activeSessionId
+        const activeInst = activeId ? terminalStreams.getInstance(activeId) : undefined
+        if (!unmounted && props.active && activeId && activeInst) {
+          terminalStreams.resize(activeId, activeInst.term.cols, activeInst.term.rows)
+        }
+      }, 150)
+    })
   }, 50)
 }
 
@@ -243,6 +279,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener(TERMINAL_SEARCH_EVENT, openSearch)
   resultsSub?.dispose()

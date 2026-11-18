@@ -49,6 +49,7 @@ const DENSITY_KEY = 'ferry:ui:density'
 const SHORTEN_PATH_KEY = 'ferry:ui:shortenPath'
 const SHOW_HIDDEN_KEY = 'ferry:ui:showHidden'
 const TERM_SCROLLBACK_KEY = 'ferry:ui:terminalScrollback'
+const TERM_PREDICTIVE_ECHO_KEY = 'ferry:ui:terminalPredictiveEcho'
 export const SCROLLBACK_OPTIONS = [1000, 5000, 10000, 50000]
 const COLUMNS_KEY = 'ferry:ui:columns'
 const THEME_KEY = 'ferry:ui:theme'
@@ -122,6 +123,7 @@ interface UiState {
   shortenPath: boolean
   showHidden: boolean
   terminalScrollback: number
+  terminalPredictiveEcho: boolean
   columns: ColumnPrefs
   theme: Theme
   dockHeight: number
@@ -226,6 +228,10 @@ function loadTerminalNumber(key: string, fallback: number, clamp: (n: number) =>
   return raw === null || raw.trim() === '' ? fallback : clamp(Number(raw))
 }
 
+function loadTerminalPredictiveEcho(): boolean {
+  return readStored(TERM_PREDICTIVE_ECHO_KEY) !== 'false'
+}
+
 /** UI-layout preferences that persist across restarts (not session/domain state). */
 export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
@@ -235,6 +241,7 @@ export const useUiStore = defineStore('ui', {
     shortenPath: localStorage.getItem(SHORTEN_PATH_KEY) === 'true',
     showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
     terminalScrollback: loadScrollback(),
+    terminalPredictiveEcho: loadTerminalPredictiveEcho(),
     columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
     theme: loadTheme(),
     dockHeight: loadDockHeight(),
@@ -324,6 +331,11 @@ export const useUiStore = defineStore('ui', {
     setTerminalScrollback(lines: number): void {
       this.terminalScrollback = SCROLLBACK_OPTIONS.includes(lines) ? lines : 5000
       localStorage.setItem(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
+    },
+
+    setTerminalPredictiveEcho(enabled: boolean): void {
+      this.terminalPredictiveEcho = enabled
+      localStorage.setItem(TERM_PREDICTIVE_ECHO_KEY, String(enabled))
     },
 
     toggleShowHidden(): void {

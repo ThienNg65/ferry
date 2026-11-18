@@ -42,19 +42,25 @@ async function onConfirm(): Promise<void> {
 </script>
 
 <template>
-  <UModal :title="title" :ui="{ footer: 'justify-end' }" @update:open="(v: boolean) => { if (!v) emit('close', false) }">
+  <UModal
+    :title="title"
+    :dismissible="!busy"
+    :close="!busy"
+    :ui="{ footer: 'flex-wrap justify-end' }"
+    @update:open="(v: boolean) => { if (!v && !busy) emit('close', false) }"
+  >
     <template #body>
       <div class="flex flex-col gap-3">
         <p v-if="body" class="text-sm text-default">{{ body }}</p>
         <ul v-if="items?.length" class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
           <li v-for="item in items" :key="item" class="truncate text-xs text-default">{{ item }}</li>
         </ul>
-        <UAlert v-if="error" color="error" variant="soft" :title="error" />
+        <UAlert v-if="error" role="alert" color="error" variant="soft" :title="error" />
       </div>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="outline" :autofocus="destructive" @click="emit('close', false)">Cancel</UButton>
-      <UButton v-if="secondaryLabel" color="neutral" variant="soft" @click="onSecondary">{{ secondaryLabel }}</UButton>
+      <UButton color="neutral" variant="outline" :disabled="busy" :autofocus="destructive" @click="emit('close', false)">Cancel</UButton>
+      <UButton v-if="secondaryLabel" color="neutral" variant="soft" :disabled="busy" @click="onSecondary">{{ secondaryLabel }}</UButton>
       <UButton :color="confirmColor ?? 'primary'" :loading="busy" :autofocus="!destructive" @click="onConfirm">
         {{ confirmLabel ?? 'Confirm' }}
       </UButton>

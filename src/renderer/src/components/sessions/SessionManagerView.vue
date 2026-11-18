@@ -9,13 +9,18 @@ import { useSettingsStore } from '../../stores/settings.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { useDebouncedRef } from '../../composables/useDebouncedRef'
-import { ENVIRONMENT_DOT } from '../../utils/environment'
+import { onTablistKeydown } from '../../utils/tablistKeys'
+import { ENVIRONMENT_LABEL } from '../../utils/environment'
+import PasswordInput from '../shell/PasswordInput.vue'
+import SiteRow from './SiteRow.vue'
+import SiteDetailsPanel from './SiteDetailsPanel.vue'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
+import type { DropdownMenuItem } from '@nuxt/ui/components/DropdownMenu.vue'
 
 const sessions = useSessionsStore()
 const sites = useSitesStore()
@@ -24,31 +29,7 @@ const notify = useNotify()
 const version = ref('')
 /** Only shown when an app-wide default proxy is actually configured — otherwise this control has nothing to bypass and would just be clutter. */
 const bypassDefaultProxy = ref(false)
-
-const keyboardAnswers = ref<string[]>([])
-watch(
-  () => sessions.pendingKeyboardPrompt,
-  (prompt) => {
-    keyboardAnswers.value = prompt ? prompt.prompts.map(() => '') : []
-  }
-)
-
-/** Template refs for each prompt's <UInput>, keyed by prompt index — lets Enter on a non-last
- * prompt (e.g. password before an OTP prompt) move focus forward instead of submitting early. */
-const keyboardPromptInputs = ref<({ inputRef?: HTMLInputElement } | null)[]>([])
-
-function onKeyboardPromptEnter(index: number): void {
-  const promptCount = sessions.pendingKeyboardPrompt?.prompts.length ?? 0
-  if (index >= promptCount - 1) {
-    void submitKeyboardAnswers()
-    return
-  }
-  keyboardPromptInputs.value[index + 1]?.inputRef?.focus()
-}
-
-async function submitKeyboardAnswers(): Promise<void> {
-  await sessions.respondKeyboardInteractive([...keyboardAnswers.value])
-}
+const savingQuickSite = ref(false)
 
 onMounted(() => {
   void sites.fetchSites()
@@ -76,6 +57,8 @@ const quickAuthOptions: { label: string; value: AuthMethod }[] = [
 const savePassword = ref(false)
 const quickHostInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
 const quickPasswordInput = ref<{ inputRef?: HTMLInputElement } | null>(null)
+const quickSubmitted = ref(false)
+const quickTouched = reactive({ host: false, port: false, username: false, privateKeyPath: false })
 let pendingFocusQuickPassword = false
 
 const recentQuickMenuItems = computed(() =>
@@ -95,6 +78,7 @@ function applyRecentQuickConnect(entry: RecentQuickConnect): void {
   form.password = ''
   form.passphrase = ''
   bypassDefaultProxy.value = entry.proxyMode === 'none'
+  quickSubmitted.value = false
   pendingFocusQuickPassword = entry.authMethod === 'password'
 }
 
@@ -113,32 +97,56 @@ async function browseQuickKey(): Promise<void> {
 }
 
 async function onSaveQuickAsSite(): Promise<void> {
-  if (!canQuickConnect.value) return
+  quickSubmitted.value = true
+  if (!canQuickConnect.value || savingQuickSite.value) return
+  savingQuickSite.value = true
   try {
     await sites.createSite({
       ...form,
-      name: `${form.username}@${form.host}`,
+      host: form.host.trim(),
+      username: form.username.trim(),
+      name: `${form.username.trim()}@${form.host.trim()}`,
       password: savePassword.value && form.authMethod === 'password' ? form.password : undefined,
       passphrase: undefined,
-      privateKeyPath: form.authMethod === 'privateKey' ? form.privateKeyPath || undefined : undefined,
+      privateKeyPath: form.authMethod === 'privateKey' ? form.privateKeyPath?.trim() || undefined : undefined,
       proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit'
     })
-    notify.success('Site saved', `${form.username}@${form.host}`)
+    notify.success('Site saved', `${form.username.trim()}@${form.host.trim()}`)
   } catch (e) {
     notify.error('Could not save site', e instanceof Error ? e.message : String(e))
+  } finally {
+    savingQuickSite.value = false
   }
 }
 
-const portError = computed(() => {
+const isPortValid = computed(() => {
   const port = Number(form.port)
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be 1–65535'
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+})
+const hostError = computed(() =>
+  (quickTouched.host || quickSubmitted.value) && !form.host.trim() ? 'Host is required' : ''
+)
+const usernameError = computed(() =>
+  (quickTouched.username || quickSubmitted.value) && !form.username.trim() ? 'Username is required' : ''
+)
+const privateKeyError = computed(() =>
+  form.authMethod === 'privateKey' &&
+  (quickTouched.privateKeyPath || quickSubmitted.value) &&
+  !(form.privateKeyPath ?? '').trim()
+    ? 'Private key file is required'
+    : ''
+)
+const portError = computed(() => {
+  if (!quickTouched.port && !quickSubmitted.value) return ''
+  return isPortValid.value ? '' : 'Port must be 1–65535'
 })
 
 const canQuickConnect = computed(() => {
   return (
     form.host.trim().length > 0 &&
     form.username.trim().length > 0 &&
-    portError.value === ''
+    isPortValid.value &&
+    (form.authMethod !== 'privateKey' || (form.privateKeyPath ?? '').trim().length > 0)
   )
 })
 const canConnect = canQuickConnect
@@ -156,7 +164,10 @@ const activeTabQuickConnect = computed(() => {
 })
 
 const showQuickConnectBanner = computed(() =>
-  Boolean(activeTabQuickConnect.value && (sessions.status === 'error' || sessions.status === 'disconnected'))
+  Boolean(
+    activeTabQuickConnect.value &&
+      (sessions.status === 'disconnected' || (sessions.status === 'error' && sessions.activeTab.hadConnected))
+  )
 )
 
 function prefillQuickConnect(qc: NonNullable<typeof activeTabQuickConnect.value>): void {
@@ -202,15 +213,23 @@ async function onReconnectQuickConnect(): Promise<void> {
 }
 
 async function onConnect(): Promise<void> {
+  quickSubmitted.value = true
   if (!canQuickConnect.value || sessions.connecting) return
   try {
-    await sessions.connect({ ...form, proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit' })
+    await sessions.connect({
+      ...form,
+      host: form.host.trim(),
+      username: form.username.trim(),
+      privateKeyPath: form.authMethod === 'privateKey' ? form.privateKeyPath?.trim() || undefined : undefined,
+      proxyMode: bypassDefaultProxy.value ? 'none' : 'inherit'
+    })
   } catch {
     // Surfaced via sessions.status/statusMessage in the template below.
   }
 }
 
 async function onConnectSite(site: Site): Promise<void> {
+  if (sessions.connecting) return
   try {
     await sessions.connectToSite(site)
   } catch {
@@ -229,6 +248,13 @@ function isSiteOpenInTab(siteId: string): boolean {
   return sessions.tabs.some((t) => t.siteId === siteId && t.status === 'connected')
 }
 
+function isSiteConnecting(siteId: string): boolean {
+  return sessions.tabs.some((t) => t.siteId === siteId && t.connecting)
+}
+
+const selectedSiteId = ref<string | null>(null)
+const selectedSite = computed(() => sites.sites.find((s) => s.id === selectedSiteId.value) ?? null)
+
 const formOpen = ref(false)
 const editingSite = ref<Site | null>(null)
 
@@ -246,28 +272,144 @@ function openEditDialog(site: Site): void {
 
 const confirm = useConfirm()
 
+function focusSiteRowOrHost(siteId: string | null): void {
+  void nextTick(() => {
+    const row = siteId ? document.querySelector<HTMLElement>(`[data-site-row][data-site-id="${siteId}"]`) : null
+    if (row) {
+      row.focus()
+    } else {
+      quickHostInput.value?.inputRef?.focus()
+    }
+  })
+}
+
+function closeSiteDetails(): void {
+  const prevId = selectedSiteId.value
+  selectedSiteId.value = null
+  focusSiteRowOrHost(prevId)
+}
+
+function onViewEsc(): void {
+  if (formOpen.value || importOpen.value || !selectedSiteId.value) return
+  closeSiteDetails()
+}
+
+async function copySiteAddress(site: Site): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(`${site.username}@${site.host}`)
+    notify.success('Copied', `${site.username}@${site.host}`)
+  } catch (e) {
+    notify.error('Could not copy address', e instanceof Error ? e.message : String(e))
+  }
+}
+
+async function disconnectSite(site: Site): Promise<void> {
+  const openTabs = sessions.tabs.filter((t) => t.siteId === site.id && (t.status === 'connected' || t.connecting))
+  for (const tab of openTabs) {
+    await sessions.disconnectTab(tab.tabId)
+  }
+}
+
 async function confirmDelete(site: Site): Promise<void> {
-  await confirm({
+  const hasOpenTab = sessions.tabs.some((t) => t.siteId === site.id && (t.status === 'connected' || t.connecting))
+  const deleted = await confirm({
     title: 'Delete site',
-    body: `Delete ${site.name}? This cannot be undone.`,
+    body: hasOpenTab
+      ? `Delete ${site.name}? Its active connection tab will be unlinked from this site. This cannot be undone.`
+      : `Delete ${site.name}? This cannot be undone.`,
     confirmLabel: 'Delete',
     confirmColor: 'error',
     destructive: true,
-    action: () => sites.deleteSite(site.id)
+    action: async () => {
+      await sites.deleteSite(site.id)
+      await sessions.unlinkDeletedSites([site.id])
+    }
   })
+  if (deleted) {
+    if (selectedSiteId.value === site.id) {
+      selectedSiteId.value = null
+      focusSiteRowOrHost(null)
+    } else if (selectedSiteId.value) {
+      focusSiteRowOrHost(selectedSiteId.value)
+    } else {
+      void nextTick(() => {
+        const firstRow = document.querySelector<HTMLElement>('[data-site-row]')
+        if (firstRow) {
+          firstRow.focus()
+        } else {
+          quickHostInput.value?.inputRef?.focus()
+        }
+      })
+    }
+  }
 }
 
 const duplicatingId = ref<string | null>(null)
 
 function siteMenuItems(site: Site): ContextMenuItem[] {
-  return [
-    { label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => void onDuplicate(site) },
+  const connected = isSiteOpenInTab(site.id)
+  const connecting = isSiteConnecting(site.id)
+  const items: ContextMenuItem[] = [
+    {
+      label: connected || connecting ? 'Switch to tab' : 'Connect',
+      icon: 'i-lucide-play',
+      disabled: sessions.connecting && !connected && !connecting,
+      onSelect: () => void onConnectSite(site)
+    }
+  ]
+  if (connected || connecting) {
+    items.push({
+      label: 'Disconnect',
+      icon: 'i-lucide-unplug',
+      onSelect: () => void disconnectSite(site)
+    })
+  }
+  items.push(
+    {
+      label: 'Copy user@host',
+      icon: 'i-lucide-clipboard-copy',
+      onSelect: () => void copySiteAddress(site)
+    },
+    { type: 'separator' },
+    {
+      label: 'Duplicate',
+      icon: 'i-lucide-copy',
+      disabled: duplicatingId.value === site.id,
+      onSelect: () => void onDuplicate(site)
+    },
     { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => openEditDialog(site) },
     { label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => void confirmDelete(site) }
-  ]
+  )
+  return items
 }
 
+const importExportMenuItems = computed<DropdownMenuItem[][]>(() => [
+  [
+    {
+      label: 'Import from WinSCP / PuTTY / SSH…',
+      icon: 'i-lucide-import',
+      onSelect: () => {
+        importOpen.value = true
+      }
+    },
+    {
+      label: 'Import sites backup (.json)…',
+      icon: 'i-lucide-upload',
+      onSelect: () => void onImportSitesJson()
+    }
+  ],
+  [
+    {
+      label: 'Export sites backup (.json)',
+      icon: 'i-lucide-download',
+      disabled: sites.sites.length === 0,
+      onSelect: () => void onExportSites()
+    }
+  ]
+])
+
 async function onDuplicate(site: Site): Promise<void> {
+  if (duplicatingId.value === site.id) return
   duplicatingId.value = site.id
   try {
     await sites.duplicateSite(site.id)
@@ -282,6 +424,7 @@ const selectedIds = reactive(new Set<string>())
 const selectedSiteIds = selectedIds
 
 async function onExportSites(): Promise<void> {
+  if (sites.sites.length === 0) return
   try {
     const jsonStr = await invoke<string>(INVOKE_CHANNELS.sitesExport)
     const blob = new Blob([jsonStr], { type: 'application/json' })
@@ -314,6 +457,7 @@ async function onImportSitesJson(): Promise<void> {
 
 function toggleSelectMode(): void {
   selectMode.value = !selectMode.value
+  selectedSiteId.value = null
   selectedIds.clear()
 }
 
@@ -325,39 +469,61 @@ function toggleSelected(id: string, checked: boolean | 'indeterminate'): void {
   }
 }
 
-const bulkDeleteOpen = ref(false)
-const bulkDeleting = ref(false)
-const bulkDeleteError = ref<string | null>(null)
-
 const selectedSites = computed(() => sites.sites.filter((s) => selectedIds.has(s.id)))
+const allFilteredSelected = computed(
+  () => filteredSites.value.length > 0 && filteredSites.value.every((s) => selectedIds.has(s.id))
+)
 
-function openBulkDeleteConfirm(): void {
-  if (selectedIds.size === 0) return
-  bulkDeleteError.value = null
-  bulkDeleteOpen.value = true
+function toggleSelectAllFiltered(): void {
+  if (allFilteredSelected.value) {
+    for (const s of filteredSites.value) {
+      selectedIds.delete(s.id)
+    }
+  } else {
+    for (const s of filteredSites.value) {
+      selectedIds.add(s.id)
+    }
+  }
 }
 
-async function confirmBulkDelete(): Promise<void> {
-  bulkDeleting.value = true
-  bulkDeleteError.value = null
-  try {
-    await sites.deleteSites(Array.from(selectedIds))
-    selectedIds.clear()
-    selectMode.value = false
-    bulkDeleteOpen.value = false
-  } catch (e) {
-    // Some deletes in the batch may have already succeeded server-side even
-    // though this rejected — resync from the store's own list (below) rather
-    // than trust `selectedIds`, so a retry doesn't re-attempt ones already gone.
-    bulkDeleteError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    await sites.fetchSites()
-    for (const id of Array.from(selectedIds)) {
-      if (!sites.sites.some((s) => s.id === id)) {
-        selectedIds.delete(id)
+async function openBulkDeleteConfirm(): Promise<void> {
+  if (selectedIds.size === 0) return
+  const targets = selectedSites.value
+  const hasActive = targets.some((s) =>
+    sessions.tabs.some((t) => t.siteId === s.id && (t.status === 'connected' || t.connecting))
+  )
+  const confirmed = await confirm({
+    title: 'Delete selected sites',
+    body: `${
+      targets.length === 1 ? 'Delete this 1 site?' : `Delete these ${targets.length} sites?`
+    }${hasActive ? ' Active connections will be unlinked.' : ''} This cannot be undone.`,
+    items: targets.map((s) => `${s.name} — ${s.username}@${s.host}:${s.port}`),
+    confirmLabel: `Delete ${targets.length}`,
+    confirmColor: 'error',
+    destructive: true,
+    action: async () => {
+      const ids = Array.from(selectedIds)
+      try {
+        await sites.deleteSites(ids)
+        await sessions.unlinkDeletedSites(ids)
+        selectedIds.clear()
+        selectMode.value = false
+      } catch (e) {
+        await sites.fetchSites()
+        const deletedIds: string[] = []
+        for (const id of Array.from(selectedIds)) {
+          if (!sites.sites.some((s) => s.id === id)) {
+            selectedIds.delete(id)
+            deletedIds.push(id)
+          }
+        }
+        await sessions.unlinkDeletedSites(deletedIds)
+        throw e
       }
     }
-    bulkDeleting.value = false
+  })
+  if (confirmed) {
+    focusSiteRowOrHost(null)
   }
 }
 
@@ -373,7 +539,9 @@ const filteredSites = computed(() => {
     (s) =>
       s.name.toLowerCase().includes(q) ||
       s.host.toLowerCase().includes(q) ||
-      s.username.toLowerCase().includes(q)
+      s.username.toLowerCase().includes(q) ||
+      (s.group ?? '').toLowerCase().includes(q) ||
+      (s.environment ? ENVIRONMENT_LABEL[s.environment].toLowerCase().includes(q) || s.environment.toLowerCase().includes(q) : false)
   )
 })
 
@@ -410,17 +578,19 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-full items-start justify-center overflow-y-auto bg-default px-6 py-8">
+  <div class="flex h-full items-start justify-center overflow-y-auto bg-default px-4 py-6 sm:px-6 sm:py-8" @keydown.esc="onViewEsc">
     <div class="my-auto flex w-full max-w-4xl flex-col gap-4">
       <UCard v-if="activeTabSite || showQuickConnectBanner" class="border-primary/40 bg-primary/5">
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center justify-between gap-4">
           <div class="flex min-w-0 items-center gap-3">
             <UIcon name="i-lucide-plug-zap" class="size-5 shrink-0 text-primary" />
             <div class="min-w-0">
               <div class="truncate text-sm font-medium text-highlighted">
                 {{
                   sessions.status === 'error'
-                    ? 'Connection lost:'
+                    ? sessions.activeTab.hadConnected
+                      ? 'Connection lost:'
+                      : 'Connection failed:'
                     : sessions.status === 'disconnected'
                       ? 'Disconnected:'
                       : 'Tab site:'
@@ -438,7 +608,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               </div>
             </div>
           </div>
-          <div class="flex shrink-0 items-center gap-2">
+          <div class="flex shrink-0 flex-wrap items-center gap-2">
             <template v-if="activeTabSite">
               <UButton
                 v-if="sessions.restoredSiteTabs.length > 1"
@@ -475,414 +645,321 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       </UCard>
 
       <div class="grid grid-cols-1 gap-6 md:grid-cols-[1.2fr_1fr] md:items-start">
-        <UCard>
-          <template #header>
-            <div class="flex items-center justify-between">
-              <h1 class="text-base font-medium text-highlighted">Sites</h1>
-              <div class="flex items-center gap-1.5">
-                <UButton
-                  v-if="sites.sites.length > 0"
-                  :label="selectMode ? 'Cancel' : 'Select'"
-                  size="xs"
-                  variant="ghost"
-                  color="neutral"
-                  @click="toggleSelectMode"
-                />
-                <UTooltip text="Import from WinSCP/PuTTY">
+        <section aria-labelledby="sites-heading">
+          <UCard>
+            <template #header>
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h1 id="sites-heading" class="text-lg font-semibold text-highlighted">Sites</h1>
+                <div class="flex flex-wrap items-center gap-1.5">
                   <UButton
-                    icon="i-lucide-import"
-                    size="xs"
+                    v-if="sites.sites.length > 0"
+                    :label="selectMode ? 'Cancel' : 'Select'"
+                    size="sm"
                     variant="ghost"
                     color="neutral"
-                    aria-label="Import sites"
-                    @click="importOpen = true"
+                    @click="toggleSelectMode"
                   />
-                </UTooltip>
-                <UTooltip text="Import sites backup">
+                  <UDropdownMenu :items="importExportMenuItems">
+                    <UButton
+                      icon="i-lucide-folder-down"
+                      trailing-icon="i-lucide-chevron-down"
+                      size="sm"
+                      variant="ghost"
+                      color="neutral"
+                    >
+                      <span class="sr-only sm:not-sr-only">Import / Export</span>
+                    </UButton>
+                  </UDropdownMenu>
                   <UButton
-                    icon="i-lucide-upload"
-                    size="xs"
-                    variant="ghost"
-                    color="neutral"
-                    aria-label="Import sites backup"
-                    @click="onImportSitesJson"
-                  />
-                </UTooltip>
-                <UTooltip text="Export sites backup">
-                  <UButton
-                    icon="i-lucide-download"
-                    size="xs"
-                    variant="ghost"
-                    color="neutral"
-                    aria-label="Export sites"
-                    @click="onExportSites"
-                  />
-                </UTooltip>
-                <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
-              </div>
-            </div>
-          </template>
-
-          <div v-if="sites.loading" role="status" aria-label="Loading sites" class="flex flex-col gap-2 py-2">
-            <div v-for="i in 4" :key="i" class="flex items-center gap-2.5 rounded-md px-2 py-1.5">
-              <USkeleton class="size-4 shrink-0 rounded-xs" />
-              <div class="flex flex-1 flex-col gap-1.5">
-                <USkeleton class="h-3.5 w-36" />
-                <USkeleton class="h-2.5 w-48" />
-              </div>
-            </div>
-          </div>
-          <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-2.5 py-7 text-center">
-            <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/15">
-              <UIcon name="i-lucide-server" class="size-5 text-muted" />
-            </div>
-            <div class="space-y-1">
-              <p class="text-xs font-medium text-default">No saved sites yet</p>
-              <p class="max-w-xs text-2xs text-muted">
-                Save a server for one-click access, import existing sessions from WinSCP, PuTTY, or ~/.ssh/config, or use Quick Connect.
-              </p>
-            </div>
-            <div class="flex flex-wrap items-center justify-center gap-2 pt-0.5">
-              <UButton icon="i-lucide-plus" size="xs" variant="soft" @click="openCreateDialog">Add site</UButton>
-              <UButton icon="i-lucide-import" size="xs" color="neutral" variant="outline" @click="importOpen = true">
-                Import sessions
-              </UButton>
-            </div>
-          </div>
-          <template v-else>
-            <UInput
-              v-model="searchQuery"
-              icon="i-lucide-search"
-              placeholder="Search sites by name, host, or user…"
-              size="xs"
-              class="mb-2.5 w-full"
-            />
-            <p v-if="filteredSites.length === 0" class="py-4 text-center text-xs text-muted">
-              No sites match "{{ debouncedSearch }}".
-            </p>
-            <div
-              v-if="selectMode"
-              class="mb-2 flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5 text-xs text-default"
-            >
-              <span>{{ selectedSiteIds.size }} selected</span>
-              <UButton
-                label="Delete selected"
-                icon="i-lucide-trash-2"
-                size="xs"
-                color="error"
-                variant="soft"
-                :disabled="selectedSiteIds.size === 0"
-                @click="openBulkDeleteConfirm"
-              />
-            </div>
-            <div class="flex max-h-[52vh] flex-col gap-1 overflow-y-auto pr-0.5">
-              <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
-                <div v-if="section.name" class="mt-2 px-2 text-2xs font-medium uppercase tracking-wide text-muted first:mt-0">
-                  {{ section.name }}
-                </div>
-                <ul class="flex flex-col gap-1">
-                  <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
-                  <li
-                    class="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
-                    :class="activeTabSite?.id === site.id ? 'bg-primary/5 ring-1 ring-primary/20' : ''"
+                    v-if="sites.sites.length > 0"
+                    icon="i-lucide-plus"
+                    size="sm"
+                    variant="soft"
+                    @click="openCreateDialog"
                   >
-                    <UCheckbox
-                      v-if="selectMode"
-                      :model-value="selectedIds.has(site.id)"
-                      @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(site.id, v)"
-                    />
-                    <div
-                      v-else
-                      class="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted transition-colors group-hover:bg-default group-hover:text-highlighted"
-                    >
-                      <UIcon :name="siteIcon(site)" class="size-3.5" />
-                    </div>
-                    <button
-                      type="button"
-                      class="min-w-0 flex-1 rounded-xs text-left focus-visible:outline-2 focus-visible:outline-primary"
-                      @click="selectMode ? toggleSelected(site.id, !selectedIds.has(site.id)) : onConnectSite(site)"
-                    >
-                      <div class="flex min-w-0 items-center gap-1.5">
-                        <span
-                          v-if="site.environment"
-                          class="size-2 shrink-0 rounded-full"
-                          :class="ENVIRONMENT_DOT[site.environment]"
-                          :title="site.environment"
-                        />
-                        <span class="truncate text-sm font-medium text-highlighted">{{ site.name }}</span>
-                        <span
-                          v-if="site.jumpHosts?.length"
-                          class="shrink-0 rounded bg-muted px-1 py-0.2 font-mono text-3xs text-muted"
-                        >
-                          Jump ×{{ site.jumpHosts.length }}
-                        </span>
-                        <span
-                          v-if="isSiteOpenInTab(site.id)"
-                          class="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-1.5 py-0.2 text-3xs font-medium text-success"
-                        >
-                          <span class="size-1.5 rounded-full bg-success" />
-                          Connected
-                        </span>
-                      </div>
-                      <div class="truncate font-mono text-2xs text-muted">{{ site.username }}@{{ site.host }}:{{ site.port }}</div>
-                    </button>
-                    <UIcon
-                      v-if="!selectMode"
-                      name="i-lucide-arrow-right"
-                      class="size-3.5 shrink-0 -translate-x-1 text-muted opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:translate-x-0 group-focus-within:opacity-100"
-                      aria-hidden="true"
-                    />
-                    <UDropdownMenu v-if="!selectMode" :items="siteMenuItems(site)">
-                      <UButton
-                        icon="i-lucide-ellipsis"
-                        color="neutral"
-                        variant="ghost"
-                        size="xs"
-                        :aria-label="`Actions for ${site.name}`"
-                        :loading="duplicatingId === site.id"
-                      />
-                    </UDropdownMenu>
-                  </li>
-                  </ContextMenu>
-                </ul>
+                    Add site
+                  </UButton>
+                </div>
+              </div>
+            </template>
+
+            <div v-if="sites.loading" role="status" aria-label="Loading sites" class="flex flex-col gap-2 py-2">
+              <div v-for="i in 4" :key="i" class="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+                <USkeleton class="size-4 shrink-0 rounded-xs" />
+                <div class="flex flex-1 flex-col gap-1.5">
+                  <USkeleton class="h-3.5 w-36" />
+                  <USkeleton class="h-2.5 w-48" />
+                </div>
               </div>
             </div>
-          </template>
-        </UCard>
-
-        <UCard>
-          <template #header>
-            <div class="flex items-center justify-between gap-2">
-              <h2 class="text-base font-medium text-highlighted">Quick Connect</h2>
-              <UDropdownMenu
-                v-if="sessions.recentQuickConnects.length > 0"
-                :items="recentQuickMenuItems"
-                :content="{ onCloseAutoFocus: onRecentMenuCloseAutoFocus }"
+            <div v-else-if="sites.error && sites.sites.length === 0" class="flex flex-col gap-3 py-2">
+              <UAlert role="alert" color="error" variant="soft" title="Could not load saved sites" :description="sites.error" />
+              <div class="flex justify-end">
+                <UButton size="sm" variant="outline" icon="i-lucide-refresh-cw" @click="sites.fetchSites()">
+                  Retry
+                </UButton>
+              </div>
+            </div>
+            <div v-else-if="sites.sites.length === 0" class="flex flex-col items-center gap-3 py-7 text-center">
+              <div class="rounded-full bg-muted/60 p-3 ring-1 ring-default/15">
+                <UIcon name="i-lucide-server" class="size-5 text-muted" />
+              </div>
+              <div class="space-y-1">
+                <p class="text-sm font-medium text-default">No saved sites yet</p>
+                <p class="max-w-xs text-xs text-muted">
+                  Save a server for one-click access, import existing sessions from WinSCP, PuTTY, or ~/.ssh/config, or use Quick Connect.
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center justify-center gap-2 pt-0.5">
+                <UButton icon="i-lucide-plus" size="sm" variant="soft" @click="openCreateDialog">Add site</UButton>
+                <UButton icon="i-lucide-import" size="sm" color="neutral" variant="outline" @click="importOpen = true">
+                  Import sessions
+                </UButton>
+              </div>
+            </div>
+            <template v-else>
+              <UInput
+                v-model="searchQuery"
+                icon="i-lucide-search"
+                placeholder="Search sites by name, host, user, or group…"
+                aria-label="Search saved sites"
+                size="sm"
+                class="mb-2.5 w-full"
+                :ui="{ trailing: 'pe-1' }"
+                @keydown.esc.stop="searchQuery = ''"
               >
-                <UButton
-                  label="Recent"
-                  icon="i-lucide-clock"
-                  trailing-icon="i-lucide-chevron-down"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                />
-              </UDropdownMenu>
-            </div>
-          </template>
-
-          <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
-            <div class="flex gap-3">
-              <UFormField label="Host" class="flex-1">
-                <UInput ref="quickHostInput" v-model="form.host" placeholder="example.com" class="w-full" />
-              </UFormField>
-              <UFormField label="Port" :error="portError || undefined" class="w-28" :ui="{ error: 'text-2xs leading-tight' }">
-                <UInput v-model.number="form.port" type="number" min="1" max="65535" class="w-full" />
-              </UFormField>
-            </div>
-            <UFormField label="Username">
-              <UInput v-model="form.username" placeholder="e.g. root" class="w-full" />
-            </UFormField>
-            <UFormField label="Authentication">
-              <URadioGroup v-model="form.authMethod" :items="quickAuthOptions" orientation="horizontal" />
-            </UFormField>
-            <UFormField v-if="form.authMethod === 'password'" label="Password">
-              <UInput ref="quickPasswordInput" v-model="form.password" type="password" class="w-full" />
-            </UFormField>
-            <template v-else-if="form.authMethod === 'privateKey'">
-              <UFormField label="Private key file">
-                <div class="flex gap-2">
-                  <UInput v-model="form.privateKeyPath" placeholder="Path to private key" class="w-full flex-1" />
-                  <UButton color="neutral" variant="outline" @click="browseQuickKey">Browse</UButton>
+                <template v-if="searchQuery.length > 0" #trailing>
+                  <UButton
+                    type="button"
+                    icon="i-lucide-x"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    aria-label="Clear search"
+                    @click="searchQuery = ''"
+                  />
+                </template>
+              </UInput>
+              <div v-if="filteredSites.length === 0" role="status" aria-live="polite" class="flex flex-col items-center gap-2 py-4 text-center">
+                <p class="text-xs text-muted">No sites match "{{ debouncedSearch }}".</p>
+                <UButton size="xs" color="neutral" variant="outline" @click="searchQuery = ''">Clear search</UButton>
+              </div>
+              <div
+                v-if="selectMode"
+                class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted px-2.5 py-1.5 text-xs text-default"
+              >
+                <div class="flex items-center gap-2">
+                  <span role="status" aria-live="polite">{{ selectedSiteIds.size }} selected</span>
+                  <UButton
+                    v-if="filteredSites.length > 0"
+                    :label="allFilteredSelected ? 'Deselect all' : 'Select all'"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    @click="toggleSelectAllFiltered"
+                  />
                 </div>
-              </UFormField>
-              <UFormField label="Passphrase">
-                <UInput v-model="form.passphrase" type="password" placeholder="Optional" class="w-full" />
-              </UFormField>
-            </template>
-            <UCheckbox
-              v-if="form.authMethod === 'password' && form.password"
-              v-model="savePassword"
-              label="Also save the password when saving as a site"
-            />
-
-            <UCheckbox
-              v-if="settings.defaultProxy"
-              v-model="bypassDefaultProxy"
-              label="Bypass default proxy for this connection"
-            />
-
-            <UAlert
-              v-if="sessions.status === 'error' && !activeTabSite && !showQuickConnectBanner"
-              color="error"
-              variant="soft"
-              :title="sessions.statusMessage ?? 'Connection failed'"
-              :ui="{ title: 'break-words [overflow-wrap:anywhere]', description: 'break-words [overflow-wrap:anywhere]' }"
-            />
-          </form>
-
-          <template #footer>
-            <div class="flex gap-2">
-              <UButton
-                type="submit"
-                form="ferry-quick-connect-form"
-                class="flex-1 justify-center"
-                :disabled="!canQuickConnect"
-                :loading="sessions.connecting"
-                @click="onConnect"
+                <UButton
+                  label="Delete selected"
+                  icon="i-lucide-trash-2"
+                  size="xs"
+                  color="error"
+                  variant="soft"
+                  :disabled="selectedSiteIds.size === 0"
+                  @click="openBulkDeleteConfirm"
+                />
+              </div>
+              <div
+                class="flex flex-col gap-1 pr-0.5 md:max-h-[58vh] md:overflow-y-auto"
+                @keydown="onTablistKeydown($event, !selectMode, true, '[data-site-row]')"
               >
-                Connect
-              </UButton>
-              <UButton color="neutral" variant="outline" icon="i-lucide-save" :disabled="!canQuickConnect" @click="onSaveQuickAsSite">
-                Save as site
-              </UButton>
-            </div>
-          </template>
-        </UCard>
+                <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
+                  <h2 v-if="section.name" class="mt-2 px-2 text-xs font-medium uppercase tracking-wide text-muted first:mt-0">
+                    {{ section.name }}
+                  </h2>
+                  <ul class="flex flex-col gap-1">
+                    <ContextMenu v-for="site in section.sites" :key="site.id" :items="siteMenuItems(site)">
+                      <SiteRow
+                        :site="site"
+                        :icon="siteIcon(site)"
+                        :selected="selectedSiteId === site.id"
+                        :select-mode="selectMode"
+                        :checked="selectedIds.has(site.id)"
+                        :connected="isSiteOpenInTab(site.id)"
+                        :connecting="isSiteConnecting(site.id)"
+                        :active="activeTabSite?.id === site.id"
+                        :busy="duplicatingId === site.id"
+                        :menu-items="siteMenuItems(site)"
+                        @select="selectedSiteId = site.id"
+                        @connect="onConnectSite(site)"
+                        @toggle="(v) => toggleSelected(site.id, v)"
+                        @delete="confirmDelete(site)"
+                      />
+                    </ContextMenu>
+                  </ul>
+                </div>
+              </div>
+            </template>
+          </UCard>
+        </section>
+
+        <Transition name="fade" mode="out-in">
+          <section v-if="selectedSite" :key="selectedSite.id" aria-labelledby="connect-panel-heading">
+            <SiteDetailsPanel
+              :site="selectedSite"
+              :icon="siteIcon(selectedSite)"
+              :connected="isSiteOpenInTab(selectedSite.id)"
+              :connecting="isSiteConnecting(selectedSite.id)"
+              :busy="sessions.connecting"
+              :duplicating="duplicatingId === selectedSite.id"
+              @connect="onConnectSite(selectedSite)"
+              @disconnect="void disconnectSite(selectedSite)"
+              @edit="openEditDialog(selectedSite)"
+              @duplicate="void onDuplicate(selectedSite)"
+              @delete="void confirmDelete(selectedSite)"
+              @close="closeSiteDetails"
+            />
+          </section>
+          <section v-else key="quick-connect" aria-labelledby="connect-panel-heading">
+            <UCard>
+              <template #header>
+                <div class="flex items-center justify-between gap-2">
+                  <h2 id="connect-panel-heading" class="text-base font-medium text-highlighted">Quick Connect</h2>
+                  <UDropdownMenu
+                    v-if="sessions.recentQuickConnects.length > 0"
+                    :items="recentQuickMenuItems"
+                    :content="{ onCloseAutoFocus: onRecentMenuCloseAutoFocus }"
+                  >
+                    <UButton
+                      label="Recent"
+                      icon="i-lucide-clock"
+                      trailing-icon="i-lucide-chevron-down"
+                      size="sm"
+                      color="neutral"
+                      variant="ghost"
+                    />
+                  </UDropdownMenu>
+                </div>
+              </template>
+
+              <form id="ferry-quick-connect-form" class="flex flex-col gap-3" @submit.prevent="onConnect">
+                <div class="flex flex-col gap-3 sm:flex-row">
+                  <UFormField label="Host" required :error="hostError || undefined" class="flex-1">
+                    <UInput
+                      ref="quickHostInput"
+                      v-model="form.host"
+                      placeholder="example.com"
+                      class="w-full"
+                      @blur="quickTouched.host = true"
+                    />
+                  </UFormField>
+                  <UFormField label="Port" required :error="portError || undefined" class="w-full sm:w-28" :ui="{ error: 'text-xs leading-tight' }">
+                    <UInput
+                      v-model.number="form.port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      class="w-full"
+                      @blur="quickTouched.port = true"
+                    />
+                  </UFormField>
+                </div>
+                <UFormField label="Username" required :error="usernameError || undefined">
+                  <UInput
+                    v-model="form.username"
+                    placeholder="e.g. root"
+                    class="w-full"
+                    @blur="quickTouched.username = true"
+                  />
+                </UFormField>
+                <UFormField label="Authentication">
+                  <URadioGroup
+                    v-model="form.authMethod"
+                    :items="quickAuthOptions"
+                    orientation="horizontal"
+                    :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
+                  />
+                </UFormField>
+                <UFormField v-if="form.authMethod === 'password'" label="Password">
+                  <PasswordInput ref="quickPasswordInput" v-model="form.password" label="password" class="w-full" />
+                </UFormField>
+                <template v-else-if="form.authMethod === 'privateKey'">
+                  <UFormField label="Private key file" required :error="privateKeyError || undefined">
+                    <div class="flex flex-col gap-2 sm:flex-row">
+                      <UInput
+                        v-model="form.privateKeyPath"
+                        placeholder="Path to private key"
+                        class="w-full flex-1"
+                        @blur="quickTouched.privateKeyPath = true"
+                      />
+                      <UButton color="neutral" variant="outline" aria-label="Browse private key file" @click="browseQuickKey">
+                        Browse
+                      </UButton>
+                    </div>
+                  </UFormField>
+                  <UFormField label="Passphrase">
+                    <PasswordInput v-model="form.passphrase" label="passphrase" placeholder="Optional" class="w-full" />
+                  </UFormField>
+                </template>
+                <UCheckbox
+                  v-if="form.authMethod === 'password'"
+                  v-model="savePassword"
+                  :disabled="!form.password"
+                  label="Also save the password when saving as a site"
+                />
+
+                <UCheckbox
+                  v-if="settings.defaultProxy"
+                  v-model="bypassDefaultProxy"
+                  label="Bypass default proxy for this connection"
+                />
+
+                <UAlert
+                  v-if="sessions.status === 'error' && !activeTabSite && !showQuickConnectBanner"
+                  role="alert"
+                  color="error"
+                  variant="soft"
+                  :title="sessions.statusMessage ?? 'Connection failed'"
+                  :ui="{ title: 'break-words [overflow-wrap:anywhere]', description: 'break-words [overflow-wrap:anywhere]' }"
+                />
+              </form>
+
+              <template #footer>
+                <div class="flex flex-wrap gap-2">
+                  <UButton
+                    type="submit"
+                    form="ferry-quick-connect-form"
+                    class="flex-1 justify-center"
+                    :disabled="sessions.connecting"
+                    :loading="sessions.connecting"
+                  >
+                    Connect
+                  </UButton>
+                  <UButton
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-save"
+                    :loading="savingQuickSite"
+                    :disabled="savingQuickSite"
+                    @click="onSaveQuickAsSite"
+                  >
+                    Save as site
+                  </UButton>
+                </div>
+              </template>
+            </UCard>
+          </section>
+        </Transition>
       </div>
 
-      <p v-if="version" class="text-center text-2xs text-muted">Ferry v{{ version }}</p>
+      <p v-if="version" class="text-center text-xs text-muted">Ferry v{{ version }}</p>
     </div>
 
-    <SiteFormDialog v-model:open="formOpen" :site="editingSite" />
+    <SiteFormDialog
+      v-model:open="formOpen"
+      :site="editingSite"
+      @saved-and-connect="(site) => void onConnectSite(site)"
+    />
     <ImportSessionsDialog v-model:open="importOpen" />
-
-    <UModal
-      :open="bulkDeleteOpen"
-      title="Delete selected sites"
-      :ui="{ footer: 'justify-end', content: 'max-w-lg' }"
-      @update:open="(v: boolean) => { if (!v) bulkDeleteOpen = false }"
-    >
-      <template #body>
-        <div class="flex flex-col gap-3">
-          <p class="text-sm text-default">
-            Delete {{ selectedSites.length === 1 ? 'this 1 site' : `these ${selectedSites.length} sites` }}? This cannot be undone.
-          </p>
-          <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
-            <li v-for="site in selectedSites" :key="site.id" class="truncate text-xs text-default">
-              {{ site.name }} — {{ site.username }}@{{ site.host }}:{{ site.port }}
-            </li>
-          </ul>
-          <UAlert v-if="bulkDeleteError" color="error" variant="soft" :title="bulkDeleteError" />
-        </div>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="bulkDeleteOpen = false">Cancel</UButton>
-        <UButton color="error" :disabled="selectedSiteIds.size === 0" :loading="bulkDeleting" @click="confirmBulkDelete">
-          Delete {{ selectedSites.length }}
-        </UButton>
-      </template>
-    </UModal>
-
-    <UModal
-      :open="Boolean(sessions.pendingHostKeyMismatch)"
-      title="Host key changed"
-      :ui="{ footer: 'justify-end' }"
-      @update:open="(v: boolean) => { if (!v) sessions.dismissHostKeyMismatch(sessions.activeTabId) }"
-    >
-      <template #body>
-        <div class="flex flex-col gap-3">
-          <UAlert
-            color="warning"
-            variant="soft"
-            icon="i-lucide-shield-alert"
-            title="This could mean a man-in-the-middle attack"
-          />
-          <p class="break-words [overflow-wrap:anywhere] text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
-          <p class="text-xs text-muted">
-            Only continue if you're certain the change is legitimate — e.g. the server was reinstalled or its key was
-            deliberately rotated.
-          </p>
-        </div>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="sessions.dismissHostKeyMismatch(sessions.activeTabId)">
-          Cancel
-        </UButton>
-        <UButton
-          color="warning"
-          :loading="sessions.connecting"
-          @click="sessions.acceptHostKeyAndRetry(sessions.activeTabId)"
-        >
-          Trust new key &amp; connect
-        </UButton>
-      </template>
-    </UModal>
-
-    <UModal
-      :open="Boolean(sessions.pendingHostKeyPrompt)"
-      title="Trust this server?"
-      :ui="{ footer: 'justify-end' }"
-      @update:open="(v: boolean) => { if (!v) sessions.respondHostKey(false) }"
-    >
-      <template #body>
-        <div class="flex flex-col gap-3">
-          <p class="text-sm text-default">
-            First connection to
-            <span class="font-medium">{{ sessions.pendingHostKeyPrompt?.host }}:{{ sessions.pendingHostKeyPrompt?.port }}</span>.
-            Check that this fingerprint matches the one your server administrator gave you.
-          </p>
-          <code class="break-all rounded-md bg-muted p-2 font-mono text-xs text-highlighted">{{ sessions.pendingHostKeyPrompt?.fingerprint }}</code>
-        </div>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" autofocus @click="sessions.respondHostKey(false)">Cancel</UButton>
-        <UButton color="primary" @click="sessions.respondHostKey(true)">Trust &amp; connect</UButton>
-      </template>
-    </UModal>
-
-    <UModal
-      :open="Boolean(sessions.pendingKeyboardPrompt)"
-      title="Authentication required"
-      :ui="{ footer: 'justify-end' }"
-      @update:open="(v: boolean) => { if (!v) sessions.cancelKeyboardInteractive() }"
-    >
-      <template #body>
-        <div class="flex flex-col gap-3">
-          <p v-if="sessions.pendingKeyboardPrompt?.instructions" class="text-sm text-default">
-            {{ sessions.pendingKeyboardPrompt.instructions }}
-          </p>
-          <UFormField
-            v-for="(prompt, i) in sessions.pendingKeyboardPrompt?.prompts ?? []"
-            :key="i"
-            :label="prompt.prompt"
-          >
-            <UInput
-              :ref="(el: any) => { keyboardPromptInputs[i] = el }"
-              v-model="keyboardAnswers[i]"
-              :type="prompt.echo ? 'text' : 'password'"
-              class="w-full"
-              autofocus
-              @keyup.enter="onKeyboardPromptEnter(i)"
-            />
-          </UFormField>
-        </div>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="sessions.cancelKeyboardInteractive">Cancel</UButton>
-        <UButton @click="submitKeyboardAnswers">Submit</UButton>
-      </template>
-    </UModal>
-    <UModal
-      :open="sessions.connecting && !sessions.pendingKeyboardPrompt && !sessions.pendingHostKeyPrompt && !sessions.pendingHostKeyMismatch"
-      title="Connecting..."
-      prevent-close
-    >
-      <template #body>
-        <div class="flex flex-col gap-2 max-h-60 overflow-y-auto">
-          <div
-            v-for="(msg, index) in sessions.activeTab?.progressMessages || []"
-            :key="index"
-            class="text-sm"
-            :class="index === (sessions.activeTab?.progressMessages.length ?? 0) - 1 ? 'text-highlighted font-medium' : 'text-muted'"
-          >
-            {{ msg }}
-          </div>
-        </div>
-      </template>
-      <template #footer>
-        <UButton color="neutral" variant="outline" @click="sessions.cancelConnect(sessions.activeTabId)">Cancel</UButton>
-      </template>
-    </UModal>
   </div>
 </template>

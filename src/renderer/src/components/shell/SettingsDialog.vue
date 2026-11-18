@@ -9,6 +9,7 @@ import { invoke } from '../../api'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { renderLegalMarkdown } from '../../utils/renderLegalMarkdown'
 import SettingsRow from './SettingsRow.vue'
+import PasswordInput from './PasswordInput.vue'
 import TerminalAppearanceSettings from './TerminalAppearanceSettings.vue'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useSitesStore } from '../../stores/sites.store'
@@ -595,6 +596,7 @@ async function saveNetwork(): Promise<void> {
                   :model-value="ui.density"
                   :items="densityOptions"
                   orientation="horizontal"
+                  :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
                   @update:model-value="(v: string) => ui.setDensity(v as Density)"
                 />
               </SettingsRow>
@@ -603,6 +605,7 @@ async function saveNetwork(): Promise<void> {
                   :model-value="ui.dockPosition"
                   :items="dockPositionOptions"
                   orientation="horizontal"
+                  :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
                   @update:model-value="(v: string) => { if (v !== ui.dockPosition) ui.toggleDockPosition() }"
                 />
               </SettingsRow>
@@ -662,7 +665,12 @@ async function saveNetwork(): Promise<void> {
               </SettingsRow>
               <template v-if="proxyEnabled">
                 <SettingsRow label="Type">
-                  <URadioGroup v-model="proxyType" :items="proxyTypeOptions" orientation="horizontal" />
+                  <URadioGroup
+                    v-model="proxyType"
+                    :items="proxyTypeOptions"
+                    orientation="horizontal"
+                    :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
+                  />
                 </SettingsRow>
                 <SettingsRow label="Host and port" stacked>
                   <div class="flex gap-2">
@@ -684,9 +692,9 @@ async function saveNetwork(): Promise<void> {
                 <SettingsRow label="Credentials" description="Optional." stacked>
                   <div class="flex gap-2">
                     <UInput v-model="proxyUsername" placeholder="Username" aria-label="Proxy username" class="w-full flex-1" />
-                    <UInput
+                    <PasswordInput
                       v-model="proxyPassword"
-                      type="password"
+                      label="proxy password"
                       aria-label="Proxy password"
                       :placeholder="settings.defaultProxy?.hasPassword ? 'Leave blank to keep current' : 'Password'"
                       class="w-full flex-1"

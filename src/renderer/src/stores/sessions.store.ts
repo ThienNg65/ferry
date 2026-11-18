@@ -121,6 +121,17 @@ export interface SessionTab {
   /** The in-flight `openSession` call while `connecting` is true — lets `closeTab` wait for it
    * to settle instead of detaching the tab from a session that's still being opened underneath it. */
   connectPromise: Promise<void> | null
+  /** True once this tab has reached `'connected'` at least once — distinguishes initial connect failures from mid-session drops. */
+  hadConnected: boolean
+  /** Snapshot of tab identity before an in-flight connect attempt so `cancelConnect` restores the picker cleanly. */
+  preConnectSnapshot?: {
+    siteId: string | null
+    label: string | null
+    hostLabel: string | null
+    status: SessionStatus | null
+    hadConnected: boolean
+    quickConnectInput?: Omit<QuickConnectInput, 'password' | 'passphrase'>
+  } | null
   /** Set when the last connect attempt failed because the server's host key changed — surfaced as a warning dialog, not a plain toast, since accepting it needs an explicit user decision. */
   pendingHostKeyMismatch: PendingHostKeyMismatch | null
   /** Sanitized Quick Connect parameters (secrets stripped) for promoting an active Quick Connect session to a saved site. */
@@ -146,10 +157,13 @@ interface SessionsState {
   unsubscribeStatus: (() => void) | null
   unsubscribeProgress: (() => void) | null
   unsubscribeKeyboardInteractive: (() => void) | null
-  /** A live keyboard-interactive challenge (2FA/OTP) awaiting the user's answer — global, not per-tab, since only one connect attempt is normally in flight at a time. */
-  pendingKeyboardPrompt: KeyboardInteractiveRequestEvent | null
+  /** Per-session queue of live keyboard-interactive (2FA/OTP) prompts so concurrent tab connects never overwrite each other. */
+  pendingKeyboardPrompts: KeyboardInteractiveRequestEvent[]
   unsubscribeHostKey: (() => void) | null
-  pendingHostKeyPrompt: HostKeyPromptEvent | null
+  /** Per-session queue of first-use host-key confirmation prompts. */
+  pendingHostKeyPrompts: HostKeyPromptEvent[]
+  /** Generation counter bumped on cancelConnect so an in-flight reconnectAll() stops queuing remaining tabs. */
+  reconnectAllGen: number
 }
 
 function freshTab(): SessionTab {
@@ -164,6 +178,8 @@ function freshTab(): SessionTab {
     connecting: false,
     progressMessages: [],
     connectPromise: null,
+    hadConnected: false,
+    preConnectSnapshot: null,
     pendingHostKeyMismatch: null
   }
 }
@@ -178,9 +194,10 @@ export const useSessionsStore = defineStore('sessions', {
       unsubscribeStatus: null,
       unsubscribeProgress: null,
       unsubscribeKeyboardInteractive: null,
-      pendingKeyboardPrompt: null,
+      pendingKeyboardPrompts: [],
       unsubscribeHostKey: null,
-      pendingHostKeyPrompt: null
+      pendingHostKeyPrompts: [],
+      reconnectAllGen: 0
     }
   },
 
@@ -202,6 +219,32 @@ export const useSessionsStore = defineStore('sessions', {
     },
     pendingHostKeyMismatch(): PendingHostKeyMismatch | null {
       return this.activeTab.pendingHostKeyMismatch
+    },
+    pendingKeyboardPrompt(state): KeyboardInteractiveRequestEvent | null {
+      const activeSid = this.activeTab.sessionId
+      if (activeSid) {
+        const match = state.pendingKeyboardPrompts.find((p) => p.sessionId === activeSid)
+        if (match) return match
+      }
+      return state.pendingKeyboardPrompts[0] ?? null
+    },
+    pendingHostKeyPrompt(state): HostKeyPromptEvent | null {
+      const activeSid = this.activeTab.sessionId
+      if (activeSid) {
+        const match = state.pendingHostKeyPrompts.find((p) => p.sessionId === activeSid)
+        if (match) return match
+      }
+      return state.pendingHostKeyPrompts[0] ?? null
+    },
+    pendingKeyboardPromptTab(state): SessionTab | null {
+      const prompt = this.pendingKeyboardPrompt
+      if (!prompt) return null
+      return state.tabs.find((t) => t.sessionId === prompt.sessionId) ?? null
+    },
+    pendingHostKeyPromptTab(state): SessionTab | null {
+      const prompt = this.pendingHostKeyPrompt
+      if (!prompt) return null
+      return state.tabs.find((t) => t.sessionId === prompt.sessionId) ?? null
     },
     restoredSiteTabs(): SessionTab[] {
       return this.tabs.filter((t) => t.siteId !== null && t.status === null && !t.connecting && t.sessionId === null)
@@ -256,6 +299,9 @@ export const useSessionsStore = defineStore('sessions', {
         }
         const wasConnected = tab.status === 'connected'
         tab.status = evt.status
+        if (evt.status === 'connected') {
+          tab.hadConnected = true
+        }
         tab.statusMessage = evt.message ?? null
         if (wasConnected && evt.status === 'error') {
           notify.error('Connection lost', tab.label ? `${tab.label}: ${evt.message ?? ''}` : evt.message)
@@ -288,7 +334,7 @@ export const useSessionsStore = defineStore('sessions', {
       this.unsubscribeKeyboardInteractive = onEvent<KeyboardInteractiveRequestEvent>(
         EVENT_CHANNELS.keyboardInteractivePrompt,
         (evt) => {
-          this.pendingKeyboardPrompt = evt
+          this.pendingKeyboardPrompts.push(evt)
         }
       )
     },
@@ -298,8 +344,14 @@ export const useSessionsStore = defineStore('sessions', {
         return
       }
       this.unsubscribeHostKey = onEvent<HostKeyPromptEvent>(EVENT_CHANNELS.hostKeyPrompt, (evt) => {
-        this.pendingHostKeyPrompt = evt
+        this.pendingHostKeyPrompts.push(evt)
       })
+    },
+
+    clearPromptsForSession(sessionId: string | null): void {
+      if (!sessionId) return
+      this.pendingKeyboardPrompts = this.pendingKeyboardPrompts.filter((p) => p.sessionId !== sessionId)
+      this.pendingHostKeyPrompts = this.pendingHostKeyPrompts.filter((p) => p.sessionId !== sessionId)
     },
 
     async respondHostKey(accept: boolean): Promise<void> {
@@ -307,7 +359,7 @@ export const useSessionsStore = defineStore('sessions', {
       if (!pending) {
         return
       }
-      this.pendingHostKeyPrompt = null
+      this.pendingHostKeyPrompts = this.pendingHostKeyPrompts.filter((p) => p.requestId !== pending.requestId)
       await invoke<void>(INVOKE_CHANNELS.sessionHostKeyRespond, { requestId: pending.requestId, accept })
     },
 
@@ -317,7 +369,7 @@ export const useSessionsStore = defineStore('sessions', {
       if (!pending) {
         return
       }
-      this.pendingKeyboardPrompt = null
+      this.pendingKeyboardPrompts = this.pendingKeyboardPrompts.filter((p) => p.requestId !== pending.requestId)
       await invoke<void>(INVOKE_CHANNELS.sessionKeyboardInteractiveRespond, {
         requestId: pending.requestId,
         responses
@@ -333,20 +385,30 @@ export const useSessionsStore = defineStore('sessions', {
       await this.respondKeyboardInteractive(pending.prompts.map(() => ''))
     },
 
-    /** Shared connect path for both quick-connect and saved-site connect — always targets the active tab. */
+    /** Shared connect path for both quick-connect and saved-site connect — defaults to the active tab unless `targetTabId` is given. */
     async openSession(
       request: ConnectRequest,
       label: string,
       hostLabel: string,
       siteId: string | null,
-      trustedHostKey?: { host: string; port: number }
+      trustedHostKey?: { host: string; port: number },
+      targetTabId?: string
     ): Promise<void> {
       this.ensureStatusSubscription()
       this.ensureKeyboardInteractiveSubscription()
       this.ensureHostKeySubscription()
-      const tab = this.activeTab
+      const tab = (targetTabId ? this.tabs.find((t) => t.tabId === targetTabId) : undefined) ?? this.activeTab
+      tab.preConnectSnapshot = {
+        siteId: tab.siteId,
+        label: tab.label,
+        hostLabel: tab.hostLabel,
+        status: tab.status,
+        hadConnected: tab.hadConnected,
+        quickConnectInput: tab.quickConnectInput ? { ...tab.quickConnectInput } : undefined
+      }
       tab.connecting = true
       tab.status = 'connecting'
+      tab.hadConnected = false
       tab.sessionId = crypto.randomUUID()
       tab.progressMessages = []
       tab.statusMessage = null
@@ -410,10 +472,15 @@ export const useSessionsStore = defineStore('sessions', {
         const alreadyTerminal = tab.status === 'error' || tab.status === 'disconnected'
         if (!alreadyTerminal) {
           tab.status = result.status
+          if (result.status === 'connected') {
+            tab.hadConnected = true
+          }
+          tab.preConnectSnapshot = null
           notify.success(`Connected to ${label}`)
         }
       } catch (e) {
         if (startedSessionId) {
+          this.clearPromptsForSession(startedSessionId)
           void useTerminalStreamsStore().disposeForSession(startedSessionId).catch(() => {})
         }
         if (isAbandoned()) {
@@ -421,6 +488,7 @@ export const useSessionsStore = defineStore('sessions', {
         }
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
+        tab.preConnectSnapshot = null
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
           tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId, hostKey: e.hostKey }
         } else {
@@ -461,6 +529,7 @@ export const useSessionsStore = defineStore('sessions', {
 
     async connect(input: QuickConnectInput): Promise<void> {
       const tab = this.activeTab
+      const priorQuickConnect = tab.quickConnectInput ? { ...tab.quickConnectInput } : undefined
       const sanitized = sanitizeQuickConnectInput(input)
       tab.quickConnectInput = sanitized
       if (input.password || input.passphrase) {
@@ -472,12 +541,16 @@ export const useSessionsStore = defineStore('sessions', {
         ephemeralQuickSecrets.delete(tab.tabId)
       }
       this.recordRecentQuickConnect(sanitized)
-      await this.openSession(
+      const attempt = this.openSession(
         { quickConnect: input },
         input.name || input.host,
         `${input.username}@${input.host}`,
         null
       )
+      if (tab.preConnectSnapshot) {
+        tab.preConnectSnapshot.quickConnectInput = priorQuickConnect
+      }
+      await attempt
     },
 
     /** User accepted a changed host key after being warned — retries the exact same connect attempt with the override set. */
@@ -501,7 +574,7 @@ export const useSessionsStore = defineStore('sessions', {
     },
 
     /** Connects to a saved site — switches to an already-open/connecting tab for the same site instead of opening a duplicate connection. */
-    async connectToSite(site: Site): Promise<void> {
+    async connectToSite(site: Site, options?: { newTabIfBusy?: boolean }): Promise<void> {
       const existing = this.tabs.find(
         (t) => t.siteId === site.id && t.tabId !== this.activeTabId && (t.status === 'connected' || t.connecting)
       )
@@ -515,42 +588,82 @@ export const useSessionsStore = defineStore('sessions', {
         }
         return
       }
+      if (options?.newTabIfBusy && (this.activeTab.connecting || this.activeTab.sessionId !== null)) {
+        this.openNewTab()
+      } else if (this.activeTab.connecting) {
+        // A second request from the picker would redirect the in-flight picker tab to a different site.
+        return
+      } else if (this.activeTab.sessionId !== null) {
+        // Never overwrite and orphan an already-live session on the active tab (e.g. via CommandPalette).
+        this.openNewTab()
+      }
       await this.openSession({ siteId: site.id }, site.name, `${site.username}@${site.host}`, site.id)
     },
 
     async reconnectAll(): Promise<void> {
       const sitesStore = useSitesStore()
-      for (const tab of [...this.restoredSiteTabs]) {
+      const notify = useNotify()
+      const gen = this.reconnectAllGen
+      const targets = [...this.restoredSiteTabs]
+      let failed = 0
+      for (const tab of targets) {
+        if (this.reconnectAllGen !== gen) {
+          break
+        }
         const site = sitesStore.sites.find((s) => s.id === tab.siteId)
         if (!site) {
           continue
         }
-        this.setActiveTab(tab.tabId)
-        await this.connectToSite(site).catch(() => undefined)
+        try {
+          await this.openSession(
+            { siteId: site.id },
+            site.name,
+            `${site.username}@${site.host}`,
+            site.id,
+            undefined,
+            tab.tabId
+          )
+        } catch {
+          failed += 1
+        }
+      }
+      if (failed > 0 && this.reconnectAllGen === gen) {
+        notify.error('Reconnect incomplete', `${failed} of ${targets.length} restored tabs failed to connect`)
       }
     },
 
     async cancelConnect(tabId: string): Promise<void> {
+      this.reconnectAllGen += 1
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab || !tab.connecting || !tab.sessionId) {
         return
       }
       const sessionId = tab.sessionId
+      const snap = tab.preConnectSnapshot
       tab.sessionId = null
-      tab.status = null
+      tab.status = snap?.status ?? null
       tab.statusMessage = null
       tab.progressMessages = []
       tab.connecting = false
       tab.connectPromise = null
-      if (this.pendingKeyboardPrompt?.sessionId === sessionId) {
-        this.pendingKeyboardPrompt = null
+      tab.hadConnected = snap?.hadConnected ?? false
+      tab.siteId = snap?.siteId ?? null
+      tab.label = snap?.label ?? null
+      tab.hostLabel = snap?.hostLabel ?? null
+      tab.quickConnectInput = snap?.quickConnectInput
+      tab.preConnectSnapshot = null
+      if (!snap?.quickConnectInput) {
+        ephemeralQuickSecrets.delete(tab.tabId)
       }
-      if (this.pendingHostKeyPrompt?.sessionId === sessionId) {
-        this.pendingHostKeyPrompt = null
+      this.clearPromptsForSession(sessionId)
+      void this.persistOpenTabs()
+      try {
+        await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
+      } finally {
+        useRemoteFsStore().clearSession(sessionId)
+        useFileFiltersStore().clearEphemeralSession(sessionId)
+        void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
       }
-      await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
-      useRemoteFsStore().clearSession(sessionId)
-      useFileFiltersStore().clearEphemeralSession(sessionId)
     },
 
     /** Disconnects a tab's live SSH/SFTP session while keeping the tab (and any ephemeral Quick Connect secrets) for reconnect. */
@@ -560,18 +673,14 @@ export const useSessionsStore = defineStore('sessions', {
         return
       }
       const sid = tab.sessionId
-      if (sid && this.pendingKeyboardPrompt?.sessionId === sid) {
-        this.pendingKeyboardPrompt = null
-      }
-      if (sid && this.pendingHostKeyPrompt?.sessionId === sid) {
-        this.pendingHostKeyPrompt = null
-      }
+      this.clearPromptsForSession(sid)
       tab.sessionId = null
       tab.status = 'disconnected'
       tab.connecting = false
       tab.connectPromise = null
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
+      tab.preConnectSnapshot = null
       if (sid) {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
         useRemoteFsStore().clearSession(sid)
@@ -652,30 +761,58 @@ export const useSessionsStore = defineStore('sessions', {
       }
     },
 
+    /** Unlinks or closes tabs referencing deleted saved sites so no ghost siteId remains. */
+    async unlinkDeletedSites(siteIds: string[]): Promise<void> {
+      if (siteIds.length === 0) return
+      const deleted = new Set(siteIds)
+      const toClose: string[] = []
+      for (const tab of this.tabs) {
+        if (tab.preConnectSnapshot?.siteId && deleted.has(tab.preConnectSnapshot.siteId)) {
+          tab.preConnectSnapshot.siteId = null
+        }
+        if (!tab.siteId || !deleted.has(tab.siteId)) continue
+        if (tab.status === 'connected' || tab.connecting) {
+          tab.siteId = null
+        } else {
+          toClose.push(tab.tabId)
+        }
+      }
+      for (const tabId of toClose) {
+        await this.closeTab(tabId)
+      }
+      void this.persistOpenTabs()
+    },
+
     /** Closes and removes a tab entirely, disconnecting its session first if connected. */
     async closeTab(tabId: string): Promise<void> {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab) {
         return
       }
-      if (this.pendingKeyboardPrompt?.sessionId === tab.sessionId) {
-        this.pendingKeyboardPrompt = null
-      }
-      if (this.pendingHostKeyPrompt?.sessionId === tab.sessionId) {
-        this.pendingHostKeyPrompt = null
-      }
-      if (tab.sessionId) {
-        await invoke<void>(INVOKE_CHANNELS.sessionClose, tab.sessionId)
-        useRemoteFsStore().clearSession(tab.sessionId)
-        useFileFiltersStore().clearEphemeralSession(tab.sessionId)
-        useMonitorStore().clearSession(tab.sessionId)
-        await useTailStreamsStore().closeForSession(tab.sessionId)
+      const sid = tab.sessionId
+      const pendingConnect = tab.connectPromise
+      tab.sessionId = null
+      tab.connecting = false
+      tab.connectPromise = null
+      this.clearPromptsForSession(sid)
+      if (sid) {
+        await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
+        if (pendingConnect) {
+          await pendingConnect.catch(() => undefined)
+        }
+        useRemoteFsStore().clearSession(sid)
+        useFileFiltersStore().clearEphemeralSession(sid)
+        useMonitorStore().clearSession(sid)
+        await useTailStreamsStore().closeForSession(sid)
         // Fire-and-forget: documented as no-op-safe today, but caught so a
         // future failure can't become an unhandled rejection — deliberately
         // not awaited so a slow teardown doesn't block closeTab.
-        void useTerminalStreamsStore().disposeForSession(tab.sessionId).catch(() => {})
+        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
+      if (closedIndex === -1) {
+        return
+      }
       ephemeralQuickSecrets.delete(tabId)
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
       void this.persistOpenTabs()

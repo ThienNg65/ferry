@@ -175,6 +175,17 @@ function onLineHeight(value: number | null | undefined): void {
           @update:model-value="(v: number) => { ui.setTerminalScrollback(v); terminalStreams.applyAppearance() }"
         />
       </SettingsRow>
+      <SettingsRow
+        label="Predictive local echo"
+        description="Show typed characters immediately on slow SSH servers; pauses automatically in password prompts and full-screen apps."
+        for-id="terminal-predictive-echo"
+      >
+        <USwitch
+          id="terminal-predictive-echo"
+          :model-value="ui.terminalPredictiveEcho"
+          @update:model-value="(v: boolean) => ui.setTerminalPredictiveEcho(v)"
+        />
+      </SettingsRow>
     </div>
   </div>
 </template>

@@ -107,6 +107,8 @@ export interface JumpHostConfig {
   privateKeyPath?: string
   password?: string
   passphrase?: string
+  /** Original 0-based index from the loaded Site.jumpHosts array so reordering preserves saved encrypted secrets. */
+  sourceIndex?: number
 }
 
 /** {@link JumpHostConfig} as returned to the renderer — booleans instead of decrypted secrets, mirroring {@link Site}. */

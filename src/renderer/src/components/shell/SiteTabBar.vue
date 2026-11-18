@@ -15,7 +15,7 @@ import { useSessionsStore, type SessionTab } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
-import { ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
+import { ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
 const SiteFormDialog = defineAsyncComponent(() => import('../sessions/SiteFormDialog.vue'))
@@ -151,6 +151,11 @@ function envBorder(siteId: string | null, isActive = false): string {
   return isActive ? 'border-primary' : 'border-transparent'
 }
 
+function envLabel(siteId: string | null): string | null {
+  const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
+  return env ? ENVIRONMENT_LABEL[env] : null
+}
+
 /** Hide `user@host` when the tab's label already is (or contains) the host, e.g. a site named after its IP. */
 function showHost(label: string | null | undefined, hostLabel: string | null | undefined): boolean {
   return Boolean(label && hostLabel && !label.includes(hostLabel.split('@').pop() ?? hostLabel))
@@ -164,16 +169,13 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 
 <template>
   <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
-  <div class="relative flex items-end justify-between gap-2 bg-muted px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
-    <div class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto">
-      <TransitionGroup name="site-tab" tag="div" class="contents" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+  <header class="relative flex items-end justify-between gap-2 bg-muted px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]">
+    <nav class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pb-px" aria-label="Open connections">
+      <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-end gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
         <div
           v-for="tab in sessions.tabs"
           :key="tab.tabId"
-          role="tab"
-          :aria-selected="tab.tabId === sessions.activeTabId"
-          :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
-          class="ferry-site-tab group max-w-64 shrink-0 cursor-pointer select-none rounded-t-md border-t-2 text-xs transition-colors"
+          class="ferry-site-tab group relative max-w-64 shrink-0 rounded-t-md border-t-2 text-xs transition-colors"
           :class="[
             envBorder(tab.siteId, tab.tabId === sessions.activeTabId),
             tab.tabId === sessions.activeTabId
@@ -181,40 +183,53 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
               : 'text-muted hover:bg-elevated hover:text-default'
           ]"
           :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
-          @click="sessions.setActiveTab(tab.tabId)"
-          @keydown.enter.self="sessions.setActiveTab(tab.tabId)"
-          @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
           <ContextMenu :items="tabMenuItems(tab)">
-            <div class="flex min-w-0 items-center gap-1.5 px-2.5 py-1">
-              <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
-              <UIcon
-                v-else-if="tab.status === 'error'"
-                name="i-lucide-circle-alert"
-                class="size-3.5 shrink-0 text-error"
-              />
-              <span
-                v-else-if="tab.status === 'connected'"
-                class="size-2 shrink-0 rounded-full bg-success"
-              />
-              <UIcon
-                v-else-if="tab.siteId"
-                name="i-lucide-server"
-                class="size-3 shrink-0 text-muted"
-              />
-              <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
-              <span
-                v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
-                class="min-w-0 truncate font-normal text-muted"
+            <div class="flex min-w-0 items-center">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="tab.tabId === sessions.activeTabId"
+                :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
+                class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 rounded-tl-md py-1.5 pl-2.5 pr-1 text-left focus-visible:outline-2 focus-visible:outline-primary"
+                @click="sessions.setActiveTab(tab.tabId)"
+                @keydown.enter.self="sessions.setActiveTab(tab.tabId)"
+                @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
               >
-                {{ tab.hostLabel }}
-              </span>
+                <UIcon v-if="tab.connecting" name="i-lucide-loader-2" class="size-3.5 shrink-0 animate-spin" />
+                <UIcon
+                  v-else-if="tab.status === 'error'"
+                  name="i-lucide-circle-alert"
+                  class="size-3.5 shrink-0 text-error"
+                />
+                <span
+                  v-else-if="tab.status === 'connected'"
+                  class="size-2 shrink-0 rounded-full bg-success"
+                />
+                <UIcon
+                  v-else-if="tab.siteId"
+                  name="i-lucide-server"
+                  class="size-3 shrink-0 text-muted"
+                />
+                <span class="truncate">{{ tab.label ?? tab.hostLabel ?? 'New Tab' }}</span>
+                <span
+                  v-if="tab.tabId === sessions.activeTabId && showHost(tab.label, tab.hostLabel)"
+                  class="min-w-0 truncate font-normal text-muted"
+                >
+                  {{ tab.hostLabel }}
+                </span>
+                <span v-if="tab.connecting" class="sr-only">Connecting</span>
+                <span v-else-if="tab.status === 'error'" class="sr-only">Connection error</span>
+                <span v-else-if="tab.status === 'connected'" class="sr-only">Connected</span>
+                <span v-if="envLabel(tab.siteId)" class="sr-only">{{ envLabel(tab.siteId) }}</span>
+              </button>
               <UTooltip text="Close tab (Middle-click)">
                 <button
                   type="button"
-                  aria-label="Close tab"
-                  class="ml-0.5 shrink-0 rounded p-0.5 transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
+                  :aria-label="`Close ${tab.label ?? tab.hostLabel ?? 'New Tab'}`"
+                  :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
+                  class="mr-0.5 flex size-6 shrink-0 items-center justify-center rounded transition-opacity hover:bg-default focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-primary"
                   :class="
                     tab.tabId === sessions.activeTabId
                       ? 'opacity-70 hover:opacity-100'
@@ -222,7 +237,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
                   "
                   @click="onCloseTab($event, tab.tabId)"
                 >
-                  <UIcon name="i-lucide-x" class="size-3" />
+                  <UIcon name="i-lucide-x" class="size-3.5" />
                 </button>
               </UTooltip>
             </div>
@@ -240,41 +255,49 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @click="sessions.openNewTab()"
         />
       </UTooltip>
-    </div>
+    </nav>
 
     <div class="flex shrink-0 items-center gap-1 pb-0.5">
       <UTooltip v-if="isBusy" :text="activityLabel">
         <button
+          v-if="sessions.status === 'connected'"
           type="button"
           aria-label="Show activity"
-          class="flex size-6 items-center justify-center rounded-md"
-          :class="sessions.status === 'connected' ? 'cursor-pointer hover:bg-accented' : 'cursor-default'"
+          class="flex size-6 cursor-pointer items-center justify-center rounded-md hover:bg-accented focus-visible:outline-2 focus-visible:outline-primary"
           @click="showActivity"
         >
           <span class="size-2 rounded-full bg-primary animate-pulse" />
         </button>
+        <div
+          v-else
+          role="status"
+          :aria-label="activityLabel"
+          class="flex size-6 items-center justify-center rounded-md"
+        >
+          <span class="size-2 rounded-full bg-primary animate-pulse" />
+        </div>
       </UTooltip>
       <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
         <button
           type="button"
-          aria-label="Restart to update"
-          class="flex items-center gap-1 rounded bg-success/20 px-1.5 py-0.5 text-2xs font-medium text-success transition-colors hover:bg-success/30"
+          aria-label="Update ready — restart to update"
+          class="flex min-h-6 items-center gap-1 rounded bg-success/20 px-2 py-0.5 text-xs font-medium text-success transition-colors hover:bg-success/30 focus-visible:outline-2 focus-visible:outline-primary"
           @click="updateStore.installNow()"
         >
-          <UIcon name="i-lucide-arrow-up-circle" class="size-3" />
+          <UIcon name="i-lucide-arrow-up-circle" class="size-3.5" />
           <span class="hidden md:inline">Update ready</span>
         </button>
       </UTooltip>
       <UTooltip text="Command palette (Ctrl+K)">
         <button
           type="button"
-          aria-label="Open command palette"
-          class="flex items-center gap-1.5 rounded-md border border-default/70 bg-default/50 px-2 py-0.5 text-2xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          aria-label="Search commands — open command palette"
+          class="flex min-h-6 items-center gap-1.5 rounded-md border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
           @click="commandPalette.open()"
         >
-          <UIcon name="i-lucide-search" class="size-3" />
+          <UIcon name="i-lucide-search" class="size-3.5" />
           <span class="hidden sm:inline">Search</span>
-          <kbd class="rounded bg-muted px-1 py-0.2 font-mono text-3xs text-muted">Ctrl+K</kbd>
+          <kbd class="rounded bg-muted px-1 py-0.5 font-mono text-2xs text-muted">Ctrl+K</kbd>
         </button>
       </UTooltip>
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
@@ -327,7 +350,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @click="exitFullScreen"
         />
       </UTooltip>
-      <UTooltip :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
+      <UTooltip v-if="sessions.status === 'connected'" :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
         <UButton
           size="xs"
           variant="ghost"
@@ -344,5 +367,5 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       :initial-values="saveQuickInitialValues"
       @saved="onQuickSiteSaved"
     />
-  </div>
+  </header>
 </template>

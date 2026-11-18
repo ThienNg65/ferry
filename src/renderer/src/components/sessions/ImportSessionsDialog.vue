@@ -37,7 +37,19 @@ const rows = computed(() =>
   }))
 )
 
-const selectableCount = computed(() => rows.value.filter((r) => !r.alreadySaved).length)
+const selectableRows = computed(() => rows.value.filter((r) => !r.alreadySaved))
+const selectableCount = computed(() => selectableRows.value.length)
+const allSelected = computed(() => selectableCount.value > 0 && selectableRows.value.every((r) => selected.has(r.index)))
+
+function toggleSelectAll(): void {
+  if (allSelected.value) {
+    selected.clear()
+  } else {
+    for (const r of selectableRows.value) {
+      selected.add(r.index)
+    }
+  }
+}
 
 watch(
   () => props.open,
@@ -110,10 +122,12 @@ async function importSelected(): Promise<void> {
 <template>
   <UModal
     :open="open"
+    :dismissible="!importing"
+    :close="!importing"
     title="Import sites"
     description="Scans this machine's saved WinSCP and PuTTY sessions (Windows) and ~/.ssh/config."
-    :ui="{ footer: 'justify-end', content: 'max-w-lg' }"
-    @update:open="(v: boolean) => { if (!v) close() }"
+    :ui="{ footer: 'flex-wrap justify-end', content: 'max-w-lg' }"
+    @update:open="(v: boolean) => { if (!v && !importing) close() }"
   >
     <template #body>
       <div class="flex flex-col gap-3">
@@ -125,39 +139,56 @@ async function importSelected(): Promise<void> {
           description="WinSCP/PuTTY don't store passwords in a form Ferry can safely decode — set one after import if the site needs it."
         />
 
-        <div v-if="loading" class="py-4 text-center text-xs text-muted">Scanning for saved sessions…</div>
-        <div v-else-if="scanned.length === 0" class="py-4 text-center text-xs text-muted">
+        <div v-if="loading" role="status" aria-live="polite" class="py-4 text-center text-xs text-muted">
+          Scanning for saved sessions…
+        </div>
+        <div v-else-if="scanned.length === 0" role="status" aria-live="polite" class="py-4 text-center text-xs text-muted">
           No WinSCP, PuTTY or ~/.ssh/config sessions found on this machine.
         </div>
-        <ul v-else class="flex max-h-80 flex-col gap-1 overflow-y-auto">
-          <li
-            v-for="row in rows"
-            :key="row.index"
-            class="flex items-center gap-2 rounded-md px-2 py-1.5"
-            :class="row.alreadySaved ? 'opacity-50' : 'hover:bg-muted'"
-          >
-            <UCheckbox
-              :model-value="selected.has(row.index)"
-              :disabled="row.alreadySaved"
-              @update:model-value="(v: boolean | 'indeterminate') => toggle(row.index, v)"
+        <template v-else>
+          <div v-if="selectableCount > 0" class="flex items-center justify-between text-xs text-muted">
+            <span role="status" aria-live="polite">{{ selected.size }} of {{ selectableCount }} ready to import</span>
+            <UButton
+              :label="allSelected ? 'Deselect all' : 'Select all'"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              @click="toggleSelectAll"
             />
-            <UBadge color="neutral" variant="subtle" size="sm">{{ row.candidate.source }}</UBadge>
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-sm font-medium text-highlighted">{{ row.candidate.name }}</div>
-              <div class="truncate text-xs text-muted">
-                {{ row.candidate.username }}@{{ row.candidate.host }}:{{ row.candidate.port }}
-                <span v-if="row.alreadySaved">— already saved</span>
+          </div>
+          <ul class="flex max-h-80 flex-col gap-1 overflow-y-auto">
+            <li
+              v-for="row in rows"
+              :key="row.index"
+              class="flex items-center gap-2 rounded-md px-2 py-1.5"
+              :class="row.alreadySaved ? 'opacity-50' : 'cursor-pointer hover:bg-muted'"
+              @click="!row.alreadySaved && toggle(row.index, !selected.has(row.index))"
+            >
+              <UCheckbox
+                :model-value="selected.has(row.index)"
+                :disabled="row.alreadySaved"
+                :aria-label="`Select ${row.candidate.name}`"
+                @click.stop
+                @update:model-value="(v: boolean | 'indeterminate') => toggle(row.index, v)"
+              />
+              <UBadge color="neutral" variant="subtle" size="sm">{{ row.candidate.source }}</UBadge>
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm font-medium text-highlighted">{{ row.candidate.name }}</div>
+                <div class="truncate text-xs text-muted">
+                  {{ row.candidate.username }}@{{ row.candidate.host }}:{{ row.candidate.port }}
+                  <span v-if="row.alreadySaved">— already saved</span>
+                </div>
               </div>
-            </div>
-          </li>
-        </ul>
+            </li>
+          </ul>
+        </template>
 
-        <UAlert v-if="error" color="error" variant="soft" :title="error" />
+        <UAlert v-if="error" role="alert" color="error" variant="soft" :title="error" />
       </div>
     </template>
 
     <template #footer>
-      <UButton color="neutral" variant="outline" @click="close">Cancel</UButton>
+      <UButton color="neutral" variant="outline" :disabled="importing" @click="close">Cancel</UButton>
       <UButton :loading="importing" :disabled="selected.size === 0 || selectableCount === 0" @click="importSelected">
         Import {{ selected.size }} selected
       </UButton>

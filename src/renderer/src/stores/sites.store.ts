@@ -12,6 +12,7 @@ function withNameFallback(input: SiteInput): SiteInput {
 interface SitesState {
   sites: Site[]
   loading: boolean
+  error: string | null
   inFlightFetch: Promise<void> | null
 }
 
@@ -19,6 +20,7 @@ export const useSitesStore = defineStore('sites', {
   state: (): SitesState => ({
     sites: [],
     loading: false,
+    error: null,
     inFlightFetch: null
   }),
 
@@ -41,9 +43,12 @@ export const useSitesStore = defineStore('sites', {
         return this.inFlightFetch
       }
       this.loading = true
+      this.error = null
       this.inFlightFetch = (async () => {
         try {
           this.sites = await invoke<Site[]>(INVOKE_CHANNELS.sitesList)
+        } catch (e) {
+          this.error = e instanceof Error ? e.message : String(e)
         } finally {
           this.loading = false
           this.inFlightFetch = null

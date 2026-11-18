@@ -46,6 +46,9 @@ function onKeydown(event: KeyboardEvent): void {
     return
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    if (!open.value && document.querySelector('[role="dialog"]')) {
+      return
+    }
     event.preventDefault()
     open.value = !open.value
   }
@@ -147,7 +150,7 @@ const groups = computed(() => {
         label: site.name,
         suffix: `${site.username}@${site.host}`,
         icon: 'i-lucide-server',
-        onSelect: () => run(() => void sessions.connectToSite(site))
+        onSelect: () => run(() => void sessions.connectToSite(site, { newTabIfBusy: true }))
       }))
     }
   ]
@@ -155,7 +158,7 @@ const groups = computed(() => {
 </script>
 
 <template>
-  <UModal v-model:open="open" :ui="{ content: 'max-w-lg' }">
+  <UModal v-model:open="open" title="Command palette" :ui="{ content: 'max-w-lg' }">
     <template #content>
       <div @keydown.enter.stop>
         <UCommandPalette :groups="groups" placeholder="Type a command or search sites…" :close="false" />

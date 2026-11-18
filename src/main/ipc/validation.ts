@@ -83,7 +83,10 @@ export function validateSiteInput(value: unknown, channel: string): SiteInput {
           authMethod: requireEnum(h.authMethod, HOP_AUTH_METHODS, 'jumpHosts.authMethod', channel),
           privateKeyPath: optionalString(h.privateKeyPath, 'jumpHosts.privateKeyPath', channel),
           password: optionalString(h.password, 'jumpHosts.password', channel),
-          passphrase: optionalString(h.passphrase, 'jumpHosts.passphrase', channel)
+          passphrase: optionalString(h.passphrase, 'jumpHosts.passphrase', channel),
+          ...(typeof h.sourceIndex === 'number' && Number.isInteger(h.sourceIndex) && h.sourceIndex >= -1
+            ? { sourceIndex: h.sourceIndex }
+            : {})
         }
       })
     : undefined
