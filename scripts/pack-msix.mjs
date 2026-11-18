@@ -13,7 +13,25 @@ const msixTemplateDir = join(rootDir, 'build', 'msix')
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
 const rawVersion = String(pkg.version || '0.0.0').split('-')[0]
 const [major = 0, minor = 0, patch = 0] = rawVersion.split('.').map((n) => Number.parseInt(n, 10) || 0)
-const msixVersion = `${major}.${minor}.${patch}.0`
+const msixVersion = process.env.FERRY_MSIX_VERSION?.trim() || `${major}.${minor}.${patch}.0`
+
+// Microsoft Store rejects MSIX packages with Major=0 or non-zero Revision.
+const parts = msixVersion.split('.').map((n) => (/^\d+$/.test(n) ? Number(n) : -1))
+if (
+  parts.length !== 4 ||
+  parts[0] < 1 ||
+  parts[0] > 65535 ||
+  parts[1] < 0 ||
+  parts[1] > 65535 ||
+  parts[2] < 0 ||
+  parts[2] > 65535 ||
+  parts[3] !== 0
+) {
+  throw new Error(
+    `Invalid Microsoft Store MSIX version "${msixVersion}" (from package.json "${pkg.version}"). ` +
+      'Store MSIX packages require Major.Minor.Build.0 with Major >= 1 (release v1.0.0+ or set FERRY_MSIX_VERSION).'
+  )
+}
 
 const exePath = join(protoDir, 'ferry-win_x64.exe')
 if (!existsSync(exePath)) {
