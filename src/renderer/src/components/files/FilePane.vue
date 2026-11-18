@@ -10,7 +10,7 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
-import { resolveConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
+import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
@@ -77,7 +77,9 @@ const connectionFilterKey = computed(() =>
   props.side === 'remote' ? resolveConnectionFilterKey(sessions.activeTab) : null
 )
 const activeVisibilityFilter = computed<FileVisibilityFilter>(() =>
-  props.side === 'remote' ? fileFilters.getFilter(connectionFilterKey.value) : emptyVisibilityFilter()
+  props.side === 'remote'
+    ? fileFilters.getFilter(connectionFilterKey.value, resolveLegacyConnectionFilterKey(sessions.activeTab))
+    : emptyVisibilityFilter()
 )
 const paneEntriesResult = computed(() =>
   composePaneEntries(store.entries, {
