@@ -28,6 +28,20 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.32.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.31.0...ferry-v0.32.0) (2026-11-18)
+
+
+### Features
+
+* **ui:** redesign Ferry icon with minimalist Glassmorphism and dynamic favicon sync ([0439f7f](https://github.com/ThienNg65/ferry/commit/0439f7f4e0320fd6bc5009e7c2785da1545c8a11))
+* **ui:** redesign Ferry icon with minimalist Glassmorphism and dynamic favicon sync ([e7e4ea6](https://github.com/ThienNg65/ferry/commit/e7e4ea6839ebe38c6159f739faa283e494bd482d))
+
+
+### Bug Fixes
+
+* harden SFTP close timeout, drop abort sync, and duplicate drop paths ([6481401](https://github.com/ThienNg65/ferry/commit/64814019e966b52a94a7e762a9908e45eacca075))
+* stream external drops, pipeline SFTP transfers, and honor local start path ([1ea1de7](https://github.com/ThienNg65/ferry/commit/1ea1de73f5fa6dc7e7b99a101eb988756bbb6bfc))
+
 ## [0.31.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.30.1...ferry-v0.31.0) (2026-11-18)
 
 
