@@ -8,6 +8,7 @@ import { useNotify } from '../../composables/useNotify'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { renderLegalMarkdown } from '../../utils/renderLegalMarkdown'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import FerryLogo from './FerryLogo.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ accepted: [] }>()
@@ -79,6 +80,12 @@ async function onContinue(): Promise<void> {
     description="Please review and accept Ferry's Privacy Policy and Terms of Service before continuing."
     :ui="{ content: 'max-w-xl' }"
   >
+    <template #title>
+      <div class="flex items-center gap-2.5">
+        <FerryLogo :size="22" decorative />
+        <span>Privacy Policy &amp; Terms of Service</span>
+      </div>
+    </template>
     <template #body>
       <div class="flex flex-col gap-3">
         <div
