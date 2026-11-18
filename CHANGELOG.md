@@ -28,6 +28,24 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.0.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.32.0...ferry-v1.0.0) (2026-11-18)
+
+
+### Features
+
+* add Microsoft Store MSIX packaging and CI workflow ([ea206db](https://github.com/ThienNg65/ferry/commit/ea206dbbfd4fbc186494e9f7e31bf64e8c958166))
+* add Microsoft Store MSIX packaging and CI workflow ([28d09ec](https://github.com/ThienNg65/ferry/commit/28d09eceb299d93b221505836050fb7838f9fdab))
+
+
+### Bug Fixes
+
+* enforce non-zero MSIX major version for Store ([e4e5cb1](https://github.com/ThienNg65/ferry/commit/e4e5cb183fd4d38ca029dc63cfcd7e29f9c8bf2a))
+
+
+### Miscellaneous Chores
+
+* **ci:** remove obsolete Electron-to-Neutralino migration workflow ([e2b488c](https://github.com/ThienNg65/ferry/commit/e2b488cc2b3eeb64d799359d0f6f1bbbee17aef4))
+
 ## [0.32.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.31.0...ferry-v0.32.0) (2026-11-18)
 
 
