@@ -6,6 +6,7 @@ import { SshError } from '../ssh/errors'
 export const SFTP_PIPELINE_CONCURRENCY = 32
 export const SFTP_CHUNK_SIZE = 128 * 1024
 const MIN_CHUNK_SIZE = 16 * 1024
+const CLOSE_TIMEOUT_MS = 2_000
 
 export interface RateLimiterLike {
   readonly isLimited: boolean
@@ -45,11 +46,19 @@ function sftpOpen(sftp: SFTPWrapper, remotePath: string, flags: OpenMode): Promi
 }
 
 function sftpClose(sftp: SFTPWrapper, handle: Buffer): Promise<void> {
-  return new Promise((resolve, reject) => {
-    sftp.close(handle, (err) => {
-      if (err) {
-        reject(err)
-      } else {
+  return new Promise((resolve) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        resolve()
+      }
+    }, CLOSE_TIMEOUT_MS)
+    timer.unref?.()
+    sftp.close(handle, () => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
         resolve()
       }
     })
@@ -176,7 +185,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
       signal.addEventListener('abort', onAbortHandler, { once: true })
     })
 
-    const runUploadWorker = async (): Promise<void> => {
+    const runWorker = async (): Promise<void> => {
       const buf = Buffer.allocUnsafe(chunkSize)
       const lh = localHandle!
       const rh = remoteHandle!
@@ -186,71 +195,53 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
         const len = Math.min(chunkSize, size - pos)
         nextPos += len
 
-        let filled = 0
-        while (filled < len && !stopped && !signal.aborted) {
-          const { bytesRead } = await lh.read(buf, filled, len - filled, pos + filled)
-          if (bytesRead === 0) {
-            throw new SshError('UNKNOWN', `Unexpected EOF reading "${localPath}" at offset ${pos + filled}`)
+        let transferred = 0
+        if (kind === 'upload') {
+          while (transferred < len && !stopped && !signal.aborted) {
+            const { bytesRead } = await lh.read(buf, transferred, len - transferred, pos + transferred)
+            if (bytesRead === 0) {
+              throw new SshError('UNKNOWN', `Unexpected EOF reading "${localPath}" at offset ${pos + transferred}`)
+            }
+            transferred += bytesRead
           }
-          filled += bytesRead
+          if (stopped || signal.aborted) break
+
+          if (rateLimiter.isLimited) {
+            await rateLimiter.acquire(transferred, signal)
+          }
+          if (stopped || signal.aborted) break
+
+          await sftpWrite(sftp, rh, buf, transferred, pos)
+        } else {
+          while (transferred < len && !stopped && !signal.aborted) {
+            const bytesRead = await sftpRead(sftp, rh, buf, transferred, len - transferred, pos + transferred)
+            if (bytesRead === 0) {
+              throw new SshError('SFTP', `Unexpected EOF reading remote "${remotePath}" at offset ${pos + transferred}`)
+            }
+            transferred += bytesRead
+          }
+          if (stopped || signal.aborted) break
+
+          if (rateLimiter.isLimited) {
+            await rateLimiter.acquire(transferred, signal)
+          }
+          if (stopped || signal.aborted) break
+
+          let written = 0
+          while (written < transferred && !stopped && !signal.aborted) {
+            const res = await lh.write(buf, written, transferred - written, pos + written)
+            written += res.bytesWritten
+          }
         }
         if (stopped || signal.aborted) break
 
-        if (rateLimiter.isLimited) {
-          await rateLimiter.acquire(filled, signal)
-        }
-        if (stopped || signal.aborted) break
-
-        await sftpWrite(sftp, rh, buf, filled, pos)
-        if (stopped || signal.aborted) break
-
-        bytesMoved += filled
-        markRangeComplete(pos, pos + filled)
+        bytesMoved += transferred
+        markRangeComplete(pos, pos + transferred)
         onProgress(bytesMoved, offset)
       }
     }
 
-    const runDownloadWorker = async (): Promise<void> => {
-      const buf = Buffer.allocUnsafe(chunkSize)
-      const lh = localHandle!
-      const rh = remoteHandle!
-      while (!stopped) {
-        const pos = nextPos
-        if (pos >= size) break
-        const len = Math.min(chunkSize, size - pos)
-        nextPos += len
-
-        let filled = 0
-        while (filled < len && !stopped && !signal.aborted) {
-          const bytesRead = await sftpRead(sftp, rh, buf, filled, len - filled, pos + filled)
-          if (bytesRead === 0) {
-            throw new SshError('SFTP', `Unexpected EOF reading remote "${remotePath}" at offset ${pos + filled}`)
-          }
-          filled += bytesRead
-        }
-        if (stopped || signal.aborted) break
-
-        if (rateLimiter.isLimited) {
-          await rateLimiter.acquire(filled, signal)
-        }
-        if (stopped || signal.aborted) break
-
-        let written = 0
-        while (written < filled && !stopped && !signal.aborted) {
-          const res = await lh.write(buf, written, filled - written, pos + written)
-          written += res.bytesWritten
-        }
-        if (stopped || signal.aborted) break
-
-        bytesMoved += filled
-        markRangeComplete(pos, pos + filled)
-        onProgress(bytesMoved, offset)
-      }
-    }
-
-    const workersPromise = Promise.all(
-      Array.from({ length: workerCount }, () => (kind === 'upload' ? runUploadWorker() : runDownloadWorker()))
-    ).then(() => undefined)
+    const workersPromise = Promise.all(Array.from({ length: workerCount }, () => runWorker())).then(() => undefined)
     // Prevent unhandled rejection when abortPromise wins the race while workers unwind.
     workersPromise.catch(() => undefined)
 

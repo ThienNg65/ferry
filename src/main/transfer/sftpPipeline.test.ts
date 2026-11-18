@@ -257,4 +257,35 @@ describe('sftpPipeline.transferPipelined', () => {
     await expect(p).rejects.toMatchObject({ code: 'CANCELLED' })
     expect(fake.getStats().openHandlesLeft).toBe(0)
   })
+
+  it('does not hang indefinitely on abort when sftp.close never responds', async () => {
+    const localFile = path.join(tmpDir, 'hung-close.bin')
+    await fs.writeFile(localFile, Buffer.alloc(512 * 1024, 2))
+    const fake = createFakeSftp()
+    ;(fake.sftp as unknown as { close: () => void }).close = () => {
+      // Simulate blackholed SSH connection that never sends SSH_FXP_STATUS for CLOSE.
+    }
+    const controller = new AbortController()
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(1)
+
+    const started = Date.now()
+    const p = transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: '/remote/hung-close.bin.part',
+      size: 512 * 1024,
+      offset: 0,
+      signal: controller.signal,
+      rateLimiter: limiter,
+      onProgress: () => undefined,
+      concurrency: 2,
+      chunkSize: 64 * 1024
+    })
+
+    setTimeout(() => controller.abort(), 15)
+    await expect(p).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(Date.now() - started).toBeLessThan(3500)
+  })
 })

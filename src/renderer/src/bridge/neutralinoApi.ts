@@ -759,7 +759,8 @@ export function createNeutralinoApi(
     stageId: string,
     relativePath: string,
     file: File,
-    modifiedAt?: string
+    modifiedAt?: string,
+    signal?: AbortSignal
   ): Promise<void> => {
     await ensureSidecarReady()
     const endpoint = await transport.waitForDirectEndpoint?.()
@@ -773,7 +774,8 @@ export function createNeutralinoApi(
     const res = await fetch(`http://127.0.0.1:${endpoint.port}/stage-drop?${params.toString()}`, {
       method: 'POST',
       headers: { 'X-Ferry-Token': endpoint.token },
-      body: file
+      body: file,
+      signal
     })
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null

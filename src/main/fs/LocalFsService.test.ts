@@ -117,6 +117,14 @@ describe('LocalFsService.stageDroppedEntries', () => {
     await expect(finishStageDrop(stageId)).rejects.toThrow(/not found/)
   })
 
+  it('rejects duplicate relativePath writes within the same staging session', async () => {
+    const { stageId } = await beginStageDrop()
+    const first = await openStageDropWriteStream(stageId, 'dup.txt')
+    first.stream.end()
+    await expect(openStageDropWriteStream(stageId, 'dup.txt')).rejects.toThrow(/Duplicate staged relative path/)
+    await abortStageDrop(stageId)
+  })
+
   it('normalizes mixed slashes in list() via path.resolve', async () => {
     const tmpSub = path.join(os.tmpdir(), `ferry-list-norm-${Date.now()}`)
     mkdirSync(tmpSub, { recursive: true })

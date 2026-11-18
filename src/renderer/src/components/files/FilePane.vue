@@ -604,6 +604,24 @@ async function collectDroppedEntry(
   }
 }
 
+function dedupRelativeName(rawName: string, seen: Set<string>): string {
+  const key = rawName.toLowerCase()
+  if (!seen.has(key)) {
+    seen.add(key)
+    return rawName
+  }
+  const dot = rawName.lastIndexOf('.')
+  const stem = dot > 0 ? rawName.slice(0, dot) : rawName
+  const ext = dot > 0 ? rawName.slice(dot) : ''
+  let n = 2
+  while (seen.has(`${stem} (${n})${ext}`.toLowerCase())) {
+    n += 1
+  }
+  const unique = `${stem} (${n})${ext}`
+  seen.add(unique.toLowerCase())
+  return unique
+}
+
 async function stageCollectedEntriesStreaming(
   collected: CollectedDropEntry[],
   totalBytes: number,
@@ -622,17 +640,29 @@ async function stageCollectedEntriesStreaming(
         }).id
       : null
 
+  const controller = new AbortController()
+  let firstError: unknown = null
   try {
     let cursor = 0
     const workerCount = Math.min(STAGE_STREAM_CONCURRENCY, files.length)
-    await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (cursor < files.length) {
-          const item = files[cursor++]
-          await stageDroppedFile(stageId, item.relativePath, item.file, item.modifiedAt)
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (!controller.signal.aborted && cursor < files.length) {
+        const item = files[cursor++]
+        try {
+          await stageDroppedFile(stageId, item.relativePath, item.file, item.modifiedAt, controller.signal)
+        } catch (err) {
+          if (firstError === null) {
+            firstError = err
+            controller.abort()
+          }
+          throw err
         }
-      })
-    )
+      }
+    })
+    await Promise.allSettled(workers)
+    if (firstError !== null) {
+      throw firstError
+    }
     return await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, { stageId })
   } catch (err) {
     await invoke<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, { stageId }).catch(() => undefined)
@@ -678,14 +708,16 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
   }
 
   const collected: CollectedDropEntry[] = []
+  const seenTopNames = new Set<string>()
   const state = { totalBytes: 0 }
   for (const { file, fsEntry } of unresolved) {
     if (fsEntry) {
-      await collectDroppedEntry(fsEntry, fsEntry.name, collected, state)
+      const topName = dedupRelativeName(fsEntry.name, seenTopNames)
+      await collectDroppedEntry(fsEntry, topName, collected, state)
     } else {
       state.totalBytes += file.size
       collected.push({
-        relativePath: file.name,
+        relativePath: dedupRelativeName(file.name, seenTopNames),
         isDir: false,
         file,
         modifiedAt: new Date(file.lastModified).toISOString()
@@ -774,6 +806,7 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
     if (isOsFileDrag(event) && event.dataTransfer) {
       const entries = await resolveOsDroppedEntries(event.dataTransfer)
       const intents: TransferIntent[] = []
+      const unusedPaths: string[] = []
       let moved = false
       for (const entry of entries) {
         if (props.side === 'local') {
@@ -781,8 +814,17 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
           moved = true
         } else if (sessionId) {
           const intent = buildTransferIntent('local', entry, sessionId, folder.path)
-          if (intent) intents.push(intent)
+          if (intent) {
+            intents.push(intent)
+          } else {
+            unusedPaths.push(entry.path)
+          }
+        } else {
+          unusedPaths.push(entry.path)
         }
+      }
+      if (unusedPaths.length > 0) {
+        void invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedPaths }).catch(() => undefined)
       }
       if (intents.length > 0) await enqueueIntents(intents)
       if (moved) await store.load(store.currentPath, { forceRefresh: true })

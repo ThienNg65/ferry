@@ -226,6 +226,7 @@ interface StageDropSession {
   createdAt: number
   topLevelOrder: string[]
   topLevelMeta: Map<string, { modifiedAt?: string }>
+  writtenPaths: Set<string>
 }
 
 const activeStageSessions = new Map<string, StageDropSession>()
@@ -294,13 +295,15 @@ async function buildStageFileEntries(
 
 async function sweepExpiredStageSessions(): Promise<void> {
   const cutoff = Date.now() - STAGE_SESSION_TTL_MS
+  const expiredRoots: string[] = []
   for (const [id, session] of activeStageSessions) {
     if (session.createdAt <= cutoff) {
       activeStageSessions.delete(id)
       activeStageDirs.delete(session.root)
-      await fs.rm(session.root, { recursive: true, force: true }).catch(() => undefined)
+      expiredRoots.push(session.root)
     }
   }
+  await Promise.all(expiredRoots.map((root) => fs.rm(root, { recursive: true, force: true }).catch(() => undefined)))
 }
 
 function isStagedDropDir(dirPath: string): boolean {
@@ -392,7 +395,8 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
     root: stageRoot,
     createdAt: Date.now(),
     topLevelOrder: [],
-    topLevelMeta: new Map()
+    topLevelMeta: new Map(),
+    writtenPaths: new Set()
   }
   activeStageDirs.add(stageRoot)
   activeStageSessions.set(stageId, session)
@@ -423,6 +427,11 @@ export async function openStageDropWriteStream(
     throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
   }
   const segments = normalizeStageSegments(relativePath)
+  const dedupeKey = (process.platform === 'win32' ? segments.join('/').toLowerCase() : segments.join('/'))
+  if (session.writtenPaths.has(dedupeKey)) {
+    throw new SshError('VALIDATION', `Duplicate staged relative path "${relativePath}"`)
+  }
+  session.writtenPaths.add(dedupeKey)
   const targetPath = resolveStageTarget(session.root, segments)
   await fs.mkdir(path.dirname(targetPath), { recursive: true })
   recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments, modifiedAt)
