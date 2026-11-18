@@ -28,6 +28,7 @@ import {
   type KeyboardInteractiveRequestEvent,
   type ProxyConfig,
   type QuickConnectInput,
+  type SessionOpenResult,
   type SessionStatus,
   type SessionStatusEvent
 } from '../../shared/contract'
@@ -252,14 +253,14 @@ export class SessionManager {
     siteId: string,
     sessionId: string,
     trustedHostKey?: TrustedHostKey
-  ): Promise<{ sessionId: string; status: SessionStatus }> {
+  ): Promise<SessionOpenResult> {
     const site = SiteStore.getInstance().getRaw(siteId)
     if (!site) {
       throw new SshError('NOT_FOUND', `Site ${siteId} not found`)
     }
     const secrets = SiteStore.getInstance().getDecryptedSecrets(siteId)
     const jumpHosts = SiteStore.getInstance().getDecryptedJumpHosts(siteId)
-    return this.connect(
+    const result = await this.connect(
       sessionId,
       siteId,
       {
@@ -281,6 +282,7 @@ export class SessionManager {
       site.remoteInitialPath ?? '.',
       trustedHostKey
     )
+    return site.localInitialPath ? { ...result, localInitialPath: site.localInitialPath } : result
   }
 
   /** Opens an ad-hoc session that isn't saved as a site. See {@link openFromSite} for `trustedHostKey`. */
@@ -288,14 +290,15 @@ export class SessionManager {
     input: QuickConnectInput,
     sessionId: string,
     trustedHostKey?: TrustedHostKey
-  ): Promise<{ sessionId: string; status: SessionStatus }> {
-    return this.connect(
+  ): Promise<SessionOpenResult> {
+    const result = await this.connect(
       sessionId,
       null,
       { ...input, proxy: resolveEffectiveProxy(input.proxyMode, input.proxy) },
       input.remoteInitialPath ?? '.',
       trustedHostKey
     )
+    return input.localInitialPath ? { ...result, localInitialPath: input.localInitialPath } : result
   }
 
   /** Builds a `hostVerifier`-equipped `ConnectConfig` for one hop (the target host, or a jump host), keyed by its own host:port in `KnownHostsStore`. */

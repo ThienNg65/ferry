@@ -17,6 +17,7 @@ import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import FerryLogo from './FerryLogo.vue'
 
 const SiteFormDialog = defineAsyncComponent(() => import('../sessions/SiteFormDialog.vue'))
 
@@ -173,6 +174,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
     class="relative flex items-end justify-between gap-2 px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]"
     :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
   >
+    <FerryLogo :size="20" class="self-center ml-0.5 mr-0.5 shrink-0" decorative />
     <nav class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pb-px" aria-label="Open connections">
       <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-end gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
         <div

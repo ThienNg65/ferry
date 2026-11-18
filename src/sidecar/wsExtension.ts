@@ -1,11 +1,16 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { unlink } from 'fs/promises'
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'http'
 import * as os from 'os'
 import * as path from 'path'
+import { pipeline } from 'stream/promises'
 import WebSocket, { WebSocketServer } from 'ws'
 import { EVENT_CHANNELS } from '../shared/contract'
+import { openStageDropWriteStream } from '../main/fs/LocalFsService'
 import { setHost } from '../main/host/host'
 import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
+import { SshError } from '../main/ssh/errors'
 import { createNodeHost } from './nodeHost'
 import { dispatchInvoke, dispatchSend, encodeLine } from './protocol'
 import { initSidecarServices, registerShutdownHandler, shutdownSidecarServices } from './sidecar'
@@ -16,6 +21,98 @@ export interface NeutralinoExtensionOptions {
   nlConnectToken?: string
   extensionId?: string
   dataDir?: string
+}
+
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  if (res.headersSent || res.writableEnded) {
+    return
+  }
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(body))
+}
+
+/**
+ * Builds the authenticated localhost HTTP handler for streaming external dropped
+ * files directly to `%TEMP%/ferry-drop-*` without buffering in JS memory or Base64.
+ */
+export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: string) {
+  const allowedOrigins = new Set([`http://localhost:${nlPort}`, `http://127.0.0.1:${nlPort}`])
+
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const remoteAddr = req.socket.remoteAddress ?? ''
+    if (remoteAddr && !LOOPBACK_ADDRS.has(remoteAddr)) {
+      sendJson(res, 403, { error: 'Forbidden' })
+      return
+    }
+
+    const origin = req.headers.origin
+    if (origin !== undefined) {
+      if (!allowedOrigins.has(origin)) {
+        sendJson(res, 403, { error: 'Origin not allowed' })
+        return
+      }
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Vary', 'Origin')
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Ferry-Token')
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    let url: URL
+    try {
+      url = new URL(req.url || '/', 'http://127.0.0.1')
+    } catch {
+      sendJson(res, 400, { error: 'Invalid URL' })
+      return
+    }
+
+    if (req.method !== 'POST' || url.pathname !== '/stage-drop') {
+      sendJson(res, 404, { error: 'Not found' })
+      return
+    }
+
+    const tokenHeader = req.headers['x-ferry-token']
+    const token = typeof tokenHeader === 'string' ? tokenHeader : ''
+    const tokenBuf = Buffer.from(token, 'utf8')
+    if (tokenBuf.length !== expectedTokenBuf.length || !timingSafeEqual(tokenBuf, expectedTokenBuf)) {
+      sendJson(res, 403, { error: 'Unauthorized' })
+      return
+    }
+
+    const stageId = url.searchParams.get('stageId') ?? ''
+    const relativePath = url.searchParams.get('relativePath') ?? ''
+    const modifiedAt = url.searchParams.get('modifiedAt') ?? undefined
+    if (!stageId || !relativePath) {
+      sendJson(res, 400, { error: 'Missing stageId or relativePath' })
+      return
+    }
+
+    let targetPath: string | null = null
+    try {
+      const opened = await openStageDropWriteStream(stageId, relativePath, modifiedAt)
+      targetPath = opened.targetPath
+      await pipeline(req, opened.stream)
+      sendJson(res, 200, { ok: true })
+    } catch (err) {
+      if (targetPath) {
+        await unlink(targetPath).catch(() => undefined)
+      }
+      const status =
+        err instanceof SshError && err.code === 'NOT_FOUND'
+          ? 404
+          : err instanceof SshError && err.code === 'VALIDATION'
+            ? 400
+            : 500
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
 }
 
 export function defaultFerryDataDir(): string {
@@ -110,18 +207,23 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     sendReadyBroadcast()
   }
 
-  const directWss = new WebSocketServer({ host: '127.0.0.1', port: 0, maxPayload: 64 * 1024 * 1024 })
-  directWss.on('listening', () => {
-    const addr = directWss.address()
+  const stageDropHandler = createStageDropHttpHandler(expectedTokenBuf, options.nlPort)
+  const httpServer = createHttpServer((req, res) => {
+    void stageDropHandler(req, res)
+  })
+  const directWss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 * 1024 })
+  httpServer.on('listening', () => {
+    const addr = httpServer.address()
     directPort = typeof addr === 'object' && addr ? addr.port : 0
     maybeInitialize()
   })
-  directWss.on('error', () => {
+  httpServer.on('error', () => {
     if (directPort === null) {
       directPort = 0
       maybeInitialize()
     }
   })
+  httpServer.listen(0, '127.0.0.1')
 
   const handleMessage = async (
     raw: WebSocket.RawData | string,
@@ -189,6 +291,11 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     }
     try {
       directWss.close()
+    } catch {
+      // Ignore close errors during shutdown.
+    }
+    try {
+      httpServer.close()
     } catch {
       // Ignore close errors during shutdown.
     }

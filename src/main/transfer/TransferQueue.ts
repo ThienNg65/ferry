@@ -1,8 +1,5 @@
 import { randomUUID } from 'crypto'
-import { createReadStream, createWriteStream } from 'fs'
 import { rename, stat, unlink } from 'fs/promises'
-import { Transform } from 'stream'
-import type { SFTPWrapper } from 'ssh2'
 import * as path from 'path'
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
@@ -11,6 +8,7 @@ import { SshError } from '../ssh/errors'
 import { commitRemoteFile } from '../fs/RemoteFsService'
 import { cleanupStagedDropPath, listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { runConcurrent } from '../util/concurrency'
+import { transferPipelined } from './sftpPipeline'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind, type TransferState } from '../../shared/contract'
 
 /** Exported so a terminal-event listener (see `onTerminalEvent`) gets full job context, not just the wire-format `TransferEvent`. */
@@ -27,6 +25,8 @@ export interface TransferJob {
   queuedAt: number
   resume?: boolean
   sourceStamp?: string
+  /** Contiguous verified byte offsets per destination path, preventing sparse gaps on pipelined pause/resume. */
+  contigOffsets?: Map<string, number>
 }
 
 /**
@@ -79,13 +79,20 @@ export class RateLimiter {
   private limitBytesPerSec: number | null = null
   private nextAvailableAt = 0
 
+  get isLimited(): boolean {
+    return this.limitBytesPerSec !== null
+  }
+
   setLimitKBps(limitKBps: number | null): void {
     this.limitBytesPerSec = limitKBps && limitKBps > 0 ? limitKBps * 1024 : null
     this.nextAvailableAt = Date.now()
   }
 
   /** Resolves once `bytes` worth of budget is available. Resolves immediately when unlimited. */
-  async acquire(bytes: number): Promise<void> {
+  async acquire(bytes: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      throw new SshError('CANCELLED', 'Transfer cancelled')
+    }
     const limit = this.limitBytesPerSec
     if (!limit) {
       return
@@ -95,30 +102,27 @@ export class RateLimiter {
     this.nextAvailableAt = slotStart + (bytes / limit) * 1000
     const waitMs = slotStart - now
     if (waitMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = (): void => {
+          clearTimeout(timer)
+          reject(new SshError('CANCELLED', 'Transfer cancelled'))
+        }
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, waitMs)
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
     }
   }
-}
-
-/** A pass-through `Transform` that delays each chunk until `limiter` grants it enough budget — the actual throttling hook in the pipe chain. */
-function createThrottleTransform(limiter: RateLimiter): Transform {
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      limiter
-        .acquire(chunk.length)
-        .then(() => callback(null, chunk))
-        .catch((e: Error) => callback(e))
-    }
-  })
 }
 
 /**
  * TransferQueue — bounded-concurrency upload/download queue.
  *
- * Uses SFTP read/write streams (not fastGet/fastPut) so cancellation is a
- * clean `stream.destroy()` and progress is derived from actual bytes moved,
- * not a coarse step callback. Progress events are throttled here — the
- * renderer must never see a flood of one-event-per-chunk updates.
+ * Uses pipelined SFTP open/read/write/close (`transferPipelined`) rather than
+ * `sftp.createWriteStream`/`fastPut` so throughput saturates WAN bandwidth while
+ * preserving cancellation, contiguous-offset resume, rate limiting, and real byte progress.
  */
 export class TransferQueue {
   private static instance: TransferQueue | null = null
@@ -312,6 +316,7 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone: 0, filesTotal: 1 })
       }
 
+      job.contigOffsets ??= new Map()
       await this.runFile({
         shell,
         kind,
@@ -320,6 +325,7 @@ export class TransferQueue {
         signal: job.controller.signal,
         size: totalBytes,
         resume,
+        contigOffsets: job.contigOffsets,
         onProgress: emitProgress
       })
 
@@ -363,6 +369,7 @@ export class TransferQueue {
     signal: AbortSignal
     size: number
     resume: boolean
+    contigOffsets: Map<string, number>
     onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
@@ -371,15 +378,32 @@ export class TransferQueue {
     const partSize = opts.resume
       ? await (opts.kind === 'upload' ? opts.shell.stat(partPath) : stat(partPath)).then((s) => s.size, () => 0)
       : 0
-    const offset = partSize <= opts.size ? partSize : 0
+    const savedContig = opts.resume ? (opts.contigOffsets.get(destPath) ?? 0) : 0
+    const offset = partSize <= opts.size ? Math.min(partSize, savedContig) : 0
+    opts.contigOffsets.set(destPath, offset)
     try {
-      await this.streamFile(sftp, opts, partPath, offset)
+      await transferPipelined({
+        sftp,
+        kind: opts.kind,
+        localPath: opts.kind === 'upload' ? opts.localPath : partPath,
+        remotePath: opts.kind === 'upload' ? partPath : opts.remotePath,
+        size: opts.size,
+        offset,
+        signal: opts.signal,
+        rateLimiter: this.rateLimiter,
+        onProgress: opts.onProgress,
+        onContigOffset: (contig) => {
+          opts.contigOffsets.set(destPath, contig)
+        }
+      })
     } catch (e) {
       if (e instanceof SshError && e.code === 'CANCELLED' && opts.signal.reason !== PAUSE_REASON) {
+        opts.contigOffsets.delete(destPath)
         await this.removePart(opts, partPath)
       }
       throw e
     }
+    opts.contigOffsets.delete(destPath)
     if (opts.kind === 'upload') {
       await commitRemoteFile(opts.shell, partPath, destPath)
     } else {
@@ -393,79 +417,6 @@ export class TransferQueue {
     } else {
       await unlink(partPath).catch(() => undefined)
     }
-  }
-
-  private async streamFile(
-    sftp: SFTPWrapper,
-    opts: { kind: TransferKind; localPath: string; remotePath: string; signal: AbortSignal; onProgress: (bytesTransferred: number, offset: number) => void },
-    partPath: string,
-    offset: number
-  ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const readOpts = { start: offset }
-      const readStream =
-        opts.kind === 'upload' ? createReadStream(opts.localPath, readOpts) : sftp.createReadStream(opts.remotePath, readOpts)
-      const writeStream =
-        opts.kind === 'upload'
-          ? sftp.createWriteStream(partPath, offset > 0 ? { flags: 'r+', start: offset } : undefined)
-          : createWriteStream(partPath, offset > 0 ? { flags: 'a' } : undefined)
-
-      const throttle = createThrottleTransform(this.rateLimiter)
-
-      let settled = false
-      const finish = (err?: Error): void => {
-        if (settled) {
-          return
-        }
-        settled = true
-        opts.signal.removeEventListener('abort', onAbort)
-        if (err) {
-          reject(err)
-        } else {
-          resolve()
-        }
-      }
-      const destroyAll = (): void => {
-        if (!readStream.destroyed) {
-          readStream.destroy()
-        }
-        if (!throttle.destroyed) {
-          throttle.destroy()
-        }
-        if (!writeStream.destroyed) {
-          writeStream.destroy()
-        }
-      }
-      const onAbort = (): void => {
-        destroyAll()
-        finish(new SshError('CANCELLED', 'Transfer cancelled'))
-      }
-      if (opts.signal.aborted) {
-        onAbort()
-        return
-      }
-      opts.signal.addEventListener('abort', onAbort, { once: true })
-
-      let bytesMoved = offset
-      readStream.on('data', (chunk: Buffer | string) => {
-        bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
-        opts.onProgress(bytesMoved, offset)
-      })
-      readStream.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      throttle.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      writeStream.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      writeStream.on('close', () => finish())
-      readStream.pipe(throttle).pipe(writeStream)
-    })
   }
 
   /**
@@ -530,6 +481,7 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone, filesTotal: files.length })
       }
 
+      job.contigOffsets ??= new Map()
       await runConcurrent(
         files.map((file, index) => ({ file, index })),
         TREE_ITEM_CONCURRENCY,
@@ -546,6 +498,7 @@ export class TransferQueue {
             signal: job.controller.signal,
             size: file.size,
             resume: job.resume === true,
+            contigOffsets: job.contigOffsets!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
               emitProgress()

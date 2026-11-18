@@ -340,9 +340,10 @@ describe('ui store layout state', () => {
     }
   })
 
-  it('persists dismissGlassUiPromo, harmonizes terminalAppearance, and resets cleanly on resetGlassUi', async () => {
+  it('persists dismissGlassUiPromo, harmonizes terminalAppearance, syncs favicon, and resets cleanly on resetGlassUi', async () => {
     const { vi } = await import('vitest')
     const classes = new Set<string>()
+    const faviconLink = { type: 'image/x-icon', href: './favicon.ico' }
     vi.stubGlobal('document', {
       documentElement: {
         classList: {
@@ -355,7 +356,8 @@ describe('ui store layout state', () => {
           contains: (cls: string) => classes.has(cls)
         },
         style: { setProperty: vi.fn() }
-      }
+      },
+      querySelector: (sel: string) => (sel === 'link[rel="icon"]' ? faviconLink : null)
     })
     const { ui, data } = await freshStore({ 'ferry:ui:theme': 'dark' })
     ui.setGlassUiEnabled(true)
@@ -363,6 +365,7 @@ describe('ui store layout state', () => {
     expect(ui.glassUiPromoDismissed).toBe(true)
     expect(data.get('ferry:ui:glassUiPromoDismissed')).toBe('true')
     expect(ui.terminalAppearance.theme.background).toBe('#0b0f19')
+    expect(faviconLink).toEqual({ type: 'image/svg+xml', href: './ferry-glass.svg' })
 
     data.clear()
     ui.resetGlassUi()
@@ -371,5 +374,6 @@ describe('ui store layout state', () => {
     expect(classes.has('ferry-glass')).toBe(false)
     expect(data.size).toBe(0)
     expect(ui.terminalAppearance.theme.background).toBe('#1e1e1e')
+    expect(faviconLink).toEqual({ type: 'image/x-icon', href: './favicon-classic.ico' })
   })
 })

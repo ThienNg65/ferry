@@ -191,9 +191,18 @@ function resolveCaptionColorRef(theme: Theme): number {
   }
 }
 
+function syncDocumentFavicon(glassEnabled: boolean): void {
+  if (typeof document === 'undefined') return
+  const link = document.querySelector?.<HTMLLinkElement>('link[rel="icon"]')
+  if (!link) return
+  link.type = glassEnabled ? 'image/svg+xml' : 'image/x-icon'
+  link.href = glassEnabled ? './ferry-glass.svg' : './favicon-classic.ico'
+}
+
 function applyGlassUiClass(enabled: boolean): void {
   if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('ferry-glass', enabled)
+    syncDocumentFavicon(enabled)
   }
 }
 

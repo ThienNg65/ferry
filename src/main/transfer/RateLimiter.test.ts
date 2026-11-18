@@ -59,4 +59,17 @@ describe('RateLimiter', () => {
     await limiter.acquire(1).then(spy)
     expect(spy).toHaveBeenCalledTimes(1)
   })
+
+  it('exposes isLimited and rejects immediately when AbortSignal aborts while waiting', async () => {
+    const limiter = new RateLimiter()
+    expect(limiter.isLimited).toBe(false)
+    limiter.setLimitKBps(1)
+    expect(limiter.isLimited).toBe(true)
+
+    await limiter.acquire(1024)
+    const controller = new AbortController()
+    const waiting = limiter.acquire(1024, controller.signal)
+    controller.abort()
+    await expect(waiting).rejects.toMatchObject({ code: 'CANCELLED' })
+  })
 })

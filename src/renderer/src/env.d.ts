@@ -22,6 +22,14 @@ interface ElectronAPI {
   send: (channel: string, ...args: unknown[]) => void
   /** Resolves a dropped/selected `File`'s absolute path (replaces the removed `File.path`, gone since Electron 32). */
   getPathForFile: (file: File) => string
+  /** Streams a dropped `File` directly to the sidecar's staging directory over authenticated localhost HTTP. */
+  stageDroppedFile?: (
+    stageId: string,
+    relativePath: string,
+    file: File,
+    modifiedAt?: string,
+    signal?: AbortSignal
+  ) => Promise<void>
   /** Returns preload execution timing mark. */
   getPreloadTime: () => { start: number; timeOrigin: number }
 }

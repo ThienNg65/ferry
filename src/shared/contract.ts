@@ -261,6 +261,8 @@ export type SessionStatus = 'connecting' | 'connected' | 'error' | 'disconnected
 export interface SessionOpenResult {
   sessionId: string
   status: SessionStatus
+  /** Configured local start directory for this site/session, if any. */
+  localInitialPath?: string
 }
 
 /** Request payload for `session:open` — connect from a saved site, or ad hoc. */
@@ -373,6 +375,26 @@ export interface StageDropEntryInput {
 /** Request payload for `fs:local:stage-drop`. */
 export interface StageDropRequest {
   entries: StageDropEntryInput[]
+}
+
+/** Request payload for `fs:local:stage-drop-begin`. */
+export interface StageDropBeginRequest {
+  dirs?: string[]
+}
+
+/** Response payload for `fs:local:stage-drop-begin`. */
+export interface StageDropBeginResult {
+  stageId: string
+}
+
+/** Request payload for `fs:local:stage-drop-finish` and `fs:local:stage-drop-abort`. */
+export interface StageDropSessionRequest {
+  stageId: string
+}
+
+/** Request payload for `fs:local:cleanup-staged-drop`. */
+export interface CleanupStagedDropRequest {
+  paths: string[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -976,6 +998,10 @@ export const INVOKE_CHANNELS = {
   fsLocalRename: 'fs:local:rename',
   fsLocalDelete: 'fs:local:delete',
   fsLocalStageDrop: 'fs:local:stage-drop',
+  fsLocalStageDropBegin: 'fs:local:stage-drop-begin',
+  fsLocalStageDropFinish: 'fs:local:stage-drop-finish',
+  fsLocalStageDropAbort: 'fs:local:stage-drop-abort',
+  fsLocalCleanupStagedDrop: 'fs:local:cleanup-staged-drop',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',

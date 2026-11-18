@@ -1,0 +1,291 @@
+import { promises as fs } from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import type { SFTPWrapper } from 'ssh2'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { transferPipelined } from './sftpPipeline'
+import { RateLimiter } from './TransferQueue'
+
+interface FakeSftpOptions {
+  maxWriteLen?: number
+  maxReadLen?: number
+  shortReadCap?: number
+  reverseAckDelayMs?: boolean
+}
+
+function createFakeSftp(opts: FakeSftpOptions = {}) {
+  const files = new Map<string, Buffer>()
+  const handles = new Map<number, { path: string; flags: string }>()
+  let nextHandleId = 1
+  let inFlight = 0
+  let maxConcurrent = 0
+  let maxHandleCount = 0
+  const openFlags: string[] = []
+
+  const track = <T>(fn: () => Promise<T>): Promise<T> => {
+    inFlight += 1
+    maxConcurrent = Math.max(maxConcurrent, inFlight)
+    return fn().finally(() => {
+      inFlight -= 1
+    })
+  }
+
+  const sftp = {
+    _maxWriteLen: opts.maxWriteLen,
+    _maxReadLen: opts.maxReadLen,
+    open(remotePath: string, flags: string, _mode: number, cb: (err: Error | null, handle?: Buffer) => void) {
+      openFlags.push(flags)
+      setImmediate(() => {
+        if (flags === 'r' || flags === 'r+') {
+          if (!files.has(remotePath)) {
+            cb(new Error(`ENOENT: ${remotePath}`))
+            return
+          }
+        } else if (flags === 'w') {
+          files.set(remotePath, Buffer.alloc(0))
+        }
+        const id = nextHandleId++
+        handles.set(id, { path: remotePath, flags })
+        maxHandleCount = Math.max(maxHandleCount, handles.size)
+        const h = Buffer.alloc(4)
+        h.writeUInt32BE(id, 0)
+        cb(null, h)
+      })
+    },
+    write(
+      handle: Buffer,
+      buf: Buffer,
+      off: number,
+      len: number,
+      pos: number,
+      cb: (err?: Error) => void
+    ) {
+      const id = handle.readUInt32BE(0)
+      const entry = handles.get(id)
+      if (!entry) {
+        setImmediate(() => cb(new Error('Invalid handle')))
+        return
+      }
+      const copy = Buffer.from(buf.subarray(off, off + len))
+      void track(async () => {
+        const delay = opts.reverseAckDelayMs ? Math.max(1, 20 - Math.floor(pos / 65536)) : 2
+        await new Promise((r) => setTimeout(r, delay))
+        if (!handles.has(id)) {
+          throw new Error('Handle closed')
+        }
+        const existing = files.get(entry.path) ?? Buffer.alloc(0)
+        const needed = pos + copy.length
+        const target = existing.length >= needed ? existing : Buffer.concat([existing, Buffer.alloc(needed - existing.length)])
+        copy.copy(target, pos)
+        files.set(entry.path, target)
+      }).then(
+        () => cb(),
+        (err: Error) => cb(err)
+      )
+    },
+    read(
+      handle: Buffer,
+      buf: Buffer,
+      off: number,
+      len: number,
+      pos: number,
+      cb: (err: Error | null, bytesRead: number) => void
+    ) {
+      const id = handle.readUInt32BE(0)
+      const entry = handles.get(id)
+      if (!entry) {
+        setImmediate(() => cb(new Error('Invalid handle'), 0))
+        return
+      }
+      void track(async () => {
+        await new Promise((r) => setTimeout(r, 2))
+        const src = files.get(entry.path) ?? Buffer.alloc(0)
+        if (pos >= src.length) return 0
+        const avail = src.length - pos
+        const cap = opts.shortReadCap ? Math.min(len, opts.shortReadCap, avail) : Math.min(len, avail)
+        src.copy(buf, off, pos, pos + cap)
+        return cap
+      }).then(
+        (nb) => cb(null, nb),
+        (err: Error) => cb(err, 0)
+      )
+    },
+    close(handle: Buffer, cb: (err?: Error) => void) {
+      const id = handle.readUInt32BE(0)
+      handles.delete(id)
+      setImmediate(() => cb())
+    }
+  } as unknown as SFTPWrapper
+
+  return {
+    sftp,
+    files,
+    openFlags,
+    getStats: () => ({ maxConcurrent, openHandlesLeft: handles.size, maxHandleCount })
+  }
+}
+
+describe('sftpPipeline.transferPipelined', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-pipeline-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('pipelines concurrent SFTP writes for uploads and produces byte-exact output', async () => {
+    const localFile = path.join(tmpDir, 'upload.bin')
+    const data = Buffer.alloc(512 * 1024)
+    for (let i = 0; i < data.length; i++) data[i] = i & 0xff
+    await fs.writeFile(localFile, data)
+
+    const fake = createFakeSftp({ maxWriteLen: 64 * 1024, reverseAckDelayMs: true })
+    const contigHistory: number[] = []
+    const controller = new AbortController()
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: '/remote/upload.bin.part',
+      size: data.length,
+      offset: 0,
+      signal: controller.signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined,
+      onContigOffset: (c) => contigHistory.push(c),
+      concurrency: 8,
+      chunkSize: 128 * 1024
+    })
+
+    expect(fake.files.get('/remote/upload.bin.part')).toEqual(data)
+    expect(fake.getStats().maxConcurrent).toBeGreaterThan(1)
+    expect(fake.getStats().openHandlesLeft).toBe(0)
+    expect(contigHistory.at(-1)).toBe(data.length)
+  })
+
+  it('pipelines concurrent SFTP reads for downloads including short server reads', async () => {
+    const data = Buffer.alloc(300 * 1024)
+    for (let i = 0; i < data.length; i++) data[i] = (i * 7) & 0xff
+    const fake = createFakeSftp({ maxReadLen: 64 * 1024, shortReadCap: 19 * 1024 })
+    fake.files.set('/remote/down.bin', data)
+
+    const localPart = path.join(tmpDir, 'down.bin.part')
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: localPart,
+      remotePath: '/remote/down.bin',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined,
+      concurrency: 6,
+      chunkSize: 128 * 1024
+    })
+
+    expect(await fs.readFile(localPart)).toEqual(data)
+    expect(fake.getStats().maxConcurrent).toBeGreaterThan(1)
+    expect(fake.getStats().openHandlesLeft).toBe(0)
+  })
+
+  it('handles 0-byte files and resumes from offset > 0 with r+ without truncating', async () => {
+    const fake = createFakeSftp()
+    const emptyLocal = path.join(tmpDir, 'empty.txt')
+    await fs.writeFile(emptyLocal, Buffer.alloc(0))
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: emptyLocal,
+      remotePath: '/remote/empty.txt.part',
+      size: 0,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined
+    })
+    expect(fake.files.get('/remote/empty.txt.part')).toEqual(Buffer.alloc(0))
+
+    const fullData = Buffer.from('hello-world-resumed-payload')
+    const resumeLocal = path.join(tmpDir, 'resume.txt')
+    await fs.writeFile(resumeLocal, fullData)
+    fake.files.set('/remote/resume.txt.part', fullData.subarray(0, 12))
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: resumeLocal,
+      remotePath: '/remote/resume.txt.part',
+      size: fullData.length,
+      offset: 12,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined
+    })
+
+    expect(fake.openFlags).toContain('r+')
+    expect(fake.files.get('/remote/resume.txt.part')).toEqual(fullData)
+  })
+
+  it('cancels promptly via AbortSignal and closes open handles', async () => {
+    const localFile = path.join(tmpDir, 'cancel.bin')
+    await fs.writeFile(localFile, Buffer.alloc(1024 * 1024, 1))
+    const fake = createFakeSftp()
+    const controller = new AbortController()
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(1)
+
+    const p = transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: '/remote/cancel.bin.part',
+      size: 1024 * 1024,
+      offset: 0,
+      signal: controller.signal,
+      rateLimiter: limiter,
+      onProgress: () => undefined,
+      concurrency: 2,
+      chunkSize: 64 * 1024
+    })
+
+    setTimeout(() => controller.abort(), 15)
+    await expect(p).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(fake.getStats().openHandlesLeft).toBe(0)
+  })
+
+  it('does not hang indefinitely on abort when sftp.close never responds', async () => {
+    const localFile = path.join(tmpDir, 'hung-close.bin')
+    await fs.writeFile(localFile, Buffer.alloc(512 * 1024, 2))
+    const fake = createFakeSftp()
+    ;(fake.sftp as unknown as { close: () => void }).close = () => {
+      // Simulate blackholed SSH connection that never sends SSH_FXP_STATUS for CLOSE.
+    }
+    const controller = new AbortController()
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(1)
+
+    const started = Date.now()
+    const p = transferPipelined({
+      sftp: fake.sftp,
+      kind: 'upload',
+      localPath: localFile,
+      remotePath: '/remote/hung-close.bin.part',
+      size: 512 * 1024,
+      offset: 0,
+      signal: controller.signal,
+      rateLimiter: limiter,
+      onProgress: () => undefined,
+      concurrency: 2,
+      chunkSize: 64 * 1024
+    })
+
+    setTimeout(() => controller.abort(), 15)
+    await expect(p).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(Date.now() - started).toBeLessThan(3500)
+  })
+})

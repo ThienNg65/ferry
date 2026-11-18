@@ -42,6 +42,11 @@ const mockSites = {
   sites: [] as Site[],
   fetchSites: vi.fn().mockResolvedValue(undefined)
 }
+const mockLocalFs = {
+  currentPath: '',
+  error: null as string | null,
+  load: vi.fn().mockResolvedValue(undefined)
+}
 
 vi.mock('../remoteFs.store', () => ({
   useRemoteFsStore: () => mockRemoteFs
@@ -63,6 +68,10 @@ vi.mock('../sites.store', () => ({
   useSitesStore: () => mockSites
 }))
 
+vi.mock('../localFs.store', () => ({
+  useLocalFsStore: () => mockLocalFs
+}))
+
 describe('sessions.store quick connect and promotion', () => {
   let storageData: Map<string, string>
 
@@ -80,6 +89,8 @@ describe('sessions.store quick connect and promotion', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mockSites.sites = []
+    mockLocalFs.currentPath = ''
+    mockLocalFs.error = null
     vi.mocked(api.invoke).mockImplementation(async (channel) => {
       if (channel === INVOKE_CHANNELS.sessionOpen) {
         return { sessionId: 'sess-1', status: 'connected' }
@@ -566,5 +577,56 @@ describe('sessions.store quick connect and promotion', () => {
     vi.mocked(api.invoke).mockRejectedValueOnce(new Error('close failed'))
     await expect(store.disconnectTab(store.activeTab.tabId)).rejects.toThrow('close failed')
     expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(secondSid)
+  })
+
+  it('loads localInitialPath into localFs when connecting to a site and falls back to home dir if unavailable', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+
+    const site: Site = {
+      id: 'site-local-path',
+      name: 'Work Box',
+      host: '10.2.100.11',
+      port: 22,
+      username: 'gravity',
+      authMethod: 'password',
+      remoteInitialPath: '/opt/app',
+      localInitialPath: 'C:/work/1.repos',
+      hasPassword: true,
+      hasPassphrase: false,
+      createdAt: '2026-11-18T00:00:00.000Z',
+      updatedAt: '2026-11-18T00:00:00.000Z'
+    }
+    mockSites.sites = [site]
+
+    let openResponse = {
+      sessionId: 'sess-local-1',
+      status: 'connected',
+      localInitialPath: 'C:/work/1.repos'
+    }
+    vi.mocked(api.invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        return openResponse
+      }
+      return undefined
+    })
+
+    await store.connectToSite(site)
+    expect(mockLocalFs.load).toHaveBeenCalledWith('C:/work/1.repos')
+
+    mockLocalFs.load.mockClear()
+    mockLocalFs.load.mockImplementationOnce(async () => {
+      mockLocalFs.error = 'Cannot list "C:\\missing"'
+      mockLocalFs.currentPath = ''
+    })
+    openResponse = {
+      sessionId: 'sess-local-2',
+      status: 'connected',
+      localInitialPath: 'C:/missing'
+    }
+
+    await store.connectToSite({ ...site, id: 'site-missing-local', localInitialPath: 'C:/missing' })
+    expect(mockLocalFs.load).toHaveBeenNthCalledWith(1, 'C:/missing')
+    expect(mockLocalFs.load).toHaveBeenNthCalledWith(2)
   })
 })

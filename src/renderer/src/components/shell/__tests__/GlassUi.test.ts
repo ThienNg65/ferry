@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import { INVOKE_CHANNELS, LEGAL_POLICY_VERSION } from '@shared/contract'
 import App from '../../../App.vue'
 import SettingsDialog from '../SettingsDialog.vue'
+import FerryLogo from '../FerryLogo.vue'
 import { useSettingsStore } from '../../../stores/settings.store'
 import { useUiStore } from '../../../stores/ui.store'
 
@@ -177,6 +178,9 @@ describe('Modern Glass UI rollout', () => {
     expect(panel.text()).toContain('Modern Glass UI')
     expect(panel.text()).toContain('In Development')
 
+    const logo = trackMount(mount(FerryLogo))
+    expect(logo.get('[data-ferry-logo]').attributes('data-ferry-logo')).toBe('classic')
+
     const toggle = panel.get('[aria-label="Modern Glass UI (In Development)"]')
     expect(ui.glassUiEnabled).toBe(false)
     expect(document.documentElement.classList.contains('ferry-glass')).toBe(false)
@@ -186,6 +190,7 @@ describe('Modern Glass UI rollout', () => {
     expect(ui.glassUiPromoDismissed).toBe(true)
     expect(document.documentElement.classList.contains('ferry-glass')).toBe(true)
     expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
+    expect(logo.get('[data-ferry-logo]').attributes('data-ferry-logo')).toBe('glass')
   })
 
   it('App.vue keeps Classic UI untouched by default and mounts .ferry-ambient-canvas only when enabled', async () => {
