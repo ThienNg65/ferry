@@ -8,7 +8,7 @@ import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { createNodeHost } from './nodeHost'
 import { dispatchInvoke, dispatchSend, encodeLine } from './protocol'
-import { initSidecarServices, shutdownSidecarServices } from './sidecar'
+import { initSidecarServices, registerShutdownHandler, shutdownSidecarServices } from './sidecar'
 
 export interface NeutralinoExtensionOptions {
   nlPort: string
@@ -172,7 +172,7 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     })
   })
 
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (code = 0): Promise<void> => {
     if (closing) {
       return
     }
@@ -197,8 +197,10 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     } catch {
       // Ignore close errors during shutdown.
     }
-    process.exit(0)
+    process.exit(code)
   }
+
+  registerShutdownHandler(shutdown)
 
   ws.on('open', () => {
     nlOpen = true

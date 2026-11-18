@@ -277,15 +277,27 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           <span class="size-2 rounded-full bg-primary animate-pulse" />
         </div>
       </UTooltip>
-      <UTooltip v-if="updateStore.isDownloaded" :text="`Ferry v${updateStore.availableVersion} is ready — click to restart`">
+      <UTooltip
+        v-if="updateStore.isDownloaded"
+        :text="
+          updateStore.availableVersion
+            ? `Ferry v${updateStore.availableVersion} is ready — click to restart`
+            : 'Update ready — click to restart'
+        "
+      >
         <button
           type="button"
-          aria-label="Update ready — restart to update"
-          class="flex min-h-6 items-center gap-1 rounded bg-success/20 px-2 py-0.5 text-xs font-medium text-success transition-colors hover:bg-success/30 focus-visible:outline-2 focus-visible:outline-primary"
+          :disabled="updateStore.installing"
+          :aria-label="updateStore.installing ? 'Installing update…' : 'Update ready — restart to update'"
+          class="flex min-h-6 items-center gap-1 rounded bg-success/20 px-2 py-0.5 text-xs font-medium text-success transition-colors hover:bg-success/30 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary"
           @click="updateStore.installNow()"
         >
-          <UIcon name="i-lucide-arrow-up-circle" class="size-3.5" />
-          <span class="hidden md:inline">Update ready</span>
+          <UIcon
+            :name="updateStore.installing ? 'i-lucide-loader-2' : 'i-lucide-arrow-up-circle'"
+            class="size-3.5"
+            :class="updateStore.installing ? 'animate-spin' : ''"
+          />
+          <span class="hidden md:inline">{{ updateStore.installing ? 'Restarting…' : 'Update ready' }}</span>
         </button>
       </UTooltip>
       <UTooltip text="Command palette (Ctrl+K)">

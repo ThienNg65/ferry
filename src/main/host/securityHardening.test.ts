@@ -82,10 +82,14 @@ describe('Security Hardening', () => {
     await expect(updater.checkForUpdates()).rejects.toThrow(/non-HTTPS/i)
     expect(fetchSpy).not.toHaveBeenCalled()
 
+    const validSha512 = `${'A'.repeat(86)}==`
     const untrustedManifestFetch = vi.fn(async () =>
-      new Response('version: 9.9.9\npath: https://attacker.example.com/Ferry-Setup-9.9.9.exe\nsha512: abc=\n', {
-        status: 200
-      })
+      new Response(
+        `version: 9.9.9\npath: https://attacker.example.com/Ferry-Setup-9.9.9.exe\nsha512: ${validSha512}\n`,
+        {
+          status: 200
+        }
+      )
     )
     const updater2 = new SidecarUpdater({
       feedUrl: 'https://github.com/ThienNg65/ferry-release/releases/latest/download',

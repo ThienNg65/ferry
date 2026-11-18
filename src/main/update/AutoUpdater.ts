@@ -7,19 +7,26 @@ import {
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { host } from '../host/host'
-import { getSidecarUpdater, type SidecarUpdater } from './SidecarUpdater'
+import {
+  compareSemver,
+  FALLBACK_APP_VERSION,
+  getSidecarUpdater,
+  resetSidecarUpdaterForTests,
+  type SidecarUpdater
+} from './SidecarUpdater'
 
 let initialized = false
 let periodicTimer: NodeJS.Timeout | null = null
 let cachedAutoUpdater: SidecarUpdater | null = null
 let currentState: UpdateState | null = null
+let installInFlight = false
 
 function getIsPackaged(): boolean {
   return Boolean(host().isPackaged)
 }
 
 function getAppVersion(): string {
-  return host().appVersion ?? '0.24.0'
+  return host().appVersion ?? FALLBACK_APP_VERSION
 }
 
 function ensureState(): UpdateState {
@@ -53,12 +60,14 @@ export function getUpdateState(): UpdateState {
 /** Resets singleton state for unit tests. */
 export function resetAutoUpdaterForTests(): void {
   initialized = false
+  installInFlight = false
   if (periodicTimer) {
     clearInterval(periodicTimer)
     periodicTimer = null
   }
   cachedAutoUpdater = null
   currentState = null
+  resetSidecarUpdaterForTests()
 }
 
 /**
@@ -82,13 +91,16 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
   autoUpdater.autoInstallOnAppQuit = false
 
   autoUpdater.on('checking-for-update', () => {
-    updateState({ status: 'checking', error: undefined })
+    if (ensureState().status !== 'checking') {
+      updateState({ status: 'checking', availableVersion: undefined, progress: undefined, error: undefined })
+    }
   })
 
   autoUpdater.on('update-available', (info: { version: string }) => {
     updateState({
-      status: 'downloading',
+      status: autoUpdater.autoDownload ? 'downloading' : 'available',
       availableVersion: info.version,
+      progress: undefined,
       error: undefined
     })
     host().broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
@@ -102,7 +114,8 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
         bytesPerSecond: Math.round(progress.bytesPerSecond),
         transferred: progress.transferred,
         total: progress.total
-      }
+      },
+      error: undefined
     })
   })
 
@@ -110,19 +123,30 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
     updateState({
       status: 'downloaded',
       availableVersion: info.version,
+      progress: undefined,
       error: undefined
     })
     host().broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
   })
 
   autoUpdater.on('update-not-available', () => {
-    updateState({ status: 'not-available', error: undefined })
+    updateState({
+      status: 'not-available',
+      availableVersion: undefined,
+      progress: undefined,
+      error: undefined
+    })
   })
 
   autoUpdater.on('error', (err: unknown) => {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[AutoUpdater]', err)
-    updateState({ status: 'error', error: message })
+    updateState({
+      status: 'error',
+      availableVersion: undefined,
+      progress: undefined,
+      error: message
+    })
   })
 
   // Periodic check timer (every 6 hours)
@@ -132,7 +156,7 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
   }
   periodicTimer = setInterval(() => {
     const settings = AppSettingsStore.getInstance().get()
-    if (settings.autoCheckUpdates !== false) {
+    if (settings.autoCheckUpdates !== false && ensureState().status !== 'downloaded') {
       void checkForUpdates(false)
     }
   }, SIX_HOURS_MS)
@@ -149,7 +173,7 @@ export async function initAutoUpdater(checkImmediately = true): Promise<void> {
 /** Checks for updates immediately. If isManual is true, returns status or error directly to caller. */
 export async function checkForUpdates(isManual = false): Promise<CheckUpdateResult> {
   if (!getIsPackaged()) {
-    updateState({ status: 'disabled' })
+    updateState({ status: 'disabled', availableVersion: undefined, progress: undefined, error: undefined })
     return { status: 'disabled', error: 'Updates are disabled in development mode' }
   }
 
@@ -160,18 +184,24 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
     return { status: state.status, version: state.availableVersion }
   }
 
+  const autoUpdater = getAutoUpdater()
+  autoUpdater.clearDownloaded?.()
+
   updateState({
     status: 'checking',
     lastCheckedAt: new Date().toISOString(),
+    availableVersion: undefined,
+    progress: undefined,
     error: undefined
   })
 
   try {
-    const autoUpdater = getAutoUpdater()
     const checkResult = await autoUpdater.checkForUpdates()
     const currentVer = getAppVersion()
-    if (!checkResult || checkResult.updateInfo.version === currentVer) {
-      updateState({ status: 'not-available' })
+    if (!checkResult || compareSemver(checkResult.updateInfo.version, currentVer) <= 0) {
+      if (ensureState().status !== 'not-available') {
+        updateState({ status: 'not-available', availableVersion: undefined, progress: undefined, error: undefined })
+      }
       return { status: 'not-available', version: currentVer }
     }
     return { status: 'available', version: checkResult.updateInfo.version }
@@ -182,14 +212,29 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
     } else {
       console.error('[AutoUpdater] background checkForUpdates failed', err)
     }
-    updateState({ status: 'error', error: message })
+    updateState({ status: 'error', availableVersion: undefined, progress: undefined, error: message })
     return { status: 'error', error: message }
   }
 }
 
-/** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
+/** Re-verifies, launches the downloaded installer, and schedules clean sidecar shutdown after IPC reply. */
 export async function installUpdateNow(): Promise<void> {
-  await initAutoUpdater(false)
-  const autoUpdater = getAutoUpdater()
-  autoUpdater.quitAndInstall(true, true)
+  if (installInFlight) {
+    return
+  }
+  installInFlight = true
+  try {
+    await initAutoUpdater(false)
+    const autoUpdater = getAutoUpdater()
+    await autoUpdater.quitAndInstall(true, true)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const downloaded = getAutoUpdater().getDownloadedInfo?.()
+    if (!downloaded?.installerPath) {
+      updateState({ status: 'error', availableVersion: undefined, progress: undefined, error: message })
+    }
+    throw err
+  } finally {
+    installInFlight = false
+  }
 }

@@ -57,6 +57,8 @@ window.addEventListener('resize', onWindowResize)
 let disposeWindowBounds: (() => void) | null = null
 onUnmounted(() => {
   disposeWindowBounds?.()
+  unsubscribeUpdateAvailable()
+  unsubscribeUpdateDownloaded()
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onTabShortcut)
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
@@ -236,16 +238,25 @@ const appLocale = extendLocale(en, {
     }
   }
 })
-onEvent<UpdateAvailableEvent>(EVENT_CHANNELS.updateAvailable, (evt) => {
+const unsubscribeUpdateAvailable = onEvent<UpdateAvailableEvent>(EVENT_CHANNELS.updateAvailable, (evt) => {
   notify.success('Update available', `Ferry v${evt.version} is downloading in the background`)
 })
-onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
-  toast.add({
+const unsubscribeUpdateDownloaded = onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
+  const { id } = toast.add({
     title: 'Update ready',
     description: `Restart Ferry to install v${evt.version}`,
     color: 'success',
     icon: 'i-lucide-check-circle',
-    actions: [{ label: 'Restart now', onClick: () => void invoke<void>(INVOKE_CHANNELS.updateInstallNow) }]
+    duration: 0,
+    actions: [
+      {
+        label: 'Restart now',
+        onClick: () => {
+          toast.remove(id)
+          void updateStore.installNow()
+        }
+      }
+    ]
   })
 })
 </script>

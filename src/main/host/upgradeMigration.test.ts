@@ -148,6 +148,8 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
     const settingsStore = AppSettingsStore.getInstance()
     expect(settingsStore.get().openTabSiteIds).toEqual(['site-1'])
     expect(settingsStore.get().bandwidthLimitKBps).toBe(2048)
+    expect(settingsStore.get().autoCheckUpdates).toBe(true)
+    expect(settingsStore.get().termsAcceptance).toBeNull()
     expect(settingsStore.getDecryptedDefaultProxy()).toEqual(
       expect.objectContaining({ host: 'corp-proxy.local', password: 'corp-pw' })
     )
@@ -174,5 +176,68 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
     const rawPrefix = Buffer.from(storedNew!.secretPassword!, 'base64').subarray(0, 3).toString('ascii')
     expect(rawPrefix).toBe('v10')
     expect(box.decrypt(storedNew!.secretPassword!)).toBe('neutralino-new-password')
+  })
+
+  it('preserves autoCheckUpdates=false and termsAcceptance and defaults omitted legacy fields', async () => {
+    const masterKey = unwrapOrCreateMasterKey(userDataDir)
+    setHost(createNodeHost(masterKey, userDataDir, () => {}))
+
+    writeFileSync(
+      path.join(userDataDir, 'app-settings.json'),
+      JSON.stringify({
+        openTabSiteIds: [],
+        bandwidthLimitKBps: null,
+        defaultProxy: null,
+        autoCheckUpdates: false,
+        termsAcceptance: { version: '1.0', acceptedAt: '2026-06-01T12:00:00.000Z' }
+      }),
+      'utf8'
+    )
+
+    const { AppSettingsStore } = await import('../app/AppSettingsStore')
+    const preserved = AppSettingsStore.getInstance().get()
+    expect(preserved.autoCheckUpdates).toBe(false)
+    expect(preserved.termsAcceptance).toEqual({ version: '1.0', acceptedAt: '2026-06-01T12:00:00.000Z' })
+    expect(preserved.historyRetentionDays).toBe(90)
+
+    // Older app-settings.json omitting autoCheckUpdates/termsAcceptance/historyRetentionDays with legacy keys
+    vi.resetModules()
+    setHost(createNodeHost(masterKey, userDataDir, () => {}))
+    writeFileSync(
+      path.join(userDataDir, 'app-settings.json'),
+      JSON.stringify({
+        openTabSiteIds: ['legacy-site'],
+        bandwidthLimitKBps: 512,
+        legacyWindowBounds: { width: 1200, height: 800 }
+      }),
+      'utf8'
+    )
+
+    const { AppSettingsStore: ReloadedStore } = await import('../app/AppSettingsStore')
+    const defaulted = ReloadedStore.getInstance().get()
+    expect(defaulted.openTabSiteIds).toEqual(['legacy-site'])
+    expect(defaulted.autoCheckUpdates).toBe(true)
+    expect(defaulted.termsAcceptance).toBeNull()
+    expect(defaulted.historyRetentionDays).toBe(90)
+  })
+
+  it('isolates corrupted JSON without erasing files or breaking unaffected stores', async () => {
+    const masterKey = unwrapOrCreateMasterKey(userDataDir)
+    setHost(createNodeHost(masterKey, userDataDir, () => {}))
+
+    const corruptedSettings = '{"openTabSiteIds": ["site-1"'
+    writeFileSync(path.join(userDataDir, 'app-settings.json'), corruptedSettings, 'utf8')
+    writeFileSync(path.join(userDataDir, 'known_hosts.json'), '{not-valid-json', 'utf8')
+    writeFileSync(path.join(userDataDir, 'bookmarks.json'), JSON.stringify({ bookmarks: [] }), 'utf8')
+
+    const { AppSettingsStore } = await import('../app/AppSettingsStore')
+    const { KnownHostsStore } = await import('../ssh/KnownHostsStore')
+    const { BookmarkStore } = await import('../bookmarks/BookmarkStore')
+
+    expect(() => AppSettingsStore.getInstance().get()).toThrow(SyntaxError)
+    // Corrupted file on disk is left intact rather than silently wiped.
+    expect(readFileSync(path.join(userDataDir, 'app-settings.json'), 'utf8')).toBe(corruptedSettings)
+    expect(() => KnownHostsStore.getInstance().list()).toThrow(SyntaxError)
+    expect(BookmarkStore.getInstance().list()).toEqual([])
   })
 })

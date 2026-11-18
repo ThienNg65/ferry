@@ -19,7 +19,7 @@ import { useUpdateStore } from '../../stores/update.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
-import { formatDateTime, formatSpeed } from '../../utils/format'
+import { formatBytes, formatDateTime, formatSpeed } from '../../utils/format'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 
 type TabId = 'appearance' | 'terminal' | 'network' | 'privacy' | 'updates'
@@ -58,8 +58,21 @@ const retentionOptions = [
 const unlimited = ref(true)
 const limitInput = ref(1024)
 const saving = ref(false)
-const checkingUpdate = ref(false)
 const autoCheckUpdates = ref(true)
+const savingAutoCheck = ref(false)
+
+const downloadPercent = computed(() => Math.min(100, Math.max(0, Math.round(update.progress?.percent ?? 0))))
+const downloadDetailText = computed(() => {
+  const prog = update.progress
+  if (!prog) {
+    return `${downloadPercent.value}%`
+  }
+  const speed = formatSpeed(prog.bytesPerSecond || 0)
+  if (prog.total > 0) {
+    return `${downloadPercent.value}% · ${formatBytes(prog.transferred)} / ${formatBytes(prog.total)} (${speed})`
+  }
+  return `${downloadPercent.value}% (${speed})`
+})
 
 const proxyEnabled = ref(false)
 const proxyType = ref<ProxyType>('socks5')
@@ -304,11 +317,14 @@ watch(
     }
     activeTab.value = 'appearance'
     legalDoc.value = null
+    autoCheckUpdates.value = settings.autoCheckUpdates
     seedNetwork()
     await settings.fetch()
     knownHosts.value = await settings.listKnownHosts()
     void update.init()
-    autoCheckUpdates.value = settings.autoCheckUpdates
+    if (!savingAutoCheck.value) {
+      autoCheckUpdates.value = settings.autoCheckUpdates
+    }
     seedNetwork()
   }
 )
@@ -326,28 +342,36 @@ function formatTime(iso: string | null): string {
 }
 
 async function handleCheckUpdate(): Promise<void> {
-  checkingUpdate.value = true
-  try {
-    const res = await update.checkNow()
-    if (res.status === 'not-available') {
-      notify.success('Up to date', `Ferry v${update.currentVersion} is the latest version`)
-    } else if (res.status === 'disabled') {
-      notify.error('Updates unavailable', 'Auto-update is disabled in development mode')
-    } else if (res.status === 'error' && res.error) {
-      notify.error('Update check failed', res.error)
-    }
-  } finally {
-    checkingUpdate.value = false
+  if (!update.canCheck) {
+    return
+  }
+  const res = await update.checkNow()
+  if (res.status === 'not-available') {
+    notify.success(
+      'Up to date',
+      update.currentVersion ? `Ferry v${update.currentVersion} is the latest version` : 'You are running the latest version'
+    )
+  } else if (res.status === 'disabled') {
+    notify.error('Updates unavailable', 'Auto-update is disabled in development mode')
+  } else if (res.status === 'error' && res.error) {
+    notify.error('Update check failed', res.error)
   }
 }
 
 async function toggleAutoCheck(value: boolean): Promise<void> {
+  if (savingAutoCheck.value) {
+    return
+  }
+  const previous = autoCheckUpdates.value
   autoCheckUpdates.value = value
+  savingAutoCheck.value = true
   try {
     await settings.setAutoCheckUpdates(value)
   } catch (err) {
-    autoCheckUpdates.value = settings.autoCheckUpdates
+    autoCheckUpdates.value = previous
     notify.error('Failed to save setting', err instanceof Error ? err.message : String(err))
+  } finally {
+    savingAutoCheck.value = false
   }
 }
 
@@ -814,31 +838,77 @@ async function saveNetwork(): Promise<void> {
               <SettingsRow label="Automatically check for updates">
                 <USwitch
                   :model-value="autoCheckUpdates"
+                  :disabled="savingAutoCheck"
                   aria-label="Automatically check for updates"
                   @update:model-value="toggleAutoCheck"
                 />
               </SettingsRow>
 
-              <div v-if="update.isDownloading" class="mt-3 flex flex-col gap-1.5 rounded-md bg-muted/30 p-3 text-xs">
-                <div class="flex items-center justify-between">
-                  <span class="font-medium text-toned">Downloading Ferry v{{ update.availableVersion }}...</span>
-                  <span class="text-muted">{{ update.progress?.percent || 0 }}% ({{ formatSpeed(update.progress?.bytesPerSecond || 0) }})</span>
+              <div v-if="update.isAvailable" class="mt-3 flex items-center gap-2 rounded-md bg-muted/30 p-3 text-xs text-toned">
+                <UIcon name="i-lucide-download" class="size-4 shrink-0 text-primary" />
+                <span>
+                  {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'A new update' }} is available — starting download…
+                </span>
+              </div>
+
+              <div v-else-if="update.isDownloading" class="mt-3 flex flex-col gap-1.5 rounded-md bg-muted/30 p-3 text-xs">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-medium text-toned">
+                    Downloading {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'update' }}...
+                  </span>
+                  <span class="text-muted">{{ downloadDetailText }}</span>
                 </div>
-                <div class="h-1.5 w-full overflow-hidden rounded bg-muted">
+                <div
+                  role="progressbar"
+                  aria-label="Update download progress"
+                  :aria-valuenow="downloadPercent"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  :aria-valuetext="`${downloadPercent}%`"
+                  class="h-1.5 w-full overflow-hidden rounded bg-muted"
+                >
                   <div
                     class="h-full bg-primary transition-all duration-300"
-                    :style="{ width: `${update.progress?.percent || 0}%` }"
+                    :style="{ width: `${downloadPercent}%` }"
                   />
                 </div>
               </div>
 
               <div
                 v-else-if="update.isDownloaded"
-                class="mt-3 flex items-center justify-between rounded-md border border-success/20 bg-success/10 p-3 text-xs text-success"
+                class="mt-3 flex items-center justify-between gap-3 rounded-md border border-success/20 bg-success/10 p-3 text-xs text-success"
               >
-                <span>Ferry v{{ update.availableVersion }} is ready to install</span>
-                <UButton color="success" size="xs" icon="i-lucide-refresh-cw" @click="update.installNow">
+                <span>{{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'Update' }} is ready to install</span>
+                <UButton
+                  color="success"
+                  size="xs"
+                  icon="i-lucide-refresh-cw"
+                  :loading="update.installing"
+                  :disabled="update.installing"
+                  @click="update.installNow()"
+                >
                   Restart & Install
+                </UButton>
+              </div>
+
+              <div
+                v-else-if="update.status === 'error'"
+                role="alert"
+                class="mt-3 flex items-center justify-between gap-3 rounded-md border border-error/20 bg-error/10 p-3 text-xs text-error"
+              >
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium">Update failed</div>
+                  <div class="mt-0.5 break-words text-error/90">{{ update.error || 'Could not check for or download updates.' }}</div>
+                </div>
+                <UButton
+                  color="error"
+                  variant="soft"
+                  size="xs"
+                  icon="i-lucide-refresh-cw"
+                  :disabled="!update.canCheck"
+                  @click="handleCheckUpdate"
+                >
+                  Retry
                 </UButton>
               </div>
 
@@ -846,7 +916,7 @@ async function saveNetwork(): Promise<void> {
                 <UButton
                   size="sm"
                   variant="outline"
-                  :loading="checkingUpdate || update.isChecking"
+                  :loading="update.isChecking"
                   :disabled="!update.canCheck"
                   icon="i-lucide-refresh-cw"
                   @click="handleCheckUpdate"

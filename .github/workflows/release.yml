@@ -135,6 +135,8 @@ jobs:
 
       - name: Verify complete installer and update metadata
         shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.target.outputs.version }}
         run: |
           shopt -s nullglob
           installers=(dist/Ferry-Setup-*.exe)
@@ -152,6 +154,7 @@ jobs:
             echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
             exit 1
           fi
+          node ./.github/scripts/regenerate-update-yml.js --verify --version "$EXPECTED_VERSION"
 
       - name: Create verified public changelog commit
         id: public-release
