@@ -28,6 +28,45 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.30.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.29.1...ferry-v0.30.0) (2026-11-18)
+
+
+### Features
+
+* add file visibility filter popover, counts, and pattern helper UI ([6d32708](https://github.com/ThienNg65/ferry/commit/6d32708e5f644ae999df0da4440599b215d758a4))
+* add glob visibility filter engine and filename pattern helper ([12b763a](https://github.com/ThienNg65/ferry/commit/12b763a0a8fd7e655f9af97bea24cb920101db13))
+* add per-connection file visibility filter store and persistence ([ddd80d4](https://github.com/ThienNg65/ferry/commit/ddd80d443941f7bec56539074e4dbec010d565f2))
+* Feat/file visibility filters ([bda768a](https://github.com/ThienNg65/ferry/commit/bda768a7e6052a462a5762a84aa4915caa05cda4))
+* Feat/terminal predictive echo ([8c1214b](https://github.com/ThienNg65/ferry/commit/8c1214bdb4c9b0ef02ad4401c344224831b80046))
+* **sites:** click selects a saved site, double-click or Enter connects ([9a42299](https://github.com/ThienNg65/ferry/commit/9a42299c0c556e9fb38bffb2244579f3f952e031))
+* **sites:** harden connection lifecycle, dialogs, and WCAG 2.2 AA UX ([c77ee62](https://github.com/ThienNg65/ferry/commit/c77ee62cc7082bcb63cf14ac1d754d9870434831))
+* **sites:** redesign site details panel and fix connecting indicators ([7e4182a](https://github.com/ThienNg65/ferry/commit/7e4182a51e3c3ccd583c15dca7e1b9fc5fc0155d))
+* **terminal:** add buffer reconciliation and password safety gates to TerminalEchoPredictor ([864bff5](https://github.com/ThienNg65/ferry/commit/864bff5c62498d1910c17f7787e9c575c2f72b5c))
+* **terminal:** add core TerminalEchoPredictor state machine ([1f3b41f](https://github.com/ThienNg65/ferry/commit/1f3b41f2a7b419a4a023103f39706a5e1275d3da))
+* **terminal:** add predictive local echo setting and toggle ([b15936c](https://github.com/ThienNg65/ferry/commit/b15936c31a69d7cb020b14dce57b01f80f15ae14))
+* **terminal:** integrate Mosh-style predictive local echo into terminal stream ([7addf2c](https://github.com/ThienNg65/ferry/commit/7addf2c5c19437794cd610c75279ec6ea5995501))
+
+
+### Bug Fixes
+
+* **files:** replace RegExp glob matcher with bounded-cost iterative matcher ([3fa84f4](https://github.com/ThienNg65/ferry/commit/3fa84f41d48887ad9d3c80994ac4bf0ac55a8c20))
+* scope bulk delete and range selection to visible filtered entries ([e7abbee](https://github.com/ThienNg65/ferry/commit/e7abbee775936add7795f69fade05d6fbf588c92))
+* scope Command Palette and pane keyboard actions to visible selected entries ([ed4ee2e](https://github.com/ThienNg65/ferry/commit/ed4ee2ed39e2fbed540838391ee4b9606f1d9c97))
+* **terminal:** await prediction flush before fit and re-arm early underline timer ([c1ebd24](https://github.com/ThienNg65/ferry/commit/c1ebd249d9ee4929791549be49f2d017fe12645e))
+* **terminal:** clear awaitingNewlineConfirm after deferred-wrap command newline ([c2515e7](https://github.com/ThienNg65/ferry/commit/c2515e75ed4b7b4d155a8eabd26f0d208ea71dd1))
+* **terminal:** defer predictions mid-escape, restore erased line suffixes, and preserve SGR attributes ([33e454c](https://github.com/ThienNg65/ferry/commit/33e454c855c766dd908107fd5642de0a925e3520))
+* **terminal:** guard predictive echo callbacks across disable and shell restart ([0136b81](https://github.com/ThienNg65/ferry/commit/0136b811eb4e34338f7f1415982c7c1b8a4996e6))
+* **terminal:** handle combined backspace chunks, chunked enter, and wrap edge cases in TerminalEchoPredictor ([4138478](https://github.com/ThienNg65/ferry/commit/413847893ca2e58b0b3e18890bcd2499c9a82ca3))
+* **terminal:** handle saturated scrollback and retyped erased prefixes in predictive echo ([df163a2](https://github.com/ThienNg65/ferry/commit/df163a29cee34c653d27947243a0a71350d65bf1))
+* **terminal:** preserve multibyte UTF-8 stream decoding across predictive echo byte chunks ([ac39f98](https://github.com/ThienNg65/ferry/commit/ac39f9879f1b81eca7dc20034deb330d7b56a7b3))
+
+
+### Documentation
+
+* document file visibility filters and common glob patterns ([8ec358b](https://github.com/ThienNg65/ferry/commit/8ec358b12a62557a1df02f8871c6ef166d5418c8))
+* note sites list select-vs-connect convention in PROJECT_MAP ([9db0419](https://github.com/ThienNg65/ferry/commit/9db041914063e73d529c728f97cded80325e0392))
+* **terminal:** add predictive local echo design spec and implementation plan ([7a11795](https://github.com/ThienNg65/ferry/commit/7a1179598e12ab0b3f235962b3b9ea05b7e429a2))
+
 ## [0.29.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.29.0...ferry-v0.29.1) (2026-11-17)
 
 
