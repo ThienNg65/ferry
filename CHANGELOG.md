@@ -28,6 +28,16 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.30.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.30.0...ferry-v0.30.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **release:** harden NSIS process cleanup, packaging, and update manifest verification ([bab3beb](https://github.com/ThienNg65/ferry/commit/bab3beb2077398eadda36aa6b7b291bf1b534f3a))
+* **update-ui:** guard update restarts, surface errors, and harden store state ([190bbc6](https://github.com/ThienNg65/ferry/commit/190bbc6e995176bfff684b08cf89429fca8d3794))
+* **update:** harden auto-update lifecycle, UI, and release verification ([d8cc216](https://github.com/ThienNg65/ferry/commit/d8cc2168785d128a16447d2c9c3081c22e71073f))
+* **update:** harden sidecar updater lifecycle, security, and shutdown handoff ([7787057](https://github.com/ThienNg65/ferry/commit/778705748f6510ca2ac6c44f662042ab3e9f8040))
+
 ## [0.30.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.29.1...ferry-v0.30.0) (2026-11-18)
 
 
