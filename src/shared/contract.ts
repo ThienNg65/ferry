@@ -571,6 +571,16 @@ export interface TailStartRequest {
   historyLines?: number
 }
 
+/** Result of starting a tail — the caller uses `tailId` to route events and to stop. */
+export interface TailStartResult {
+  tailId: string
+}
+
+/** Payload for the `tail:ready` channel — emitted once the remote tail command starts producing output/PID marker. */
+export interface TailReadyEvent {
+  tailId: string
+}
+
 /** Payload for the `tail:line` channel. */
 export interface TailLineEvent {
   tailId: string
@@ -1085,6 +1095,7 @@ export const EVENT_CHANNELS = {
   operationEvent: 'operation:event',
   monitorSample: 'monitor:sample',
   monitorStatus: 'monitor:status',
+  tailReady: 'tail:ready',
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',

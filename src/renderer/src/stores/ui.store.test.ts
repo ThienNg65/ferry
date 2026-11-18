@@ -53,7 +53,8 @@ describe('ui store layout state', () => {
     const data = new Map(Object.entries(stored))
     vi.stubGlobal('localStorage', {
       getItem: (k: string) => data.get(k) ?? null,
-      setItem: (k: string, v: string) => void data.set(k, v)
+      setItem: (k: string, v: string) => void data.set(k, v),
+      clear: () => data.clear()
     })
     vi.stubGlobal('window', { innerHeight: 900 })
     setActivePinia(createPinia())
@@ -143,7 +144,12 @@ describe('ui store layout state', () => {
     const { INVOKE_CHANNELS } = await import('@shared/contract')
     const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
     const toggleMock = vi.fn()
-    vi.stubGlobal('document', { documentElement: { classList: { toggle: toggleMock }, style: { setProperty: vi.fn() } } })
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: { toggle: toggleMock, contains: () => false },
+        style: { setProperty: vi.fn() }
+      }
+    })
     const { ui } = await freshStore({ 'ferry:ui:theme': 'dark' })
     vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
     await ui.initTheme()
@@ -184,7 +190,8 @@ describe('ui store layout state', () => {
     ])
     vi.stubGlobal('localStorage', {
       getItem: (k: string) => data.get(k) ?? null,
-      setItem: (k: string, v: string) => void data.set(k, v)
+      setItem: (k: string, v: string) => void data.set(k, v),
+      clear: () => data.clear()
     })
     vi.stubGlobal('window', { innerHeight: 900, innerWidth: 1000 })
     setActivePinia(createPinia())
@@ -212,5 +219,157 @@ describe('ui store layout state', () => {
     ui.setTerminalPredictiveEcho(false)
     ui.resetTerminalAppearance()
     expect(ui.terminalPredictiveEcho).toBe(false)
+  })
+
+  it('defaults glassUiEnabled and glassUiPromoDismissed to false and restores stored values', async () => {
+    const { ui: defaults } = await freshStore()
+    expect(defaults.glassUiEnabled).toBe(false)
+    expect(defaults.glassUiPromoDismissed).toBe(false)
+
+    const { ui: restored } = await freshStore({
+      'ferry:ui:glassUi': 'true',
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    })
+    expect(restored.glassUiEnabled).toBe(true)
+    expect(restored.glassUiPromoDismissed).toBe(true)
+  })
+
+  it('initGlassUi and setGlassUiEnabled toggle ferry-glass class, persist, and sync DWM caption color', async () => {
+    const { vi } = await import('vitest')
+    const { INVOKE_CHANNELS } = await import('@shared/contract')
+    const classes = new Set<string>()
+    const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: {
+          toggle: (cls: string, force?: boolean) => {
+            const on = force === undefined ? !classes.has(cls) : force
+            if (on) classes.add(cls)
+            else classes.delete(cls)
+            return on
+          },
+          contains: (cls: string) => classes.has(cls)
+        },
+        style: { setProperty: vi.fn() }
+      }
+    })
+    const { ui, data } = await freshStore({ 'ferry:ui:theme': 'dark' })
+    vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
+
+    ui.initGlassUi()
+    expect(classes.has('ferry-glass')).toBe(false)
+
+    ui.setGlassUiEnabled(true)
+    expect(ui.glassUiEnabled).toBe(true)
+    expect(data.get('ferry:ui:glassUi')).toBe('true')
+    expect(classes.has('ferry-glass')).toBe(true)
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
+      theme: 'dark',
+      captionColor: 0x160d09
+    })
+
+    ui.setGlassUiEnabled(false)
+    expect(ui.glassUiEnabled).toBe(false)
+    expect(data.get('ferry:ui:glassUi')).toBe('false')
+    expect(classes.has('ferry-glass')).toBe(false)
+    expect(invokeMock).toHaveBeenLastCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
+      theme: 'dark',
+      captionColor: 0x262626
+    })
+  })
+
+  it('reads --ferry-caption-bg when ferry-glass is active and debounces accent theme sync', async () => {
+    const { vi } = await import('vitest')
+    const { INVOKE_CHANNELS } = await import('@shared/contract')
+    vi.useFakeTimers()
+    try {
+      const classes = new Set<string>(['ferry-glass', 'dark'])
+      const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
+      vi.stubGlobal('CSS', { supports: () => true })
+      vi.stubGlobal('getComputedStyle', () => ({
+        getPropertyValue: (prop: string) => (prop === '--ferry-caption-bg' ? '#112233' : '')
+      }))
+      vi.stubGlobal('document', {
+        documentElement: {
+          classList: {
+            toggle: (cls: string, force?: boolean) => {
+              const on = force === undefined ? !classes.has(cls) : force
+              if (on) classes.add(cls)
+              else classes.delete(cls)
+              return on
+            },
+            contains: (cls: string) => classes.has(cls)
+          },
+          style: { setProperty: vi.fn() }
+        },
+        createElement: () => ({
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            fillStyle: '',
+            fillRect: vi.fn(),
+            getImageData: () => ({ data: new Uint8ClampedArray([0x11, 0x22, 0x33, 255]) })
+          })
+        })
+      })
+
+      const { ui } = await freshStore({ 'ferry:ui:theme': 'dark', 'ferry:ui:glassUi': 'false' })
+      vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
+
+      // Classic mode: setAccentColor does not trigger window:syncTheme
+      ui.setAccentColor('#8b5cf6')
+      vi.advanceTimersByTime(300)
+      expect(invokeMock).not.toHaveBeenCalled()
+
+      // Glass mode: rapid accent changes debounce to a single window:syncTheme after 250ms
+      ui.setGlassUiEnabled(true)
+      invokeMock.mockClear()
+      ui.setAccentColor('#22c55e')
+      ui.setAccentColor('#f97316')
+      expect(invokeMock).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(249)
+      expect(invokeMock).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(invokeMock).toHaveBeenCalledTimes(1)
+      expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
+        theme: 'dark',
+        captionColor: 0x332211
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('persists dismissGlassUiPromo, harmonizes terminalAppearance, and resets cleanly on resetGlassUi', async () => {
+    const { vi } = await import('vitest')
+    const classes = new Set<string>()
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: {
+          toggle: (cls: string, force?: boolean) => {
+            const on = force === undefined ? !classes.has(cls) : force
+            if (on) classes.add(cls)
+            else classes.delete(cls)
+            return on
+          },
+          contains: (cls: string) => classes.has(cls)
+        },
+        style: { setProperty: vi.fn() }
+      }
+    })
+    const { ui, data } = await freshStore({ 'ferry:ui:theme': 'dark' })
+    ui.setGlassUiEnabled(true)
+    ui.dismissGlassUiPromo()
+    expect(ui.glassUiPromoDismissed).toBe(true)
+    expect(data.get('ferry:ui:glassUiPromoDismissed')).toBe('true')
+    expect(ui.terminalAppearance.theme.background).toBe('#0b0f19')
+
+    data.clear()
+    ui.resetGlassUi()
+    expect(ui.glassUiEnabled).toBe(false)
+    expect(ui.glassUiPromoDismissed).toBe(false)
+    expect(classes.has('ferry-glass')).toBe(false)
+    expect(data.size).toBe(0)
+    expect(ui.terminalAppearance.theme.background).toBe('#1e1e1e')
   })
 })

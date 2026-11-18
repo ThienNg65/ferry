@@ -46,14 +46,19 @@ function flattenFields(
   value: unknown,
   prefix: string,
   depth: number,
-  out: Array<{ key: string; value: string }>
+  out: Array<{ key: string; value: string }>,
+  state: { truncated: boolean }
 ): void {
-  if (out.length >= MAX_FLAT_FIELDS) return
+  if (out.length >= MAX_FLAT_FIELDS) {
+    state.truncated = true
+    return
+  }
   if (value === null || typeof value !== 'object') {
     out.push({ key: prefix, value: String(value) })
     return
   }
   if (depth >= MAX_FLAT_DEPTH) {
+    state.truncated = true
     out.push({ key: prefix, value: JSON.stringify(value) })
     return
   }
@@ -63,11 +68,18 @@ function flattenFields(
       return
     }
     const limit = Math.min(value.length, 5)
-    for (let i = 0; i < limit && out.length < MAX_FLAT_FIELDS; i++) {
-      flattenFields(value[i], `${prefix}[${i}]`, depth + 1, out)
+    for (let i = 0; i < limit; i++) {
+      if (out.length >= MAX_FLAT_FIELDS) {
+        state.truncated = true
+        break
+      }
+      flattenFields(value[i], `${prefix}[${i}]`, depth + 1, out, state)
     }
-    if (value.length > limit && out.length < MAX_FLAT_FIELDS) {
-      out.push({ key: `${prefix}[…]`, value: `${value.length - limit} more items` })
+    if (value.length > limit) {
+      state.truncated = true
+      if (out.length < MAX_FLAT_FIELDS) {
+        out.push({ key: `${prefix}[…]`, value: `${value.length - limit} more items` })
+      }
     }
     return
   }
@@ -77,19 +89,23 @@ function flattenFields(
     return
   }
   for (const [k, v] of entries) {
-    if (out.length >= MAX_FLAT_FIELDS) break
-    flattenFields(v, prefix ? `${prefix}.${k}` : k, depth + 1, out)
+    if (out.length >= MAX_FLAT_FIELDS) {
+      state.truncated = true
+      break
+    }
+    flattenFields(v, prefix ? `${prefix}.${k}` : k, depth + 1, out, state)
   }
 }
 
-const jsonFields = computed<Array<{ key: string; value: string }>>(() => {
+const flattenedJson = computed<{ fields: Array<{ key: string; value: string }>; truncated: boolean }>(() => {
   const data = jsonPayload.value?.data
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return []
+    return { fields: [], truncated: false }
   }
-  const out: Array<{ key: string; value: string }> = []
-  flattenFields(data, '', 0, out)
-  return out
+  const fields: Array<{ key: string; value: string }> = []
+  const state = { truncated: false }
+  flattenFields(data, '', 0, fields, state)
+  return { fields, truncated: state.truncated }
 })
 
 async function copyValue(value: string, label = 'Copied to clipboard'): Promise<void> {
@@ -105,22 +121,22 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
 <template>
   <aside
     aria-label="Log line inspector"
-    class="absolute inset-y-0 right-0 z-30 flex w-80 max-w-[90%] flex-col overflow-hidden border-l border-muted bg-default shadow-xl lg:w-96"
+    class="absolute inset-y-0 right-0 z-30 flex w-80 max-w-[92%] flex-col overflow-hidden border-l border-muted bg-default shadow-xl lg:w-96"
   >
     <!-- Inspector Header -->
-    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted/30 px-2.5 select-none">
-      <div class="flex items-center gap-1.5 min-w-0">
-        <span class="font-mono text-xs font-semibold text-default tabular-nums">Line #{{ lineNumber }}</span>
+    <div class="flex h-8 shrink-0 items-center justify-between gap-1.5 border-b border-muted bg-muted/30 px-2.5 select-none">
+      <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <span class="truncate font-mono text-xs font-semibold text-default tabular-nums">Line #{{ lineNumber }}</span>
         <span
           v-if="levelStyles.badgeText"
-          class="inline-block rounded px-1 py-0.2 text-2xs font-bold leading-none"
+          class="inline-block shrink-0 rounded px-1 py-0.2 text-2xs font-bold leading-none"
           :class="levelStyles.badgeClass"
         >
           {{ levelStyles.badgeText }}
         </span>
         <span
           v-if="jsonPayload"
-          class="inline-block rounded bg-primary/10 px-1 py-0.2 font-mono text-3xs font-semibold text-primary ring-1 ring-primary/20"
+          class="inline-block shrink-0 rounded bg-primary/10 px-1 py-0.2 font-mono text-3xs font-semibold text-primary ring-1 ring-primary/20"
         >
           JSON
         </span>
@@ -203,28 +219,37 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
       </div>
 
       <!-- Structured JSON Fields -->
-      <div v-if="jsonFields.length > 0" class="space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-2xs font-medium uppercase tracking-wider text-muted">Fields ({{ jsonFields.length }})</span>
-          <span class="text-3xs text-muted">Click value to copy</span>
+      <div v-if="flattenedJson.fields.length > 0" class="space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-2xs font-medium uppercase tracking-wider text-muted">
+            Fields ({{ flattenedJson.fields.length }}{{ flattenedJson.truncated ? '+' : '' }})
+          </span>
+          <span v-if="flattenedJson.truncated" class="text-3xs text-warning">
+            Truncated (max {{ MAX_FLAT_FIELDS }} fields / depth {{ MAX_FLAT_DEPTH }})
+          </span>
         </div>
         <div class="divide-y divide-muted rounded-md border border-muted overflow-hidden">
           <div
-            v-for="field in jsonFields"
+            v-for="field in flattenedJson.fields"
             :key="field.key"
-            class="flex items-start gap-2 px-2.5 py-1.5 hover:bg-muted/30 transition-colors"
+            class="group/field flex items-start gap-2 px-2.5 py-1.5 hover:bg-muted/30 transition-colors"
           >
-            <span class="w-32 shrink-0 truncate font-mono text-2xs text-muted select-text" :title="field.key">
+            <span class="w-28 shrink-0 truncate font-mono text-2xs text-muted select-text" :title="field.key">
               {{ field.key }}
             </span>
-            <button
-              type="button"
-              class="min-w-0 flex-1 text-left font-mono text-2xs text-default break-all hover:text-primary cursor-pointer transition-colors"
-              title="Copy value"
-              @click="copyValue(field.value, `Copied ${field.key}`)"
-            >
+            <span class="min-w-0 flex-1 font-mono text-2xs text-default break-all select-text">
               {{ field.value }}
-            </button>
+            </span>
+            <UTooltip text="Copy value">
+              <button
+                type="button"
+                :aria-label="`Copy ${field.key}`"
+                class="shrink-0 rounded p-0.5 text-muted opacity-60 transition-opacity hover:bg-muted hover:text-default group-hover/field:opacity-100 focus-visible:opacity-100 cursor-pointer"
+                @click="copyValue(field.value, `Copied ${field.key}`)"
+              >
+                <UIcon name="i-lucide-copy" class="size-3" />
+              </button>
+            </UTooltip>
           </div>
         </div>
       </div>

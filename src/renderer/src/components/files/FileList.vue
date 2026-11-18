@@ -206,11 +206,16 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
 </script>
 
 <template>
-  <div class="@container flex min-h-0 flex-1 flex-col overflow-hidden" :style="columnVars">
+  <div
+    class="@container flex min-h-0 flex-1 flex-col overflow-hidden"
+    :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+    :style="columnVars"
+  >
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       role="row"
-      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted bg-muted/20 px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
+      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
+      :class="ui.glassUiEnabled ? 'bg-muted/60' : 'bg-muted/20'"
     >
       <span class="size-4 shrink-0" />
       <button

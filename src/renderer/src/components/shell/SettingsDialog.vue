@@ -560,6 +560,25 @@ async function saveNetwork(): Promise<void> {
               aria-labelledby="settings-tab-appearance"
             >
               <h2 class="text-base font-semibold text-highlighted">Appearance</h2>
+              <SettingsRow
+                label="Modern Glass UI"
+                description="Translucent frosted-glass surfaces, ambient mesh backdrop, and Plus Jakarta Sans typography."
+              >
+                <template #label>
+                  <div class="flex items-center gap-2">
+                    <span>Modern Glass UI</span>
+                    <UBadge color="primary" variant="subtle" size="xs">In Development</UBadge>
+                  </div>
+                </template>
+                <USwitch
+                  :model-value="ui.glassUiEnabled"
+                  aria-label="Modern Glass UI (In Development)"
+                  @update:model-value="(v: boolean) => {
+                    ui.setGlassUiEnabled(v)
+                    ui.dismissGlassUiPromo()
+                  }"
+                />
+              </SettingsRow>
               <SettingsRow label="Accent color" description="Used for focus rings, selection and primary actions." stacked>
                 <div class="flex flex-wrap items-start justify-between gap-4">
                   <div class="flex flex-col gap-2.5">

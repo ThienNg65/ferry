@@ -12,29 +12,32 @@ export interface KeywordChunk {
 }
 
 export function buildKeywordRegex(keywords: string[]): RegExp | null {
-  if (keywords.length === 0) {
+  const nonEmpty = keywords.filter((k) => k.length > 0)
+  if (nonEmpty.length === 0) {
     return null
   }
-  const parts = keywords.map((k) => `(${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`)
+  const parts = nonEmpty.map((k) => `(${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`)
   return new RegExp(parts.join('|'), 'gi')
 }
 
 export function splitByKeywords(text: string, regex: RegExp | null): KeywordChunk[] {
-  if (!regex) {
+  if (!regex || !text) {
     return [{ text, group: null }]
   }
+  const re = regex.global ? regex : new RegExp(regex.source, `${regex.flags}g`)
   const chunks: KeywordChunk[] = []
   let last = 0
-  regex.lastIndex = 0
-  for (let m = regex.exec(text); m !== null; m = regex.exec(text)) {
+  re.lastIndex = 0
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
     if (m[0].length === 0) {
-      regex.lastIndex += 1
+      re.lastIndex += 1
       continue
     }
     if (m.index > last) {
       chunks.push({ text: text.slice(last, m.index), group: null })
     }
-    const group = m.findIndex((value, i) => i > 0 && value !== undefined) - 1
+    const groupIdx = m.findIndex((value, i) => i > 0 && value !== undefined)
+    const group = groupIdx > 0 ? groupIdx - 1 : 0
     chunks.push({ text: m[0], group })
     last = m.index + m[0].length
   }

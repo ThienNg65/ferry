@@ -147,7 +147,105 @@ export function getLogLevelStyles(level: LogLevel): LogLevelStyles {
  * Distinguishes whether a match is the globally active match.
  */
 const MAX_REGEX_LENGTH = 256
-const NESTED_QUANTIFIER_RE = /\([^)]*[+*][^)]*\)(?:[+*?]|\{\d+,?\d*\})|\([^)]*\|[^)]*\)(?:[+*]|\{\d+,?\d*\})/
+
+/**
+ * Linear-time check for nested quantifiers or repeated alternations (e.g. `(a+)+`, `((a)+)+`, `(a|b){2,}`)
+ * that can trigger catastrophic backtracking, while allowing bounded groups like `(\d{1,3}\.){3}`.
+ */
+function hasNestedQuantifier(pattern: string): boolean {
+  interface Frame {
+    hasUnboundedInner: boolean
+    hasAlternation: boolean
+  }
+  const stack: Frame[] = [{ hasUnboundedInner: false, hasAlternation: false }]
+  let inCharClass = false
+  let lastTokenUnbounded = false
+
+  const readQuantifier = (idx: number): { end: number; isRepeat: boolean; isUnbounded: boolean } => {
+    const ch = pattern[idx]
+    if (ch === '+' || ch === '*') {
+      const lazy = pattern[idx + 1] === '?' || pattern[idx + 1] === '+'
+      return { end: idx + (lazy ? 1 : 0), isRepeat: true, isUnbounded: true }
+    }
+    if (ch === '?') {
+      const lazy = pattern[idx + 1] === '?' || pattern[idx + 1] === '+'
+      return { end: idx + (lazy ? 1 : 0), isRepeat: true, isUnbounded: false }
+    }
+    if (ch === '{') {
+      const m = /^\{\d+(?:,(\d*))?\}/.exec(pattern.slice(idx))
+      if (m) {
+        const end = idx + m[0].length - 1
+        const lazy = pattern[end + 1] === '?' || pattern[end + 1] === '+'
+        const isUnbounded = m[1] === ''
+        return { end: end + (lazy ? 1 : 0), isRepeat: true, isUnbounded }
+      }
+    }
+    return { end: idx - 1, isRepeat: false, isUnbounded: false }
+  }
+
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]
+    if (ch === '\\') {
+      i++
+      lastTokenUnbounded = false
+      continue
+    }
+    if (inCharClass) {
+      if (ch === ']') {
+        inCharClass = false
+        lastTokenUnbounded = false
+      }
+      continue
+    }
+    if (ch === '[') {
+      inCharClass = true
+      lastTokenUnbounded = false
+      continue
+    }
+    if (ch === '(') {
+      stack.push({ hasUnboundedInner: false, hasAlternation: false })
+      lastTokenUnbounded = false
+      continue
+    }
+    if (ch === ')') {
+      const frame = stack.length > 1 ? stack.pop()! : null
+      const q = readQuantifier(i + 1)
+      if (q.isRepeat) {
+        i = q.end
+      }
+      if (frame) {
+        if ((frame.hasUnboundedInner && q.isRepeat) || (frame.hasAlternation && q.isRepeat)) {
+          return true
+        }
+        const parent = stack[stack.length - 1]
+        if (frame.hasUnboundedInner || q.isUnbounded) {
+          parent.hasUnboundedInner = true
+        }
+      }
+      lastTokenUnbounded = q.isUnbounded
+      continue
+    }
+    if (ch === '|') {
+      stack[stack.length - 1].hasAlternation = true
+      lastTokenUnbounded = false
+      continue
+    }
+    if (ch === '+' || ch === '*' || ch === '{') {
+      const q = readQuantifier(i)
+      if (q.isRepeat) {
+        i = q.end
+        if (q.isUnbounded) {
+          if (lastTokenUnbounded) return true
+          stack[stack.length - 1].hasUnboundedInner = true
+        }
+        lastTokenUnbounded = q.isUnbounded
+        continue
+      }
+    }
+    lastTokenUnbounded = false
+  }
+  return false
+}
 
 /** Builds a search RegExp safely, rejecting overly long or nested-quantifier ReDoS patterns. */
 export function buildSafeSearchRegex(
@@ -162,7 +260,7 @@ export function buildSafeSearchRegex(
     if (query.length > MAX_REGEX_LENGTH) {
       return { regex: null, error: `Regex exceeds ${MAX_REGEX_LENGTH} character limit` }
     }
-    if (NESTED_QUANTIFIER_RE.test(query)) {
+    if (hasNestedQuantifier(query)) {
       return { regex: null, error: 'Unsafe nested quantifier in regex' }
     }
   }
@@ -174,8 +272,8 @@ export function buildSafeSearchRegex(
   }
 }
 
-const MAX_REGEX_LINE_LENGTH = 16_384
-const MAX_MATCHES_PER_LINE = 200
+export const MAX_REGEX_LINE_LENGTH = 16_384
+export const MAX_MATCHES_PER_LINE = 200
 
 export function splitLineMatches(
   line: string,
@@ -244,17 +342,27 @@ export interface ExtractedJsonPayload {
   rawJson: string
 }
 
+const MAX_JSON_LINE_LENGTH = 65_536
+const MAX_JSON_CANDIDATES = 8
+
 /**
  * Detects and parses a JSON object/array payload at the start of a line or as a trailing suffix.
  */
 export function extractJsonPayload(line: string): ExtractedJsonPayload | null {
+  if (!line || line.length > MAX_JSON_LINE_LENGTH) return null
   const trimmed = line.trimEnd()
   if (!trimmed) return null
 
-  const braceIdx = trimmed.indexOf('{')
-  const bracketIdx = trimmed.indexOf('[')
   const candidates: number[] = []
-  if (braceIdx !== -1) candidates.push(braceIdx)
+  let searchFrom = 0
+  while (candidates.length < MAX_JSON_CANDIDATES) {
+    const braceIdx = trimmed.indexOf('{', searchFrom)
+    if (braceIdx === -1) break
+    candidates.push(braceIdx)
+    searchFrom = braceIdx + 1
+  }
+
+  const bracketIdx = trimmed.indexOf('[')
   // Only treat '[' as JSON array if it's at the start (after optional whitespace) or follows ': ' / '= '
   if (
     bracketIdx !== -1 &&
@@ -264,7 +372,7 @@ export function extractJsonPayload(line: string): ExtractedJsonPayload | null {
   }
   candidates.sort((a, b) => a - b)
 
-  for (const idx of candidates) {
+  for (const idx of candidates.slice(0, MAX_JSON_CANDIDATES)) {
     const rawJson = trimmed.slice(idx)
     if (rawJson.length < 2) continue
     try {
@@ -308,13 +416,13 @@ function findMatchRanges(
   lineGlobalMatchStart: number,
   activeGlobalMatchIndex: number
 ): MatchRange[] {
-  if (!regex || !line) return []
+  if (!regex || !line || line.length > MAX_REGEX_LINE_LENGTH) return []
   const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`
   const re = new RegExp(regex.source, flags)
   const ranges: MatchRange[] = []
   let matchCount = 0
   let match: RegExpExecArray | null
-  while ((match = re.exec(line)) !== null) {
+  while (matchCount < MAX_MATCHES_PER_LINE && (match = re.exec(line)) !== null) {
     if (match[0].length === 0) {
       re.lastIndex++
       continue

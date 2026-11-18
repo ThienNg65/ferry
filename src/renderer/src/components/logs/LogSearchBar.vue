@@ -71,6 +71,15 @@ defineExpose({
 // The bar is always visible now; the keyword row only shows once opened or populated.
 const highlightOpen = ref(false)
 
+function closeKeywordInput(e: KeyboardEvent): void {
+  highlightOpen.value = false
+  keywordDraft.value = ''
+  ;(e.target as HTMLElement | null)?.blur()
+  if (!props.modelValue) {
+    emit('close')
+  }
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Enter') {
     e.preventDefault()
@@ -101,10 +110,10 @@ function onKeydown(e: KeyboardEvent): void {
 <template>
   <div
     ref="rootRef"
-    class="flex flex-col gap-1.5 border-b border-muted bg-muted/70 px-2.5 py-1.5 text-xs backdrop-blur-sm"
+    class="flex flex-col gap-1.5 border-b border-muted bg-muted/80 px-2.5 py-1.5 text-xs"
   >
-    <div class="flex items-center gap-1.5">
-    <div class="relative flex min-w-[220px] max-w-sm flex-1 items-center">
+    <div class="flex flex-wrap items-center gap-1.5">
+    <div class="relative flex min-w-[140px] max-w-sm flex-1 items-center">
       <UInput
         ref="inputRef"
         :model-value="modelValue"
@@ -112,6 +121,7 @@ function onKeydown(e: KeyboardEvent): void {
         icon="i-lucide-search"
         size="xs"
         class="w-full"
+        :class="modelValue.length > 0 ? '[&_input]:pr-7' : ''"
         :color="regexError ? 'error' : 'neutral'"
         @update:model-value="emit('update:modelValue', String($event))"
         @keydown="onKeydown"
@@ -119,6 +129,7 @@ function onKeydown(e: KeyboardEvent): void {
       <button
         v-if="modelValue.length > 0"
         type="button"
+        aria-label="Clear search"
         class="absolute right-2 text-muted hover:text-default transition-colors p-0.5 rounded cursor-pointer"
         title="Clear search"
         @click="clearQuery"
@@ -128,7 +139,7 @@ function onKeydown(e: KeyboardEvent): void {
     </div>
 
     <!-- Match counter / status -->
-    <div class="flex items-center px-1 text-2xs font-mono shrink-0 select-none">
+    <div aria-live="polite" role="status" class="flex items-center px-1 text-2xs font-mono shrink-0 select-none">
       <span
         v-if="regexError"
         class="rounded px-1.5 py-0.5 bg-error/15 text-error ring-1 ring-error/20 font-medium truncate max-w-[160px]"
@@ -179,6 +190,8 @@ function onKeydown(e: KeyboardEvent): void {
 
     <UTooltip text="Match Case (Alt+C)">
       <UButton
+        aria-label="Match Case (Alt+C)"
+        :aria-pressed="caseSensitive"
         label="Aa"
         size="xs"
         :color="caseSensitive ? 'primary' : 'neutral'"
@@ -190,6 +203,8 @@ function onKeydown(e: KeyboardEvent): void {
 
     <UTooltip text="Use Regular Expression (Alt+R)">
       <UButton
+        aria-label="Use Regular Expression (Alt+R)"
+        :aria-pressed="isRegex"
         label=".*"
         size="xs"
         :color="isRegex ? 'primary' : 'neutral'"
@@ -202,6 +217,7 @@ function onKeydown(e: KeyboardEvent): void {
     <UTooltip text="Filter mode: only display matching lines (Alt+F)">
       <UButton
         aria-label="Filter mode: only display matching lines (Alt+F)"
+        :aria-pressed="Boolean(filterOnly)"
         icon="i-lucide-filter"
         size="xs"
         :color="filterOnly ? 'primary' : 'neutral'"
@@ -214,6 +230,8 @@ function onKeydown(e: KeyboardEvent): void {
     <UTooltip text="Highlight keywords">
       <UButton
         aria-label="Highlight keywords"
+        :aria-expanded="highlightOpen || (keywords?.length ?? 0) > 0"
+        :aria-pressed="highlightOpen || (keywords?.length ?? 0) > 0"
         icon="i-lucide-highlighter"
         size="xs"
         :color="highlightOpen || (keywords?.length ?? 0) > 0 ? 'primary' : 'neutral'"
@@ -255,7 +273,7 @@ function onKeydown(e: KeyboardEvent): void {
         placeholder="Add keyword, press Enter…"
         class="w-44"
         @keyup.enter="submitKeyword"
-        @keydown.escape.stop="emit('close')"
+        @keydown.escape.stop="closeKeywordInput"
       />
       <UButton
         v-if="(keywords?.length ?? 0) > 0"

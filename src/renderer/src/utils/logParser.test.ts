@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildSafeSearchRegex, getLogLevelStyles, parseLogLevel, parseTimestampPrefix, splitLineMatches } from './logParser'
+import {
+  buildSafeSearchRegex,
+  extractJsonPayload,
+  getLogLevelStyles,
+  parseLogLevel,
+  parseTimestampPrefix,
+  splitLineMatches,
+  tokenizeLogLine
+} from './logParser'
 
 describe('parseTimestampPrefix', () => {
   it('extracts ISO 8601 timestamps', () => {
@@ -153,9 +161,14 @@ describe('splitLineMatches', () => {
 describe('buildSafeSearchRegex', () => {
   it('rejects nested quantifiers and oversized patterns', () => {
     expect(buildSafeSearchRegex('(a+)+', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('((a)+)+', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('(?:(a+))+', true, false).error).toBeTruthy()
+    expect(buildSafeSearchRegex('(a{1,}){1,}', true, false).error).toBeTruthy()
     expect(buildSafeSearchRegex('(a+){2,}', true, false).error).toBeTruthy()
     expect(buildSafeSearchRegex('(a|b){2,5}', true, false).error).toBeTruthy()
     expect(buildSafeSearchRegex('a'.repeat(257), true, false).error).toBeTruthy()
+    // Bounded repeat groups such as IPv4 octets remain valid
+    expect(buildSafeSearchRegex('(\\d{1,3}\\.){3}\\d{1,3}', true, false).error).toBeNull()
   })
 
   it('escapes plain text queries and compiles valid regexes', () => {
@@ -167,5 +180,29 @@ describe('buildSafeSearchRegex', () => {
     const valid = buildSafeSearchRegex('err(or|no)', true, true)
     expect(valid.error).toBeNull()
     expect(valid.regex?.flags).toBe('g')
+  })
+})
+
+describe('tokenizeLogLine and extractJsonPayload limits', () => {
+  it('caps search match tokens per line and skips oversized lines in tokenizeLogLine', () => {
+    const many = tokenizeLogLine('a'.repeat(300), /a/g, null)
+    expect(many.restTokens.filter((t) => t.isMatch)).toHaveLength(200)
+
+    const longLine = 'a'.repeat(16_385)
+    const skipped = tokenizeLogLine(longLine, /a/g, null)
+    expect(skipped.restTokens).toEqual([
+      { text: longLine, isMatch: false, isActiveMatch: false, keywordGroup: null }
+    ])
+  })
+
+  it('skips non-JSON braces to extract a trailing JSON payload and guards oversized lines', () => {
+    const parsed = extractJsonPayload('INFO user {alice} payload {"status":502}')
+    expect(parsed).toEqual({
+      prefix: 'INFO user {alice} payload',
+      data: { status: 502 },
+      rawJson: '{"status":502}'
+    })
+
+    expect(extractJsonPayload(`{"a":"${'x'.repeat(70_000)}"}`)).toBeNull()
   })
 })

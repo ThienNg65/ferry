@@ -36,7 +36,13 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     rows: [
       ['Ctrl+`', 'Toggle terminal dock'],
       ['Ctrl+Shift+F', 'Search the terminal'],
-      ['Ctrl+Shift+C / Ctrl+Shift+V', 'Copy / paste in the terminal']
+      ['Ctrl+Shift+C / Ctrl+Shift+V', 'Copy / paste in the terminal'],
+      ['Ctrl+F', 'Find in log tail'],
+      ['Enter / Shift+Enter', 'Next / previous log match'],
+      ['Space / P', 'Pause or resume live log tail'],
+      ['Home / End (or G)', 'Jump to top / latest log line'],
+      ['Up / Down', 'Step selected line in log inspector'],
+      ['Esc', 'Close log inspector']
     ]
   }
 ]

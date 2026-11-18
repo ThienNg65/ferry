@@ -9,6 +9,7 @@ import {
   buildFontFamily,
   clampFontSize,
   clampLineHeight,
+  isBundledFont,
   resolveTheme,
   sanitizeFontName,
   type AppTheme
@@ -44,6 +45,19 @@ describe('resolveTheme', () => {
     expect(theme.red).toBe('#bf616a')
     expect(theme.brightWhite).toBe('#eceff4')
   })
+
+  it('uses glass-harmonized opaque backgrounds for the ferry scheme when glassUiEnabled is true', () => {
+    const classicDark = resolveTheme('ferry', 'dark', false)
+    const glassDark = resolveTheme('ferry', 'dark', true)
+    const glassLight = resolveTheme('ferry', 'light', true)
+
+    expect(classicDark.background).toBe('#1e1e1e')
+    expect(glassDark.background).toBe('#0b0f19')
+    expect(glassLight.background).toBe('#f8fafc')
+    expect(contrastRatio(glassDark.foreground, glassDark.background)).toBeGreaterThanOrEqual(4.5)
+    expect(contrastRatio(glassLight.foreground, glassLight.background)).toBeGreaterThanOrEqual(4.5)
+    expect(resolveTheme('dracula', 'dark', true)).toEqual(resolveTheme('dracula', 'dark', false))
+  })
 })
 
 describe('scheme data', () => {
@@ -64,6 +78,13 @@ describe('buildFontFamily', () => {
 
   it('quotes a preset and appends monospace fallback', () => {
     expect(buildFontFamily('fira-code', '')).toBe("'Fira Code', monospace")
+  })
+
+  it('uses the bundled variable font stack for jetbrains-mono and marks it bundled', () => {
+    expect(buildFontFamily('jetbrains-mono', '')).toBe("'JetBrains Mono Variable', 'JetBrains Mono', monospace")
+    expect(isBundledFont('jetbrains-mono')).toBe(true)
+    expect(isBundledFont('fira-code')).toBe(false)
+    expect(isBundledFont('custom')).toBe(false)
   })
 
   it('uses a sanitized custom name', () => {

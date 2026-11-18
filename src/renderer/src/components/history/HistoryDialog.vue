@@ -111,7 +111,7 @@ function close(): void {
               <UIcon :name="iconFor(entry)" class="size-4 shrink-0 text-muted" />
               <div class="min-w-0 flex-1">
                 <div class="truncate">{{ entry.label }}</div>
-                <div class="truncate text-xs text-muted">
+                <div class="truncate text-xs text-muted tabular-nums">
                   <span v-if="entry.siteName">{{ entry.siteName }} · </span>
                   {{ formatDateTime(entry.finishedAt) }}
                   <span v-if="entry.bytes"> · {{ formatBytes(entry.bytes) }}</span>

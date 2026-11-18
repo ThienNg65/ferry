@@ -56,6 +56,20 @@ const FERRY_LIGHT: SchemeDef = {
     '#666666', '#cd3131', '#14ce14', '#b5ba00', '#0451a5', '#bc05bc', '#0598bc', '#a5a5a5']
 }
 
+const FERRY_GLASS_DARK: SchemeDef = {
+  ...FERRY_DARK,
+  background: '#0b0f19',
+  foreground: '#e4e4e7',
+  cursor: '#e4e4e7'
+}
+
+const FERRY_GLASS_LIGHT: SchemeDef = {
+  ...FERRY_LIGHT,
+  background: '#f8fafc',
+  foreground: '#18181b',
+  cursor: '#18181b'
+}
+
 const FIXED_SCHEMES: SchemeDef[] = [
   {
     id: 'dracula', name: 'Dracula', background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', selectionBackground: '#44475a',
@@ -110,11 +124,15 @@ export function isSchemeId(id: string): boolean {
   return SCHEME_OPTIONS.some((option) => option.id === id)
 }
 
-export function resolveTheme(schemeId: string, appTheme: AppTheme): TerminalTheme {
+export function resolveTheme(schemeId: string, appTheme: AppTheme, glassUiEnabled = false): TerminalTheme {
+  const defaultDef =
+    appTheme === 'dark'
+      ? glassUiEnabled ? FERRY_GLASS_DARK : FERRY_DARK
+      : glassUiEnabled ? FERRY_GLASS_LIGHT : FERRY_LIGHT
   const def =
     schemeId === DEFAULT_SCHEME_ID
-      ? appTheme === 'dark' ? FERRY_DARK : FERRY_LIGHT
-      : FIXED_SCHEMES.find((scheme) => scheme.id === schemeId) ?? (appTheme === 'dark' ? FERRY_DARK : FERRY_LIGHT)
+      ? defaultDef
+      : FIXED_SCHEMES.find((scheme) => scheme.id === schemeId) ?? defaultDef
   const theme: Record<string, string> = {
     background: def.background,
     foreground: def.foreground,
@@ -136,12 +154,20 @@ export interface FontPreset {
   id: string
   label: string
   family: string | null
+  stack?: string
+  bundled?: boolean
 }
 
 export const FONT_PRESETS: FontPreset[] = [
   { id: DEFAULT_FONT_ID, label: 'Default', family: null },
   { id: 'cascadia-code', label: 'Cascadia Code', family: 'Cascadia Code' },
-  { id: 'jetbrains-mono', label: 'JetBrains Mono', family: 'JetBrains Mono' },
+  {
+    id: 'jetbrains-mono',
+    label: 'JetBrains Mono',
+    family: 'JetBrains Mono',
+    stack: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
+    bundled: true
+  },
   { id: 'fira-code', label: 'Fira Code', family: 'Fira Code' },
   { id: 'consolas', label: 'Consolas', family: 'Consolas' },
   { id: 'sf-mono', label: 'SF Mono', family: 'SF Mono' },
@@ -151,6 +177,10 @@ export const FONT_PRESETS: FontPreset[] = [
 
 export function isFontId(id: string): boolean {
   return id === CUSTOM_FONT_ID || FONT_PRESETS.some((preset) => preset.id === id)
+}
+
+export function isBundledFont(fontId: string): boolean {
+  return Boolean(FONT_PRESETS.find((preset) => preset.id === fontId)?.bundled)
 }
 
 export function sanitizeFontName(name: string): string {
@@ -167,6 +197,10 @@ export function fontFamilyName(fontId: string, custom: string): string | null {
 export function buildFontFamily(fontId: string, custom: string): string {
   if (fontId === 'monospace') {
     return 'monospace'
+  }
+  const preset = FONT_PRESETS.find((p) => p.id === fontId)
+  if (preset?.stack) {
+    return preset.stack
   }
   const name = fontFamilyName(fontId, custom)
   return name ? `'${name}', monospace` : DEFAULT_FONT_STACK

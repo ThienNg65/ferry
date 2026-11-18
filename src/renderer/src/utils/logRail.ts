@@ -17,7 +17,7 @@ export function buildRailMarks(
   pinned: ReadonlySet<number>,
   bucketCount: number
 ): RailBucket[] {
-  const count = Math.max(1, Math.floor(bucketCount))
+  const count = Number.isFinite(bucketCount) ? Math.max(1, Math.floor(bucketCount)) : 1
   const buckets: RailBucket[] = Array.from({ length: count }, () => ({
     error: false,
     warn: false,
@@ -39,6 +39,7 @@ export function buildRailMarks(
 
 /** Maps a 0..1 rail position to a line index (clamped). */
 export function railPositionToIndex(ratio: number, total: number): number {
-  if (total <= 0) return 0
+  if (!Number.isFinite(total) || total <= 0) return 0
+  if (!Number.isFinite(ratio)) return 0
   return Math.min(total - 1, Math.max(0, Math.floor(ratio * total)))
 }

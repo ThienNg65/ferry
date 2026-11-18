@@ -11,6 +11,7 @@ import {
   MIN_LINE_HEIGHT,
   SCHEME_OPTIONS,
   fontFamilyName,
+  isBundledFont,
   resolveTheme
 } from '../../utils/terminalAppearance'
 import { isFontInstalled } from '../../utils/fontInstalled'
@@ -26,7 +27,7 @@ const fontItems = [
 
 const schemeCards = computed(() =>
   SCHEME_OPTIONS.map((option) => {
-    const theme = resolveTheme(option.id, ui.theme)
+    const theme = resolveTheme(option.id, ui.theme, ui.glassUiEnabled)
     return {
       ...option,
       theme,
@@ -38,6 +39,9 @@ const schemeCards = computed(() =>
 const appearance = computed(() => ui.terminalAppearance)
 
 const fontHint = computed(() => {
+  if (isBundledFont(ui.terminalFont)) {
+    return null
+  }
   const name = fontFamilyName(ui.terminalFont, ui.terminalFontCustom)
   if (!name || isFontInstalled(name)) {
     return null

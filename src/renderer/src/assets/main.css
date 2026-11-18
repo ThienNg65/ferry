@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
+/* Local Variable Font Declarations (Zero external network requests) */
+@font-face {
+  font-family: 'Plus Jakarta Sans Variable';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('./fonts/PlusJakartaSans-Variable.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('./fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
+}
+
 @theme {
   --font-sans: -apple-system, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'SF Mono', Consolas, monospace;
@@ -91,6 +108,61 @@ body {
 
 .dark *::-webkit-scrollbar-thumb:hover {
   background-color: var(--ui-color-neutral-500);
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+@supports not (scrollbar-width: none) {
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@property --ferry-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --ferry-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+.ferry-scroll-fade-x {
+  --ferry-fade-size: 1.5rem;
+  --ferry-fade-dir: right;
+  --ferry-fade-start-pos: 0;
+  --ferry-fade-end-pos: 100%;
+  scroll-padding-inline: var(--ferry-fade-size);
+  mask:
+    linear-gradient(black, black) no-clip subtract,
+    linear-gradient(to var(--ferry-fade-dir), black, transparent) var(--ferry-fade-start-pos) 0 / var(--ferry-fade-start) 100% no-repeat no-clip,
+    linear-gradient(to var(--ferry-fade-dir), transparent, black) var(--ferry-fade-end-pos) 0 / var(--ferry-fade-end) 100% no-repeat no-clip;
+  animation: ferry-reveal-fade-start linear both, ferry-hide-fade-end linear both;
+  animation-timeline: scroll(self inline);
+  animation-range: 0 var(--ferry-fade-size), calc(100% - var(--ferry-fade-size)) 100%;
+}
+
+.ferry-scroll-fade-x:dir(rtl) {
+  --ferry-fade-dir: left;
+  --ferry-fade-start-pos: 100%;
+  --ferry-fade-end-pos: 0;
+}
+
+@keyframes ferry-reveal-fade-start {
+  to {
+    --ferry-fade-start: var(--ferry-fade-size);
+  }
+}
+
+@keyframes ferry-hide-fade-end {
+  from {
+    --ferry-fade-end: var(--ferry-fade-size);
+  }
 }
 
 /* Shared fade transition — the connected/picker swap in App.vue and the
@@ -213,6 +285,10 @@ body {
 .ferry-dock-tab[aria-selected='true']::after {
   transform: scaleX(1);
 }
+html.ferry-glass .ferry-dock-tab[aria-selected='true'] {
+  background-color: color-mix(in oklab, var(--ui-bg) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ferry-glass-chrome-border) 85%, transparent);
+}
 .ferry-dock-tab {
   transition: transform var(--ferry-motion-fast) ease-out;
 }
@@ -309,5 +385,227 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================================
+   Modern Glass UI Redesign (Scoped strictly to html.ferry-glass)
+   ============================================================================ */
+
+html.ferry-glass {
+  --font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', -apple-system, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'JetBrains Mono Variable', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  --ferry-canvas-base: #f4f6fb;
+  /* 100% opaque (alpha === 255) so ui.store.ts resolveCaptionColorRef() syncs Win11 DWM caption bar */
+  --ferry-caption-bg: color-mix(in srgb, var(--ui-color-primary-500) 6%, #f4f6fb);
+
+  --ferry-ambient-mesh:
+    radial-gradient(ellipse 68% 58% at 15% 18%, color-mix(in oklab, var(--ui-color-primary-400) 40%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 62% 55% at 86% 24%, oklch(0.78 0.16 300 / 0.32) 0%, transparent 68%),
+    radial-gradient(ellipse 65% 58% at 58% 84%, color-mix(in oklab, var(--ui-color-primary-300) 32%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 52% 48% at 22% 78%, oklch(0.84 0.13 205 / 0.26) 0%, transparent 65%);
+
+  /* Tier 1: App Chrome */
+  --ferry-glass-chrome-bg: rgba(248, 250, 252, 0.68);
+  --ferry-glass-chrome-blur: blur(18px) saturate(180%);
+  --ferry-glass-chrome-border: rgba(15, 23, 42, 0.08);
+  --ferry-glass-tab-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
+
+  /* Tier 2A: Showcase Frosted Cards (SessionManagerView) */
+  --ferry-glass-card-bg: rgba(255, 255, 255, 0.68);
+  --ferry-glass-card-blur: blur(20px) saturate(180%);
+  --ferry-glass-card-border: rgba(255, 255, 255, 0.78);
+  --ferry-glass-card-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.92), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --ferry-glass-card-shadow: 0 12px 32px -6px rgba(15, 23, 42, 0.07), 0 4px 12px -2px rgba(15, 23, 42, 0.04);
+
+  /* Tier 2B: High-Legibility Content Wells (FileList, LogTailViewer, Monitor) */
+  --ferry-glass-well-bg: rgba(255, 255, 255, 0.82);
+
+  /* Tier 3: Floating Overlays (Modals, CommandPalette, Popovers, ContextMenu) */
+  --ferry-glass-overlay-bg: rgba(255, 255, 255, 0.78);
+  --ferry-glass-overlay-blur: blur(24px) saturate(180%);
+  --ferry-glass-overlay-border: rgba(255, 255, 255, 0.82);
+  --ferry-glass-overlay-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    0 0 0 1px rgba(15, 23, 42, 0.07),
+    0 24px 48px -12px rgba(15, 23, 42, 0.14);
+
+  /* Nuxt UI v4 Semantic Surface Remapping */
+  --ui-radius: 0.625rem;
+  --ui-bg: var(--ferry-glass-well-bg);
+  --ui-bg-muted: var(--ferry-glass-chrome-bg);
+  --ui-bg-elevated: var(--ferry-glass-card-bg);
+  --ui-border: var(--ferry-glass-chrome-border);
+  --ui-border-muted: var(--ferry-glass-chrome-border);
+  --ferry-surface-bar: var(--ferry-glass-chrome-bg);
+  --ferry-surface-subtle: rgba(255, 255, 255, 0.55);
+}
+
+html.dark.ferry-glass {
+  --ferry-canvas-base: #090d16;
+  --ferry-caption-bg: color-mix(in srgb, var(--ui-color-primary-500) 8%, #090d16);
+
+  --ferry-ambient-mesh:
+    radial-gradient(ellipse 68% 58% at 16% 18%, color-mix(in oklab, var(--ui-color-primary-400) 34%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 62% 56% at 85% 24%, oklch(0.48 0.19 295 / 0.30) 0%, transparent 68%),
+    radial-gradient(ellipse 65% 58% at 58% 84%, color-mix(in oklab, var(--ui-color-primary-500) 28%, transparent) 0%, transparent 68%),
+    radial-gradient(ellipse 52% 48% at 22% 78%, oklch(0.44 0.15 215 / 0.24) 0%, transparent 65%);
+
+  /* Tier 1: App Chrome */
+  --ferry-glass-chrome-bg: rgba(13, 18, 30, 0.62);
+  --ferry-glass-chrome-blur: blur(18px) saturate(180%);
+  --ferry-glass-chrome-border: rgba(255, 255, 255, 0.09);
+  --ferry-glass-tab-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+
+  /* Tier 2A: Showcase Frosted Cards */
+  --ferry-glass-card-bg: rgba(15, 23, 42, 0.60);
+  --ferry-glass-card-blur: blur(20px) saturate(180%);
+  --ferry-glass-card-border: rgba(255, 255, 255, 0.14);
+  --ferry-glass-card-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+  --ferry-glass-card-shadow: 0 16px 36px -6px rgba(0, 0, 0, 0.42), 0 4px 12px -2px rgba(0, 0, 0, 0.28);
+
+  /* Tier 2B: High-Legibility Content Wells */
+  --ferry-glass-well-bg: rgba(11, 15, 25, 0.78);
+
+  /* Tier 3: Floating Overlays */
+  --ferry-glass-overlay-bg: rgba(15, 23, 42, 0.72);
+  --ferry-glass-overlay-blur: blur(24px) saturate(180%);
+  --ferry-glass-overlay-border: rgba(255, 255, 255, 0.18);
+  --ferry-glass-overlay-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.24),
+    0 24px 56px -12px rgba(0, 0, 0, 0.62);
+
+  /* Nuxt UI v4 Semantic Surface Remapping */
+  --ui-bg: var(--ferry-glass-well-bg);
+  --ui-bg-muted: var(--ferry-glass-chrome-bg);
+  --ui-bg-elevated: var(--ferry-glass-card-bg);
+  --ui-border: var(--ferry-glass-chrome-border);
+  --ui-border-muted: var(--ferry-glass-chrome-border);
+  --ferry-surface-bar: var(--ferry-glass-chrome-bg);
+  --ferry-surface-subtle: rgba(15, 23, 42, 0.48);
+}
+
+html.ferry-glass body {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01";
+  background-color: var(--ferry-canvas-base);
+}
+
+html.ferry-glass .font-mono,
+html.ferry-glass code,
+html.ferry-glass pre,
+html.ferry-glass kbd {
+  font-feature-settings: normal;
+}
+
+/* Enforce tabular numerals on all file metadata, transfer counters, and monitor tables */
+html.ferry-glass .tabular-nums,
+html.ferry-glass [data-numeric='true'] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Static Ambient Mesh Canvas (zero idle GPU animation) */
+.ferry-ambient-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--ferry-canvas-base);
+  background-image: var(--ferry-ambient-mesh);
+  transition:
+    background-color var(--ferry-motion-panel) var(--ferry-motion-ease-out),
+    background-image var(--ferry-motion-panel) var(--ferry-motion-ease-out);
+}
+
+html.ferry-glass .ferry-glass-chrome {
+  background-color: var(--ferry-glass-chrome-bg);
+  backdrop-filter: var(--ferry-glass-chrome-blur);
+  -webkit-backdrop-filter: var(--ferry-glass-chrome-blur);
+  border-color: var(--ferry-glass-chrome-border);
+}
+
+html.ferry-glass .ferry-glass-card {
+  background-color: var(--ferry-glass-card-bg);
+  backdrop-filter: var(--ferry-glass-card-blur);
+  -webkit-backdrop-filter: var(--ferry-glass-card-blur);
+  border: 1px solid var(--ferry-glass-card-border);
+  box-shadow: var(--ferry-glass-card-highlight), var(--ferry-glass-card-shadow);
+}
+
+html.ferry-glass .ferry-glass-well {
+  background-color: var(--ferry-glass-well-bg);
+}
+
+html.ferry-glass .ferry-glass-overlay {
+  background-color: var(--ferry-glass-overlay-bg);
+  backdrop-filter: var(--ferry-glass-overlay-blur);
+  -webkit-backdrop-filter: var(--ferry-glass-overlay-blur);
+  border: 1px solid var(--ferry-glass-overlay-border);
+  box-shadow: var(--ferry-glass-overlay-shadow);
+}
+
+html.ferry-glass .ferry-glass-active-tab {
+  box-shadow: var(--ferry-glass-tab-highlight);
+}
+
+html.ferry-glass .ferry-site-row:hover {
+  background-color: color-mix(in oklab, var(--ui-bg) 45%, transparent);
+}
+
+html.ferry-glass .ferry-site-row[data-selected='true'] {
+  background-color: color-mix(in oklab, var(--ui-primary) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-primary) 35%, transparent);
+}
+
+html.ferry-glass .ferry-site-row[data-active='true']:not([data-selected='true']) {
+  background-color: color-mix(in oklab, var(--ui-primary) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-primary) 22%, transparent);
+}
+
+/* Tier 3 Teleported Portals (Dialogs, Popovers, Menus, Select Listboxes, Toasts — excluding Tooltips) */
+html.ferry-glass [role="dialog"],
+html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass [data-slot="viewport"] > li {
+  background-color: var(--ferry-glass-overlay-bg) !important;
+  backdrop-filter: var(--ferry-glass-overlay-blur);
+  -webkit-backdrop-filter: var(--ferry-glass-overlay-blur);
+  border: 1px solid var(--ferry-glass-overlay-border);
+  box-shadow: var(--ferry-glass-overlay-shadow);
+}
+
+html.ferry-glass .ferry-glass-card input,
+html.ferry-glass .ferry-glass-overlay input,
+html.ferry-glass .ferry-glass-card [role="combobox"],
+html.ferry-glass .ferry-glass-overlay [role="combobox"] {
+  background-color: var(--ferry-surface-subtle);
+  border-color: var(--ferry-glass-chrome-border);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html.ferry-glass {
+    --ferry-caption-bg: #f8fafc;
+    --ferry-glass-chrome-bg: rgba(248, 250, 252, 0.98);
+    --ferry-glass-chrome-blur: none;
+    --ferry-glass-card-bg: rgba(255, 255, 255, 0.98);
+    --ferry-glass-card-blur: none;
+    --ferry-glass-well-bg: #ffffff;
+    --ferry-glass-overlay-bg: #ffffff;
+    --ferry-glass-overlay-blur: none;
+    --ferry-surface-subtle: #f1f5f9;
+  }
+
+  html.dark.ferry-glass {
+    --ferry-caption-bg: #0d121e;
+    --ferry-glass-chrome-bg: rgba(13, 18, 30, 0.98);
+    --ferry-glass-chrome-blur: none;
+    --ferry-glass-card-bg: rgba(15, 23, 42, 0.98);
+    --ferry-glass-card-blur: none;
+    --ferry-glass-well-bg: #0b0f19;
+    --ferry-glass-overlay-bg: #0f172a;
+    --ferry-glass-overlay-blur: none;
+    --ferry-surface-subtle: #1e293b;
   }
 }

@@ -70,6 +70,7 @@ function onPointerMove(e: PointerEvent): void {
       </div>
     </div>
     <div
+      v-if="items.length > 0"
       class="pointer-events-none absolute inset-x-0 rounded-xs bg-default/40 ring-1 ring-inset ring-accented"
       :style="{ top: `${thumbTop * 100}%`, height: `max(6px, ${thumbHeight * 100}%)` }"
     />

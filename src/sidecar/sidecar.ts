@@ -4,6 +4,7 @@ import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { initHistoryRecorder } from '../main/history/HistoryRecorder'
 import { HistoryStore } from '../main/history/HistoryStore'
 import { EditSessionManager } from '../main/edit/EditSessionManager'
+import { TailManager } from '../main/tail/TailManager'
 import { AppSettingsStore } from '../main/app/AppSettingsStore'
 import { TransferQueue } from '../main/transfer/TransferQueue'
 import { KnownHostsStore } from '../main/ssh/KnownHostsStore'
@@ -33,6 +34,7 @@ export function initSidecarServices(): void {
 }
 
 export async function shutdownSidecarServices(): Promise<void> {
+  TailManager.getInstance().stopAll()
   HistoryStore.getInstance().flush()
   await EditSessionManager.getInstance().disposeAll()
   await cleanupAllStagedDrops().catch(() => undefined)

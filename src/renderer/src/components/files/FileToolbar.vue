@@ -64,15 +64,22 @@ const moreItems = computed<DropdownMenuItem[]>(() => {
 
 const filterExpanded = ref(false)
 const showFilterInput = computed(() => filterExpanded.value || Boolean(props.filterText))
-const filterInputRef = ref<{ inputRef?: HTMLInputElement } | HTMLInputElement | null>(null)
+type InputRef = { inputRef?: HTMLInputElement } | HTMLInputElement | null
+const filterInputRef = ref<InputRef>(null)
+const narrowFilterInputRef = ref<InputRef>(null)
+
+function pickVisibleInput(candidate: InputRef): HTMLInputElement | null {
+  const el =
+    candidate && 'inputRef' in candidate
+      ? (candidate.inputRef ?? null)
+      : (candidate as HTMLInputElement | null)
+  return el && el.offsetParent !== null ? el : null
+}
 
 function focusFilter(): void {
   filterExpanded.value = true
   void nextTick(() => {
-    const el =
-      filterInputRef.value && 'inputRef' in filterInputRef.value
-        ? filterInputRef.value.inputRef
-        : (filterInputRef.value as HTMLInputElement | null)
+    const el = pickVisibleInput(filterInputRef.value) ?? pickVisibleInput(narrowFilterInputRef.value)
     if (el) {
       el.focus()
       el.select()
@@ -99,140 +106,183 @@ function onFilterInput(value: string | number): void {
 </script>
 
 <template>
-  <div class="flex shrink-0 items-center gap-0.5 pr-1.5">
-    <UTooltip text="Back (Alt+Left)">
-      <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
-    </UTooltip>
-    <UTooltip text="Forward (Alt+Right)">
-      <UButton icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
-    </UTooltip>
-    <UTooltip text="Go up one level (Backspace)">
-      <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
-    </UTooltip>
-    <UTooltip text="Refresh (Ctrl+R)">
-      <UButton
-        icon="i-lucide-refresh-cw"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        aria-label="Refresh"
-        :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
-        @click="emit('refresh')"
-      />
-    </UTooltip>
-    <span class="mx-0.5 h-3.5 w-px shrink-0 bg-muted" aria-hidden="true" />
-    <UTooltip text="New folder">
-      <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
-    </UTooltip>
-    <UTooltip text="New file">
-      <UButton
-        icon="i-lucide-file-plus"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        aria-label="New file"
-        class="hidden @[480px]:inline-flex"
-        @click="emit('touch')"
-      />
-    </UTooltip>
-    <UInput
-      v-if="showFilterInput"
-      ref="filterInputRef"
-      :model-value="filterText ?? ''"
-      icon="i-lucide-search"
-      placeholder="Search…"
-      size="xs"
-      class="w-28 @[440px]:w-36 focus-within:w-40 transition-[width]"
-      :ui="{ trailing: 'pointer-events-auto' }"
-      @update:model-value="onFilterInput"
-      @blur="collapseEmptyFilter"
-      @keydown.esc.stop="clearAndCollapseFilter"
-    >
-      <template v-if="filterText" #trailing>
-        <UButton
-          icon="i-lucide-x"
-          color="neutral"
-          variant="link"
-          size="xs"
-          aria-label="Clear search"
-          :padded="false"
-          @mousedown.prevent
-          @click="clearAndCollapseFilter"
-        />
-      </template>
-    </UInput>
-    <UTooltip v-else text="Search (Ctrl+F)">
-      <UButton
-        icon="i-lucide-search"
-        color="neutral"
-        variant="ghost"
-        size="xs"
-        aria-label="Search files"
-        @click="focusFilter()"
-      />
-    </UTooltip>
-    <FileVisibilityPopover
-      v-if="side === 'remote' && visibilityFilter"
-      :model-value="visibilityFilter"
-      @update:model-value="emit('update:visibilityFilter', $event)"
-      @clear="emit('clear-visibility-filter')"
-    />
-    <UTooltip
-      v-if="selectedCount && transferIcon"
-      :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"
-    >
-      <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" @click="emit('transfer-selected')">
-        {{ selectedCount }}
-      </UButton>
-    </UTooltip>
-    <Popover v-if="canBookmark !== false">
-      <UTooltip text="Bookmarks">
-        <UButton icon="i-lucide-bookmark" color="neutral" variant="ghost" size="xs" aria-label="Bookmarks" />
+  <div
+    role="toolbar"
+    :aria-label="`${side === 'local' ? 'Local' : 'Remote'} file actions`"
+    class="flex min-w-0 basis-full shrink-0 flex-wrap items-center justify-between gap-1 @[580px]:basis-auto @[580px]:flex-nowrap @[580px]:justify-start @[580px]:gap-0.5"
+  >
+    <div role="group" aria-label="Navigation" class="flex shrink-0 items-center gap-0.5">
+      <UTooltip text="Back (Alt+Left)">
+        <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
       </UTooltip>
-      <template #content>
-        <div class="flex w-64 flex-col gap-1 p-2">
+      <UTooltip text="Forward (Alt+Right)">
+        <UButton icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
+      </UTooltip>
+      <UTooltip text="Go up one level (Backspace)">
+        <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
+      </UTooltip>
+      <UTooltip text="Refresh (Ctrl+R)">
+        <UButton
+          icon="i-lucide-refresh-cw"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Refresh"
+          :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+          @click="emit('refresh')"
+        />
+      </UTooltip>
+    </div>
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      class="mx-1 hidden h-3.5 w-px shrink-0 border-l border-muted/70 @[580px]:inline-block"
+      aria-hidden="true"
+    />
+    <div role="group" aria-label="File actions" class="flex shrink-0 items-center gap-0.5">
+      <UTooltip text="New folder">
+        <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
+      </UTooltip>
+      <UTooltip text="New file">
+        <UButton
+          icon="i-lucide-file-plus"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="New file"
+          class="hidden @[480px]:inline-flex"
+          @click="emit('touch')"
+        />
+      </UTooltip>
+      <UTooltip :text="showFilterInput ? 'Close search (Esc)' : 'Search (Ctrl+F)'">
+        <UButton
+          icon="i-lucide-search"
+          :color="showFilterInput ? 'primary' : 'neutral'"
+          :variant="showFilterInput ? 'soft' : 'ghost'"
+          size="xs"
+          aria-label="Search files"
+          :aria-pressed="showFilterInput"
+          :class="showFilterInput ? '@[480px]:hidden' : ''"
+          @mousedown.prevent
+          @click="showFilterInput ? clearAndCollapseFilter() : focusFilter()"
+        />
+      </UTooltip>
+      <UInput
+        v-if="showFilterInput"
+        ref="filterInputRef"
+        :model-value="filterText ?? ''"
+        icon="i-lucide-search"
+        placeholder="Search…"
+        size="xs"
+        class="hidden @[480px]:inline-flex shrink-0 w-32 @[580px]:w-36 focus-within:w-40 transition-[width]"
+        :ui="{ trailing: 'pointer-events-auto' }"
+        @update:model-value="onFilterInput"
+        @blur="collapseEmptyFilter"
+        @keydown.esc.stop="clearAndCollapseFilter"
+      >
+        <template v-if="filterText" #trailing>
           <UButton
-            icon="i-lucide-bookmark-plus"
+            icon="i-lucide-x"
             color="neutral"
-            variant="ghost"
+            variant="link"
             size="xs"
-            class="justify-start"
-            @click="emit('bookmark')"
-          >
-            Bookmark this folder
-          </UButton>
-          <div v-if="bookmarks && bookmarks.length > 0" class="my-1 border-t border-muted"></div>
-          <div
-            v-for="b in bookmarks"
-            :key="b.id"
-            class="group flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
-          >
+            aria-label="Clear search"
+            :padded="false"
+            @mousedown.prevent
+            @click="clearAndCollapseFilter"
+          />
+        </template>
+      </UInput>
+      <FileVisibilityPopover
+        v-if="side === 'remote' && visibilityFilter"
+        :model-value="visibilityFilter"
+        @update:model-value="emit('update:visibilityFilter', $event)"
+        @clear="emit('clear-visibility-filter')"
+      />
+      <UTooltip
+        v-if="selectedCount && transferIcon"
+        :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"
+      >
+        <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" class="tabular-nums" @click="emit('transfer-selected')">
+          {{ selectedCount }}
+        </UButton>
+      </UTooltip>
+      <Popover v-if="canBookmark !== false">
+        <UTooltip text="Bookmarks">
+          <UButton icon="i-lucide-bookmark" color="neutral" variant="ghost" size="xs" aria-label="Bookmarks" />
+        </UTooltip>
+        <template #content>
+          <div class="flex w-64 flex-col gap-1 p-2">
             <UButton
-              icon="i-lucide-folder"
+              icon="i-lucide-bookmark-plus"
               color="neutral"
               variant="ghost"
               size="xs"
-              class="min-w-0 flex-1 justify-start truncate"
-              :title="b.path"
-              @click="emit('jump-bookmark', b.path)"
+              class="justify-start"
+              @click="emit('bookmark')"
             >
-              <span class="truncate">{{ b.label }}</span>
+              Bookmark this folder
             </UButton>
-            <UButton
-              icon="i-lucide-x"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              aria-label="Remove bookmark"
-              class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-              @click="emit('remove-bookmark', b.id)"
-            />
+            <div v-if="bookmarks && bookmarks.length > 0" class="my-1 border-t border-muted"></div>
+            <div
+              v-for="b in bookmarks"
+              :key="b.id"
+              class="group flex items-center gap-1 rounded-md px-2 py-1 hover:bg-muted"
+            >
+              <UButton
+                icon="i-lucide-folder"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="min-w-0 flex-1 justify-start truncate"
+                :title="b.path"
+                @click="emit('jump-bookmark', b.path)"
+              >
+                <span class="truncate">{{ b.label }}</span>
+              </UButton>
+              <UButton
+                icon="i-lucide-x"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                aria-label="Remove bookmark"
+                class="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                @click="emit('remove-bookmark', b.id)"
+              />
+            </div>
           </div>
-        </div>
-      </template>
-    </Popover>
-    <UDropdownMenu :items="moreItems">
-      <UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
-    </UDropdownMenu>
+        </template>
+      </Popover>
+      <UDropdownMenu :items="moreItems">
+        <UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
+      </UDropdownMenu>
+    </div>
+    <div v-if="showFilterInput" class="basis-full pt-0.5 @[480px]:hidden">
+      <UInput
+        ref="narrowFilterInputRef"
+        :model-value="filterText ?? ''"
+        icon="i-lucide-search"
+        placeholder="Search…"
+        size="xs"
+        class="w-full"
+        :ui="{ trailing: 'pointer-events-auto' }"
+        @update:model-value="onFilterInput"
+        @blur="collapseEmptyFilter"
+        @keydown.esc.stop="clearAndCollapseFilter"
+      >
+        <template v-if="filterText" #trailing>
+          <UButton
+            icon="i-lucide-x"
+            color="neutral"
+            variant="link"
+            size="xs"
+            aria-label="Clear search"
+            :padded="false"
+            @mousedown.prevent
+            @click="clearAndCollapseFilter"
+          />
+        </template>
+      </UInput>
+    </div>
   </div>
 </template>
