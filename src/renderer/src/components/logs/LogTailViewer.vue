@@ -1,3 +1,31 @@
+<script lang="ts">
+import { ref as moduleRef } from 'vue'
+
+const FONT_SIZE_KEY = 'ferry:tail:fontSize'
+const WRAP_LINES_KEY = 'ferry:tail:wrapLines'
+type TailFontSize = 'sm' | 'md' | 'lg'
+
+function loadFontSize(): TailFontSize {
+  try {
+    const raw = localStorage.getItem(FONT_SIZE_KEY)
+    return raw === 'sm' || raw === 'md' || raw === 'lg' ? raw : 'md'
+  } catch {
+    return 'md'
+  }
+}
+
+function loadWrapLines(): boolean {
+  try {
+    return localStorage.getItem(WRAP_LINES_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+const fontSize = moduleRef<TailFontSize>(loadFontSize())
+const wrapLines = moduleRef<boolean>(loadWrapLines())
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
@@ -18,6 +46,10 @@ import { tailControls } from '../../composables/useTailControls'
 import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import { KEYWORD_CLASSES, buildKeywordRegex } from '../../utils/keywordHighlight'
 
+const MAX_REGEX_LINE_LENGTH = 16_384
+const MAX_MATCHES_PER_LINE = 200
+const MAX_JSON_LINE_LENGTH = 32_768
+
 const props = withDefaults(defineProps<{ tailId: string; active?: boolean }>(), { active: true })
 const isActive = computed(() => props.active)
 
@@ -28,6 +60,11 @@ const notify = useNotify()
 const lines = computed(() => tailStreams.linesMap[props.tailId] || [])
 const ended = computed(() => tailStreams.endedMap[props.tailId] || false)
 const error = computed(() => tailStreams.errorMap[props.tailId])
+const streamStatus = computed<'connecting' | 'streaming' | 'ended' | 'error'>(() => {
+  if (error.value) return 'error'
+  if (ended.value) return 'ended'
+  return tailStreams.statusMap?.[props.tailId] ?? (lines.value.length > 0 ? 'streaming' : 'connecting')
+})
 const currentTab = computed(() => tailStreams.tabs.find((t) => t.tailId === props.tailId))
 const sessionLabel = computed(() => {
   const sid = currentTab.value?.sessionId
@@ -48,21 +85,22 @@ const levelFilter = ref<'all' | 'error' | 'warn' | 'info' | 'debug'>('all')
 const pinnedOnly = ref(false)
 const selectedOriginalIndex = ref<number | null>(null)
 
-// Font size & line wrap preferences stored in localStorage
-const FONT_SIZE_KEY = 'ferry:tail:fontSize'
-const WRAP_LINES_KEY = 'ferry:tail:wrapLines'
-type TailFontSize = 'sm' | 'md' | 'lg'
-const fontSize = ref<TailFontSize>((localStorage.getItem(FONT_SIZE_KEY) as TailFontSize) || 'md')
-const wrapLines = ref(localStorage.getItem(WRAP_LINES_KEY) === 'true')
-
 function setFontSize(size: TailFontSize): void {
   fontSize.value = size
-  localStorage.setItem(FONT_SIZE_KEY, size)
+  try {
+    localStorage.setItem(FONT_SIZE_KEY, size)
+  } catch {
+    // Ignore storage quota / privacy mode errors
+  }
 }
 
 function toggleWrap(): void {
   wrapLines.value = !wrapLines.value
-  localStorage.setItem(WRAP_LINES_KEY, String(wrapLines.value))
+  try {
+    localStorage.setItem(WRAP_LINES_KEY, String(wrapLines.value))
+  } catch {
+    // Ignore storage quota / privacy mode errors
+  }
 }
 
 const fontSizeClass = computed(() => {
@@ -227,12 +265,13 @@ const searchIndex = computed<SearchIndex>(() => {
 
   for (let i = 0; i < items.length; i++) {
     const text = items[i].text
+    if (text.length > MAX_REGEX_LINE_LENGTH) continue
     searchRe.lastIndex = 0
     let match: RegExpExecArray | null
     let lineHasMatch = false
     let matchInLine = 0
 
-    while ((match = searchRe.exec(text)) !== null) {
+    while (matchInLine < MAX_MATCHES_PER_LINE && (match = searchRe.exec(text)) !== null) {
       if (match[0].length === 0) {
         searchRe.lastIndex++
         continue
@@ -270,6 +309,12 @@ function jumpToActiveMatch(): void {
   if (!match) return
   autoScroll.value = false
   rowVirtualizer.value.scrollToIndex(match.filteredIndex, { align: 'center' })
+  if (!wrapLines.value) {
+    void nextTick(() => {
+      const el = scrollEl.value?.querySelector<HTMLElement>('[data-active-match="true"]')
+      el?.scrollIntoView({ block: 'nearest', inline: 'center' })
+    })
+  }
 }
 
 function stepMatch(delta: 1 | -1): void {
@@ -403,7 +448,7 @@ function scrollToBottom(): void {
 }
 
 function toggleAutoScroll(): void {
-  if (ended.value || error.value) return
+  if (streamStatus.value !== 'streaming') return
   if (autoScroll.value) {
     autoScroll.value = false
   } else {
@@ -419,14 +464,26 @@ watch(
     if (added < 0) {
       newLinesCount.value = 0
     } else if (added > 0 && autoScroll.value) {
-      void nextTick(() => {
-        if (autoScroll.value) scrollToBottom()
-      })
+      if (isActive.value) {
+        void nextTick(() => {
+          if (autoScroll.value && isActive.value) scrollToBottom()
+        })
+      }
     } else if (added > 0) {
       newLinesCount.value += added
     }
   }
 )
+
+watch(isActive, async (active) => {
+  if (!active) return
+  await nextTick()
+  rowVirtualizer.value.measure()
+  if (autoScroll.value) {
+    scrollToBottom()
+  }
+  updateThumb()
+})
 
 watch(
   () => tailStreams.droppedCountMap[props.tailId] || 0,
@@ -508,29 +565,40 @@ function onExport(): void {
 }
 
 function hasJsonLine(text: string): boolean {
+  if (text.length > MAX_JSON_LINE_LENGTH) return false
   if (!text.includes('{') && !text.trimStart().startsWith('[')) return false
   return extractJsonPayload(text) !== null
 }
 
 // Keyboard shortcuts
 function onViewerKeydown(e: KeyboardEvent): void {
+  if (e.defaultPrevented) return
   if (e.key === 'Escape') {
     if (selectedOriginalIndex.value !== null) {
       e.preventDefault()
       selectedOriginalIndex.value = null
+      scrollEl.value?.focus()
       return
     }
   }
-  if (e.target instanceof HTMLElement && e.target.closest('button, input, textarea')) {
+  const target = e.target instanceof HTMLElement ? e.target : null
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) {
     return
   }
   if (e.key === 'ArrowUp' && selectedItem.value) {
     e.preventDefault()
     stepSelectedLine(-1)
-  } else if (e.key === 'ArrowDown' && selectedItem.value) {
+    return
+  }
+  if (e.key === 'ArrowDown' && selectedItem.value) {
     e.preventDefault()
     stepSelectedLine(1)
-  } else if ((e.key === ' ' || e.key.toLowerCase() === 'p') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    return
+  }
+  if (target?.closest('button, [role="button"], a[href]')) {
+    return
+  }
+  if ((e.key === ' ' || e.key.toLowerCase() === 'p') && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
     toggleAutoScroll()
   } else if (e.key === 'End' || (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey)) {
@@ -548,6 +616,7 @@ function onViewerKeydown(e: KeyboardEvent): void {
 function onWindowKeydown(e: KeyboardEvent): void {
   // Inactive tail tabs stay mounted (v-show); only the visible viewer may claim Ctrl+F.
   if (!rootEl.value || rootEl.value.getClientRects().length === 0) return
+  if (document.querySelector('[role="dialog"]')) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
     const inSearchBar = searchBarRef.value?.contains(e.target) ?? false
     if (
@@ -555,14 +624,14 @@ function onWindowKeydown(e: KeyboardEvent): void {
       e.target instanceof HTMLTextAreaElement ||
       (e.target instanceof HTMLElement && e.target.isContentEditable)
     ) {
-      if (!scrollEl.value?.contains(e.target) && !inSearchBar) {
+      if (!rootEl.value.contains(e.target) && !inSearchBar) {
         return
       }
     }
-    const el = scrollEl.value
     if (
       inSearchBar ||
-      (el && (el.contains(document.activeElement) || document.activeElement === document.body))
+      rootEl.value.contains(document.activeElement) ||
+      document.activeElement === document.body
     ) {
       e.preventDefault()
       searchBarRef.value?.focusInput()
@@ -572,11 +641,32 @@ function onWindowKeydown(e: KeyboardEvent): void {
 
 watch(totalSize, () => void nextTick(updateThumb))
 
+let scrollObserver: ResizeObserver | null = null
+let lastScrollWidth = 0
+
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown)
   void nextTick(() => {
     scrollToBottom()
     updateThumb()
+    const el = scrollEl.value
+    if (el) {
+      lastScrollWidth = el.clientWidth
+      scrollObserver = new ResizeObserver(() => {
+        const current = scrollEl.value
+        if (!current || (current.clientWidth === 0 && current.clientHeight === 0)) return
+        const widthChanged = current.clientWidth !== lastScrollWidth
+        lastScrollWidth = current.clientWidth
+        if (wrapLines.value && widthChanged) {
+          rowVirtualizer.value.measure()
+        }
+        updateThumb()
+        if (autoScroll.value) {
+          scrollToBottom()
+        }
+      })
+      scrollObserver.observe(el)
+    }
   })
   lastReceived = tailStreams.receivedCountMap[props.tailId] || 0
   rateTimer = setInterval(() => {
@@ -592,6 +682,7 @@ function releaseControls(): void {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  scrollObserver?.disconnect()
   clearInterval(rateTimer)
   releaseControls()
 })
@@ -624,6 +715,7 @@ watchEffect(() => {
   }
   tailControls.value = {
     tailId: props.tailId,
+    status: streamStatus.value,
     ended: ended.value,
     error: error.value,
     autoScroll: autoScroll.value,
@@ -642,7 +734,7 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div ref="rootEl" class="relative flex h-full flex-col overflow-hidden bg-default">
+  <div ref="rootEl" class="relative flex h-full flex-col overflow-hidden bg-default" @keydown="onViewerKeydown">
     <!-- Row 2: find + level filters, always visible -->
     <LogSearchBar
       ref="searchBarRef"
@@ -662,12 +754,13 @@ watchEffect(() => {
       @prev="prevMatch"
       @close="closeSearch"
     >
-      <div class="ml-auto flex shrink-0 items-center gap-2 overflow-x-auto scrollbar-none">
-        <div class="flex items-center rounded-md bg-muted/60 p-0.5">
+      <div class="ml-auto flex max-w-full flex-wrap items-center gap-2">
+        <div role="group" aria-label="Filter by log level" class="flex flex-wrap items-center rounded-md bg-muted/60 p-0.5">
           <button
             v-for="opt in filterOptions"
             :key="opt.id"
             type="button"
+            :aria-pressed="levelFilter === opt.id"
             class="flex cursor-pointer items-center gap-1 rounded px-2 py-0.5 font-mono text-2xs transition-colors"
             :class="
               levelFilter === opt.id
@@ -685,7 +778,7 @@ watchEffect(() => {
                   ? 'bg-error/20 text-error'
                   : opt.id === 'warn'
                     ? 'bg-warning/20 text-warning'
-                    : 'bg-muted text-muted'
+                    : 'bg-default/80 text-default/80 ring-1 ring-muted'
               "
             >
               {{ opt.count }}
@@ -693,20 +786,23 @@ watchEffect(() => {
           </button>
         </div>
 
-        <button
-          v-if="pinnedCount > 0"
-          type="button"
-          class="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-2xs transition-colors"
-          :class="
-            pinnedOnly
-              ? 'border-primary/40 bg-primary/15 font-semibold text-primary'
-              : 'border-muted bg-muted/50 text-muted hover:text-default'
-          "
-          @click="pinnedOnly = !pinnedOnly"
-        >
-          <UIcon name="i-lucide-bookmark" class="size-3" />
-          <span class="font-bold tabular-nums">{{ pinnedCount }}</span>
-        </button>
+        <UTooltip v-if="pinnedCount > 0" text="Show pinned lines only">
+          <button
+            type="button"
+            aria-label="Show pinned lines only"
+            :aria-pressed="pinnedOnly"
+            class="flex cursor-pointer items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-2xs transition-colors"
+            :class="
+              pinnedOnly
+                ? 'border-primary/40 bg-primary/15 font-semibold text-primary'
+                : 'border-muted bg-muted/50 text-muted hover:text-default'
+            "
+            @click="pinnedOnly = !pinnedOnly"
+          >
+            <UIcon name="i-lucide-bookmark" class="size-3" />
+            <span class="font-bold tabular-nums">{{ pinnedCount }}</span>
+          </button>
+        </UTooltip>
       </div>
     </LogSearchBar>
 
@@ -716,11 +812,12 @@ watchEffect(() => {
         <!-- Virtualized Log Line Viewer -->
         <div
           ref="scrollEl"
+          role="listbox"
+          aria-label="Log output"
           tabindex="0"
           class="relative min-h-0 min-w-0 flex-1 overflow-auto bg-default font-mono leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
           :class="fontSizeClass"
           @scroll="onScroll"
-          @keydown="onViewerKeydown"
         >
         <div
           :style="{
@@ -746,12 +843,14 @@ watchEffect(() => {
               keywordRegex,
               wrapLines
             ]"
+            role="option"
+            :aria-selected="selectedOriginalIndex === filteredLines[virtualRow.index].originalIndex"
             :data-index="virtualRow.index"
             :style="{
               position: 'absolute',
               top: 0,
               left: 0,
-              width: wrapLines ? '100%' : 'max-content',
+              width: '100%',
               minWidth: '100%',
               transform: `translateY(${virtualRow.start}px)`
             }"
@@ -824,6 +923,7 @@ watchEffect(() => {
                   <template v-for="(tTok, tIdx) in tokenized.timestampTokens" :key="tIdx">
                     <mark
                       v-if="tTok.isMatch"
+                      :data-active-match="tTok.isActiveMatch ? 'true' : undefined"
                       :class="
                         tTok.isActiveMatch
                           ? 'bg-warning text-inverted font-bold rounded-xs px-0.5 shadow-sm ring-2 ring-primary'
@@ -837,6 +937,7 @@ watchEffect(() => {
                 <template v-for="(rTok, rIdx) in tokenized.restTokens" :key="rIdx">
                   <mark
                     v-if="rTok.isMatch"
+                    :data-active-match="rTok.isActiveMatch ? 'true' : undefined"
                     :class="
                       rTok.isActiveMatch
                         ? 'bg-warning text-inverted font-bold rounded-xs px-0.5 shadow-sm ring-2 ring-primary'
@@ -892,15 +993,29 @@ watchEffect(() => {
           </div>
         </div>
 
-        <!-- Empty / Waiting State -->
+        <!-- Empty / Connecting / Terminal State -->
         <div
           v-if="filteredLines.length === 0"
-          class="flex h-full flex-col items-center justify-center gap-1.5 py-12 text-center select-none"
+          role="status"
+          aria-live="polite"
+          class="flex h-full flex-col items-center justify-center gap-1.5 px-4 py-12 text-center select-none"
         >
-          <UIcon name="i-lucide-scroll-text" class="size-6 text-muted" />
-          <p class="text-xs text-muted">
-            {{ lines.length === 0 ? 'Waiting for output…' : 'No logs match the current filter' }}
-          </p>
+          <template v-if="lines.length === 0">
+            <UIcon v-if="error" name="i-lucide-alert-circle" class="size-6 text-error" />
+            <UIcon v-else-if="ended" name="i-lucide-circle-slash" class="size-6 text-muted" />
+            <UIcon v-else-if="streamStatus === 'connecting'" name="i-lucide-loader-2" class="size-6 animate-spin text-primary" />
+            <UIcon v-else name="i-lucide-scroll-text" class="size-6 text-muted" />
+            <p class="text-xs text-muted">
+              <template v-if="error">Unable to stream this file — see error below</template>
+              <template v-else-if="ended">Stream ended with no output</template>
+              <template v-else-if="streamStatus === 'connecting'">Connecting to remote log stream…</template>
+              <template v-else>Waiting for output…</template>
+            </p>
+          </template>
+          <template v-else>
+            <UIcon name="i-lucide-filter-x" class="size-6 text-muted" />
+            <p class="text-xs text-muted">No logs match the current filter</p>
+          </template>
         </div>
         </div>
 
@@ -916,7 +1031,7 @@ watchEffect(() => {
         <!-- Floating Jump to Latest Button -->
         <Transition name="slide-up">
           <button
-            v-if="!autoScroll && lines.length > 0"
+            v-if="!autoScroll && lines.length > 0 && !selectedItem"
             type="button"
             class="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur-md ring-1 ring-primary/40 bg-primary text-inverted transition-all hover:scale-105 active:scale-95 cursor-pointer"
             @click="scrollToBottom"
@@ -953,22 +1068,35 @@ watchEffect(() => {
     >
       <div class="flex items-center gap-2 min-w-0">
         <UIcon name="i-lucide-alert-circle" class="size-4 shrink-0 text-error" />
-        <span class="truncate">{{ error }}</span>
+        <span class="truncate" :title="error">{{ error }}</span>
       </div>
-      <UButton
-        label="Restart stream"
-        icon="i-lucide-rotate-cw"
-        size="xs"
-        color="error"
-        variant="soft"
-        :loading="restarting"
-        @click="onRestart"
-      />
+      <div class="flex shrink-0 items-center gap-1">
+        <UTooltip text="Copy error">
+          <UButton
+            aria-label="Copy error"
+            icon="i-lucide-copy"
+            size="xs"
+            color="error"
+            variant="ghost"
+            @click="copyText(error, 'Error copied')"
+          />
+        </UTooltip>
+        <UButton
+          label="Restart stream"
+          icon="i-lucide-rotate-cw"
+          size="xs"
+          color="error"
+          variant="soft"
+          :loading="restarting"
+          @click="onRestart"
+        />
+      </div>
     </div>
 
     <!-- Stream Ended Banner -->
     <div
       v-else-if="ended"
+      role="status"
       class="flex items-center justify-center gap-2 border-t border-muted bg-muted/20 px-3 py-1 text-2xs text-muted"
     >
       <span>Stream ended</span>

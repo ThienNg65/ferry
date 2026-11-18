@@ -21,4 +21,18 @@ describe('keywordHighlight', () => {
     const regex = buildKeywordRegex(['a.b', '(x)'])
     expect(splitByKeywords('a.b axb (x)', regex).filter((c) => c.group !== null).map((c) => c.text)).toEqual(['a.b', '(x)'])
   })
+
+  it('ignores empty keywords and handles non-global regexes without looping', () => {
+    expect(buildKeywordRegex(['', ''])).toBeNull()
+    const regex = buildKeywordRegex(['', 'warn'])
+    expect(splitByKeywords('warn ok', regex)).toEqual([
+      { text: 'warn', group: 0 },
+      { text: ' ok', group: null }
+    ])
+    expect(splitByKeywords('foo bar foo', /foo/i)).toEqual([
+      { text: 'foo', group: 0 },
+      { text: ' bar ', group: null },
+      { text: 'foo', group: 0 }
+    ])
+  })
 })

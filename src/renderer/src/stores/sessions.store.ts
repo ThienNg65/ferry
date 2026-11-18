@@ -406,10 +406,15 @@ export const useSessionsStore = defineStore('sessions', {
         hadConnected: tab.hadConnected,
         quickConnectInput: tab.quickConnectInput ? { ...tab.quickConnectInput } : undefined
       }
+      const previousSessionId = tab.sessionId
       tab.connecting = true
       tab.status = 'connecting'
       tab.hadConnected = false
-      tab.sessionId = crypto.randomUUID()
+      const nextSessionId = crypto.randomUUID()
+      tab.sessionId = nextSessionId
+      if (previousSessionId) {
+        useTailStreamsStore().rebindSession?.(previousSessionId, nextSessionId)
+      }
       tab.progressMessages = []
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
@@ -662,6 +667,7 @@ export const useSessionsStore = defineStore('sessions', {
       } finally {
         useRemoteFsStore().clearSession(sessionId)
         useFileFiltersStore().clearEphemeralSession(sessionId)
+        await useTailStreamsStore().closeForSession(sessionId)
         void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
       }
     },
@@ -682,12 +688,15 @@ export const useSessionsStore = defineStore('sessions', {
       tab.pendingHostKeyMismatch = null
       tab.preConnectSnapshot = null
       if (sid) {
-        await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
-        useRemoteFsStore().clearSession(sid)
-        useFileFiltersStore().clearEphemeralSession(sid)
-        useMonitorStore().clearSession(sid)
-        await useTailStreamsStore().closeForSession(sid)
-        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
+        try {
+          await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
+        } finally {
+          useRemoteFsStore().clearSession(sid)
+          useFileFiltersStore().clearEphemeralSession(sid)
+          useMonitorStore().clearSession(sid)
+          await useTailStreamsStore().closeForSession(sid)
+          void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
+        }
       }
     },
 
@@ -796,18 +805,21 @@ export const useSessionsStore = defineStore('sessions', {
       tab.connectPromise = null
       this.clearPromptsForSession(sid)
       if (sid) {
-        await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
-        if (pendingConnect) {
-          await pendingConnect.catch(() => undefined)
+        try {
+          await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
+          if (pendingConnect) {
+            await pendingConnect.catch(() => undefined)
+          }
+        } finally {
+          useRemoteFsStore().clearSession(sid)
+          useFileFiltersStore().clearEphemeralSession(sid)
+          useMonitorStore().clearSession(sid)
+          await useTailStreamsStore().closeForSession(sid)
+          // Fire-and-forget: documented as no-op-safe today, but caught so a
+          // future failure can't become an unhandled rejection — deliberately
+          // not awaited so a slow teardown doesn't block closeTab.
+          void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
         }
-        useRemoteFsStore().clearSession(sid)
-        useFileFiltersStore().clearEphemeralSession(sid)
-        useMonitorStore().clearSession(sid)
-        await useTailStreamsStore().closeForSession(sid)
-        // Fire-and-forget: documented as no-op-safe today, but caught so a
-        // future failure can't become an unhandled rejection — deliberately
-        // not awaited so a slow teardown doesn't block closeTab.
-        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
       }
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
       if (closedIndex === -1) {

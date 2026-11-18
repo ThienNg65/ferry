@@ -19,19 +19,23 @@ describe('buildRailMarks', () => {
     expect(marks.map((m) => m.pinned)).toEqual([true, false, false, false])
   })
 
-  it('merges many lines into fewer buckets and handles empty input', () => {
+  it('merges many lines into fewer buckets and handles empty or non-finite input', () => {
     const items = Array.from({ length: 10 }, (_, i) => line(i, i === 9 ? 'error' : 'info'))
     const marks = buildRailMarks(items, new Set(), new Set(), 2)
     expect(marks.map((m) => m.error)).toEqual([false, true])
     expect(buildRailMarks([], new Set(), new Set(), 3)).toHaveLength(3)
+    expect(buildRailMarks(items, new Set(), new Set(), Number.NaN)).toHaveLength(1)
+    expect(buildRailMarks(items, new Set(), new Set(), Number.POSITIVE_INFINITY)).toHaveLength(1)
   })
 })
 
 describe('railPositionToIndex', () => {
-  it('clamps to the valid range', () => {
+  it('clamps to the valid range and guards non-finite inputs', () => {
     expect(railPositionToIndex(0.5, 10)).toBe(5)
     expect(railPositionToIndex(1.2, 10)).toBe(9)
     expect(railPositionToIndex(-1, 10)).toBe(0)
     expect(railPositionToIndex(0.5, 0)).toBe(0)
+    expect(railPositionToIndex(Number.NaN, 10)).toBe(0)
+    expect(railPositionToIndex(0.5, Number.NaN)).toBe(0)
   })
 })

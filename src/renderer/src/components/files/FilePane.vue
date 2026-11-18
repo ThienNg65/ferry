@@ -375,7 +375,11 @@ async function onTail(entry: FileEntry): Promise<void> {
   }
   const dock = useDockState()
   dock.openDock('tail')
-  await tailStreams.open(sessionId, entry.path)
+  try {
+    await tailStreams.open(sessionId, entry.path)
+  } catch (e) {
+    notify.error('Could not open log tail', e instanceof Error ? e.message : String(e))
+  }
 }
 
 async function onEdit(entry: FileEntry): Promise<void> {

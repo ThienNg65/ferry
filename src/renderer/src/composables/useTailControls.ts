@@ -1,7 +1,9 @@
 import { shallowRef } from 'vue'
+import type { TailStreamStatus } from '../stores/tailStreams.store'
 
 export interface TailControls {
   tailId: string
+  status: TailStreamStatus
   ended: boolean
   error: string | undefined
   autoScroll: boolean

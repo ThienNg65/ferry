@@ -32,7 +32,8 @@ const mockTerminalStreams = {
   disposeForSession: vi.fn().mockResolvedValue(undefined)
 }
 const mockTailStreams = {
-  closeForSession: vi.fn().mockResolvedValue(undefined)
+  closeForSession: vi.fn().mockResolvedValue(undefined),
+  rebindSession: vi.fn()
 }
 const mockMonitor = {
   clearSession: vi.fn()
@@ -541,5 +542,29 @@ describe('sessions.store quick connect and promotion', () => {
 
     const opens = vi.mocked(api.invoke).mock.calls.filter(([c]) => c === INVOKE_CHANNELS.sessionOpen)
     expect(opens).toHaveLength(1)
+  })
+
+  it('rebinds tail streams on reconnect and still calls closeForSession if sessionClose fails', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    await store.connect({
+      name: 'QC',
+      host: 'a.example.com',
+      port: 22,
+      username: 'alice',
+      authMethod: 'password',
+      password: 'pw'
+    })
+    const firstSid = store.activeTab.sessionId!
+    store.activeTab.status = 'error'
+
+    await store.reconnectTab(store.activeTab.tabId)
+    const secondSid = store.activeTab.sessionId!
+    expect(secondSid).not.toBe(firstSid)
+    expect(mockTailStreams.rebindSession).toHaveBeenCalledWith(firstSid, secondSid)
+
+    vi.mocked(api.invoke).mockRejectedValueOnce(new Error('close failed'))
+    await expect(store.disconnectTab(store.activeTab.tabId)).rejects.toThrow('close failed')
+    expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(secondSid)
   })
 })

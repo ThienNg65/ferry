@@ -729,6 +729,7 @@ export class SessionManager {
       const current = this.sessions.get(sessionId)
       if (current && current.status === 'connected') {
         current.status = 'error'
+        TailManager.getInstance().stopAllForSession(sessionId)
         this.broadcastStatus(sessionId, 'error', 'Connection closed unexpectedly')
       }
     })
@@ -744,7 +745,6 @@ export class SessionManager {
       return
     }
     const wasConnecting = entry.status === 'connecting'
-    entry.status = 'disconnected'
     if (wasConnecting) {
       entry.abort()
     }
@@ -760,7 +760,10 @@ export class SessionManager {
         pending.resolve([])
       }
     }
+    // Stop tails before flipping `entry.status` to `'disconnected'` so `killRemoteTail`
+    // can still dispatch `kill <pid>` while the SSH client is connected.
     TailManager.getInstance().stopAllForSession(sessionId)
+    entry.status = 'disconnected'
     TerminalManager.getInstance().closeAllForSession(sessionId)
     OperationRegistry.getInstance().cancelAllForSession(sessionId)
     MonitorManager.getInstance().stopAllForSession(sessionId)
