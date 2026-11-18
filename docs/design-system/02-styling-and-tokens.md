@@ -85,6 +85,11 @@ html.ferry-glass {
 
   /* Nuxt UI v4 Semantic Surface Remapping */
   --ui-radius: 0.625rem;
+  --ui-bg: var(--ferry-glass-well-bg);
+  --ui-bg-muted: var(--ferry-glass-chrome-bg);
+  --ui-bg-elevated: var(--ferry-glass-card-bg);
+  --ui-border: var(--ferry-glass-chrome-border);
+  --ui-border-muted: var(--ferry-glass-chrome-border);
   --ferry-surface-bar: var(--ferry-glass-chrome-bg);
   --ferry-surface-subtle: rgba(255, 255, 255, 0.55);
 }
@@ -122,6 +127,12 @@ html.dark.ferry-glass {
     inset 0 1px 0 0 rgba(255, 255, 255, 0.24),
     0 24px 56px -12px rgba(0, 0, 0, 0.62);
 
+  /* Nuxt UI v4 Semantic Surface Remapping */
+  --ui-bg: var(--ferry-glass-well-bg);
+  --ui-bg-muted: var(--ferry-glass-chrome-bg);
+  --ui-bg-elevated: var(--ferry-glass-card-bg);
+  --ui-border: var(--ferry-glass-chrome-border);
+  --ui-border-muted: var(--ferry-glass-chrome-border);
   --ferry-surface-bar: var(--ferry-glass-chrome-bg);
   --ferry-surface-subtle: rgba(15, 23, 42, 0.48);
 }
@@ -170,13 +181,15 @@ html.ferry-glass .ferry-glass-overlay {
 
 Nuxt UI v4 components (`UCard`, `UModal`, `UPopover`, `UDropdownMenu`, `UContextMenu`, `UInput`, `USelect`, `UToaster`) compile their structural colors to CSS variables (`--ui-bg`, `--ui-bg-elevated`, `--ui-bg-muted`, `--ui-border`, `--ui-border-muted`).
 
-Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single component, we combine two clean techniques under `html.ferry-glass`:
-1. **Portal Overlays (`[role="dialog"]`, `[data-reka-popper-content-wrapper]`):**
-   - Nuxt UI v4 (built on Reka UI) teleports modals, popovers, dropdowns, and context menus to `<body>`.
-   - Under `html.ferry-glass`, a single global selector upgrades all teleported popper/dialog surfaces to Tier 3 refractive glass automatically:
+Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single component, we combine three clean rules under `html.ferry-glass`:
+1. **Portal Overlays (`[role="dialog"]`, Menus/Popovers/Selects, and `UToast` — Excluding `UTooltip`):**
+   - Nuxt UI v4 (built on Reka UI) teleports modals, popovers, dropdowns, context menus, and tooltips to `<body>`.
+   - **Important:** `UTooltip` also renders inside `[data-reka-popper-content-wrapper]`, whereas `UToast` (`ToastRoot` inside `UToaster`) renders as an `<li role="status">` / `[data-slot="root"]` toast item rather than a Reka popper.
+   - Therefore, we target `[role="dialog"]`, `[role="menu"]`, `[role="listbox"]`, and `UToaster` toast roots (`[data-slot="viewport"] > li`) for Tier 3 refractive glass while explicitly excluding `[role="tooltip"]` so small 24px tooltips stay lightweight:
    ```css
-   html.ferry-glass [data-reka-popper-content-wrapper] > *,
-   html.ferry-glass [role="dialog"] {
+   html.ferry-glass [role="dialog"],
+   html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+   html.ferry-glass [data-slot="viewport"] > li {
      background-color: var(--ferry-glass-overlay-bg) !important;
      backdrop-filter: var(--ferry-glass-overlay-blur);
      -webkit-backdrop-filter: var(--ferry-glass-overlay-blur);
@@ -184,8 +197,19 @@ Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single co
      box-shadow: var(--ferry-glass-overlay-shadow);
    }
    ```
-2. **Form Inputs Inside Glass Cards (`UInput`, `USelect`):**
-   - Inside `.ferry-glass-card` and `.ferry-glass-overlay`, text inputs use a subtle recessed glass well (`rgba(255, 255, 255, 0.55)` in Light / `rgba(15, 23, 42, 0.55)` in Dark) with `1px solid var(--ferry-glass-chrome-border)` and no nested `backdrop-filter`.
+2. **Form Inputs Inside Glass Cards & Overlays (`UInput`, `USelect`):**
+   - Inside `.ferry-glass-card` and `.ferry-glass-overlay`, text inputs and selects use a recessed semi-transparent well (`--ferry-surface-subtle`) with `1px solid var(--ferry-glass-chrome-border)` and **no** nested `backdrop-filter`:
+   ```css
+   html.ferry-glass .ferry-glass-card input,
+   html.ferry-glass .ferry-glass-overlay input,
+   html.ferry-glass .ferry-glass-card [role="combobox"],
+   html.ferry-glass .ferry-glass-overlay [role="combobox"] {
+     background-color: var(--ferry-surface-subtle);
+     border-color: var(--ferry-glass-chrome-border);
+   }
+   ```
+3. **Remapping `--ui-bg*` Tokens for Inner Containers:**
+   - Because `--ui-bg` maps to `var(--ferry-glass-well-bg)` and `--ui-bg-muted` maps to `var(--ferry-glass-chrome-bg)` under `html.ferry-glass`, inner containers that use `bg-default` or `bg-muted` (such as `LogTailViewer.vue:737,818`, `FilePane.vue:838`, and `EditorDialog.vue:140`) automatically inherit translucent glass-well tints without requiring manual overrides on every internal `<div>`.
 
 ---
 
@@ -256,11 +280,11 @@ Users who enable "Reduce transparency" (Windows 11 *Settings → Accessibility �
 
 ### Verified Contrast Ratio Matrix (Worst-Case Over Primary Ambient Orb)
 
-Because `.ferry-ambient-canvas` caps its radial orb opacity at `22%` in Light mode and `20%` in Dark mode, we can compute the exact worst-case composite background luminance beneath every glass tier and verify WCAG 2.2 compliance:
+Ferry configures Nuxt UI with `neutral: 'zinc'` (`vite.renderer.config.mts:20`) and overrides `--ui-text-muted` / `--ui-text-dimmed` in `main.css:42-52` to `var(--ui-color-neutral-600)` (`#52525b`) in Light mode and `var(--ui-color-neutral-400)` (`#a1a1aa`) in Dark mode. Because `.ferry-ambient-canvas` caps its radial orb opacity at `22%` in Light mode and `20%` in Dark mode, the worst-case composite background luminance beneath every glass tier passes WCAG 2.2 AA/AAA:
 
-| Text Token | Foreground Color (Light / Dark) | Over Tier 1 Chrome (`0.75` / `0.68`) | Over Tier 2A Card (`0.72` / `0.64`) | Over Tier 2B Content Well (`0.88` / `0.84`) | WCAG 2.2 Target |
+| Nuxt UI v4 Text Token | Foreground Color (`zinc` Light / Dark) | Over Tier 1 Chrome (`0.75` / `0.68`) | Over Tier 2A Card (`0.72` / `0.64`) | Over Tier 2B Content Well (`0.88` / `0.84`) | WCAG 2.2 Target |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `--ui-text-highlighted` | `#0f172a` / `#f8fafc` | **14.2:1** / **14.8:1** | **13.8:1** / **14.1:1** | **16.1:1** / **16.4:1** | Passes AAA (>= 7.0:1) |
-| `--ui-text-default` | `#1e293b` / `#e2e8f0` | **11.4:1** / **12.1:1** | **11.0:1** / **11.5:1** | **12.9:1** / **13.3:1** | Passes AAA (>= 7.0:1) |
-| `--ui-text-muted` | `#475569` / `#94a3b8` | **5.4:1** / **5.8:1** | **5.2:1** / **5.5:1** | **6.1:1** / **6.4:1** | Passes AA (>= 4.5:1) |
-| Interactive Borders / Icons | `#64748b` / `#64748b` | **3.6:1** / **3.7:1** | **3.5:1** / **3.5:1** | **4.0:1** / **4.1:1** | Passes Non-Text AA (>= 3.0:1) |
+| `--ui-text-highlighted` | `#18181b` (`zinc-900`) / `#fafafa` (`zinc-50`) | **14.5:1** / **15.2:1** | **14.1:1** / **14.6:1** | **15.8:1** / **16.7:1** | Passes AAA (>= 7.0:1) |
+| `--ui-text` | `#3f3f46` (`zinc-700`) / `#e4e4e7` (`zinc-200`) | **8.9:1** / **11.8:1** | **8.6:1** / **11.3:1** | **9.7:1** / **12.9:1** | Passes AAA (>= 7.0:1) |
+| `--ui-text-muted` | `#52525b` (`zinc-600`) / `#a1a1aa` (`zinc-400`) | **6.3:1** / **6.4:1** | **6.1:1** / **6.1:1** | **6.9:1** / **7.1:1** | Passes AA (>= 4.5:1) |
+| Interactive Borders / Icons | `#71717a` (`zinc-500`) / `#71717a` (`zinc-500`) | **4.1:1** / **3.6:1** | **4.0:1** / **3.5:1** | **4.4:1** / **4.0:1** | Passes Non-Text AA (>= 3.0:1) |

@@ -15,15 +15,15 @@ This section maps every major Ferry view and component to its exact elevation ti
 | Component / File | Elevation Tier | Glass Utility / Token | Key Visual & Structural Rules under `html.ferry-glass` |
 | :--- | :--- | :--- | :--- |
 | [`App.vue`](../../src/renderer/src/App.vue) | Layer 0 + Wrapper | `.ferry-ambient-canvas` + `bg-transparent` | Renders `<div v-if="ui.glassUiEnabled" class="ferry-ambient-canvas" aria-hidden="true" />` behind the root flex column; switches root wrapper from `bg-default` to `bg-transparent` when `ui.glassUiEnabled` is `true`. **Never** puts `backdrop-filter` on `<main>`. |
-| [`SiteTabBar.vue`](../../src/renderer/src/components/shell/SiteTabBar.vue) | Tier 1 Chrome | `.ferry-glass-chrome` | Header switches from `bg-muted` to `.ferry-glass-chrome`. Active `.ferry-site-tab` uses `.ferry-glass-card` top-bevel highlight; inactive tabs are transparent with `hover:bg-default/40`. |
+| [`SiteTabBar.vue`](../../src/renderer/src/components/shell/SiteTabBar.vue) | Tier 1 Chrome | `.ferry-glass-chrome` | Header switches from `bg-muted` to `.ferry-glass-chrome`. Active `.ferry-site-tab` uses `bg-default` (which resolves to `--ferry-glass-well-bg`) plus an inset top-bevel `box-shadow` highlight (`inset 0 1px 0 rgba(255,255,255,0.22)`) **without** applying `.ferry-glass-card` (avoiding nested `backdrop-filter` and preserving `border-t-2` environment borders). Inactive tabs are transparent with `hover:bg-default/40`. |
 | [`SessionManagerView.vue`](../../src/renderer/src/components/sessions/SessionManagerView.vue) | Tier 2A Frosted Cards | `.ferry-glass-card` | Outer scroll container is `bg-transparent` so `.ferry-ambient-canvas` shines around the cards. Both `Sites` and `Quick Connect` `<UCard>` components (plus the reconnect banner and [`SiteDetailsPanel.vue`](../../src/renderer/src/components/sessions/SiteDetailsPanel.vue)) apply `.ferry-glass-card`. |
 | [`SiteRow.vue`](../../src/renderer/src/components/sessions/SiteRow.vue) | Child of Tier 2A | No `backdrop-filter` | Uses translucent hover (`hover:bg-default/45`) and selected pill (`bg-primary/15 ring-1 ring-primary/35`) inside the parent `.ferry-glass-card`. |
 | [`FilePane.vue`](../../src/renderer/src/components/files/FilePane.vue) | Container | `bg-transparent` | Acts as a flex layout shell (`border-r border-[var(--ferry-glass-chrome-border)]`) without its own `backdrop-filter` so child chrome and wells sample cleanly. |
-| [`FileToolbar.vue`](../../src/renderer/src/components/files/FileToolbar.vue) & [`PathBreadcrumb.vue`](../../src/renderer/src/components/files/PathBreadcrumb.vue) | Tier 1 Chrome | `.ferry-glass-chrome` | Translucent frosted header bars above each file pane with `1px` bottom border (`var(--ferry-glass-chrome-border)`). |
-| [`FileList.vue`](../../src/renderer/src/components/files/FileList.vue) | Tier 2B Content Well | `.ferry-glass-well` | High-legibility translucent well (`0.88` Light / `0.84` Dark). Column header row uses `bg-muted/60 backdrop-blur-md`. |
-| [`FileRow.vue`](../../src/renderer/src/components/files/FileRow.vue) | Virtualized Row | **Zero `backdrop-filter`** | **Never** apply `backdrop-filter` to virtualized rows. Selected rows use `bg-primary/14`, hover rows use `hover:bg-muted/50`, and size/date cells enforce `tabular-nums`. |
-| [`BottomDock.vue`](../../src/renderer/src/components/shell/BottomDock.vue) | Tier 1 + Tier 2B | `.ferry-glass-chrome` (tab bar) + `.ferry-glass-well` (panels) | Dock tab strip and collapsed right rail use `.ferry-glass-chrome`; `TransferQueue`, `ActivityPanel`, `LogTailViewer`, `MonitorPanel`, and `OpenEditsPanel` sit in `.ferry-glass-well`. |
-| [`TerminalView.vue`](../../src/renderer/src/components/terminal/TerminalView.vue) | WebGL Canvas | Opaque / `0.90` Default Scheme | Preserves `@xterm/addon-webgl` performance and all 9 terminal schemes in `terminalAppearance.ts`. Only the default `Ferry` scheme receives a subtle harmonized dark/light slate background (`#0b0f19` / `#f8fafc`). |
+| [`FileToolbar.vue`](../../src/renderer/src/components/files/FileToolbar.vue) & [`PathBreadcrumb.vue`](../../src/renderer/src/components/files/PathBreadcrumb.vue) | Tier 1 Chrome | `.ferry-glass-chrome` | Translucent frosted header bars above each file pane with `1px` bottom border (`var(--ferry-glass-chrome-border)`). Strip the redundant inner `backdrop-blur-xs` from `PathBreadcrumb.vue:182` so it does not nest a second blur inside `.ferry-glass-chrome`. |
+| [`FileList.vue`](../../src/renderer/src/components/files/FileList.vue) | Tier 2B Content Well | `.ferry-glass-well` | High-legibility translucent well (`0.88` Light / `0.84` Dark). Column header row uses `bg-muted/60` (no nested `backdrop-blur`). |
+| [`FileRow.vue`](../../src/renderer/src/components/files/FileRow.vue) | Virtualized Row | **Zero `backdrop-filter`** | **Never** apply `backdrop-filter` to virtualized rows. Selected rows preserve active vs. inactive pane distinction (`bg-primary/14` + `shadow-[inset_2px_0_0_var(--ui-primary)]`), hover rows use `hover:bg-muted/50`, and size/date cells enforce `tabular-nums`. |
+| [`BottomDock.vue`](../../src/renderer/src/components/shell/BottomDock.vue) | Tier 1 + Tier 2B | `.ferry-glass-chrome` (tab bar) + `.ferry-glass-well` (panels) | Dock tab strip and collapsed right rail use `.ferry-glass-chrome`; `TransferQueue`, `ActivityPanel`, `LogTailViewer`, `MonitorPanel`, and `OpenEditsPanel` sit in `.ferry-glass-well`. Strip `backdrop-blur-xs` from virtualized log rows in `LogTailViewer.vue:959` (and `backdrop-blur-md` on line 1036) to eliminate per-row compositor layers. |
+| [`TerminalView.vue`](../../src/renderer/src/components/terminal/TerminalView.vue) | WebGL Canvas | 100% Opaque Default Scheme | Preserves `@xterm/addon-webgl` (`allowTransparency: false`) performance and all 9 terminal schemes in `terminalAppearance.ts`. When `glassUiEnabled` is `true`, the default `Ferry` scheme uses 100% opaque `#0b0f19` (Dark) / `#f8fafc` (Light) harmonized to the glass well, and `terminalStreams.applyAppearance()` is called on toggle. |
 | [`SettingsDialog.vue`](../../src/renderer/src/components/shell/SettingsDialog.vue) & All Modals/Popovers | Tier 3 Overlay | `.ferry-glass-overlay` | Teleported `[role="dialog"]` and `[data-reka-popper-content-wrapper]` surfaces automatically receive `blur(24px) saturate(180%)`, 1px specular border, and deep ambient shadow. |
 
 ---
@@ -79,9 +79,10 @@ When disconnected, `SessionManagerView.vue` is the hero showcase for Mikołaj Ga
    }
    ```
 2. **DOM Class & Windows 11 Native Titlebar Sync (`resolveCaptionColorRef` — Review Focus #2):**
-   - Update `resolveCaptionColorRef(theme: Theme, glassUiEnabled = false)` in `ui.store.ts` to read `--ferry-caption-bg` first when `glassUiEnabled` is `true` (falling back to `--ui-bg-muted`).
+   - **Startup Initialization Order (`App.vue`):** Always call `ui.initGlassUi()` and `ui.initAccentColor()` **before** `const initialThemeSync = ui.initTheme()` in `App.vue` so `html.ferry-glass` and `--ui-color-primary-500` are set on `document.documentElement` before `resolveCaptionColorRef()` samples `--ferry-caption-bg`.
+   - Update `resolveCaptionColorRef(theme: Theme)` in `ui.store.ts` to check `document.documentElement.classList.contains('ferry-glass')` and read `--ferry-caption-bg` first when active (falling back to `--ui-bg-muted`).
    - Because `--ferry-caption-bg` is defined using `color-mix(in srgb, var(--ui-color-primary-500) 6%, #f4f6fb)` (100% opaque, `alpha === 255`), the offscreen 1x1 `<canvas>` pixel check (`if (a !== 255) return fallback`) succeeds and passes the exact accent-tinted COLORREF to `INVOKE_CHANNELS.windowSyncTheme`.
-   - Call `void applyTheme(this.theme)` inside `setGlassUiEnabled(enabled)` and `setAccentColor(hex)` so toggling Glass UI or changing the accent color updates the Windows 11 native titlebar immediately.
+   - Call `void applyTheme(this.theme)` inside `setGlassUiEnabled(enabled)`, and inside `setAccentColor(hex)` **only when `this.glassUiEnabled` is `true` (debounced by 250ms)** so dragging the HSV `ColorPicker` in `SettingsDialog.vue` does not spawn `powershell.exe` on every 100ms throttle tick.
 
 ```ts
 function applyGlassUiClass(enabled: boolean): void {
@@ -175,6 +176,8 @@ sequenceDiagram
 
 ### Exact Notification Implementation (`src/renderer/src/App.vue`)
 
+Note: Uses `duration: 0` (matching `App.vue:250` and `useNotify.ts:34` for actionable prompts so the toast never auto-expires before the user sees it) and `'onUpdate:open'` (matching `@nuxt/ui` v4.9's `ToastRoot` event signature so clicking the close `X` button persists `ui.dismissGlassUiPromo()`):
+
 ```ts
 let promoToastShown = false
 
@@ -190,8 +193,8 @@ watch(
       description: 'Try Ferry’s new minimalist translucent design in Settings → Appearance.',
       icon: 'i-lucide-sparkles',
       color: 'primary',
-      duration: 12000,
-      onOpenChange: (open: boolean) => {
+      duration: 0,
+      'onUpdate:open': (open: boolean) => {
         if (!open) {
           ui.dismissGlassUiPromo()
         }

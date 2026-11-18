@@ -40,8 +40,8 @@ Rendering text over a `backdrop-filter: blur()` surface introduces subtle lumina
 3. **Mandatory Tabular Numerals (`tabular-nums`) for Dynamic & Columnar Data:**
    - `Plus Jakarta Sans` defaults to proportional numerals in running prose.
    - Every numeric column or live counter—file sizes (`FileRow.vue`), modified timestamps (`FileRow.vue`), transfer speeds/percentages (`TransferQueue.vue`), port numbers (`SessionManagerView.vue`), and CPU/RAM metrics (`MonitorPanel.vue`)—**must** apply `tabular-nums` (`font-variant-numeric: tabular-nums`) so digits align vertically and never jitter during live updates.
-4. **Subpixel Antialiasing & Font Feature Settings:**
-   - Enable `font-feature-settings: "cv01", "cv02"` on `Plus Jakarta Sans` for clean single-story lowercase `a`/disambiguated `I`/`l` legibility in filenames.
+4. **Subpixel Antialiasing & OpenType Stylistic Sets:**
+   - Enable `font-feature-settings: "ss01"` scoped strictly to `--font-sans` elements (never globally on `html.ferry-glass` where it would bleed into `JetBrains Mono`'s character variants) for clean single-story `a` and disambiguated `I`/`l` legibility in filenames.
 
 ---
 
@@ -87,7 +87,6 @@ Ferry's existing custom font-size tokens in [`src/renderer/src/assets/main.css`]
 html.ferry-glass {
   --font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', -apple-system, 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', 'JetBrains Mono Variable', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-  font-feature-settings: 'cv01', 'cv02';
 }
 
 /* Enforce tabular numerals on all file metadata, transfer counters, and monitor tables */
@@ -112,14 +111,14 @@ Ferry is an SSH/SFTP desktop tool frequently operated inside corporate VPNs, bas
 
 ### License Attribution (`scripts/generate-third-party-licenses.mjs`)
 Both **Plus Jakarta Sans** (designed by Tokotype) and **JetBrains Mono** (designed by JetBrains) are licensed under the **SIL Open Font License 1.1 (OFL-1.1)**.
-During Phase 2 implementation, [`scripts/generate-third-party-licenses.mjs`](../../scripts/generate-third-party-licenses.mjs) must append the OFL-1.1 copyright and license blocks for both bundled fonts into `THIRD_PARTY_LICENSES.txt` so the in-app **Settings → Privacy & Legal → Licenses** viewer remains 100% compliant.
+During Phase 2 implementation, [`scripts/generate-third-party-licenses.mjs`](../../scripts/generate-third-party-licenses.mjs) (including its font-disclaimer comment on line 130) must be updated to append the OFL-1.1 copyright and license blocks for both bundled fonts into `THIRD_PARTY_LICENSES.txt` so the in-app **Settings → Privacy & Legal → Licenses** viewer remains 100% compliant.
 
 ---
 
 ## 5. Terminal Appearance Integration (`terminalAppearance.ts`)
 
-Today, [`src/renderer/src/utils/terminalAppearance.ts`](../../src/renderer/src/utils/terminalAppearance.ts) includes a `'jetbrains'` font option (`'JetBrains Mono'`) that relies on `fontInstalled.ts` (`isFontInstalled('JetBrains Mono')`) to check whether the user has manually installed JetBrains Mono in Windows.
+Today, [`src/renderer/src/utils/terminalAppearance.ts`](../../src/renderer/src/utils/terminalAppearance.ts) includes a `'jetbrains-mono'` font option (`family: 'JetBrains Mono'`) that relies on `fontInstalled.ts` (`isFontInstalled('JetBrains Mono')` in `TerminalAppearanceSettings.vue:42`) to check whether the user has manually installed JetBrains Mono in Windows.
 
 By bundling `JetBrainsMono-Variable.woff2` in the renderer:
-1. Updating the `'jetbrains'` font stack in `terminalAppearance.ts` to `'JetBrains Mono Variable', 'JetBrains Mono', monospace` (and marking `'JetBrains Mono'` as always available alongside `'default'`/`'consolas'`) guarantees every user can select **JetBrains Mono** in **Settings → Terminal** without installing external system fonts.
+1. Updating the `'jetbrains-mono'` font stack in `terminalAppearance.ts` to `'JetBrains Mono Variable', 'JetBrains Mono', monospace` and treating `'jetbrains-mono'` as a bundled built-in font in `TerminalAppearanceSettings.vue` (bypassing `isFontInstalled`, which only detects OS-installed fonts on a synchronous 2D canvas) guarantees every user can select **JetBrains Mono** in **Settings → Terminal** without installing external system fonts.
 2. When `glassUiEnabled` is `true`, all monospace UI elements outside the terminal (`LogTailViewer`, `PathBreadcrumb` raw inputs, `ChmodDialog` octal codes, and `KnownHosts` SHA-256 fingerprints) automatically render in crisp `Cascadia Code` (Windows 11) or bundled `JetBrains Mono Variable` (Windows 10 fallback).
