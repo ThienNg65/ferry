@@ -446,4 +446,100 @@ describe('sessions.store quick connect and promotion', () => {
       exclude: ['*.log.????-??-??']
     })
   })
+
+  it('connectToSite opens a new tab instead of overwriting an already-connected activeTab', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    const mk = (id: string): Site => ({
+      id,
+      name: id,
+      host: `${id}.example.com`,
+      port: 22,
+      username: 'root',
+      authMethod: 'agent',
+      hasPassword: false,
+      hasPassphrase: false,
+      createdAt: '2026-11-17T00:00:00.000Z',
+      updatedAt: '2026-11-17T00:00:00.000Z'
+    })
+
+    await store.connectToSite(mk('site-1'))
+    const tab1 = store.activeTab.tabId
+    expect(store.activeTab.status).toBe('connected')
+
+    await store.connectToSite(mk('site-2'), { newTabIfBusy: true })
+    expect(store.tabs).toHaveLength(2)
+    expect(store.tabs[0].tabId).toBe(tab1)
+    expect(store.tabs[0].siteId).toBe('site-1')
+    expect(store.tabs[0].status).toBe('connected')
+    expect(store.activeTab.siteId).toBe('site-2')
+  })
+
+  it('cancelConnect restores fresh tab identity and disposes pre-warmed terminal stream', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    vi.mocked(api.invoke).mockImplementation((channel) =>
+      channel === INVOKE_CHANNELS.sessionOpen ? new Promise(() => {}) : Promise.resolve(undefined)
+    )
+
+    void store.connect({
+      name: 'Quick Connect',
+      host: 'slow.example.com',
+      port: 22,
+      username: 'alice',
+      authMethod: 'password',
+      password: 'pw'
+    })
+    const sid = store.activeTab.sessionId!
+    expect(store.activeTab.connecting).toBe(true)
+
+    await store.cancelConnect(store.activeTab.tabId)
+    expect(store.activeTab.connecting).toBe(false)
+    expect(store.activeTab.sessionId).toBeNull()
+    expect(store.activeTab.siteId).toBeNull()
+    expect(store.activeTab.label).toBeNull()
+    expect(store.activeTab.hostLabel).toBeNull()
+    expect(store.activeTab.quickConnectInput).toBeUndefined()
+    expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sid)
+  })
+
+  it('reconnectAll stops remaining tabs when cancelConnect is triggered mid-batch', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    const mk = (id: string): Site => ({
+      id,
+      name: id,
+      host: `${id}.example.com`,
+      port: 22,
+      username: 'root',
+      authMethod: 'agent',
+      hasPassword: false,
+      hasPassphrase: false,
+      createdAt: '2026-11-17T00:00:00.000Z',
+      updatedAt: '2026-11-17T00:00:00.000Z'
+    })
+    mockSites.sites = [mk('s1'), mk('s2')]
+    store.tabs[0].siteId = 's1'
+    store.openNewTab()
+    store.tabs[1].siteId = 's2'
+    store.setActiveTab(store.tabs[0].tabId)
+
+    let resolveFirst!: (v: { sessionId: string; status: string }) => void
+    vi.mocked(api.invoke).mockImplementation((channel) => {
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        return new Promise((resolve) => {
+          resolveFirst = resolve as typeof resolveFirst
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const batch = store.reconnectAll()
+    await store.cancelConnect(store.tabs[0].tabId)
+    resolveFirst({ sessionId: 'sess-1', status: 'connected' })
+    await batch
+
+    const opens = vi.mocked(api.invoke).mock.calls.filter(([c]) => c === INVOKE_CHANNELS.sessionOpen)
+    expect(opens).toHaveLength(1)
+  })
 })

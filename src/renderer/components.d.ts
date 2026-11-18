@@ -37,6 +37,7 @@ declare module 'vue' {
     LogTailViewer: typeof import('./src/components/logs/LogTailViewer.vue')['default']
     MonitorPanel: typeof import('./src/components/monitor/MonitorPanel.vue')['default']
     OpenEditsPanel: typeof import('./src/components/edits/OpenEditsPanel.vue')['default']
+    PasswordInput: typeof import('./src/components/shell/PasswordInput.vue')['default']
     PathBreadcrumb: typeof import('./src/components/files/PathBreadcrumb.vue')['default']
     ProcessTable: typeof import('./src/components/monitor/ProcessTable.vue')['default']
     SessionManagerView: typeof import('./src/components/sessions/SessionManagerView.vue')['default']

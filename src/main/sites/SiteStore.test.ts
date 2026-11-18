@@ -80,4 +80,57 @@ describe('exportSites', () => {
     expect(site.secretPassword).toBeUndefined()
     expect(site.hasPassword).toBe(true)
   })
+
+  it('preserves each jump hop encrypted secret across UI reorders using sourceIndex', () => {
+    const store = SiteStore.getInstance()
+    const created = store.create({
+      name: 'Jump Chain',
+      host: 'target.example.com',
+      port: 22,
+      username: 'app',
+      authMethod: 'agent',
+      jumpHosts: [
+        { host: 'hop0.example.com', port: 22, username: 'u0', authMethod: 'password', password: 'pw0' },
+        { host: 'hop1.example.com', port: 22, username: 'u1', authMethod: 'password', password: 'pw1' }
+      ]
+    })
+
+    // Swap hop 1 and hop 0 without re-entering passwords, passing sourceIndex
+    store.update(created.id, {
+      name: 'Jump Chain',
+      host: 'target.example.com',
+      port: 22,
+      username: 'app',
+      authMethod: 'agent',
+      jumpHosts: [
+        { host: 'hop1.example.com', port: 22, username: 'u1', authMethod: 'password', sourceIndex: 1 },
+        { host: 'hop0.example.com', port: 22, username: 'u0', authMethod: 'password', sourceIndex: 0 }
+      ]
+    })
+
+    const decrypted = store.getDecryptedJumpHosts(created.id)
+    expect(decrypted.map((h) => [h.host, h.password])).toEqual([
+      ['hop1.example.com', 'pw1'],
+      ['hop0.example.com', 'pw0']
+    ])
+
+    // Deleting hop 1 and adding a new hop at index 1 with sourceIndex: -1 must NOT inherit old pw1
+    store.update(created.id, {
+      name: 'Jump Chain',
+      host: 'target.example.com',
+      port: 22,
+      username: 'app',
+      authMethod: 'agent',
+      jumpHosts: [
+        { host: 'hop1.example.com', port: 22, username: 'u1', authMethod: 'password', sourceIndex: 0 },
+        { host: 'brand-new.example.com', port: 22, username: 'unew', authMethod: 'password', sourceIndex: -1 }
+      ]
+    })
+
+    const afterReplace = store.getDecryptedJumpHosts(created.id)
+    expect(afterReplace.map((h) => [h.host, h.password])).toEqual([
+      ['hop1.example.com', 'pw1'],
+      ['brand-new.example.com', undefined]
+    ])
+  })
 })

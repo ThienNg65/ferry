@@ -66,4 +66,15 @@ describe('SiteDetailsPanel', () => {
     expect(w.emitted('edit')).toHaveLength(1)
     expect(w.emitted('close')).toHaveLength(1)
   })
+
+  it('shows credential status and emits disconnect / duplicate / delete', async () => {
+    const w = mountPanel({ connected: true })
+    expect(w.text()).toContain('Not set')
+    await findBtn(w, 'Disconnect').trigger('click')
+    await w.get('[aria-label="Duplicate site"]').trigger('click')
+    await w.get('[aria-label="Delete site"]').trigger('click')
+    expect(w.emitted('disconnect')).toHaveLength(1)
+    expect(w.emitted('duplicate')).toHaveLength(1)
+    expect(w.emitted('delete')).toHaveLength(1)
+  })
 })

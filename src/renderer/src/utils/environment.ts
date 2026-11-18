@@ -7,6 +7,12 @@ export const ENVIRONMENT_OPTIONS: { label: string; value: SiteEnvironment | 'non
   { label: 'Development', value: 'dev' }
 ]
 
+export const ENVIRONMENT_LABEL: Record<SiteEnvironment, string> = {
+  prod: 'Production',
+  staging: 'Staging',
+  dev: 'Development'
+}
+
 export const ENVIRONMENT_TAB_BORDER: Record<SiteEnvironment, string> = {
   prod: 'border-error',
   staging: 'border-warning',

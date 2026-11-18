@@ -2,32 +2,47 @@
  * Generates an 11-step accent color ramp (Nuxt UI's shade scale) from a
  * single user-picked hex color.
  *
- * Holds hue and saturation constant (taken from the picked color) and varies
- * only lightness, following the exact lightness curve of this app's own
- * default "brand" palette (see main.css's `--color-brand-*` values) — so a
- * custom accent keeps the same visual weight/contrast progression across
- * shades regardless of which hue the user picks, rather than naively
- * lightness-interpolating from the picked hex in a way that could wash out
- * contrast at the extremes.
+ * Holds hue and saturation constant (taken from the picked color) and solves
+ * HSL lightness per shade step to hit fixed WCAG relative-luminance targets,
+ * so bright hues (such as green, yellow, or cyan) still guarantee >= 4.5:1
+ * contrast for `--ui-primary` (shade 600 on white, shade 400 on dark surfaces).
  */
 export type ShadeKey = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 950
 export type ShadeRamp = Record<ShadeKey, string>
 
 const SHADE_KEYS: ShadeKey[] = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]
 
-/** Lightness percent (0-100) per shade step, reverse-derived from this app's own default brand palette. */
-const SHADE_LIGHTNESS: Record<ShadeKey, number> = {
-  50: 98,
-  100: 93,
-  200: 87,
-  300: 78,
-  400: 67,
-  500: 52,
-  600: 44,
-  700: 36,
-  800: 30,
-  900: 26,
-  950: 18
+/** Target WCAG relative luminance (0–1) per shade step. */
+const SHADE_LUMINANCE: Record<ShadeKey, number> = {
+  50: 0.94,
+  100: 0.85,
+  200: 0.7,
+  300: 0.52,
+  400: 0.34,
+  500: 0.23,
+  600: 0.155,
+  700: 0.105,
+  800: 0.07,
+  900: 0.045,
+  950: 0.024
+}
+
+export function relativeLuminance(r: number, g: number, b: number): number {
+  const linearize = (channel: number): number => {
+    const s = channel / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+}
+
+export function contrastRatio(hexA: string, hexB: string): number {
+  const [ra, ga, ba] = hexToRgb(hexA)
+  const [rb, gb, bb] = hexToRgb(hexB)
+  const la = relativeLuminance(ra, ga, ba)
+  const lb = relativeLuminance(rb, gb, bb)
+  const lighter = Math.max(la, lb)
+  const darker = Math.min(la, lb)
+  return (lighter + 0.05) / (darker + 0.05)
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -92,12 +107,28 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [r * 255, g * 255, b * 255]
 }
 
+function findLightnessForLuminance(h: number, s: number, targetLum: number): number {
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2
+    const [r, g, b] = hslToRgb(h, s, mid)
+    if (relativeLuminance(r, g, b) < targetLum) {
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+  return (lo + hi) / 2
+}
+
 export function generateShadeRamp(baseHex: string): ShadeRamp {
   const [r, g, b] = hexToRgb(baseHex)
   const { h, s } = rgbToHueSaturation(r, g, b)
   const ramp = {} as ShadeRamp
   for (const shade of SHADE_KEYS) {
-    const [rr, gg, bb] = hslToRgb(h, s, SHADE_LIGHTNESS[shade] / 100)
+    const l = findLightnessForLuminance(h, s, SHADE_LUMINANCE[shade])
+    const [rr, gg, bb] = hslToRgb(h, s, l)
     ramp[shade] = rgbToHex(rr, gg, bb)
   }
   return ramp

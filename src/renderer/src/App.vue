@@ -23,6 +23,7 @@ import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
+import ConnectionModals from './components/sessions/ConnectionModals.vue'
 
 const SessionManagerView = defineAsyncComponent(() => import('./components/sessions/SessionManagerView.vue'))
 const SettingsDialog = defineAsyncComponent(() => import('./components/shell/SettingsDialog.vue'))
@@ -194,6 +195,9 @@ function onTabShortcut(event: KeyboardEvent): void {
     const step = event.shiftKey ? -1 : 1
     sessions.setActiveTab(tabs[(index + step + tabs.length) % tabs.length].tabId)
   } else if (event.key.toLowerCase() === 'w' && !event.shiftKey && !inTerminal) {
+    if (document.querySelector('[role="dialog"]')) {
+      return
+    }
     event.preventDefault()
     void sessions.closeTab(sessions.activeTabId)
   }
@@ -259,7 +263,7 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
   >
     <div class="flex h-screen flex-col bg-default text-default">
       <SiteTabBar />
-      <div class="relative min-h-0 flex-1">
+      <main class="relative min-h-0 flex-1">
         <!--
           The connected view is hoisted out of the Transition/v-if instead of toggling with
           v-if/v-else — BottomDock renders TerminalView, which owns long-lived xterm.js
@@ -268,8 +272,8 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           instance, which xterm.js does not support (see PROJECT_MAP.md Gotcha #9). v-show only
           toggles CSS display, so the subtree — and its terminal containers — never unmounts.
         -->
-        <Transition name="fade" mode="out-in">
-          <SessionManagerView v-if="!isConnected" key="picker" />
+        <Transition name="fade">
+          <SessionManagerView v-if="!isConnected" key="picker" class="absolute inset-0 z-10" />
         </Transition>
         <div
           v-if="hasConnectedOnce"
@@ -312,12 +316,13 @@ onEvent<UpdateDownloadedEvent>(EVENT_CHANNELS.updateDownloaded, (evt) => {
           </div>
           <BottomDock />
         </div>
-      </div>
+      </main>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
     <ShortcutsDialog v-model:open="shortcutsDialog.isOpen.value" />
     <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
+    <ConnectionModals />
   </UApp>
 </template>

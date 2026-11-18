@@ -96,4 +96,16 @@ describe('SiteRow', () => {
   it('shows a Connecting… badge', () => {
     expect(mountRow({ connecting: true }).text()).toContain('Connecting…')
   })
+
+  it('exposes checkbox role in selectMode, sr-only environment label, and emits delete on Delete key', async () => {
+    const wSelect = mountRow({ selectMode: true, checked: true })
+    const btnSelect = wSelect.get('[data-site-row]')
+    expect(btnSelect.attributes('role')).toBe('checkbox')
+    expect(btnSelect.attributes('aria-checked')).toBe('true')
+
+    const wEnv = mountRow({ site: { ...site, environment: 'prod' } })
+    expect(wEnv.text()).toContain('Production')
+    await wEnv.get('[data-site-row]').trigger('keydown', { key: 'Delete' })
+    expect(wEnv.emitted('delete')).toHaveLength(1)
+  })
 })

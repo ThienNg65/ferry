@@ -82,7 +82,7 @@ async function onContinue(): Promise<void> {
     <template #body>
       <div class="flex flex-col gap-3">
         <div
-          class="flex gap-1 border-b border-muted pb-2"
+          class="flex gap-1 overflow-x-auto border-b border-muted pb-2"
           role="tablist"
           aria-label="Legal documents"
           @keydown="onTablistKeydown($event, true)"
@@ -96,7 +96,7 @@ async function onContinue(): Promise<void> {
             :aria-selected="activeDoc === tab.id"
             :aria-controls="`legal-panel-${tab.id}`"
             :tabindex="activeDoc === tab.id ? 0 : -1"
-            class="rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+            class="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
             :class="activeDoc === tab.id ? 'bg-primary/10 text-primary' : 'text-muted hover:bg-muted'"
             @click="activeDoc = tab.id"
           >
