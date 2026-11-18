@@ -28,6 +28,30 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [0.31.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.30.1...ferry-v0.31.0) (2026-11-18)
+
+
+### Features
+
+* Fix/log window readiness & new ui ([1d23d74](https://github.com/ThienNg65/ferry/commit/1d23d745815d9631e3abe7635d53aa28d1c9bf60))
+* **ui:** implement Modern Glass UI redesign and enhance dock/pane bars ([22ddbe1](https://github.com/ThienNg65/ferry/commit/22ddbe1e1c831af605cdfba566813ab479de69c5))
+
+
+### Bug Fixes
+
+* **tail:** harden log window readiness, lifecycle, and dock UI ([8f26eb3](https://github.com/ThienNg65/ferry/commit/8f26eb36cf17ef26c59f848ad318c91e254d16d5))
+
+
+### Documentation
+
+* add session handoff for Phase 2 glassmorphism UI implementation planning ([340f940](https://github.com/ThienNg65/ferry/commit/340f94045ae8432d2d7ff4b5b63741b30e1bc619))
+* **design:** add component patterns, feature switch, and discovery toast spec ([6764f25](https://github.com/ThienNg65/ferry/commit/6764f2532735c09f4c69eb49a6bc2fca8359f8e3))
+* **design:** add glassmorphism CSS tokens and Light/Dark recipes ([7277491](https://github.com/ThienNg65/ferry/commit/727749130e86417a02b57dca37a8b78776d4704f))
+* **design:** add modern typography system spec with Plus Jakarta Sans and JetBrains Mono ([bf42bb4](https://github.com/ThienNg65/ferry/commit/bf42bb4c15efe7085a0b00d62e182d88cf482c9f))
+* **design:** add root DESIGN.md agent entrypoint and design system index ([2f31340](https://github.com/ThienNg65/ferry/commit/2f31340900e82c4151d4110fe4f2bd08cae5f7a8))
+* **design:** add visual direction and Gałęziowski glassmorphism study ([ba3d6ac](https://github.com/ThienNg65/ferry/commit/ba3d6ac280cc5b2aa823d6bdcba724a5c327acbb))
+* **design:** resolve final review findings across styling, typography, and component patterns ([b041144](https://github.com/ThienNg65/ferry/commit/b0411449a1aed9b7b2d4f839db3d5ec797e41ed3))
+
 ## [0.30.1](https://github.com/ThienNg65/ferry/compare/ferry-v0.30.0...ferry-v0.30.1) (2026-11-18)
 
 
