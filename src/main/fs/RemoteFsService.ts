@@ -235,10 +235,14 @@ export async function downloadForEdit(
   })
 }
 
-export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number } | null> {
+export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number | null } | null> {
   try {
     const stats = await SessionManager.getInstance().shell(sessionId).stat(remotePath)
-    return { mtime: stats.mtime ?? 0, size: stats.size ?? 0, mode: stats.mode & 0o7777 }
+    return {
+      mtime: stats.mtime ?? 0,
+      size: stats.size ?? 0,
+      mode: typeof stats.mode === 'number' ? stats.mode & 0o7777 : null
+    }
   } catch {
     return null
   }
@@ -304,8 +308,8 @@ export async function commitRemoteFile(shell: RemoteShell, tempPath: string, tar
   const sftp = await shell.sftp()
   const resolved = await resolveRemotePath(sftp, target)
   const existing = await shell.stat(resolved).then((s) => s, () => null)
-  const existingMode = existing ? (existing.mode & 0o7777) : 0
-  if (existingMode > 0) {
+  if (existing && typeof existing.mode === 'number') {
+    const existingMode = existing.mode & 0o7777
     await shell.chmod(tempPath, existingMode.toString(8).padStart(4, '0')).catch(() => undefined)
   }
   if (!(await posixRename(sftp, tempPath, resolved))) {
@@ -360,8 +364,8 @@ export async function uploadForEditSudo(sessionId: string, localPath: string, re
   const temp = shellEscape(`${remotePath}.ferry-tmp-${randomBytes(4).toString('hex')}`)
   try {
     await sudoExec(shell, `tee -- ${temp} > /dev/null`, data, 'umask 077; ')
-    await sudoExec(shell, `chmod --reference=${target} -- ${temp}`).catch(() => undefined)
-    await sudoExec(shell, `chown --reference=${target} -- ${temp}`).catch(() => undefined)
+    await sudoExec(shell, `chmod --reference=${target} -- ${temp}`)
+    await sudoExec(shell, `chown --reference=${target} -- ${temp}`)
     await sudoExec(shell, `mv -f -- ${temp} ${target}`)
   } catch (e) {
     await sudoExec(shell, `rm -f -- ${temp}`).catch(() => undefined)
@@ -385,7 +389,7 @@ export async function uploadForEdit(sessionId: string, localPath: string, remote
       }
       throw e
     }
-    if (existing && existing.mode > 0) {
+    if (existing && existing.mode !== null) {
       await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0')).catch(() => undefined)
     }
     if (!(await posixRename(sftp, tempPath, target))) {

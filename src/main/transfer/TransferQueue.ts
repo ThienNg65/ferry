@@ -522,10 +522,15 @@ export class TransferQueue {
       const pendingFiles: Array<{ file: (typeof files)[number]; index: number }> = []
       for (let i = 0; i < files.length; i++) {
         const f = files[i]
-        if (job.resume && completedSet.has(f.relPath)) {
+        const stamp = `${f.size}:${f.mtimeMs ?? ''}`
+        const prevStamp = job.sourceStamps.get(f.relPath)
+        if (job.resume && completedSet.has(f.relPath) && prevStamp === stamp) {
           doneBytes += f.size
           filesDone += 1
         } else {
+          if (prevStamp !== undefined && prevStamp !== stamp) {
+            completedSet.delete(f.relPath)
+          }
           pendingFiles.push({ file: f, index: i })
         }
       }
