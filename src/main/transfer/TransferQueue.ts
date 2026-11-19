@@ -61,6 +61,8 @@ const PROGRESS_THROTTLE_MS = 200
 const PART_SUFFIX = '.part'
 const MAX_RETRYABLE = 200
 const PAUSE_REASON = 'pause'
+/** Maximum virtual bandwidth credit to absorb timer scheduling jitter without unbounded catch-up bursts. */
+const MAX_BANDWIDTH_CATCH_UP_MS = 20
 
 /**
  * Global FIFO bandwidth scheduler. Only granted work consumes virtual bandwidth.
@@ -96,6 +98,10 @@ export class RateLimiter {
     if (!this.limitBytesPerSec) {
       return Promise.resolve()
     }
+    // Start a new burst at wall time after an actual idle period; do not bank unlimited bandwidth.
+    if (this.pending.length === 0 && this.nextAvailableAt < Date.now() - MAX_BANDWIDTH_CATCH_UP_MS) {
+      this.nextAvailableAt = Date.now()
+    }
     return new Promise<void>((resolve, reject) => {
       const entry = {
         bytes,
@@ -122,6 +128,9 @@ export class RateLimiter {
       clearTimeout(this.timer)
       this.timer = null
     }
+    // Clamp once per scheduling pass, not once per grant. Preserving fractional
+    // deadlines within the loop avoids losing sub-ms credit after late timers.
+    this.nextAvailableAt = Math.max(this.nextAvailableAt, Date.now() - MAX_BANDWIDTH_CATCH_UP_MS)
     while (this.pending.length > 0) {
       const limit = this.limitBytesPerSec
       const now = Date.now()
@@ -136,7 +145,7 @@ export class RateLimiter {
       const entry = this.pending.shift()!
       entry.signal?.removeEventListener('abort', entry.onAbort)
       if (limit) {
-        this.nextAvailableAt = Math.max(now, this.nextAvailableAt) + (entry.bytes / limit) * 1000
+        this.nextAvailableAt += (entry.bytes / limit) * 1000
       }
       entry.resolve()
     }
