@@ -14,7 +14,9 @@ export function registerTransferHandlers(): void {
     const queue = TransferQueue.getInstance()
     const transferId = request.isDir
       ? queue.enqueueTree(sessionId, kind, localPath, remotePath)
-      : queue.enqueue(sessionId, kind, localPath, remotePath)
+      : request.createParents === true
+        ? queue.enqueue(sessionId, kind, localPath, remotePath, true)
+        : queue.enqueue(sessionId, kind, localPath, remotePath)
     return { transferId }
   })
 

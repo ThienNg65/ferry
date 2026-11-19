@@ -22,6 +22,7 @@ interface LocalFsState {
   entries: FileEntry[]
   loading: boolean
   error: string | null
+  failedPath: string | null
   selected: Set<string>
   selectAnchor: string | null
   sortColumn: SortColumn
@@ -36,6 +37,7 @@ export const useLocalFsStore = defineStore('localFs', {
     entries: [],
     loading: false,
     error: null,
+    failedPath: null,
     selected: new Set(),
     selectAnchor: null,
     sortColumn: 'name',
@@ -54,9 +56,11 @@ export const useLocalFsStore = defineStore('localFs', {
       const seq = ++this.requestSeq
       this.loading = true
       this.error = null
+      this.failedPath = null
+      const from = this.currentPath
+      const target = dirPath ?? from
       try {
-        const from = this.currentPath
-        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, dirPath ?? this.currentPath)
+        const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, target)
         if (seq !== this.requestSeq) {
           return false
         }
@@ -72,6 +76,7 @@ export const useLocalFsStore = defineStore('localFs', {
         if (seq !== this.requestSeq) {
           return false
         }
+        this.failedPath = target
         this.error = e instanceof Error ? e.message : String(e)
         return false
       } finally {
@@ -79,6 +84,10 @@ export const useLocalFsStore = defineStore('localFs', {
           this.loading = false
         }
       }
+    },
+
+    async retryDirectory(): Promise<void> {
+      await this.load(this.failedPath ?? this.currentPath)
     },
 
     /** Silently refreshes the current local directory if it matches `targetDir`, preserving selection and scroll. */
@@ -193,14 +202,14 @@ export const useLocalFsStore = defineStore('localFs', {
     },
 
     /** Renames `entry` in place, within its current parent directory. */
-    async rename(entry: FileEntry, newName: string): Promise<void> {
+    async rename(entry: FileEntry, newName: string, replace: boolean): Promise<void> {
       const parent = entry.path.slice(0, entry.path.length - entry.name.length)
       const newPath = `${parent}${newName}`
-      await invoke<void>(INVOKE_CHANNELS.fsLocalRename, entry.path, newPath)
+      await invoke<void>(INVOKE_CHANNELS.fsLocalRename, entry.path, newPath, replace)
       const target = this.entries.find((e) => e.path === entry.path)
       if (target) {
-        target.name = newName
-        target.path = newPath
+        this.entries = this.entries.filter((e) => e.path !== newPath && e.path !== entry.path)
+        this.entries.push({ ...target, name: newName, path: newPath })
         if (this.selected.has(entry.path)) {
           this.selected.delete(entry.path)
           this.selected.add(newPath)
@@ -247,6 +256,7 @@ export const useLocalFsStore = defineStore('localFs', {
 
     setError(message: string | null): void {
       this.error = message
+      this.failedPath = null
     }
   }
 })

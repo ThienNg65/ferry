@@ -175,13 +175,11 @@ function cancelRename(): void {
 }
 
 function submitRename(): void {
-  const name = draftName.value.trim()
-  if (name && name !== props.entry.name) {
-    emit('rename', props.entry, name)
-  } else {
-    emit('cancel-rename')
+  if (draftName.value === props.entry.name) {
+    onRenameEscape()
+    return
   }
-  focusPane()
+  emit('rename', props.entry, draftName.value)
 }
 
 const isArchiveFile = computed(() => isArchive(props.entry.name))
@@ -282,12 +280,12 @@ function onMouseLeave(): void {
       size="xs"
       class="min-w-24 flex-1"
       autofocus
+      :aria-label="`Rename ${entry.name}`"
       @click.stop
       @dblclick.stop
       @keydown.stop
       @keyup.enter="submitRename"
       @keyup.esc="onRenameEscape"
-      @blur="cancelRename"
     />
     <div v-else class="flex min-w-24 flex-1 items-center gap-1.5 overflow-hidden">
       <span

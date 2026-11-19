@@ -2,9 +2,13 @@ import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import type { SFTPWrapper } from 'ssh2'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { transferPipelined } from './sftpPipeline'
-import { RateLimiter } from './TransferQueue'
+import { RateLimiter, TransferQueue } from './TransferQueue'
+import { SessionManager } from '../ssh/SessionManager'
+import type { RemoteShell } from '../ssh/RemoteShell'
+import { testHost } from '../host/testHost.setup'
+import { EVENT_CHANNELS, type TransferEvent } from '../../shared/contract'
 
 interface FakeSftpOptions {
   maxWriteLen?: number
@@ -41,7 +45,11 @@ function createFakeSftp(opts: FakeSftpOptions = {}) {
             cb(new Error(`ENOENT: ${remotePath}`))
             return
           }
-        } else if (flags === 'w') {
+        } else if (flags === 'w' || flags === 'wx') {
+          if (flags === 'wx' && files.has(remotePath)) {
+            cb(new Error(`EEXIST: ${remotePath}`))
+            return
+          }
           files.set(remotePath, Buffer.alloc(0))
         }
         const id = nextHandleId++
@@ -133,6 +141,7 @@ describe('sftpPipeline.transferPipelined', () => {
   })
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -256,6 +265,74 @@ describe('sftpPipeline.transferPipelined', () => {
     setTimeout(() => controller.abort(), 15)
     await expect(p).rejects.toMatchObject({ code: 'CANCELLED' })
     expect(fake.getStats().openHandlesLeft).toBe(0)
+  })
+
+  it('refuses a staging-name collision without claiming or overwriting the file', async () => {
+    const data = Buffer.from('source')
+    const destination = path.join(tmpDir, 'existing.part')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/source', data)
+    await fs.writeFile(destination, 'user-owned')
+    const onDestinationCreated = vi.fn()
+
+    await expect(transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: destination,
+      remotePath: '/remote/source',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: vi.fn(),
+      onDestinationCreated
+    })).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(onDestinationCreated).not.toHaveBeenCalled()
+    expect(await fs.readFile(destination, 'utf8')).toBe('user-owned')
+  })
+
+  it('keeps same-target jobs isolated through pause, cancellation and resume', async () => {
+    const fake = createFakeSftp()
+    const firstData = Buffer.alloc(512 * 1024, '1')
+    const secondData = Buffer.alloc(512 * 1024, '2')
+    fake.files.set('/remote/first', firstData)
+    fake.files.set('/remote/second', secondData)
+    vi.spyOn(SessionManager.getInstance(), 'shell').mockReturnValue({
+      sftp: async () => fake.sftp,
+      stat: async (target: string) => ({ size: fake.files.get(target)!.length, mtime: 1 })
+    } as unknown as RemoteShell)
+    const events = vi.spyOn(testHost, 'broadcast')
+    const state = (id: string, wanted: TransferEvent['state']): boolean => events.mock.calls.some(
+      ([channel, event]) => channel === EVENT_CHANNELS.transferEvent
+        && (event as TransferEvent).transferId === id && (event as TransferEvent).state === wanted
+    )
+    const stagingFiles = async (): Promise<string[]> => (await fs.readdir(tmpDir))
+      .filter((name) => name.startsWith('.ferry-transfer-'))
+
+    const queue = new TransferQueue()
+    const destination = path.join(tmpDir, 'report.txt')
+    await fs.writeFile(`${destination}.part`, 'user-owned')
+    queue.setBandwidthLimitKBps(256)
+    const first = queue.enqueue('session', 'download', destination, '/remote/first')
+    const second = queue.enqueue('session', 'download', destination, '/remote/second')
+    try {
+      await vi.waitFor(async () => expect(await stagingFiles()).toHaveLength(2))
+      queue.pause(first)
+      queue.pause(second)
+      await vi.waitFor(() => expect(state(first, 'paused') && state(second, 'paused')).toBe(true))
+      queue.cancel(first)
+      await vi.waitFor(async () => expect(await stagingFiles()).toHaveLength(1))
+      queue.setBandwidthLimitKBps(null)
+      queue.retry(second)
+      await vi.waitFor(() => expect(state(second, 'done')).toBe(true))
+      expect(await fs.readFile(destination)).toEqual(secondData)
+      expect(await fs.readFile(`${destination}.part`, 'utf8')).toBe('user-owned')
+      expect(await stagingFiles()).toEqual([])
+    } finally {
+      queue.cancel(first)
+      queue.cancel(second)
+      queue.setBandwidthLimitKBps(null)
+    }
   })
 
   it('does not hang indefinitely on abort when sftp.close never responds', async () => {

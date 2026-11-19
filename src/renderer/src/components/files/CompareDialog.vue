@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
+import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { CompareRow, CompareStatus } from '@shared/contract'
-import { invoke } from '../../api'
-import { useTransferQueueStore } from '../../stores/transferQueue.store'
+import type { CompareRequest, CompareRow, CompareStatus, FileListResult } from '@shared/contract'
+import { invoke, IpcError } from '../../api'
+import { useTransferIntents } from '../../composables/useTransferIntents'
+import { useSessionsStore } from '../../stores/sessions.store'
+import type { ConflictChoice } from '../../utils/resolveConflicts'
+import TransferConflictDialog from './TransferConflictDialog.vue'
 import { useNotify } from '../../composables/useNotify'
 import { formatBytes } from '../../utils/format'
 
@@ -16,14 +20,19 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
-const transfers = useTransferQueueStore()
+const sessions = useSessionsStore()
+const { buildTransferIntent, checkAndQueueTransfers, transferConflict, dismissTransferConflict, resolveTransferConflict } =
+  useTransferIntents()
 const notify = useNotify()
 
 const localPath = ref('')
 const remotePath = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
-const rows = ref<CompareRow[] | null>(null)
+const result = shallowRef<{ request: CompareRequest; rows: CompareRow[] } | null>(null)
+const rows = computed(() => result.value?.rows ?? null)
+const checkingDestination = ref(false)
+let generation = 0
 const showSame = ref(false)
 
 const STATUS_LABELS: Record<CompareStatus, string> = {
@@ -44,18 +53,27 @@ const STATUS_COLORS: Record<CompareStatus, 'neutral' | 'primary' | 'warning' | '
   sizeDiff: 'warning'
 }
 
+function invalidate(): void {
+  generation++
+  result.value = null
+  loading.value = false
+  checkingDestination.value = false
+  error.value = null
+  dismissTransferConflict()
+}
+
+watch([localPath, remotePath, () => props.sessionId, () => sessions.status], invalidate, { flush: 'sync' })
 watch(
   () => props.open,
   (isOpen) => {
+    invalidate()
     if (isOpen) {
       localPath.value = props.initialLocalPath
       remotePath.value = props.initialRemotePath
-      rows.value = null
-      error.value = null
       void compare()
     }
   },
-  { immediate: true }
+  { immediate: true, flush: 'sync' }
 )
 
 const visibleRows = computed(() => (rows.value ?? []).filter((r) => showSame.value || r.status !== 'same'))
@@ -69,32 +87,72 @@ function join(root: string, relPath: string, sep: string): string {
 }
 
 async function compare(): Promise<void> {
-  if (!props.sessionId) {
-    return
-  }
+  invalidate()
+  if (!props.sessionId || !localPath.value.trim() || !remotePath.value.trim()) return
+  const version = generation
+  const request = { sessionId: props.sessionId, localPath: localPath.value, remotePath: remotePath.value }
   loading.value = true
-  error.value = null
   try {
-    rows.value = await invoke<CompareRow[]>(INVOKE_CHANNELS.syncCompare, {
-      sessionId: props.sessionId,
-      localPath: localPath.value,
-      remotePath: remotePath.value
-    })
+    const scanned = await invoke<CompareRow[]>(INVOKE_CHANNELS.syncCompare, request)
+    if (version === generation) result.value = { request, rows: scanned }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (version === generation) error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (version === generation) loading.value = false
   }
 }
 
 async function copy(row: CompareRow, kind: 'upload' | 'download'): Promise<void> {
-  if (!props.sessionId) {
+  const scan = result.value
+  if (!scan?.rows.includes(row) || checkingDestination.value || transferConflict.value) return
+  const { request } = scan
+  const { sessionId } = request
+  const sep = request.localPath.includes('\\') ? '\\' : '/'
+  const segments = row.relPath.split('/')
+  const name = segments.pop()!
+  if (!name || [...segments, name].some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+    notify.error('Could not queue transfer', 'The scan returned an invalid relative path.')
     return
   }
-  const sep = localPath.value.includes('\\') ? '\\' : '/'
+  const relativeParent = segments.join('/')
+  const localParent = relativeParent ? join(request.localPath, relativeParent, sep) : request.localPath
+  const remoteParent = relativeParent ? join(request.remotePath, relativeParent, '/') : request.remotePath
+  const upload = kind === 'upload'
+  const intent = buildTransferIntent(upload ? 'local' : 'remote', {
+    name,
+    path: upload ? join(localParent, name, sep) : join(remoteParent, name, '/'),
+    isDir: false,
+    size: upload ? row.localSize : row.remoteSize,
+    modifiedAt: (upload ? row.localMtimeMs : row.remoteMtimeMs) === undefined
+      ? null
+      : new Date((upload ? row.localMtimeMs : row.remoteMtimeMs)!).toISOString()
+  }, sessionId, upload ? remoteParent : localParent)
+  if (!intent) return
+
+  checkingDestination.value = true
   try {
-    await transfers.enqueue(props.sessionId, kind, join(localPath.value, row.relPath, sep), join(remotePath.value, row.relPath, '/'))
-    notify.success(kind === 'upload' ? 'Upload queued' : 'Download queued', row.relPath)
+    let entries: FileListResult['entries'] = []
+    try {
+      const listing = upload
+        ? await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, remoteParent, true)
+        : await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, localParent)
+      entries = listing.entries
+    } catch (e) {
+      if (!(e instanceof IpcError && e.code === 'NOT_FOUND')) throw e
+    }
+    if (result.value !== scan || !props.open || props.sessionId !== sessionId) return
+    await checkAndQueueTransfers([{ ...intent, createParents: true }], { entries })
+  } catch (e) {
+    if (result.value === scan) notify.error('Could not queue transfer', e instanceof Error ? e.message : String(e))
+  } finally {
+    if (result.value === scan) checkingDestination.value = false
+  }
+}
+
+async function resolveConflict(choice: ConflictChoice): Promise<void> {
+  if (!result.value || !props.open || props.sessionId !== result.value.request.sessionId) return
+  try {
+    await resolveTransferConflict(choice)
   } catch (e) {
     notify.error('Could not queue transfer', e instanceof Error ? e.message : String(e))
   }
@@ -149,10 +207,10 @@ function sizeText(size?: number): string {
                 </td>
                 <td class="px-2 py-1 text-right">
                   <UTooltip v-if="row.localSize !== undefined" text="Copy local to remote">
-                    <UButton icon="i-lucide-arrow-right" size="xs" color="neutral" variant="ghost" aria-label="Copy local to remote" @click="copy(row, 'upload')" />
+                    <UButton icon="i-lucide-arrow-right" size="xs" color="neutral" variant="ghost" aria-label="Copy local to remote" :disabled="checkingDestination" @click="copy(row, 'upload')" />
                   </UTooltip>
                   <UTooltip v-if="row.remoteSize !== undefined" text="Copy remote to local">
-                    <UButton icon="i-lucide-arrow-left" size="xs" color="neutral" variant="ghost" aria-label="Copy remote to local" @click="copy(row, 'download')" />
+                    <UButton icon="i-lucide-arrow-left" size="xs" color="neutral" variant="ghost" aria-label="Copy remote to local" :disabled="checkingDestination" @click="copy(row, 'download')" />
                   </UTooltip>
                 </td>
               </tr>
@@ -168,4 +226,9 @@ function sizeText(size?: number): string {
       <UButton color="neutral" variant="outline" @click="emit('update:open', false)">Close</UButton>
     </template>
   </UModal>
+  <TransferConflictDialog
+    :conflicts="transferConflict?.conflicts ?? []"
+    @dismiss="dismissTransferConflict"
+    @resolve="resolveConflict"
+  />
 </template>

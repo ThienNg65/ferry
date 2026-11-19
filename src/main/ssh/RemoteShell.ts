@@ -635,11 +635,12 @@ export class RemoteShell {
     }
   }
 
-  /** Recursively walks a remote directory over SFTP, depth-first, parent directories before their children. */
+  /** Walks parents before children over SFTP. When requested, includes symlinks as leaves. */
   async readdirRecursive(
-    remotePath: string
-  ): Promise<{ relPath: string; isDir: boolean; size: number; mtimeMs?: number }[]> {
-    const results: { relPath: string; isDir: boolean; size: number; mtimeMs?: number }[] = []
+    remotePath: string,
+    includeSymlinks = false
+  ): Promise<{ relPath: string; isDir: boolean; isSymlink?: true; size: number; mtimeMs?: number }[]> {
+    const results: { relPath: string; isDir: boolean; isSymlink?: true; size: number; mtimeMs?: number }[] = []
 
     const walk = async (currentPath: string, relBase: string): Promise<void> => {
       const entries = await this.readdir(currentPath)
@@ -656,10 +657,11 @@ export class RemoteShell {
             `Refusing to process unsafe remote entry name "${entry.filename}" under "${currentPath}"`
           )
         }
+        const relPath = relBase ? `${relBase}/${entry.filename}` : entry.filename
         if (entry.isSymlink) {
+          if (includeSymlinks) results.push({ relPath, isDir: false, isSymlink: true, size: 0 })
           continue
         }
-        const relPath = relBase ? `${relBase}/${entry.filename}` : entry.filename
         const childPath = `${currentPath.replace(/\/$/, '')}/${entry.filename}`
         if (entry.isDirectory) {
           results.push({ relPath, isDir: true, size: 0 })

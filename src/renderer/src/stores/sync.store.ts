@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { SyncOptions, SyncPlan, SyncRunResult } from '@shared/contract'
+import type { SyncOptions, SyncPlan, SyncRunRequest, SyncRunResult } from '@shared/contract'
 import { invoke } from '../api'
 
 export const useSyncStore = defineStore('sync', {
@@ -9,8 +9,8 @@ export const useSyncStore = defineStore('sync', {
       return invoke<SyncPlan>(INVOKE_CHANNELS.syncPreview, options)
     },
 
-    async run(options: SyncOptions): Promise<SyncRunResult> {
-      return invoke<SyncRunResult>(INVOKE_CHANNELS.syncRun, options)
+    async run(request: SyncRunRequest): Promise<SyncRunResult> {
+      return invoke<SyncRunResult>(INVOKE_CHANNELS.syncRun, request)
     }
   }
 })

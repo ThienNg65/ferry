@@ -150,7 +150,8 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       kind: TransferKind,
       localPath: string,
       remotePath: string,
-      isDir = false
+      isDir = false,
+      createParents?: boolean
     ): Promise<void> {
       this.ensureSubscription()
       const result = await invoke<TransferEnqueueResult>(INVOKE_CHANNELS.transferEnqueue, {
@@ -158,7 +159,8 @@ export const useTransferQueueStore = defineStore('transferQueue', {
         kind,
         localPath,
         remotePath,
-        isDir
+        isDir,
+        ...(createParents ? { createParents } : {})
       })
       // Main-side push()/run() can broadcast 'queued'/'started' transfer
       // events synchronously before this invoke() resolves. Only seed the

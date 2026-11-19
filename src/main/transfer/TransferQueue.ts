@@ -21,12 +21,13 @@ export interface TransferJob {
   controller: AbortController
   /** True when this job moves a whole directory tree rather than a single file. */
   isTree: boolean
+  createParents?: boolean
   /** Epoch ms when queued — close enough to "started" for History's purposes; queueing delay is usually negligible. */
   queuedAt: number
   resume?: boolean
   sourceStamp?: string
-  /** Contiguous verified byte offsets per destination path, preventing sparse gaps on pipelined pause/resume. */
-  contigOffsets?: Map<string, number>
+  /** Exclusively created temporary files and their contiguous verified byte offsets. */
+  staging?: Map<string, { path: string; offset: number }>
   /** Completed relative paths for resumable directory-tree transfers. */
   completedFiles?: Set<string>
   /** Per-file source stamps (`size:mtime`) for validating `.part` resume in tree transfers. */
@@ -62,7 +63,6 @@ const MAX_CONCURRENT = 3
 const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
-const PART_SUFFIX = '.part'
 const MAX_RETRYABLE = 200
 const PAUSE_REASON = 'pause'
 /** Maximum virtual bandwidth credit to absorb timer scheduling jitter without unbounded catch-up bursts. */
@@ -202,8 +202,8 @@ export class TransferQueue {
   }
 
   /** Queues a single-file transfer and returns its id immediately; work happens in the background. */
-  enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string): string {
-    return this.push(sessionId, kind, localPath, remotePath, false)
+  enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, createParents?: boolean): string {
+    return this.push(sessionId, kind, localPath, remotePath, false, createParents)
   }
 
   /**
@@ -215,7 +215,7 @@ export class TransferQueue {
     return this.push(sessionId, kind, localPath, remotePath, true)
   }
 
-  private push(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, isTree: boolean): string {
+  private push(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, isTree: boolean, createParents?: boolean): string {
     const transferId = randomUUID()
     const job: TransferJob = {
       transferId,
@@ -225,6 +225,7 @@ export class TransferQueue {
       remotePath,
       controller: new AbortController(),
       isTree,
+      createParents,
       queuedAt: Date.now(),
       resume: false
     }
@@ -251,7 +252,11 @@ export class TransferQueue {
     this.retryable.delete(job.transferId)
     this.retryable.set(job.transferId, job)
     if (this.retryable.size > MAX_RETRYABLE) {
-      this.retryable.delete(this.retryable.keys().next().value as string)
+      const oldestId = this.retryable.keys().next().value as string
+      const oldestJob = this.retryable.get(oldestId)!
+      this.retryable.delete(oldestId)
+      this.paused.delete(oldestId)
+      this.cleanupJobArtifacts(oldestJob)
     }
   }
 
@@ -274,23 +279,21 @@ export class TransferQueue {
     if (job.kind === 'upload') {
       void cleanupStagedDropPath(job.localPath).catch(() => undefined)
     }
-    const remote = job.kind === 'upload'
-    const unlinkPart = (partPath: string): void => {
+    this.cleanupStaging(job)
+  }
+
+  private cleanupStaging(job: TransferJob): void {
+    for (const part of job.staging?.values() ?? []) {
       try {
-        const op = remote ? SessionManager.getInstance().shell(job.sessionId).unlink(partPath) : unlink(partPath)
+        const op = job.kind === 'upload'
+          ? SessionManager.getInstance().shell(job.sessionId).unlink(part.path)
+          : unlink(part.path)
         void op.catch(() => undefined)
       } catch {
-        // Session may already be closed.
+        // The session may already be closed.
       }
     }
-    if (job.contigOffsets && job.contigOffsets.size > 0) {
-      for (const destPath of job.contigOffsets.keys()) {
-        unlinkPart(`${destPath}${PART_SUFFIX}`)
-      }
-      job.contigOffsets.clear()
-    } else if (!job.isTree) {
-      unlinkPart(`${remote ? job.remotePath : job.localPath}${PART_SUFFIX}`)
-    }
+    job.staging?.clear()
   }
 
   /** Cancels a transfer, whether still queued or actively streaming. */
@@ -321,9 +324,7 @@ export class TransferQueue {
       const evt = this.jobEvent(job, 'cancelled')
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
-      if (job.kind === 'upload') {
-        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
-      }
+      this.cleanupJobArtifacts(job)
     }
   }
 
@@ -372,7 +373,12 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone: 0, filesTotal: 1 })
       }
 
-      job.contigOffsets ??= new Map()
+      if (job.createParents) {
+        if (job.controller.signal.aborted) throw new SshError('CANCELLED', 'Transfer cancelled')
+        if (kind === 'upload') await shell.mkdirRecursive(path.posix.dirname(job.remotePath))
+        else await mkdirLocalRecursive(path.dirname(job.localPath))
+      }
+      job.staging ??= new Map()
       await this.runFile({
         shell,
         kind,
@@ -381,7 +387,7 @@ export class TransferQueue {
         signal: job.controller.signal,
         size: totalBytes,
         resume,
-        contigOffsets: job.contigOffsets,
+        staging: job.staging,
         onProgress: emitProgress
       })
 
@@ -392,7 +398,7 @@ export class TransferQueue {
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
-      const cancelled = e instanceof SshError && e.code === 'CANCELLED'
+      const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
       const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
       if (!cancelled || pausedNow) {
@@ -403,9 +409,7 @@ export class TransferQueue {
         this.broadcast(this.jobEvent(job, 'paused'))
         return
       }
-      if (cancelled && kind === 'upload') {
-        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
-      }
+      if (cancelled) this.cleanupJobArtifacts(job)
       const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
@@ -425,46 +429,44 @@ export class TransferQueue {
     signal: AbortSignal
     size: number
     resume: boolean
-    contigOffsets: Map<string, number>
+    staging: NonNullable<TransferJob['staging']>
     onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
     const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
-    const partPath = `${destPath}${PART_SUFFIX}`
-    const partSize = opts.resume
-      ? await (opts.kind === 'upload' ? opts.shell.stat(partPath) : stat(partPath)).then((s) => s.size, () => 0)
+    let part = opts.staging.get(destPath)
+    const partSize = part && opts.resume
+      ? await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path)).then((s) => s.size, () => 0)
       : 0
-    const savedContig = opts.resume ? (opts.contigOffsets.get(destPath) ?? 0) : 0
-    const offset = partSize <= opts.size ? Math.min(partSize, savedContig) : 0
-    opts.contigOffsets.set(destPath, offset)
-    try {
-      await transferPipelined({
-        sftp,
-        kind: opts.kind,
-        localPath: opts.kind === 'upload' ? opts.localPath : partPath,
-        remotePath: opts.kind === 'upload' ? partPath : opts.remotePath,
-        size: opts.size,
-        offset,
-        signal: opts.signal,
-        rateLimiter: this.rateLimiter,
-        onProgress: opts.onProgress,
-        onContigOffset: (contig) => {
-          opts.contigOffsets.set(destPath, contig)
-        }
-      })
-    } catch (e) {
-      if (e instanceof SshError && e.code === 'CANCELLED' && opts.signal.reason !== PAUSE_REASON) {
-        opts.contigOffsets.delete(destPath)
-        await this.removePart(opts, partPath)
-      }
-      throw e
+    const offset = part && partSize <= opts.size ? Math.min(partSize, part.offset) : 0
+    if (!offset && part) {
+      await this.removePart(opts, part.path)
+      opts.staging.delete(destPath)
+      part = undefined
     }
+    const paths = opts.kind === 'upload' ? path.posix : path
+    const fresh = !part
+    const staging = part ?? { path: paths.join(paths.dirname(destPath), `.ferry-transfer-${randomUUID()}.part`), offset: 0 }
+    await transferPipelined({
+      sftp,
+      kind: opts.kind,
+      localPath: opts.kind === 'upload' ? opts.localPath : staging.path,
+      remotePath: opts.kind === 'upload' ? staging.path : opts.remotePath,
+      size: opts.size,
+      offset,
+      signal: opts.signal,
+      rateLimiter: this.rateLimiter,
+      onProgress: opts.onProgress,
+      onContigOffset: (contig) => { staging.offset = contig },
+      onDestinationCreated: fresh ? () => { opts.staging.set(destPath, staging) } : undefined
+    })
+    if (opts.signal.aborted) throw new SshError('CANCELLED', 'Transfer cancelled')
     if (opts.kind === 'upload') {
-      await commitRemoteFile(opts.shell, partPath, destPath)
+      await commitRemoteFile(opts.shell, staging.path, destPath)
     } else {
-      await rename(partPath, destPath)
+      await rename(staging.path, destPath)
     }
-    opts.contigOffsets.delete(destPath)
+    opts.staging.delete(destPath)
   }
 
   private async removePart(opts: { shell: RemoteShell; kind: TransferKind }, partPath: string): Promise<void> {
@@ -511,7 +513,7 @@ export class TransferQueue {
         }
       })
 
-      job.contigOffsets ??= new Map()
+      job.staging ??= new Map()
       job.completedFiles ??= new Set()
       job.sourceStamps ??= new Map()
 
@@ -568,10 +570,6 @@ export class TransferQueue {
           const prevStamp = job.sourceStamps!.get(file.relPath)
           const resumeFile = job.resume === true && (prevStamp === undefined || prevStamp === stamp)
           job.sourceStamps!.set(file.relPath, stamp)
-          const destPath = kind === 'upload' ? joinRemote(job.remotePath, file.relPath) : joinLocal(job.localPath, file.relPath)
-          if (!resumeFile) {
-            job.contigOffsets!.delete(destPath)
-          }
           inFlightBytes.set(index, 0)
           await this.runFile({
             shell,
@@ -581,7 +579,7 @@ export class TransferQueue {
             signal: job.controller.signal,
             size: file.size,
             resume: resumeFile,
-            contigOffsets: job.contigOffsets!,
+            staging: job.staging!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
               emitProgress()
@@ -599,6 +597,7 @@ export class TransferQueue {
       if (kind === 'upload') {
         await cleanupStagedDropPath(job.localPath).catch(() => undefined)
       }
+      this.cleanupStaging(job)
       const doneEvt = this.jobEvent(job, 'done', { bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length })
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
@@ -614,9 +613,7 @@ export class TransferQueue {
         this.broadcast(this.jobEvent(job, 'paused'))
         return
       }
-      if (cancelled && kind === 'upload') {
-        void cleanupStagedDropPath(job.localPath).catch(() => undefined)
-      }
+      if (cancelled) this.cleanupJobArtifacts(job)
       const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)

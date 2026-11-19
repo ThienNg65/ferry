@@ -148,36 +148,4 @@ async function submitKeyboardAnswers(): Promise<void> {
       <UButton @click="submitKeyboardAnswers">Submit</UButton>
     </template>
   </UModal>
-
-  <UModal
-    :open="sessions.connecting && !sessions.pendingKeyboardPrompt && !sessions.pendingHostKeyPrompt && !sessions.pendingHostKeyMismatch"
-    title="Connecting…"
-    :description="sessions.activeTab?.label ? `Connecting to ${sessions.activeTab.label}` : undefined"
-    :dismissible="false"
-    :close="false"
-    :ui="{ footer: 'flex-wrap justify-end' }"
-  >
-    <template #body>
-      <div role="status" aria-live="polite" class="flex max-h-60 flex-col gap-2 overflow-y-auto">
-        <div
-          v-if="(sessions.activeTab?.progressMessages?.length ?? 0) === 0"
-          class="flex items-center gap-2 text-sm text-muted"
-        >
-          <UIcon name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-primary" />
-          <span>Opening SSH connection…</span>
-        </div>
-        <div
-          v-for="(msg, index) in sessions.activeTab?.progressMessages || []"
-          :key="index"
-          class="text-sm"
-          :class="index === (sessions.activeTab?.progressMessages.length ?? 0) - 1 ? 'font-medium text-highlighted' : 'text-muted'"
-        >
-          {{ msg }}
-        </div>
-      </div>
-    </template>
-    <template #footer>
-      <UButton color="neutral" variant="outline" @click="sessions.cancelConnect(sessions.activeTabId)">Cancel</UButton>
-    </template>
-  </UModal>
 </template>
