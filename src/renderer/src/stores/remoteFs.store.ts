@@ -407,8 +407,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     },
 
     /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
-    async remove(entry: FileEntry): Promise<void> {
-      const sessionId = this.activeSessionId()
+    async remove(entry: FileEntry, sessionId = this.activeSessionId()): Promise<void> {
       const bucket = this.ensureBucket(sessionId)
       const dirPath = bucket.currentPath
       await invoke<void>(INVOKE_CHANNELS.fsRemoteDelete, sessionId, entry.path)
@@ -422,8 +421,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
      * single Activity row with item-count progress), then patches the listing
      * once — entries that fail to delete stay in the listing.
      */
-    async removeMany(entries: FileEntry[]): Promise<void> {
-      const sessionId = this.activeSessionId()
+    async removeMany(entries: FileEntry[], sessionId = this.activeSessionId()): Promise<void> {
       const bucket = this.ensureBucket(sessionId)
       const dirPath = bucket.currentPath
       const result = await invoke<DeleteManyResult>(INVOKE_CHANNELS.fsRemoteDeleteMany, {
