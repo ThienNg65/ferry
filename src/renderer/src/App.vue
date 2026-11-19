@@ -207,9 +207,13 @@ function onTabShortcut(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  disposeWindowBounds = initWindowBoundsPersistence({ beforeShow: initialThemeSync })
+  const settingsReady = settingsStore.fetch().catch(() => {})
+  disposeWindowBounds = initWindowBoundsPersistence({
+    beforeShow: Promise.all([initialThemeSync, settingsReady])
+      .then(() => ui.initTheme())
+      .catch(() => {})
+  })
   window.addEventListener('keydown', onTabShortcut)
-  void settingsStore.fetch()
   void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin

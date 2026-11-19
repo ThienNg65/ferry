@@ -43,6 +43,19 @@ function readStored(key: string): string | null {
   }
 }
 
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Ignore storage quota / restricted context errors.
+  }
+  if (typeof window !== 'undefined' && window.api) {
+    void invoke<void>(INVOKE_CHANNELS.settingsSetUiPref, { key, value }).catch(() => {
+      // Non-fatal in isolated unit tests or disconnected contexts.
+    })
+  }
+}
+
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
@@ -162,6 +175,22 @@ function loadTheme(): Theme {
   return systemPrefersDark() ? 'dark' : 'light'
 }
 
+function resolveCssColor(token: string): string {
+  const styles = getComputedStyle(document.documentElement)
+  if (typeof document.documentElement.appendChild === 'function' && typeof document.createElement === 'function') {
+    const probe = document.createElement('span')
+    if (probe && probe.style) {
+      probe.style.color = `var(${token})`
+      probe.style.display = 'none'
+      document.documentElement.appendChild(probe)
+      const computed = getComputedStyle(probe).color?.trim()
+      probe.remove?.()
+      if (computed) return computed
+    }
+  }
+  return styles.getPropertyValue(token).trim()
+}
+
 /** Converts `--ferry-caption-bg` (when `.ferry-glass` is active) or `--ui-bg-muted` into a Win32 COLORREF (`0x00BBGGRR`) so the Win11 titlebar matches `SiteTabBar`. */
 function resolveCaptionColorRef(theme: Theme): number {
   const isGlass = document.documentElement.classList.contains('ferry-glass')
@@ -169,10 +198,7 @@ function resolveCaptionColorRef(theme: Theme): number {
     ? (theme === 'dark' ? 0x160d09 : 0xfbf6f4)
     : (theme === 'dark' ? 0x262626 : 0xfafafa)
   try {
-    const styles = getComputedStyle(document.documentElement)
-    const raw =
-      (isGlass ? styles.getPropertyValue('--ferry-caption-bg').trim() : '') ||
-      styles.getPropertyValue('--ui-bg-muted').trim()
+    const raw = (isGlass ? resolveCssColor('--ferry-caption-bg') : '') || resolveCssColor('--ui-bg-muted')
     if (!raw || (typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && !CSS.supports('color', raw))) {
       return fallback
     }
@@ -181,7 +207,13 @@ function resolveCaptionColorRef(theme: Theme): number {
     canvas.height = 1
     const ctx = canvas.getContext('2d')
     if (!ctx) return fallback
+    // Two-sentinel guard: Canvas 2D silently ignores unparseable fillStyle assignments, leaving the previous color.
+    ctx.fillStyle = '#010203'
     ctx.fillStyle = raw
+    const first = ctx.fillStyle
+    ctx.fillStyle = '#fefdfc'
+    ctx.fillStyle = raw
+    if (ctx.fillStyle !== first) return fallback
     ctx.fillRect(0, 0, 1, 1)
     const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
     if (a !== 255) return fallback
@@ -313,27 +345,27 @@ export const useUiStore = defineStore('ui', {
   actions: {
     setTerminalScheme(id: string): void {
       this.terminalScheme = isSchemeId(id) ? id : DEFAULT_SCHEME_ID
-      localStorage.setItem(TERM_SCHEME_KEY, this.terminalScheme)
+      writeStored(TERM_SCHEME_KEY, this.terminalScheme)
     },
 
     setTerminalFont(id: string): void {
       this.terminalFont = isFontId(id) ? id : DEFAULT_FONT_ID
-      localStorage.setItem(TERM_FONT_KEY, this.terminalFont)
+      writeStored(TERM_FONT_KEY, this.terminalFont)
     },
 
     setTerminalFontCustom(name: string): void {
       this.terminalFontCustom = name.slice(0, 60)
-      localStorage.setItem(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom)
+      writeStored(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom)
     },
 
     setTerminalFontSize(size: number): void {
       this.terminalFontSize = clampFontSize(size)
-      localStorage.setItem(TERM_FONT_SIZE_KEY, String(this.terminalFontSize))
+      writeStored(TERM_FONT_SIZE_KEY, String(this.terminalFontSize))
     },
 
     setTerminalLineHeight(height: number): void {
       this.terminalLineHeight = clampLineHeight(height)
-      localStorage.setItem(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight))
+      writeStored(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight))
     },
 
     resetTerminalAppearance(): void {
@@ -346,12 +378,12 @@ export const useUiStore = defineStore('ui', {
 
     toggleLocalPane(): void {
       this.showLocalPane = !this.showLocalPane
-      localStorage.setItem(STORAGE_KEY, String(this.showLocalPane))
+      writeStored(STORAGE_KEY, String(this.showLocalPane))
     },
 
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
-      localStorage.setItem(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
+      writeStored(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
     },
 
     setColumnVisible(key: ColumnKey, visible: boolean): void {
@@ -366,7 +398,7 @@ export const useUiStore = defineStore('ui', {
 
     persistColumns(): void {
       try {
-        localStorage.setItem(COLUMNS_KEY, JSON.stringify(this.columns))
+        writeStored(COLUMNS_KEY, JSON.stringify(this.columns))
       } catch {
         return
       }
@@ -374,27 +406,27 @@ export const useUiStore = defineStore('ui', {
 
     setTerminalScrollback(lines: number): void {
       this.terminalScrollback = SCROLLBACK_OPTIONS.includes(lines) ? lines : 5000
-      localStorage.setItem(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
+      writeStored(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
     },
 
     setTerminalPredictiveEcho(enabled: boolean): void {
       this.terminalPredictiveEcho = enabled
-      localStorage.setItem(TERM_PREDICTIVE_ECHO_KEY, String(enabled))
+      writeStored(TERM_PREDICTIVE_ECHO_KEY, String(enabled))
     },
 
     toggleShowHidden(): void {
       this.showHidden = !this.showHidden
-      localStorage.setItem(SHOW_HIDDEN_KEY, String(this.showHidden))
+      writeStored(SHOW_HIDDEN_KEY, String(this.showHidden))
     },
 
     setDensity(density: Density): void {
       this.density = density
-      localStorage.setItem(DENSITY_KEY, density)
+      writeStored(DENSITY_KEY, density)
     },
 
     setShortenPath(shorten: boolean): void {
       this.shortenPath = shorten
-      localStorage.setItem(SHORTEN_PATH_KEY, String(shorten))
+      writeStored(SHORTEN_PATH_KEY, String(shorten))
     },
 
     /** Applies the persisted theme to the document and OS window frame — call once on app start. */
@@ -405,7 +437,7 @@ export const useUiStore = defineStore('ui', {
     toggleTheme(): void {
       clearAccentThemeSyncTimer()
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
-      localStorage.setItem(THEME_KEY, this.theme)
+      writeStored(THEME_KEY, this.theme)
       void applyTheme(this.theme)
     },
 
@@ -416,14 +448,14 @@ export const useUiStore = defineStore('ui', {
     setGlassUiEnabled(enabled: boolean): void {
       clearAccentThemeSyncTimer()
       this.glassUiEnabled = enabled
-      localStorage.setItem(GLASS_UI_KEY, String(enabled))
+      writeStored(GLASS_UI_KEY, String(enabled))
       applyGlassUiClass(enabled)
       void applyTheme(this.theme)
     },
 
     dismissGlassUiPromo(): void {
       this.glassUiPromoDismissed = true
-      localStorage.setItem(GLASS_PROMO_DISMISSED_KEY, 'true')
+      writeStored(GLASS_PROMO_DISMISSED_KEY, 'true')
     },
 
     /** Resets Glass UI state and root class after `localStorage.clear()` without re-writing storage keys. */
@@ -435,6 +467,47 @@ export const useUiStore = defineStore('ui', {
       void applyTheme(this.theme)
     },
 
+    /** Hydrates UI preferences from sidecar `app-settings.json` (survives Neutralino ephemeral ports). */
+    hydrateFromPrefs(prefs: Record<string, string>): void {
+      const entries = Object.entries(prefs).filter(
+        ([key, value]) => key.startsWith('ferry:ui:') && typeof value === 'string'
+      )
+      if (entries.length === 0) return
+
+      for (const [key, value] of entries) {
+        try {
+          localStorage.setItem(key, value)
+        } catch {
+          // Ignore storage quota / restricted context errors.
+        }
+      }
+
+      this.showLocalPane = readStored(STORAGE_KEY) !== 'false'
+      this.permissionsDisplay = loadPermissionsDisplay()
+      this.density = loadDensity()
+      this.shortenPath = readStored(SHORTEN_PATH_KEY) === 'true'
+      this.showHidden = readStored(SHOW_HIDDEN_KEY) !== 'false'
+      this.terminalScrollback = loadScrollback()
+      this.terminalPredictiveEcho = loadTerminalPredictiveEcho()
+      this.columns = parseColumnPrefs(readStored(COLUMNS_KEY))
+      this.theme = loadTheme()
+      this.dockHeight = loadDockHeight()
+      this.dockPosition = loadDockPosition()
+      this.dockWidth = loadDockWidth()
+      this.accentColor = loadAccentColor()
+      this.localPaneWidth = loadLocalPaneWidth()
+      this.glassUiEnabled = loadGlassUiEnabled()
+      this.glassUiPromoDismissed = loadGlassUiPromoDismissed()
+      this.terminalScheme = loadTerminalScheme()
+      this.terminalFont = loadTerminalFont()
+      this.terminalFontCustom = (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60)
+      this.terminalFontSize = loadTerminalNumber(TERM_FONT_SIZE_KEY, DEFAULT_FONT_SIZE, clampFontSize)
+      this.terminalLineHeight = loadTerminalNumber(TERM_LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT, clampLineHeight)
+
+      applyGlassUiClass(this.glassUiEnabled)
+      applyAccentColor(this.accentColor)
+    },
+
     /** Applies the persisted accent color to the document — call once on app start, alongside initTheme(). */
     initAccentColor(): void {
       applyAccentColor(this.accentColor)
@@ -442,7 +515,7 @@ export const useUiStore = defineStore('ui', {
 
     setAccentColor(hex: string): void {
       this.accentColor = hex
-      localStorage.setItem(ACCENT_KEY, hex)
+      writeStored(ACCENT_KEY, hex)
       applyAccentColor(hex)
       if (this.glassUiEnabled) {
         clearAccentThemeSyncTimer()
@@ -456,19 +529,19 @@ export const useUiStore = defineStore('ui', {
     /** Clamps + persists a new dock height — call once at drag-end, and again on window resize to re-clamp against the new viewport. */
     setDockHeight(px: number): void {
       this.dockHeight = clampDockHeight(px, window.innerHeight)
-      localStorage.setItem(DOCK_HEIGHT_KEY, String(this.dockHeight))
+      writeStored(DOCK_HEIGHT_KEY, String(this.dockHeight))
     },
 
     toggleDockPosition(): void {
       this.dockPosition = this.dockPosition === 'bottom' ? 'right' : 'bottom'
-      localStorage.setItem(DOCK_POSITION_KEY, this.dockPosition)
+      writeStored(DOCK_POSITION_KEY, this.dockPosition)
     },
 
     /** Clamps + persists a new right-dock width. */
     setDockWidth(px: number): void {
       const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
       this.dockWidth = clampDockWidth(px, width)
-      localStorage.setItem(DOCK_WIDTH_KEY, String(this.dockWidth))
+      writeStored(DOCK_WIDTH_KEY, String(this.dockWidth))
     },
 
     setLocalPaneWidth(percent: number): void {
@@ -476,7 +549,7 @@ export const useUiStore = defineStore('ui', {
     },
 
     saveLocalPaneWidth(): void {
-      localStorage.setItem(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
+      writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
     }
   }
 })

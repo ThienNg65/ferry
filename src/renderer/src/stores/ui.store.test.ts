@@ -319,18 +319,18 @@ describe('ui store layout state', () => {
       // Classic mode: setAccentColor does not trigger window:syncTheme
       ui.setAccentColor('#8b5cf6')
       vi.advanceTimersByTime(300)
-      expect(invokeMock).not.toHaveBeenCalled()
+      expect(invokeMock).not.toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, expect.anything())
 
       // Glass mode: rapid accent changes debounce to a single window:syncTheme after 250ms
       ui.setGlassUiEnabled(true)
       invokeMock.mockClear()
       ui.setAccentColor('#22c55e')
       ui.setAccentColor('#f97316')
-      expect(invokeMock).not.toHaveBeenCalled()
+      expect(invokeMock).not.toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, expect.anything())
       vi.advanceTimersByTime(249)
-      expect(invokeMock).not.toHaveBeenCalled()
+      expect(invokeMock).not.toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, expect.anything())
       vi.advanceTimersByTime(1)
-      expect(invokeMock).toHaveBeenCalledTimes(1)
+      expect(invokeMock.mock.calls.filter(([ch]) => ch === INVOKE_CHANNELS.windowSyncTheme)).toHaveLength(1)
       expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
         theme: 'dark',
         captionColor: 0x332211
@@ -375,5 +375,156 @@ describe('ui store layout state', () => {
     expect(data.size).toBe(0)
     expect(ui.terminalAppearance.theme.background).toBe('#1e1e1e')
     expect(faviconLink).toEqual({ type: 'image/x-icon', href: './favicon-classic.ico' })
+  })
+
+  it('persists Glass UI choices via settings:setUiPref and hydrates from sidecar prefs when localStorage is empty', async () => {
+    const { vi } = await import('vitest')
+    const { INVOKE_CHANNELS } = await import('@shared/contract')
+    const classes = new Set<string>()
+    const faviconLink = { type: 'image/x-icon', href: './favicon.ico' }
+    const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: {
+          toggle: (cls: string, force?: boolean) => {
+            const on = force === undefined ? !classes.has(cls) : force
+            if (on) classes.add(cls)
+            else classes.delete(cls)
+            return on
+          },
+          contains: (cls: string) => classes.has(cls)
+        },
+        style: { setProperty: vi.fn() }
+      },
+      querySelector: (sel: string) => (sel === 'link[rel="icon"]' ? faviconLink : null)
+    })
+
+    const { ui, data } = await freshStore()
+    vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
+
+    ui.setGlassUiEnabled(true)
+    ui.dismissGlassUiPromo()
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.settingsSetUiPref, {
+      key: 'ferry:ui:glassUi',
+      value: 'true'
+    })
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.settingsSetUiPref, {
+      key: 'ferry:ui:glassUiPromoDismissed',
+      value: 'true'
+    })
+
+    // Simulate a fresh Neutralino launch on a new port where localStorage is empty
+    data.clear()
+    classes.clear()
+    const { ui: restarted } = await freshStore()
+    expect(restarted.glassUiEnabled).toBe(false)
+    expect(restarted.glassUiPromoDismissed).toBe(false)
+
+    restarted.hydrateFromPrefs({
+      'ferry:ui:glassUi': 'true',
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    })
+    expect(restarted.glassUiEnabled).toBe(true)
+    expect(restarted.glassUiPromoDismissed).toBe(true)
+    expect(classes.has('ferry-glass')).toBe(true)
+    expect(faviconLink).toEqual({ type: 'image/svg+xml', href: './ferry-glass.svg' })
+  })
+
+  it('resolves --ferry-caption-bg via DOM probe for Light Glass and falls back instead of sending black when canvas rejects fillStyle', async () => {
+    const { vi } = await import('vitest')
+    const { INVOKE_CHANNELS } = await import('@shared/contract')
+    const classes = new Set<string>(['ferry-glass'])
+    const invokeMock = vi.fn().mockResolvedValue({ ok: true, data: undefined })
+    const probe = { style: { color: '', display: '' }, remove: vi.fn() }
+    vi.stubGlobal('CSS', { supports: () => true })
+    vi.stubGlobal('getComputedStyle', (el: unknown) =>
+      el === probe
+        ? { color: 'rgb(240, 244, 251)', getPropertyValue: () => '' }
+        : { getPropertyValue: () => 'color-mix(in srgb, var(--ui-color-primary-500) 6%, #f4f6fb)' }
+    )
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: {
+          toggle: (cls: string, force?: boolean) => {
+            const on = force === undefined ? !classes.has(cls) : force
+            if (on) classes.add(cls)
+            else classes.delete(cls)
+            return on
+          },
+          contains: (cls: string) => classes.has(cls)
+        },
+        style: { setProperty: vi.fn() },
+        appendChild: vi.fn()
+      },
+      createElement: (tag: string) =>
+        tag === 'span'
+          ? probe
+          : {
+              width: 0,
+              height: 0,
+              getContext: () => ({
+                fillStyle: '',
+                fillRect: vi.fn(),
+                getImageData: () => ({ data: new Uint8ClampedArray([240, 244, 251, 255]) })
+              })
+            }
+    })
+
+    const { ui } = await freshStore({ 'ferry:ui:theme': 'light', 'ferry:ui:glassUi': 'true' })
+    vi.stubGlobal('window', { innerHeight: 900, api: { invoke: invokeMock } })
+
+    await ui.initTheme()
+    expect(probe.style.color).toBe('var(--ferry-caption-bg)')
+    expect(probe.remove).toHaveBeenCalled()
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
+      theme: 'light',
+      captionColor: 0xfbf4f0
+    })
+
+    // Simulate Canvas 2D rejecting an unparseable fillStyle (keeps sentinel instead of setting color)
+    invokeMock.mockClear()
+    vi.stubGlobal('getComputedStyle', () => ({
+      color: 'color-mix(in srgb, var(--missing) 6%, #f4f6fb)',
+      getPropertyValue: () => 'color-mix(in srgb, var(--missing) 6%, #f4f6fb)'
+    }))
+    vi.stubGlobal('document', {
+      documentElement: {
+        classList: {
+          toggle: (cls: string, force?: boolean) => {
+            const on = force === undefined ? !classes.has(cls) : force
+            if (on) classes.add(cls)
+            else classes.delete(cls)
+            return on
+          },
+          contains: (cls: string) => classes.has(cls)
+        },
+        style: { setProperty: vi.fn() },
+        appendChild: vi.fn()
+      },
+      createElement: (tag: string) => {
+        if (tag === 'span') return probe
+        let currentFill = '#000000'
+        return {
+          width: 0,
+          height: 0,
+          getContext: () => ({
+            get fillStyle() {
+              return currentFill
+            },
+            set fillStyle(val: string) {
+              if (val.startsWith('#')) currentFill = val
+            },
+            fillRect: vi.fn(),
+            getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, 255]) })
+          })
+        }
+      }
+    })
+
+    await ui.initTheme()
+    expect(invokeMock).toHaveBeenCalledWith(INVOKE_CHANNELS.windowSyncTheme, {
+      theme: 'light',
+      captionColor: 0xfbf6f4
+    })
   })
 })

@@ -410,7 +410,12 @@ html.ferry-glass {
   --ferry-glass-chrome-bg: rgba(248, 250, 252, 0.68);
   --ferry-glass-chrome-blur: blur(18px) saturate(180%);
   --ferry-glass-chrome-border: rgba(15, 23, 42, 0.08);
-  --ferry-glass-tab-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
+  --ferry-glass-tab-active-bg: rgba(255, 255, 255, 0.88);
+  --ferry-glass-tab-highlight:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    0 0 0 1px rgba(15, 23, 42, 0.08),
+    0 1px 3px rgba(15, 23, 42, 0.06);
+  --ferry-glass-tab-hover-bg: rgba(255, 255, 255, 0.48);
 
   /* Tier 2A: Showcase Frosted Cards (SessionManagerView) */
   --ferry-glass-card-bg: rgba(255, 255, 255, 0.68);
@@ -456,7 +461,12 @@ html.dark.ferry-glass {
   --ferry-glass-chrome-bg: rgba(13, 18, 30, 0.62);
   --ferry-glass-chrome-blur: blur(18px) saturate(180%);
   --ferry-glass-chrome-border: rgba(255, 255, 255, 0.09);
-  --ferry-glass-tab-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.22);
+  --ferry-glass-tab-active-bg: rgba(30, 41, 59, 0.72);
+  --ferry-glass-tab-highlight:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.28);
+  --ferry-glass-tab-hover-bg: rgba(255, 255, 255, 0.08);
 
   /* Tier 2A: Showcase Frosted Cards */
   --ferry-glass-card-bg: rgba(15, 23, 42, 0.60);
@@ -548,7 +558,12 @@ html.ferry-glass .ferry-glass-overlay {
 }
 
 html.ferry-glass .ferry-glass-active-tab {
+  background-color: var(--ferry-glass-tab-active-bg);
   box-shadow: var(--ferry-glass-tab-highlight);
+}
+
+html.ferry-glass .ferry-glass-inactive-tab:hover {
+  background-color: var(--ferry-glass-tab-hover-bg);
 }
 
 html.ferry-glass .ferry-site-row:hover {

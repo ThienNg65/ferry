@@ -5,7 +5,8 @@ import {
   type AppSettings,
   type KnownHostEntry,
   type ProxyConfig,
-  type TermsAcceptance
+  type TermsAcceptance,
+  type UiPrefUpdate
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { BookmarkStore } from '../bookmarks/BookmarkStore'
@@ -76,6 +77,19 @@ export function registerSettingsHandlers(): void {
       // Host is not initialized in isolated IPC unit tests.
     }
     return acceptance
+  })
+
+  handle<void>(INVOKE_CHANNELS.settingsSetUiPref, (payload) => {
+    const update = payload as Partial<UiPrefUpdate> | null | undefined
+    const key = typeof update?.key === 'string' ? update.key : ''
+    if (!key.startsWith('ferry:ui:') || key.length > 64) {
+      throw new SshError('VALIDATION', 'settings:setUiPref requires a valid ferry:ui:* key')
+    }
+    const value = update?.value
+    if (value !== null && (typeof value !== 'string' || value.length > 4096)) {
+      throw new SshError('VALIDATION', 'settings:setUiPref requires a string value (<= 4096 chars) or null')
+    }
+    AppSettingsStore.getInstance().setUiPref(key, value)
   })
 
   handle<KnownHostEntry[]>(INVOKE_CHANNELS.knownHostsList, () => {

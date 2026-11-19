@@ -19,6 +19,18 @@ interface StoreSchema {
   autoCheckUpdates: boolean
   historyRetentionDays: number | null
   termsAcceptance: TermsAcceptance | null
+  uiPrefs: Record<string, string>
+}
+
+function sanitizeUiPrefs(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const clean: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith('ferry:ui:') && typeof value === 'string') {
+      clean[key] = value
+    }
+  }
+  return clean
 }
 
 /**
@@ -43,7 +55,8 @@ export class AppSettingsStore {
           defaultProxy: null,
           autoCheckUpdates: true,
           historyRetentionDays: 90,
-          termsAcceptance: null
+          termsAcceptance: null,
+          uiPrefs: {}
         }
       })
     }
@@ -68,7 +81,8 @@ export class AppSettingsStore {
         : undefined,
       autoCheckUpdates: this.store.get('autoCheckUpdates') ?? true,
       historyRetentionDays: rawRetention === undefined ? 90 : rawRetention,
-      termsAcceptance: this.store.get('termsAcceptance') ?? null
+      termsAcceptance: this.store.get('termsAcceptance') ?? null,
+      uiPrefs: sanitizeUiPrefs(this.store.get('uiPrefs'))
     }
   }
 
@@ -90,6 +104,16 @@ export class AppSettingsStore {
     return record
   }
 
+  setUiPref(key: string, value: string | null): void {
+    const next = sanitizeUiPrefs(this.store.get('uiPrefs'))
+    if (value === null) {
+      delete next[key]
+    } else {
+      next[key] = value
+    }
+    this.store.set('uiPrefs', next)
+  }
+
   reset(): void {
     this.store.set('openTabSiteIds', [])
     this.store.set('bandwidthLimitKBps', null)
@@ -97,6 +121,7 @@ export class AppSettingsStore {
     this.store.set('autoCheckUpdates', true)
     this.store.set('historyRetentionDays', 90)
     this.store.set('termsAcceptance', null)
+    this.store.set('uiPrefs', {})
   }
 
   setBandwidthLimitKBps(limit: number | null): void {

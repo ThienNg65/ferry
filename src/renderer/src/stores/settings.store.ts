@@ -39,6 +39,7 @@ export const useSettingsStore = defineStore('settings', {
           this.autoCheckUpdates = settings.autoCheckUpdates ?? true
           this.historyRetentionDays = settings.historyRetentionDays === undefined ? 90 : settings.historyRetentionDays
           this.termsAcceptance = settings.termsAcceptance ?? null
+          useUiStore().hydrateFromPrefs(settings.uiPrefs ?? {})
           this.loaded = true
         } finally {
           this.inFlightFetch = null

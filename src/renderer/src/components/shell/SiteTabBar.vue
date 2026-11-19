@@ -15,7 +15,7 @@ import { useSessionsStore, type SessionTab } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
-import { ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
+import { ENVIRONMENT_DOT, ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import FerryLogo from './FerryLogo.vue'
 
@@ -152,6 +152,12 @@ function envBorder(siteId: string | null, isActive = false): string {
   return isActive ? 'border-primary' : 'border-transparent'
 }
 
+function envIndicator(siteId: string | null, isActive = false): string | null {
+  const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
+  if (env) return ENVIRONMENT_DOT[env]
+  return isActive ? 'bg-primary' : null
+}
+
 function envLabel(siteId: string | null): string | null {
   const env = siteId ? sites.sites.find((s) => s.id === siteId)?.environment : undefined
   return env ? ENVIRONMENT_LABEL[env] : null
@@ -169,29 +175,51 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 </script>
 
 <template>
-  <!-- The hairline is an inset shadow (not a border) so the active tab, flush with the bottom edge, paints over it and joins the canvas below. -->
+  <!-- The hairline is an inset shadow (not a border) so Classic's flush active tab paints over it, while Glass uses centered floating pills. -->
   <header
-    class="relative flex items-end justify-between gap-2 px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]"
-    :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
+    class="relative flex justify-between gap-2"
+    :class="
+      ui.glassUiEnabled
+        ? 'ferry-glass-chrome items-center px-2.5 py-1.5 shadow-[inset_0_-1px_0_var(--ferry-glass-chrome-border)]'
+        : 'bg-muted items-end px-2 pt-0.5 shadow-[inset_0_-1px_0_var(--ui-border-muted)]'
+    "
   >
-    <FerryLogo :size="20" class="self-center ml-0.5 mr-0.5 shrink-0" decorative />
-    <nav class="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pb-px" aria-label="Open connections">
-      <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-end gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+    <FerryLogo v-if="!ui.glassUiEnabled || isFullScreen" :size="20" class="self-center ml-0.5 mr-0.5 shrink-0" decorative />
+    <nav
+      class="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      :class="ui.glassUiEnabled ? 'items-center' : 'items-end pb-px'"
+      aria-label="Open connections"
+    >
+      <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-center gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
         <div
           v-for="tab in sessions.tabs"
           :key="tab.tabId"
-          class="ferry-site-tab group relative max-w-64 shrink-0 rounded-t-md border-t-2 text-xs transition-colors"
+          class="ferry-site-tab group relative max-w-64 shrink-0 text-xs transition-colors"
           :class="[
-            envBorder(tab.siteId, tab.tabId === sessions.activeTabId),
-            tab.tabId === sessions.activeTabId
-              ? ['bg-default font-medium text-highlighted', ui.glassUiEnabled ? 'ferry-glass-active-tab' : '']
-              : ui.glassUiEnabled
-                ? 'text-muted hover:bg-default/40 hover:text-default'
-                : 'text-muted hover:bg-elevated hover:text-default'
+            ui.glassUiEnabled
+              ? [
+                  'rounded-lg',
+                  tab.tabId === sessions.activeTabId
+                    ? 'ferry-glass-active-tab font-medium text-highlighted'
+                    : 'ferry-glass-inactive-tab text-muted hover:text-default'
+                ]
+              : [
+                  'rounded-t-md border-t-2',
+                  envBorder(tab.siteId, tab.tabId === sessions.activeTabId),
+                  tab.tabId === sessions.activeTabId
+                    ? 'bg-default font-medium text-highlighted'
+                    : 'text-muted hover:bg-elevated hover:text-default'
+                ]
           ]"
           :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
+          <span
+            v-if="ui.glassUiEnabled && envIndicator(tab.siteId, tab.tabId === sessions.activeTabId)"
+            aria-hidden="true"
+            class="pointer-events-none absolute inset-x-2.5 bottom-0 h-0.5 rounded-full"
+            :class="envIndicator(tab.siteId, tab.tabId === sessions.activeTabId)"
+          />
           <ContextMenu :items="tabMenuItems(tab)">
             <div class="flex min-w-0 items-center">
               <button
@@ -199,7 +227,8 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
                 role="tab"
                 :aria-selected="tab.tabId === sessions.activeTabId"
                 :tabindex="tab.tabId === sessions.activeTabId ? 0 : -1"
-                class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 rounded-tl-md py-1.5 pl-2.5 pr-1 text-left focus-visible:outline-2 focus-visible:outline-primary"
+                class="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 pl-2.5 pr-1 text-left focus-visible:outline-2 focus-visible:outline-primary"
+                :class="ui.glassUiEnabled ? 'rounded-l-lg py-1' : 'rounded-tl-md py-1.5'"
                 @click="sessions.setActiveTab(tab.tabId)"
                 @keydown.enter.self="sessions.setActiveTab(tab.tabId)"
                 @keydown.space.self.prevent="sessions.setActiveTab(tab.tabId)"
@@ -254,7 +283,8 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       <UTooltip text="New tab">
         <UButton
           icon="i-lucide-plus"
-          class="mb-0.5 shrink-0"
+          class="shrink-0"
+          :class="ui.glassUiEnabled ? '' : 'mb-0.5'"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -264,7 +294,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
     </nav>
 
-    <div class="flex shrink-0 items-center gap-1 pb-0.5">
+    <div class="flex shrink-0 items-center gap-1" :class="ui.glassUiEnabled ? '' : 'pb-0.5'">
       <UTooltip v-if="isBusy" :text="activityLabel">
         <button
           v-if="sessions.status === 'connected'"
@@ -311,7 +341,8 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         <button
           type="button"
           aria-label="Search commands — open command palette"
-          class="flex min-h-6 items-center gap-1.5 rounded-md border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          class="flex min-h-6 items-center gap-1.5 border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          :class="ui.glassUiEnabled ? 'rounded-lg' : 'rounded-md'"
           @click="commandPalette.open()"
         >
           <UIcon name="i-lucide-search" class="size-3.5" />
