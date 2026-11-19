@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { RateLimiter } from './TransferQueue'
+import { RateLimiter, transferPartPath } from './TransferQueue'
 
 describe('RateLimiter', () => {
   beforeEach(() => {
@@ -211,4 +211,26 @@ describe('RateLimiter', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+})
+
+describe('job-owned transfer staging', () => {
+  it('does not overwrite a user-owned .part file', () => {
+    const destination = '/reports/report.txt'
+    const staged = transferPartPath(destination, 'job-a')
+    expect(staged).not.toBe(`${destination}.part`)
+    expect(staged).toBe('/reports/report.txt.ferry-job-a.part')
+  })
+
+  it('isolates simultaneous jobs targeting the same destination', () => {
+    const destination = '/reports/report.txt'
+    const first = transferPartPath(destination, 'job-a')
+    const second = transferPartPath(destination, 'job-b')
+    expect(first).not.toBe(second)
+    expect(transferPartPath(destination, 'job-a')).toBe(first) // pause/retry
+  })
+
+  it('isolates individual files in a directory-tree job', () => {
+    const id = 'tree-job'
+    expect(transferPartPath('/reports/a.txt', id)).not.toBe(transferPartPath('/reports/b.txt', id))
+  })
 })
