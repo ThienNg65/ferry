@@ -120,7 +120,11 @@ async function openExternalNow(): Promise<void> {
 }
 
 async function onOpenExternal(): Promise<void> {
-  if (!props.editId || loading.value || saving.value) return
+  if (!props.editId || !props.open || loading.value || saving.value) return
+  const editIdAtPrompt = props.editId
+  const pathAtPrompt = props.localTempPath
+  const tokenAtPrompt = loadToken
+  const contentAtPrompt = content.value
   if (isDirty.value) {
     const ok = await confirm({
       title: 'Discard unsaved changes?',
@@ -130,6 +134,11 @@ async function onOpenExternal(): Promise<void> {
     })
     if (!ok) return
   }
+  // A confirmation may outlive the document it was shown for. Never open an
+  // external editor (and close this modal) after a newer edit or session switch.
+  if (!props.open || saving.value || loading.value ||
+    props.editId !== editIdAtPrompt || props.localTempPath !== pathAtPrompt ||
+    loadToken !== tokenAtPrompt || content.value !== contentAtPrompt) return
   await openExternalNow()
 }
 
