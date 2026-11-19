@@ -28,6 +28,20 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.2.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.1.0...ferry-v1.2.0) (2026-11-19)
+
+
+### Features
+
+* **branding:** refresh the Ferry app icon ([1188929](https://github.com/ThienNg65/ferry/commit/1188929bfe155bbc04d5ea378208383f496b6c4b))
+* **branding:** refresh the Ferry app icon ([8c6eee8](https://github.com/ThienNg65/ferry/commit/8c6eee847204de249b8196aaed06808f8143b2f4))
+* **branding:** render the Ferry icon in frosted glass ([f0026c7](https://github.com/ThienNg65/ferry/commit/f0026c72ee1f4b612d207ac54b7ebdeafc02a672))
+
+
+### Code Refactoring
+
+* **branding:** slim the Ferry mast crossbar ([bb43dfb](https://github.com/ThienNg65/ferry/commit/bb43dfbf9baf583b505a75fb9fceffc649616c2e))
+
 ## [1.1.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.0.1...ferry-v1.1.0) (2026-11-19)
 
 
