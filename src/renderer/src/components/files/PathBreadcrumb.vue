@@ -24,7 +24,7 @@ const collapsedMenuItems = computed(() =>
 const strip = ref<HTMLElement | null>(null)
 const stripWidth = ref(0)
 const effectiveShorten = computed(
-  () => ui.shortenPath || (stripWidth.value > 0 && stripWidth.value < 240 && segments.value.length > 2)
+  () => ui.shortenPath || (stripWidth.value > 0 && stripWidth.value < 300 && segments.value.length > 2)
 )
 
 function scrollToEnd(): void {
@@ -102,7 +102,7 @@ async function copyCurrentPath(): Promise<void> {
       <div
         ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5"
-        :class="effectiveShorten ? 'overflow-hidden' : 'overflow-x-auto scrollbar-none'"
+        :class="effectiveShorten ? 'overflow-hidden' : 'ferry-scroll-fade-x overflow-x-auto scrollbar-none touch-pan-x'"
         @click.self="startEdit"
       >
         <template v-if="effectiveShorten">

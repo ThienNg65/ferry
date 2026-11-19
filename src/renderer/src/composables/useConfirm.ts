@@ -15,7 +15,7 @@ export interface ConfirmOptions {
 export function useConfirm(): (options: ConfirmOptions) => Promise<boolean> {
   const overlay = useOverlay()
   return async (options) => {
-    const modal = overlay.create(ConfirmDialog)
+    const modal = overlay.create(ConfirmDialog, { destroyOnClose: true })
     const confirmed = await modal.open(options)
     return Boolean(confirmed)
   }

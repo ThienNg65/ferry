@@ -20,7 +20,7 @@ This section maps every major Ferry view and component to its exact elevation ti
 | [`SiteRow.vue`](../../src/renderer/src/components/sessions/SiteRow.vue) | Child of Tier 2A | No `backdrop-filter` | Uses translucent hover (`hover:bg-default/45`) and selected pill (`bg-primary/15 ring-1 ring-primary/35`) inside the parent `.ferry-glass-card`. |
 | [`FilePane.vue`](../../src/renderer/src/components/files/FilePane.vue) | Container | `bg-transparent` | Acts as a flex layout shell (`border-r border-[var(--ferry-glass-chrome-border)]`) without its own `backdrop-filter` so child chrome and wells sample cleanly. |
 | [`FileToolbar.vue`](../../src/renderer/src/components/files/FileToolbar.vue) & [`PathBreadcrumb.vue`](../../src/renderer/src/components/files/PathBreadcrumb.vue) | Tier 1 Chrome | `.ferry-glass-chrome` | Translucent frosted header bars above each file pane with `1px` bottom border (`var(--ferry-glass-chrome-border)`). Strip the redundant inner `backdrop-blur-xs` from `PathBreadcrumb.vue:182` so it does not nest a second blur inside `.ferry-glass-chrome`. |
-| [`FileList.vue`](../../src/renderer/src/components/files/FileList.vue) | Tier 2B Content Well | `.ferry-glass-well` | High-legibility translucent well (`0.88` Light / `0.84` Dark). Column header row uses `bg-muted/60` (no nested `backdrop-blur`). |
+| [`FileList.vue`](../../src/renderer/src/components/files/FileList.vue) | Tier 2B Content Well | `.ferry-glass-well` | High-legibility translucent well (`0.82` Light / `0.78` Dark). Column header row uses `bg-muted/60` (no nested `backdrop-blur`). |
 | [`FileRow.vue`](../../src/renderer/src/components/files/FileRow.vue) | Virtualized Row | **Zero `backdrop-filter`** | **Never** apply `backdrop-filter` to virtualized rows. Selected rows preserve active vs. inactive pane distinction (`bg-primary/14` + `shadow-[inset_2px_0_0_var(--ui-primary)]`), hover rows use `hover:bg-muted/50`, and size/date cells enforce `tabular-nums`. |
 | [`BottomDock.vue`](../../src/renderer/src/components/shell/BottomDock.vue) | Tier 1 + Tier 2B | `.ferry-glass-chrome` (tab bar) + `.ferry-glass-well` (panels) | Dock tab strip and collapsed right rail use `.ferry-glass-chrome`; `TransferQueue`, `ActivityPanel`, `LogTailViewer`, `MonitorPanel`, and `OpenEditsPanel` sit in `.ferry-glass-well`. Strip `backdrop-blur-xs` from virtualized log rows in `LogTailViewer.vue:959` (and `backdrop-blur-md` on line 1036) to eliminate per-row compositor layers. |
 | [`TerminalView.vue`](../../src/renderer/src/components/terminal/TerminalView.vue) | WebGL Canvas | 100% Opaque Default Scheme | Preserves `@xterm/addon-webgl` (`allowTransparency: false`) performance and all 9 terminal schemes in `terminalAppearance.ts`. When `glassUiEnabled` is `true`, the default `Ferry` scheme uses 100% opaque `#0b0f19` (Dark) / `#f8fafc` (Light) harmonized to the glass well, and `terminalStreams.applyAppearance()` is called on toggle. |
@@ -249,3 +249,43 @@ Before any Phase 2 implementation PR is marked complete, verify every item in th
 5. **OS Accessibility Media Queries:**
    - `@media (prefers-reduced-motion: reduce)` collapses all transition durations to `0.01ms`.
    - `@media (prefers-reduced-transparency: reduce)` disables all `backdrop-filter` blurs and raises surface alpha to `>= 0.98`.
+
+---
+
+## 5. Responsive Slot Architecture, Container Queries & Input Modality Handling (Arc UI Engineering Patterns)
+
+### 5.1 Container-First Responsiveness (`@container` & `cqi` over Viewport Media Queries)
+
+Viewport `@media` queries alone fail in a multi-pane desktop application: users freely drag the `FilePane` splitter, collapse the Local pane, open `SiteDetailsPanel`, or dock `BottomDock` to the right or bottom. A `FilePane` inside a `1440px` desktop window can easily be narrowed to `320px`. Components must adapt to their **slot width** via CSS container queries (`container-type: inline-size`) or `ResizeObserver`:
+
+| Resizable Slot / View | Container Breakpoints | Responsive Adaptation Rule |
+| :--- | :--- | :--- |
+| **`FilePane` (`FileToolbar.vue` & `PathBreadcrumb.vue`)** | `>= 580px` (`@[580px]`) | Inline single-row header with breadcrumb, vertical separator, full toolbar controls, and wider filter `<UInput>`. |
+| | `480px – 579px` (`@[480px]`) | Wraps toolbar cleanly below breadcrumb while keeping `"New file"` button and inline search input visible; engages `.ferry-scroll-fade-x` on `PathBreadcrumb`. |
+| | `< 480px` (`< 300px` strip) | Collapses `"New file"` into `"More actions"` dropdown, expands search below toolbar, and switches `PathBreadcrumb` (`stripWidth < 300px`) into compact root + `…` parent menu + current folder mode. |
+| **`SessionManagerView.vue` (`Sites` + `Quick Connect` + `SiteDetailsPanel`)** | `>= 860px` (`@[860px]`) | Dual-column grid (`Sites` card alongside `Quick Connect` / `SiteDetailsPanel`) with `Sites` list capped at `@[860px]:max-h-[58vh]`. |
+| | `< 860px` | Single-column stacked layout with natural full-page scrolling and `slide-up` inline swap between `Quick Connect` and `SiteDetailsPanel`. |
+| **`BottomDock.vue` (`TransferQueue`, `MonitorPanel`, `LogTailViewer`)** | `>= 560px` (`@[560px]`) | Shows full host label beside terminal search action in dock header and session badge (`@[480px]`) on log-tail tabs. |
+| | `< 500px` (`compactRightTabs`) | Collapses inactive right-dock tab labels to icon-only pills; keeps `min-h-9` (`36px`) dock header and `Ctrl+`` hint (`@[460px]`) cleanly constrained. |
+
+- **Viewport Safety Rules:**
+  - Never set `width: 100vw` on internal layout containers (prevents horizontal scrollbar overflow).
+  - Floating modals, slide-overs, and popovers cap at `min(var(--modal-max-w), calc(100vw - 32px))` and `max-height: calc(100dvh - 32px)`.
+
+### 5.2 Pointer, Touch & Keyboard Modality Discrimination
+
+- **Hover Guards:** Wrap hover-only surface tints and hover-revealed icons in `@media (hover: hover) and (pointer: fine)` so touch or hybrid Windows devices never leave sticky hover states.
+- **Axis-Locked Touch & Drag (`touch-action`):** Pane splitters (`FilePane` divider, `BottomDock` resize handle) and HSV color pickers set `touch-action: none`; horizontal tab strips (`SiteTabBar`, `BottomDock` tabs) set `touch-action: pan-x` so horizontal drags or trackpad gestures never fight vertical scroll containers.
+- **Keyboard & Button Parity for Every Gesture/Hover Action:** Every hover-revealed action (`SiteRow` connect/edit buttons, `FileRow` quick actions, toast actions) must remain reachable via keyboard `:focus-visible` and context menus.
+
+---
+
+## 6. Arc UI Micro-Interaction Pattern Mapping for Ferry Components
+
+| Ferry Component(s) | Arc UI Pattern Applied | Implementation Standard |
+| :--- | :--- | :--- |
+| **`SiteTabBar.vue` & `BottomDock.vue`** | Shared Transform Indicator + Overflow Edge Masks + Warmup Tooltips | Animate active tab indicators via `transform` (`scale-x-100` / `scale-x-75` / `scale-x-0` and `scaleX` on `--ferry-motion-standard` + `--ferry-motion-ease-emphasized`); engage `.ferry-scroll-fade-x` edge masks + `touch-pan-x` + mouse-wheel scrolling on horizontal overflow; share a `300ms` tooltip warmup window via `<UApp :tooltip>`. |
+| **`FileToolbar.vue`, `SiteTabBar.vue` & `BottomDock.vue`** | Tactile Press Scale + Popup-Anchor Press Guard | Apply `.ferry-pressable` (`scale(0.975)` over `--ferry-motion-instant`) on toolbar buttons while automatically suppressing `:active` shrink on disabled controls and popup triggers (`[aria-haspopup]`, `[data-state="open"]`, `[aria-expanded="true"]`). |
+| **Destructive Actions (`ConfirmDialog.vue`)** | `280ms` Pointer Double-Click Guard | Guard `destructive: true` pointer clicks (`event.detail > 0`) for `280ms` after `<UModal>` `@enter` to prevent accidental double-click destruction while keeping keyboard (`Enter`/`Space`) confirmation instant. |
+| **`SettingsDialog.vue`, `CommandPalette.vue`, `FilePreviewDialog.vue` & Reka UI Portals** | Aligned Keyframe Timings + Glass Skeleton Shimmer | Pair Tier 3 `.ferry-glass-overlay` with `[data-state="open"]` (`170ms` `--ferry-motion-ease-emphasized`) and `[data-state="closed"]` (`140ms` `--ferry-motion-ease-exit`) keyframe timing overrides, and use `--ferry-skeleton-base` / `--ferry-skeleton-highlight` shimmer inside glass loading states. |
+| **`SessionManagerView.vue`** | `@container` Grid + `slide-up` Card Swap | Use `@[860px]` container queries for grid columns and `58vh` list scroll capping, `slide-up` panel swaps (`SiteDetailsPanel` / `Quick Connect`), `text-balance` / `text-pretty` empty states, and `:aria-busy` on async buttons. |

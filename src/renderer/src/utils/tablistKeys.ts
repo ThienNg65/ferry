@@ -31,3 +31,10 @@ export function onTablistKeydown(
     next.click()
   }
 }
+
+export function onTabStripWheel(e: WheelEvent): void {
+  const el = e.currentTarget as HTMLElement | null
+  if (!el || el.scrollWidth <= el.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+  el.scrollLeft += e.deltaY
+  e.preventDefault()
+}
