@@ -184,6 +184,7 @@ export interface SidecarUpdaterDeps {
   feedUrl?: string
   downloadDir?: string
   fetchImpl?: typeof fetch
+  createWriteStreamImpl?: typeof createWriteStream
   spawnImpl?: typeof spawn
   exitImpl?: (code: number) => void
   manifestTimeoutMs?: number
@@ -265,9 +266,7 @@ async function finishWriteStream(stream: WriteStream, getError: () => Error | nu
     }
     const onClose = (): void => {
       cleanup()
-      const err = getError()
-      if (err) reject(err)
-      else resolve()
+      reject(getError() ?? new Error('Download file stream closed before finishing'))
     }
     stream.once('finish', onFinish)
     stream.once('error', onErr)
@@ -332,6 +331,7 @@ export class SidecarUpdater extends EventEmitter {
       feedUrl: deps.feedUrl ?? (process.env['FERRY_UPDATE_FEED_URL'] || DEFAULT_UPDATE_FEED_URL),
       downloadDir: deps.downloadDir ?? path.join(os.tmpdir(), 'ferry-updater'),
       fetchImpl: deps.fetchImpl ?? fetch,
+      createWriteStreamImpl: deps.createWriteStreamImpl ?? createWriteStream,
       spawnImpl: deps.spawnImpl ?? spawn,
       exitImpl:
         deps.exitImpl ??
@@ -520,7 +520,7 @@ export class SidecarUpdater extends EventEmitter {
 
     const total = Number(res.headers.get('content-length')) || manifest.size || 0
     const hash = createHash('sha512')
-    const fileStream = createWriteStream(tmpPath)
+    const fileStream = this.deps.createWriteStreamImpl(tmpPath)
     let streamError: Error | null = null
     fileStream.on('error', (err) => {
       if (!streamError) {
