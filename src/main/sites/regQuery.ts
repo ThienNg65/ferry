@@ -76,5 +76,5 @@ export function parseDword(raw: string | undefined, fallback: number): number {
     return fallback
   }
   const n = parseInt(raw.replace(/^0x/i, ''), 16)
-  return Number.isFinite(n) && n > 0 ? n : fallback
+  return Number.isFinite(n) && n >= 1 && n <= 65535 ? n : fallback
 }

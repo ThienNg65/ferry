@@ -32,7 +32,7 @@ describe('keys.ipc', () => {
       publicKey: 'ssh-ed25519 AAAA...',
       method: 'builtin'
     })
-    const req = { path: 'id_ed25519', passphrase: undefined }
+    const req = { keyPath: 'id_ed25519' }
     const result = await invoke('keys:generate', req)
     expect(generateEd25519KeyPair).toHaveBeenCalledWith(req)
     expect(result).toEqual({
@@ -48,7 +48,7 @@ describe('keys.ipc', () => {
 
   it('wraps an underlying keygen failure into an error envelope', async () => {
     vi.mocked(generateEd25519KeyPair).mockRejectedValueOnce(new Error('ssh-keygen not found'))
-    const result = await invoke('keys:generate', { path: 'id_ed25519' })
+    const result = await invoke('keys:generate', { keyPath: 'id_ed25519' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'ssh-keygen not found' })
   })
 })

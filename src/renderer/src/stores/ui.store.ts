@@ -116,7 +116,7 @@ export function clampDockWidth(value: number, windowInnerWidth: number): number 
 }
 
 function loadDockHeight(): number {
-  const stored = Number(localStorage.getItem(DOCK_HEIGHT_KEY))
+  const stored = Number(readStored(DOCK_HEIGHT_KEY))
   const initial = Number.isFinite(stored) && stored > 0 ? stored : MIN_DOCK_HEIGHT
   return clampDockHeight(initial, window.innerHeight)
 }
@@ -161,11 +161,11 @@ interface UiState {
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
-  return localStorage.getItem(PERMISSIONS_DISPLAY_KEY) === 'technical' ? 'technical' : 'friendly'
+  return readStored(PERMISSIONS_DISPLAY_KEY) === 'technical' ? 'technical' : 'friendly'
 }
 
 function loadDensity(): Density {
-  return localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable'
+  return readStored(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable'
 }
 
 function systemPrefersDark(): boolean {
@@ -173,7 +173,7 @@ function systemPrefersDark(): boolean {
 }
 
 function loadTheme(): Theme {
-  const stored = localStorage.getItem(THEME_KEY)
+  const stored = readStored(THEME_KEY)
   if (stored === 'light' || stored === 'dark') return stored
   return systemPrefersDark() ? 'dark' : 'light'
 }
@@ -265,7 +265,7 @@ async function applyTheme(theme: Theme): Promise<void> {
 const HEX_COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i
 
 function loadAccentColor(): string {
-  const stored = localStorage.getItem(ACCENT_KEY)
+  const stored = readStored(ACCENT_KEY)
   return stored && HEX_COLOR_RE.test(stored) ? stored : DEFAULT_ACCENT_COLOR
 }
 
@@ -278,7 +278,7 @@ function applyAccentColor(hex: string): void {
 }
 
 function loadLocalPaneWidth(): number {
-  const stored = Number(localStorage.getItem(LOCAL_PANE_WIDTH_KEY))
+  const stored = Number(readStored(LOCAL_PANE_WIDTH_KEY))
   return Number.isFinite(stored) && stored >= 10 && stored <= 90 ? stored : DEFAULT_LOCAL_PANE_WIDTH
 }
 
@@ -291,17 +291,17 @@ function loadGlassUiPromoDismissed(): boolean {
 }
 
 function loadTerminalScheme(): string {
-  const stored = localStorage.getItem(TERM_SCHEME_KEY)
+  const stored = readStored(TERM_SCHEME_KEY)
   return stored && isSchemeId(stored) ? stored : DEFAULT_SCHEME_ID
 }
 
 function loadTerminalFont(): string {
-  const stored = localStorage.getItem(TERM_FONT_KEY)
+  const stored = readStored(TERM_FONT_KEY)
   return stored && isFontId(stored) ? stored : DEFAULT_FONT_ID
 }
 
 function loadTerminalNumber(key: string, fallback: number, clamp: (n: number) => number): number {
-  const raw = localStorage.getItem(key)
+  const raw = readStored(key)
   return raw === null || raw.trim() === '' ? fallback : clamp(Number(raw))
 }
 
@@ -312,11 +312,11 @@ function loadTerminalPredictiveEcho(): boolean {
 /** UI-layout preferences that persist across restarts (not session/domain state). */
 export const useUiStore = defineStore('ui', {
   state: (): UiState => ({
-    showLocalPane: localStorage.getItem(STORAGE_KEY) !== 'false',
+    showLocalPane: readStored(STORAGE_KEY) !== 'false',
     permissionsDisplay: loadPermissionsDisplay(),
     density: loadDensity(),
-    shortenPath: localStorage.getItem(SHORTEN_PATH_KEY) === 'true',
-    showHidden: localStorage.getItem(SHOW_HIDDEN_KEY) !== 'false',
+    shortenPath: readStored(SHORTEN_PATH_KEY) === 'true',
+    showHidden: readStored(SHOW_HIDDEN_KEY) !== 'false',
     terminalScrollback: loadScrollback(),
     terminalPredictiveEcho: loadTerminalPredictiveEcho(),
     columns: parseColumnPrefs(readStored(COLUMNS_KEY)),
@@ -330,7 +330,7 @@ export const useUiStore = defineStore('ui', {
     glassUiPromoDismissed: loadGlassUiPromoDismissed(),
     terminalScheme: loadTerminalScheme(),
     terminalFont: loadTerminalFont(),
-    terminalFontCustom: (localStorage.getItem(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
+    terminalFontCustom: (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
     terminalFontSize: loadTerminalNumber(TERM_FONT_SIZE_KEY, DEFAULT_FONT_SIZE, clampFontSize),
     terminalLineHeight: loadTerminalNumber(TERM_LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT, clampLineHeight),
     activePane: 'remote',
@@ -511,6 +511,7 @@ export const useUiStore = defineStore('ui', {
 
       applyGlassUiClass(this.glassUiEnabled)
       applyAccentColor(this.accentColor)
+      void applyTheme(this.theme)
     },
 
     /** Applies the persisted accent color to the document — call once on app start, alongside initTheme(). */

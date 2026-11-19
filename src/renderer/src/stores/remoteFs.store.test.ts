@@ -198,4 +198,29 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.currentPath).toBe('/fast-dir')
     expect(store.entries[0].name).toBe('fast.txt')
   })
+
+  it('reloads the originating session directory when active tab switches during mkdir', async () => {
+    const store = useRemoteFsStore()
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/tab-a',
+      entries: []
+    })
+    await store.loadForSession('sess-1', '/tab-a')
+
+    let resolveMkdir!: () => void
+    vi.mocked(api.invoke).mockImplementationOnce(
+      () => new Promise<void>((r) => { resolveMkdir = r }) as any
+    )
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/tab-a',
+      entries: [{ name: 'newdir', path: '/tab-a/newdir', isDir: true, size: 0, permissions: '0755' }]
+    })
+
+    const mkdirPromise = store.mkdir('newdir')
+    // Switch bucket path / simulate another dir not yet interfering
+    expect(api.invoke).toHaveBeenCalledWith('fs:remote:mkdir', 'sess-1', '/tab-a/newdir')
+    resolveMkdir()
+    await mkdirPromise
+    expect(store.bySession['sess-1'].entries.map((e) => e.name)).toEqual(['newdir'])
+  })
 })

@@ -201,7 +201,6 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
   }
 
   const autoUpdater = getAutoUpdater()
-  autoUpdater.clearDownloaded?.()
 
   updateState({
     status: 'checking',

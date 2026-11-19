@@ -6,6 +6,7 @@ import { basicSetup } from 'codemirror'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileReadResult } from '@shared/contract'
 import { invoke } from '../../api'
+import { useConfirm } from '../../composables/useConfirm'
 import { useNotify } from '../../composables/useNotify'
 import { useUiStore } from '../../stores/ui.store'
 
@@ -20,6 +21,7 @@ const emit = defineEmits<{
   'update:open': [value: boolean]
 }>()
 
+const confirm = useConfirm()
 const notify = useNotify()
 const ui = useUiStore()
 
@@ -28,6 +30,7 @@ const savedContent = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const fontSize = ref(14)
+let loadToken = 0
 
 const isDirty = computed(() => !loading.value && content.value !== savedContent.value)
 const extensions = computed(() => (ui.theme === 'dark' ? [basicSetup, oneDark] : [basicSetup]))
@@ -49,26 +52,32 @@ const handleReady = (payload: { view: unknown }) => {
 }
 
 watch(
-  () => props.open,
-  async (isOpen) => {
-    if (isOpen && props.localTempPath) {
+  () => [props.open, props.localTempPath] as const,
+  async ([isOpen, tempPath]) => {
+    const token = ++loadToken
+    if (isOpen && tempPath) {
       loading.value = true
       try {
-        const res = await invoke<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, props.localTempPath)
+        const res = await invoke<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, tempPath)
+        if (token !== loadToken || !props.open) return
         if (res.truncated) {
           notify.error('File too large', 'This file is too large to edit in the built-in editor. Opening externally...')
-          await onOpenExternal()
+          await openExternalNow()
           return
         }
         content.value = res.content
         savedContent.value = res.content
       } catch (e) {
+        if (token !== loadToken) return
         notify.error('Failed to load file', e instanceof Error ? e.message : String(e))
         emit('update:open', false)
       } finally {
-        loading.value = false
+        if (token === loadToken) {
+          loading.value = false
+        }
       }
     } else {
+      loading.value = false
       content.value = ''
       savedContent.value = ''
     }
@@ -77,7 +86,7 @@ watch(
 )
 
 async function onSave(): Promise<void> {
-  if (!props.localTempPath) return
+  if (!props.localTempPath || loading.value || saving.value || !isDirty.value) return
   saving.value = true
   try {
     await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, {
@@ -93,7 +102,7 @@ async function onSave(): Promise<void> {
   }
 }
 
-async function onOpenExternal(): Promise<void> {
+async function openExternalNow(): Promise<void> {
   if (!props.editId) return
   try {
     await invoke<void>(INVOKE_CHANNELS.editOpenExternal, { editId: props.editId })
@@ -102,13 +111,40 @@ async function onOpenExternal(): Promise<void> {
     notify.error('Failed to open external editor', e instanceof Error ? e.message : String(e))
   }
 }
+
+async function onOpenExternal(): Promise<void> {
+  if (!props.editId || loading.value || saving.value) return
+  if (isDirty.value) {
+    const ok = await confirm({
+      title: 'Discard unsaved changes?',
+      body: 'Opening in an external editor will discard your unsaved changes in this window.',
+      confirmLabel: 'Discard & Open',
+      confirmColor: 'warning'
+    })
+    if (!ok) return
+  }
+  await openExternalNow()
+}
+
+async function onUpdateOpen(nextOpen: boolean): Promise<void> {
+  if (!nextOpen && isDirty.value) {
+    const ok = await confirm({
+      title: 'Discard unsaved changes?',
+      body: 'You have unsaved edits that have not been saved yet.',
+      confirmLabel: 'Discard',
+      confirmColor: 'warning'
+    })
+    if (!ok) return
+  }
+  emit('update:open', nextOpen)
+}
 </script>
 
 <template>
   <UModal
     :open="open"
     :title="`Editing: ${remotePath ?? 'file'}`"
-    @update:open="(v: boolean) => emit('update:open', v)"
+    @update:open="onUpdateOpen"
     :ui="{ content: 'sm:max-w-5xl h-[85vh] flex flex-col', body: 'p-0 sm:p-0 flex-1 overflow-hidden', header: 'py-3' }"
   >
     <template #actions>

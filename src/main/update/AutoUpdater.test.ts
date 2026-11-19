@@ -717,6 +717,8 @@ describe('SidecarUpdater', () => {
     expect(compareSemver('0.24.0-rc.1', '0.24.0')).toBeLessThan(0)
     expect(compareSemver('0.24.0', '0.24.0-rc.1')).toBeGreaterThan(0)
     expect(compareSemver('0.21.0', '0.22.0')).toBeLessThan(0)
+    expect(compareSemver('1.0.0-beta.10', '1.0.0-beta.2')).toBeGreaterThan(0)
+    expect(compareSemver('1.0.0-rc-2', '1.0.0-rc-1')).toBeGreaterThan(0)
   })
 
   it('aborts manifest fetch when the feed stalls past manifestTimeoutMs', async () => {

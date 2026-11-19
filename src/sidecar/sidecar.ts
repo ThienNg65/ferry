@@ -18,17 +18,26 @@ import { serve, type WriteLine } from './protocol'
 export function initSidecarServices(): void {
   registerUpdaterExitHandler(requestSidecarShutdown)
   initHistoryRecorder()
-  const settings = AppSettingsStore.getInstance().get()
-  TransferQueue.getInstance().setBandwidthLimitKBps(settings.bandwidthLimitKBps)
-  const retention = settings.historyRetentionDays === undefined ? 90 : settings.historyRetentionDays
-  HistoryStore.getInstance().pruneExpired(retention)
+  let settings: ReturnType<ReturnType<typeof AppSettingsStore.getInstance>['get']> | null = null
+  try {
+    settings = AppSettingsStore.getInstance().get()
+  } catch (e) {
+    console.error('sidecar: app-settings.json unreadable at startup:', e)
+  }
+  TransferQueue.getInstance().setBandwidthLimitKBps(settings?.bandwidthLimitKBps ?? null)
+  const retention = settings?.historyRetentionDays === undefined ? 90 : settings.historyRetentionDays
+  try {
+    HistoryStore.getInstance().pruneExpired(retention)
+  } catch (e) {
+    console.error('sidecar: history.json unreadable at startup:', e)
+  }
   try {
     KnownHostsStore.getInstance()
   } catch (e) {
     console.error('sidecar: known_hosts.json unreadable at startup:', e)
   }
   void cleanupAllStagedDrops().catch(() => undefined)
-  if (host().isPackaged && settings.termsAcceptance !== null) {
+  if (host().isPackaged && settings && settings.termsAcceptance !== null) {
     setTimeout(() => void initAutoUpdater(), 5000).unref?.()
   }
 }
@@ -67,7 +76,11 @@ export function startSidecar(input: Readable, write: WriteLine, exit: (code: num
     }
     closing = true
     if (ready) {
-      await shutdownSidecarServices()
+      try {
+        await shutdownSidecarServices()
+      } catch (e) {
+        console.error('sidecar: error during shutdown:', e)
+      }
     }
     exit(code)
   }

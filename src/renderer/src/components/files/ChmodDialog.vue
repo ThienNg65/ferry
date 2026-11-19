@@ -20,6 +20,9 @@ const emit = defineEmits<{
 const owner = reactive({ read: false, write: false, execute: false })
 const group = reactive({ read: false, write: false, execute: false })
 const other = reactive({ read: false, write: false, execute: false })
+const recursive = ref(false)
+const ownerName = ref('')
+const groupName = ref('')
 
 watch(
   () => props.open,
@@ -40,10 +43,6 @@ watch(
   },
   { immediate: true }
 )
-
-const recursive = ref(false)
-const ownerName = ref('')
-const groupName = ref('')
 
 const mode = computed(() => formatMode({ owner, group, other }))
 const technical = computed(() => toTechnical(mode.value))

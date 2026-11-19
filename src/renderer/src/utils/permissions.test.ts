@@ -38,4 +38,9 @@ describe('toTechnical / toFriendlyLabel (existing behavior, unchanged by the par
   it('still renders the owner-scoped friendly label', () => {
     expect(toFriendlyLabel('0644')).toBe('Read & Write')
   })
+
+  it('pads short octal strings to 3 digits', () => {
+    expect(toTechnical('64')).toBe('---rw-r--')
+    expect(toFriendlyLabel('64')).toBe('No access')
+  })
 })

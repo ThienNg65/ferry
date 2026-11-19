@@ -57,8 +57,9 @@ export function parseProcStat(text: string): CpuTimes[] {
       continue
     }
     // Columns: user nice system idle [iowait irq softirq steal guest guest_nice]
+    // Linux proc(5): guest and guest_nice are already included in user and nice, so sum only the first 8 columns.
     const idle = fields[3] + (fields[4] ?? 0)
-    const total = fields.reduce((sum, n) => sum + n, 0)
+    const total = fields.slice(0, 8).reduce((sum, n) => sum + n, 0)
     rows.push({ label: match[1], idle, total })
   }
   // The aggregate 'cpu' row always sorts before 'cpu0' in real /proc/stat, but

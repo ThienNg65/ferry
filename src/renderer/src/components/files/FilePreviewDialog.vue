@@ -33,10 +33,14 @@ const showTail = computed(() => {
   return props.side === 'remote' && entry !== null && isLogFile(entry.name)
 })
 
+let loadToken = 0
+
 watch(
   () => [props.open, props.entry] as const,
   async ([isOpen, entry]) => {
+    const token = ++loadToken
     if (!isOpen || !entry || !isTextPreviewable(entry.name)) {
+      loading.value = false
       content.value = ''
       error.value = null
       truncated.value = false
@@ -53,12 +57,16 @@ watch(
               sessions.activeSessionId,
               entry.path
             )
+      if (token !== loadToken || !props.open) return
       content.value = result.content
       truncated.value = result.truncated
     } catch (e) {
+      if (token !== loadToken || !props.open) return
       error.value = e instanceof Error ? e.message : String(e)
     } finally {
-      loading.value = false
+      if (token === loadToken) {
+        loading.value = false
+      }
     }
   },
   { immediate: true }

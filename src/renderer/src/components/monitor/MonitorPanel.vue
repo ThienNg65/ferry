@@ -59,6 +59,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  switchToken++
   if (ageTicker) {
     clearInterval(ageTicker)
     ageTicker = null

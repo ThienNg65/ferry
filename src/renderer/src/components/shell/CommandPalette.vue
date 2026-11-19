@@ -36,6 +36,12 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.target instanceof HTMLElement && event.target.closest('.xterm')) {
     return
   }
+  const isToggleKey = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k'
+  if (isToggleKey && open.value) {
+    event.preventDefault()
+    open.value = false
+    return
+  }
   // Typing in a dialog's text field must never be interrupted by the global shortcut
   // (mirrors the guard in FilePane.vue's onKeydown).
   if (
@@ -45,12 +51,12 @@ function onKeydown(event: KeyboardEvent): void {
   ) {
     return
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-    if (!open.value && document.querySelector('[role="dialog"]')) {
+  if (isToggleKey) {
+    if (document.querySelector('[role="dialog"]')) {
       return
     }
     event.preventDefault()
-    open.value = !open.value
+    open.value = true
   }
 }
 

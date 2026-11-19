@@ -320,13 +320,20 @@ watch(
     autoCheckUpdates.value = settings.autoCheckUpdates
     seedNetwork()
     await settings.fetch()
-    knownHosts.value = await settings.listKnownHosts()
+    const hosts = await settings.listKnownHosts()
+    knownHosts.value = Array.isArray(hosts) ? hosts : []
     void update.init()
+    if (!props.open) {
+      return
+    }
     if (!savingAutoCheck.value) {
       autoCheckUpdates.value = settings.autoCheckUpdates
     }
-    seedNetwork()
-  }
+    if (!dirty.value) {
+      seedNetwork()
+    }
+  },
+  { immediate: true }
 )
 
 const verticalQuery = window.matchMedia('(min-width: 640px)')

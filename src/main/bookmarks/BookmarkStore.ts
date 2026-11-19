@@ -14,7 +14,11 @@ export class BookmarkStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'bookmarks', defaults: { bookmarks: [] } })
+      this._store = new Conf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'bookmarks',
+        defaults: { bookmarks: [] }
+      })
     }
     return this._store
   }
@@ -27,7 +31,8 @@ export class BookmarkStore {
   }
 
   list(): Bookmark[] {
-    return this.store.get('bookmarks')
+    const stored = this.store.get('bookmarks')
+    return Array.isArray(stored) ? stored : []
   }
 
   create(input: BookmarkInput): Bookmark {
@@ -39,14 +44,14 @@ export class BookmarkStore {
       label: input.label,
       createdAt: new Date().toISOString()
     }
-    const bookmarks = this.store.get('bookmarks')
+    const bookmarks = this.list()
     bookmarks.push(bookmark)
     this.store.set('bookmarks', bookmarks)
     return bookmark
   }
 
   delete(id: string): void {
-    const bookmarks = this.store.get('bookmarks').filter((b) => b.id !== id)
+    const bookmarks = this.list().filter((b) => b.id !== id)
     this.store.set('bookmarks', bookmarks)
   }
 

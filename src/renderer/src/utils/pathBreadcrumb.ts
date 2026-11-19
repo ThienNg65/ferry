@@ -45,6 +45,16 @@ export function parseBreadcrumbSegments(rawPath: string): BreadcrumbSegment[] {
     if (parts.length === 0) {
       return [{ label: path, fullPath: path }]
     }
+    if (normalized.startsWith('\\\\')) {
+      const rootLabel = parts.length >= 2 ? `\\\\${parts[0]}\\${parts[1]}` : `\\\\${parts[0]}`
+      const segments: BreadcrumbSegment[] = [{ label: rootLabel, fullPath: rootLabel }]
+      let current = rootLabel
+      for (let i = 2; i < parts.length; i++) {
+        current = `${current}\\${parts[i]}`
+        segments.push({ label: parts[i], fullPath: current })
+      }
+      return segments
+    }
     const drive = parts[0].endsWith(':') ? `${parts[0]}\\` : parts[0]
     const segments: BreadcrumbSegment[] = [{ label: drive, fullPath: drive }]
     let current = drive.replace(/\\$/, '')
@@ -61,12 +71,13 @@ export function parseBreadcrumbSegments(rawPath: string): BreadcrumbSegment[] {
   }
   const parts = trimmed.split('/').filter(Boolean)
   const segments: BreadcrumbSegment[] = []
+  const isAbs = path.startsWith('/')
   let current = ''
-  if (path.startsWith('/')) {
+  if (isAbs) {
     segments.push({ label: '/', fullPath: '/' })
   }
   for (const part of parts) {
-    current = `${current}/${part}`
+    current = isAbs || current !== '' ? `${current}/${part}` : part
     segments.push({ label: part, fullPath: current })
   }
   return segments

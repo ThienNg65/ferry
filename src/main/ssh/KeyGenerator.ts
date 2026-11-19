@@ -129,16 +129,22 @@ export async function generateBuiltin(req: KeyGenerateRequest): Promise<KeyGener
   // OpenSSH's on-disk ed25519 "private key" field is the libsodium secret-key
   // convention: the 32-byte seed followed by the 32-byte public key, 64 bytes total.
   const privKey64 = Buffer.concat([seedBytes, pubKeyBytes])
-  const comment = req.comment ?? ''
+  const comment = (req.comment ?? '').replace(/[\r\n]/g, ' ')
 
   const pem = buildOpenSshPrivateKeyPem(pubKeyBytes, privKey64, comment)
   const publicLine = `${`ssh-ed25519 ${edPublicKeyBlob(pubKeyBytes).toString('base64')}${comment ? ` ${comment}` : ''}`}\n`
 
-  await fs.writeFile(req.keyPath, pem, { mode: 0o600 })
-  if (process.platform === 'win32') {
-    await execFileAsync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:F`], { windowsHide: true })
+  await fs.writeFile(req.keyPath, pem, { mode: 0o600, flag: 'wx' })
+  try {
+    if (process.platform === 'win32') {
+      const user = process.env.USERNAME || os.userInfo().username
+      await execFileAsync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${user}:F`], { windowsHide: true })
+    }
+    await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644, flag: 'wx' })
+  } catch (e) {
+    await fs.unlink(req.keyPath).catch(() => undefined)
+    throw e
   }
-  await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644 })
 
   return {
     privateKeyPath: req.keyPath,
@@ -176,7 +182,7 @@ export async function generateEd25519KeyPair(
   const exists = await fs
     .access(resolvedReq.keyPath)
     .then(() => true)
-    .catch(() => false)
+    .catch(() => fs.access(`${resolvedReq.keyPath}.pub`).then(() => true, () => false))
   if (exists) {
     throw new SshError('VALIDATION', `"${resolvedReq.keyPath}" already exists — choose a different path.`)
   }

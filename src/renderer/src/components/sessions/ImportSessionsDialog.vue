@@ -72,7 +72,8 @@ watch(
     } finally {
       loading.value = false
     }
-  }
+  },
+  { immediate: true }
 )
 
 function toggle(index: number, checked: boolean | 'indeterminate'): void {

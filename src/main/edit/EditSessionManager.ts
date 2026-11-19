@@ -54,6 +54,9 @@ interface EditEntry {
   /** True once the underlying SSH session has closed — the watcher is stopped but the temp file is kept. */
   sessionClosed: boolean
   viaSudo: boolean
+  uploading: boolean
+  pendingReupload: boolean
+  pendingForce: boolean
 }
 
 /**
@@ -67,6 +70,7 @@ interface EditEntry {
 export class EditSessionManager {
   private static instance: EditSessionManager | null = null
   private readonly edits = new Map<string, EditEntry>()
+  private readonly pendingOpens = new Map<string, Promise<{ editId: string; localTempPath: string }>>()
 
   static getInstance(): EditSessionManager {
     if (EditSessionManager.instance === null) {
@@ -100,67 +104,99 @@ export class EditSessionManager {
       return { editId: existing.editId, localTempPath: existing.localTempPath }
     }
 
-    const editId = randomUUID()
-    const remoteStamp = await this.remoteStamp(sessionId, remotePath, viaSudo)
-    const basename = sanitizeEditFilename(remotePath)
-    const safeSession = sanitizeSessionSegment(sessionId)
-    const tempDir = path.resolve(os.tmpdir(), 'ferry-edit', safeSession, randomUUID())
-    const localTempPath = path.resolve(tempDir, basename)
-    if (!localTempPath.startsWith(tempDir + path.sep)) {
-      logSecurityEvent('edit.path_traversal_blocked', { sessionId, remotePath })
-      throw new SshError('VALIDATION', `Unsafe remote filename for edit: ${remotePath}`)
-    }
-    // Mode is only fully meaningful on POSIX (Windows honors just the
-    // read-only attribute bit) — but on a shared Linux/macOS machine with a
-    // world-readable /tmp, an unrestricted directory would let other local
-    // users read the downloaded remote file's content while it's open.
-    await fs.mkdir(tempDir, { recursive: true, mode: 0o700 })
-
-    await OperationRegistry.getInstance().run(
-      { kind: 'edit-download', sessionId, label: `Opening ${basename} for editing`, cancellable: true },
-      async (ctx) => {
-        if (viaSudo) {
-          await downloadForEditSudo(sessionId, remotePath, localTempPath)
-          return
+    const dedupKey = `${sessionId}:${viaSudo ? '1' : '0'}:${remotePath}`
+    const inflight = this.pendingOpens.get(dedupKey)
+    if (inflight) {
+      const opened = await inflight
+      if (!builtin) {
+        const result = await host().openPath(opened.localTempPath)
+        if (result) {
+          throw new SshError('UNKNOWN', `Could not open "${opened.localTempPath}": ${result}`)
         }
-        await downloadForEdit(
-          sessionId, 
-          remotePath, 
-          localTempPath, 
-          (bytesTransferred) => {
-            ctx.reportProgress(bytesTransferred, undefined, 'bytes')
-          }, 
-          ctx.signal
+      }
+      return opened
+    }
+
+    const openPromise = (async (): Promise<{ editId: string; localTempPath: string }> => {
+      const editId = randomUUID()
+      const remoteStamp = await this.remoteStamp(sessionId, remotePath, viaSudo)
+      const basename = sanitizeEditFilename(remotePath)
+      const safeSession = sanitizeSessionSegment(sessionId)
+      const tempDir = path.resolve(os.tmpdir(), 'ferry-edit', safeSession, randomUUID())
+      const localTempPath = path.resolve(tempDir, basename)
+      if (!localTempPath.startsWith(tempDir + path.sep)) {
+        logSecurityEvent('edit.path_traversal_blocked', { sessionId, remotePath })
+        throw new SshError('VALIDATION', `Unsafe remote filename for edit: ${remotePath}`)
+      }
+      // Mode is only fully meaningful on POSIX (Windows honors just the
+      // read-only attribute bit) — but on a shared Linux/macOS machine with a
+      // world-readable /tmp, an unrestricted directory would let other local
+      // users read the downloaded remote file's content while it's open.
+      await fs.mkdir(tempDir, { recursive: true, mode: 0o700 })
+
+      try {
+        await OperationRegistry.getInstance().run(
+          { kind: 'edit-download', sessionId, label: `Opening ${basename} for editing`, cancellable: true },
+          async (ctx) => {
+            if (viaSudo) {
+              await downloadForEditSudo(sessionId, remotePath, localTempPath, ctx.signal)
+              return
+            }
+            await downloadForEdit(
+              sessionId,
+              remotePath,
+              localTempPath,
+              (bytesTransferred) => {
+                ctx.reportProgress(bytesTransferred, undefined, 'bytes')
+              },
+              ctx.signal
+            )
+          }
         )
-      }
-    )
 
-    if (!builtin) {
-      const result = await host().openPath(localTempPath)
-      if (result) {
-        throw new SshError('UNKNOWN', `Could not open "${localTempPath}": ${result}`)
+        if (!builtin) {
+          const result = await host().openPath(localTempPath)
+          if (result) {
+            throw new SshError('UNKNOWN', `Could not open "${localTempPath}": ${result}`)
+          }
+        }
+
+        const stats = await fs.stat(localTempPath)
+        const entry: EditEntry = {
+          editId,
+          sessionId,
+          remotePath,
+          localTempPath,
+          watcher: null,
+          debounceTimer: null,
+          lastSyncedMtimeMs: stats.mtimeMs,
+          remoteStamp,
+          conflictNotified: false,
+          sessionClosed: false,
+          viaSudo,
+          uploading: false,
+          pendingReupload: false,
+          pendingForce: false
+        }
+        this.edits.set(editId, entry)
+        this.watch(entry)
+
+        this.broadcast({ editId, sessionId, remotePath, localTempPath, state: 'opened' })
+        return { editId, localTempPath }
+      } catch (e) {
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+        throw e
+      }
+    })()
+
+    this.pendingOpens.set(dedupKey, openPromise)
+    try {
+      return await openPromise
+    } finally {
+      if (this.pendingOpens.get(dedupKey) === openPromise) {
+        this.pendingOpens.delete(dedupKey)
       }
     }
-
-    const stats = await fs.stat(localTempPath)
-    const entry: EditEntry = {
-      editId,
-      sessionId,
-      remotePath,
-      localTempPath,
-      watcher: null,
-      debounceTimer: null,
-      lastSyncedMtimeMs: stats.mtimeMs,
-      remoteStamp,
-      conflictNotified: false,
-      sessionClosed: false,
-      viaSudo
-    }
-    this.edits.set(editId, entry)
-    this.watch(entry)
-
-    this.broadcast({ editId, sessionId, remotePath, localTempPath, state: 'opened' })
-    return { editId, localTempPath }
   }
 
   /** Public-safe snapshot of every currently open edit, for hydrating the renderer's Open Edits list on load — the `edit:event` stream alone only covers edits opened after that point. */
@@ -220,6 +256,10 @@ export class EditSessionManager {
         void this.reupload(entry)
       }, REUPLOAD_DEBOUNCE_MS)
     })
+    entry.watcher.on('error', () => {
+      entry.watcher?.close()
+      entry.watcher = null
+    })
   }
 
   private async remoteStamp(sessionId: string, remotePath: string, viaSudo = false): Promise<{ mtime: number; size: number } | null> {
@@ -236,63 +276,91 @@ export class EditSessionManager {
   }
 
   private async reupload(entry: EditEntry, force = false): Promise<void> {
-    if (entry.sessionClosed) {
+    if (entry.sessionClosed || !this.edits.has(entry.editId)) {
       return
     }
-    if (!force && entry.remoteStamp) {
-      const current = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
-      if (current && (current.mtime !== entry.remoteStamp.mtime || current.size !== entry.remoteStamp.size)) {
-        if (entry.conflictNotified) {
+    if (entry.uploading) {
+      entry.pendingReupload = true
+      entry.pendingForce ||= force
+      return
+    }
+    entry.uploading = true
+    try {
+      if (!force && entry.remoteStamp) {
+        const current = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
+        if (entry.sessionClosed || !this.edits.has(entry.editId)) {
           return
         }
-        entry.conflictNotified = true
+        if (current && (current.mtime !== entry.remoteStamp.mtime || current.size !== entry.remoteStamp.size)) {
+          if (entry.conflictNotified) {
+            return
+          }
+          entry.conflictNotified = true
+          this.broadcast({
+            editId: entry.editId,
+            sessionId: entry.sessionId,
+            remotePath: entry.remotePath,
+            localTempPath: entry.localTempPath,
+            state: 'remote-changed'
+          })
+          return
+        }
+      }
+      const preUploadStats = await fs.stat(entry.localTempPath).catch(() => null)
+      const basename = path.basename(entry.localTempPath)
+      this.broadcast({
+        editId: entry.editId,
+        sessionId: entry.sessionId,
+        remotePath: entry.remotePath,
+        localTempPath: entry.localTempPath,
+        state: 'reuploading'
+      })
+      try {
+        await OperationRegistry.getInstance().run(
+          { kind: 'edit-reupload', sessionId: entry.sessionId, label: `Re-uploading ${basename}`, cancellable: false },
+          async () => {
+            await (entry.viaSudo ? uploadForEditSudo : uploadForEdit)(entry.sessionId, entry.localTempPath, entry.remotePath)
+          }
+        )
+        if (entry.sessionClosed || !this.edits.has(entry.editId)) {
+          return
+        }
+        const postStats = preUploadStats ?? (await fs.stat(entry.localTempPath))
+        entry.lastSyncedMtimeMs = postStats.mtimeMs
+        entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
+        entry.conflictNotified = false
         this.broadcast({
           editId: entry.editId,
           sessionId: entry.sessionId,
           remotePath: entry.remotePath,
           localTempPath: entry.localTempPath,
-          state: 'remote-changed'
+          state: 'reuploaded'
         })
-        return
-      }
-    }
-    const basename = path.basename(entry.localTempPath)
-    this.broadcast({
-      editId: entry.editId,
-      sessionId: entry.sessionId,
-      remotePath: entry.remotePath,
-      localTempPath: entry.localTempPath,
-      state: 'reuploading'
-    })
-    try {
-      await OperationRegistry.getInstance().run(
-        { kind: 'edit-reupload', sessionId: entry.sessionId, label: `Re-uploading ${basename}`, cancellable: false },
-        async () => {
-          await (entry.viaSudo ? uploadForEditSudo : uploadForEdit)(entry.sessionId, entry.localTempPath, entry.remotePath)
+      } catch (e) {
+        if (!this.edits.has(entry.editId)) {
+          return
         }
-      )
-      const stats = await fs.stat(entry.localTempPath)
-      entry.lastSyncedMtimeMs = stats.mtimeMs
-      entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
-      entry.conflictNotified = false
-      this.broadcast({
-        editId: entry.editId,
-        sessionId: entry.sessionId,
-        remotePath: entry.remotePath,
-        localTempPath: entry.localTempPath,
-        state: 'reuploaded'
-      })
-    } catch (e) {
-      // Keep watching — the file and the next save-triggered retry both
-      // survive a failed upload (dropped connection, permissions, ...).
-      this.broadcast({
-        editId: entry.editId,
-        sessionId: entry.sessionId,
-        remotePath: entry.remotePath,
-        localTempPath: entry.localTempPath,
-        state: 'upload-error',
-        error: e instanceof Error ? e.message : String(e)
-      })
+        // Keep watching — the file and the next save-triggered retry both
+        // survive a failed upload (dropped connection, permissions, ...).
+        this.broadcast({
+          editId: entry.editId,
+          sessionId: entry.sessionId,
+          remotePath: entry.remotePath,
+          localTempPath: entry.localTempPath,
+          state: 'upload-error',
+          error: e instanceof Error ? e.message : String(e)
+        })
+      }
+    } finally {
+      entry.uploading = false
+      if (entry.pendingReupload) {
+        const nextForce = entry.pendingForce
+        entry.pendingReupload = false
+        entry.pendingForce = false
+        if (!entry.sessionClosed && this.edits.has(entry.editId)) {
+          void this.reupload(entry, nextForce)
+        }
+      }
     }
   }
 

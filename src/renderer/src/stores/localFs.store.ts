@@ -27,6 +27,7 @@ interface LocalFsState {
   sortColumn: SortColumn
   sortDirection: SortDirection
   history: NavHistory
+  requestSeq: number
 }
 
 export const useLocalFsStore = defineStore('localFs', {
@@ -39,7 +40,8 @@ export const useLocalFsStore = defineStore('localFs', {
     selectAnchor: null,
     sortColumn: 'name',
     sortDirection: 'asc',
-    history: emptyHistory()
+    history: emptyHistory(),
+    requestSeq: 0
   }),
 
   getters: {
@@ -48,12 +50,16 @@ export const useLocalFsStore = defineStore('localFs', {
   },
 
   actions: {
-    async load(dirPath?: string, options?: { skipHistory?: boolean }): Promise<void> {
+    async load(dirPath?: string, options?: { skipHistory?: boolean }): Promise<boolean> {
+      const seq = ++this.requestSeq
       this.loading = true
       this.error = null
       try {
         const from = this.currentPath
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, dirPath ?? this.currentPath)
+        if (seq !== this.requestSeq) {
+          return false
+        }
         if (dirPath !== undefined && !options?.skipHistory && from && result.path !== from) {
           this.history = recordVisit(this.history, from)
         }
@@ -61,10 +67,17 @@ export const useLocalFsStore = defineStore('localFs', {
         this.entries = result.entries.sort(compareEntries(this.sortColumn, this.sortDirection))
         this.selected = new Set()
         this.selectAnchor = null
+        return true
       } catch (e) {
+        if (seq !== this.requestSeq) {
+          return false
+        }
         this.error = e instanceof Error ? e.message : String(e)
+        return false
       } finally {
-        this.loading = false
+        if (seq === this.requestSeq) {
+          this.loading = false
+        }
       }
     },
 
@@ -109,15 +122,15 @@ export const useLocalFsStore = defineStore('localFs', {
     async goBack(): Promise<void> {
       const step = stepBack(this.history, this.currentPath)
       if (!step) return
-      await this.load(step.target, { skipHistory: true })
-      if (!this.error) this.history = step.next
+      const committed = await this.load(step.target, { skipHistory: true })
+      if (committed) this.history = step.next
     },
 
     async goForward(): Promise<void> {
       const step = stepForward(this.history, this.currentPath)
       if (!step) return
-      await this.load(step.target, { skipHistory: true })
-      if (!this.error) this.history = step.next
+      const committed = await this.load(step.target, { skipHistory: true })
+      if (committed) this.history = step.next
     },
 
     async openDir(dirPath: string): Promise<void> {
@@ -125,7 +138,15 @@ export const useLocalFsStore = defineStore('localFs', {
     },
 
     async goUp(): Promise<void> {
-      const parent = this.currentPath.replace(/[\\/][^\\/]+[\\/]?$/, '') || this.currentPath
+      const cur = this.currentPath
+      if (!cur) return
+      const stripped = cur.replace(/[\\/][^\\/]+[\\/]?$/, '')
+      let parent = stripped
+      if (!parent) {
+        parent = cur.startsWith('/') ? '/' : cur
+      } else if (/^[A-Za-z]:$/.test(parent)) {
+        parent = `${parent}\\`
+      }
       await this.load(parent)
     },
 
@@ -180,6 +201,13 @@ export const useLocalFsStore = defineStore('localFs', {
       if (target) {
         target.name = newName
         target.path = newPath
+        if (this.selected.has(entry.path)) {
+          this.selected.delete(entry.path)
+          this.selected.add(newPath)
+        }
+        if (this.selectAnchor === entry.path) {
+          this.selectAnchor = newPath
+        }
         this.entries = [...this.entries].sort(compareEntries(this.sortColumn, this.sortDirection))
       }
     },

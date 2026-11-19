@@ -38,14 +38,19 @@ export class HistoryStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'history', defaults: { entries: [] } })
+      this._store = new Conf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'history',
+        defaults: { entries: [] }
+      })
     }
     return this._store
   }
 
   private get entries(): HistoryEntry[] {
     if (!this._entries) {
-      this._entries = this.store.get('entries')
+      const stored = this.store.get('entries')
+      this._entries = Array.isArray(stored) ? stored : []
     }
     return this._entries
   }

@@ -318,4 +318,25 @@ describe('neutralinoApi', () => {
     expect(config.nativeAllowList).not.toContain('os.spawnProcess')
     expect(config.nativeAllowList).not.toContain('app.killProcess')
   })
+
+  it('does not hang when sidecar:ready fires while getExtensionStats is in flight', async () => {
+    let resolveStats!: (stats: { loaded: string[]; connected: string[] }) => void
+    const { transport, emit, dispatched } = createFakeTransport([])
+    transport.getExtensionStats = () =>
+      new Promise((resolve) => {
+        resolveStats = resolve
+      })
+
+    const api = createNeutralinoApi(transport, { readyTimeoutMs: 500, rpcTimeoutMs: 500 })
+    const p = api.invoke(INVOKE_CHANNELS.settingsGet)
+
+    // sidecar:ready arrives while getExtensionStats() is still pending, then getExtensionStats resolves empty
+    emit('sidecar:ready', { extensionId: 'js.ferry.sidecar' })
+    resolveStats({ loaded: [], connected: [] })
+
+    await vi.waitFor(() => expect(dispatched).toHaveLength(1))
+    const call = dispatched[0].data as { id: string }
+    emit('rpc_reply', { id: call.id, result: ok({ bandwidthLimitKBps: null }) })
+    await expect(p).resolves.toEqual(ok({ bandwidthLimitKBps: null }))
+  })
 })

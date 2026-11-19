@@ -38,6 +38,9 @@ export function decodeB64Deep(value: unknown): unknown {
     }
     const out: Record<string, unknown> = {}
     for (const key of keys) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        continue
+      }
       out[key] = decodeB64Deep(record[key])
     }
     return out
@@ -55,8 +58,13 @@ export async function dispatchInvoke(channel: unknown, args: unknown) {
 
 export function dispatchSend(channel: unknown, payload: unknown): void {
   const handler = typeof channel === 'string' ? sendHandlers.get(channel as SendChannel) : undefined
-  if (handler) {
+  if (!handler) {
+    return
+  }
+  try {
     handler({}, decodeB64Deep(payload))
+  } catch (e) {
+    console.error(`sidecar: send handler failed for "${String(channel)}":`, e)
   }
 }
 
@@ -78,13 +86,17 @@ export function serve(input: Readable, write: WriteLine, hooks: SidecarHooks): v
     if (!line.trim()) {
       return
     }
-    let message: Record<string, unknown>
+    let parsed: unknown
     try {
-      message = JSON.parse(line)
+      parsed = JSON.parse(line)
     } catch {
       console.error(`sidecar: ignoring malformed line (${line.length} chars)`)
       return
     }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return
+    }
+    const message = parsed as Record<string, unknown>
     if (message.type === 'init') {
       hooks.init(message as unknown as InitMessage)
     } else if (message.type === 'shutdown') {

@@ -63,14 +63,15 @@ export function initHistoryRecorder(): void {
     )
   })
 
-  OperationRegistry.getInstance().onTerminalEvent((evt: OperationEvent) => {
+  OperationRegistry.getInstance().setSiteNameResolver?.(siteNameFor)
+  OperationRegistry.getInstance().onTerminalEvent((evt: OperationEvent, capturedSiteName?: string) => {
     HistoryStore.getInstance().record(
       {
         kind: 'operation',
         label: evt.label,
         operationKind: evt.kind,
         sessionId: evt.sessionId,
-        siteName: siteNameFor(evt.sessionId),
+        siteName: capturedSiteName ?? siteNameFor(evt.sessionId),
         startedAt: evt.startedAt,
         finishedAt: Date.now(),
         status: evt.state as HistoryEntry['status'],

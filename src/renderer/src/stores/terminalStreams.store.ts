@@ -54,7 +54,9 @@ const instances = new Map<string, TerminalInstance>()
  * `instances.get(sessionId)` check as undefined and each open a real PTY.
  */
 const pending = new Map<string, Promise<string>>()
+const restarting = new Map<string, Promise<void>>()
 const earlyOutput = new Map<string, { chunks: Array<string | Uint8Array>; bytes: number }>()
+const earlyExits = new Set<string>()
 let opensInFlight = 0
 
 /**
@@ -69,7 +71,7 @@ const disposing = new Map<string, Promise<void>>()
 /** Copies the terminal's current selection to the OS clipboard, then clears it. */
 function copySelection(term: Terminal): void {
   if (term.hasSelection()) {
-    void navigator.clipboard.writeText(term.getSelection())
+    void navigator.clipboard.writeText(term.getSelection()).catch(() => {})
     term.clearSelection()
   }
 }
@@ -289,14 +291,26 @@ function writeChunkWithAck(sessionId: string, inst: TerminalInstance, data: stri
   })
 }
 
+function emitExited(sessionId: string, inst: TerminalInstance): void {
+  clearUnderlineTimer(inst)
+  const prefix = inst.predictor.beforeServerWrite(inst.term.cols)
+  inst.predictor.reset()
+  resetScrollTracker(inst)
+  inst.writeGeneration++
+  inst.term.write(`${prefix}\r\n[Process exited]\r\n`)
+  onShellExited?.(sessionId)
+}
+
 function drainEarlyOutput(sessionId: string, inst: TerminalInstance): void {
   const buffered = earlyOutput.get(inst.terminalId)
-  if (!buffered) {
-    return
+  if (buffered) {
+    earlyOutput.delete(inst.terminalId)
+    for (const chunk of buffered.chunks) {
+      writeChunkWithAck(sessionId, inst, chunk)
+    }
   }
-  earlyOutput.delete(inst.terminalId)
-  for (const chunk of buffered.chunks) {
-    writeChunkWithAck(sessionId, inst, chunk)
+  if (earlyExits.delete(inst.terminalId)) {
+    emitExited(sessionId, inst)
   }
 }
 
@@ -330,16 +344,12 @@ function ensureSubscriptions(): void {
   exitUnsub = onEvent<TerminalExitEvent>(EVENT_CHANNELS.terminalExit, (evt) => {
     const entry = findEntryByTerminalId(evt.terminalId)
     if (!entry) {
+      if (opensInFlight > 0) {
+        earlyExits.add(evt.terminalId)
+      }
       return
     }
-    const [sessionId, inst] = entry
-    clearUnderlineTimer(inst)
-    const prefix = inst.predictor.beforeServerWrite(inst.term.cols)
-    inst.predictor.reset()
-    resetScrollTracker(inst)
-    inst.writeGeneration++
-    inst.term.write(`${prefix}\r\n[Process exited]\r\n`)
-    onShellExited?.(sessionId)
+    emitExited(entry[0], entry[1])
   })
 }
 
@@ -360,40 +370,56 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
     },
 
     async restart(sessionId: string): Promise<void> {
+      const existingRestart = restarting.get(sessionId)
+      if (existingRestart) {
+        return existingRestart
+      }
       const inst = instances.get(sessionId)
       if (!inst) {
         return
       }
-      clearUnderlineTimer(inst)
-      inst.predictor.reset()
-      resetScrollTracker(inst)
-      inst.writeGeneration++
-      opensInFlight++
-      try {
-        const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
-          sessionId,
-          cols: inst.term.cols,
-          rows: inst.term.rows
-        })
-        if (instances.get(sessionId) !== inst) {
-          return
-        }
-        inst.terminalId = terminalId
-        inst.unacked = 0
-        inst.cols = inst.term.cols
-        inst.rows = inst.term.rows
-        this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
-        inst.term.write('\r\n[Shell restarted]\r\n')
+      const run = (async (): Promise<void> => {
         clearUnderlineTimer(inst)
         inst.predictor.reset()
         resetScrollTracker(inst)
         inst.writeGeneration++
-        drainEarlyOutput(sessionId, inst)
-        inst.term.focus()
+        opensInFlight++
+        try {
+          const { terminalId } = await invoke<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, {
+            sessionId,
+            cols: inst.term.cols,
+            rows: inst.term.rows
+          })
+          if (instances.get(sessionId) !== inst) {
+            void invoke<void>(INVOKE_CHANNELS.terminalClose, terminalId).catch(() => {})
+            return
+          }
+          inst.terminalId = terminalId
+          inst.unacked = 0
+          inst.cols = inst.term.cols
+          inst.rows = inst.term.rows
+          this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
+          inst.term.write('\r\n[Shell restarted]\r\n')
+          clearUnderlineTimer(inst)
+          inst.predictor.reset()
+          resetScrollTracker(inst)
+          inst.writeGeneration++
+          drainEarlyOutput(sessionId, inst)
+          inst.term.focus()
+        } finally {
+          opensInFlight--
+          if (opensInFlight === 0) {
+            earlyOutput.clear()
+            earlyExits.clear()
+          }
+        }
+      })()
+      restarting.set(sessionId, run)
+      try {
+        await run
       } finally {
-        opensInFlight--
-        if (opensInFlight === 0) {
-          earlyOutput.clear()
+        if (restarting.get(sessionId) === run) {
+          restarting.delete(sessionId)
         }
       }
     },
@@ -501,7 +527,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             }
             if (action === 'paste') {
               ev.preventDefault()
-              void pasteInto(term)
+              void pasteInto(term).catch(() => {})
               return false
             }
             return true
@@ -514,6 +540,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
           opensInFlight--
           if (opensInFlight === 0) {
             earlyOutput.clear()
+            earlyExits.clear()
           }
         }
       })()

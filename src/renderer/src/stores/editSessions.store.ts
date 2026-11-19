@@ -57,7 +57,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
               { label: 'Overwrite', onClick: () =>
                   void invoke<void>(INVOKE_CHANNELS.editForceReupload, evt.editId).catch((e: Error) => notify.error('Overwrite failed', e.message))
               },
-              { label: 'Discard my edit', onClick: () => void this.close(evt.editId) }
+              { label: 'Discard my edit', onClick: () => void this.close(evt.editId).catch(() => {}) }
             ])
             break
           case 'session-closed':
@@ -70,7 +70,9 @@ export const useEditSessionsStore = defineStore('editSessions', {
       })
       if (!this.hydrated) {
         this.hydrated = true
-        void this.hydrate()
+        void this.hydrate().catch(() => {
+          this.hydrated = false
+        })
       }
     },
 

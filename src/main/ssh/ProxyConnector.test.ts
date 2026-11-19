@@ -207,6 +207,34 @@ describe('connectViaProxy (HTTP CONNECT)', () => {
       code: 'PROXY_CONNECT'
     })
   })
+
+  it('brackets IPv6 targetHost literals in HTTP CONNECT requests', async () => {
+    let seenRequest = ''
+    const started = await fakeHttpProxy((req) => {
+      seenRequest = req
+      return { status: 'HTTP/1.1 200 Connection Established' }
+    })
+    server = started.server
+
+    const proxy: ProxyConfig = { type: 'http', host: '127.0.0.1', port: started.port }
+    const socket = await connectViaProxy(proxy, '2001:db8::1', 22, 2000)
+    expect(seenRequest).toContain('CONNECT [2001:db8::1]:22 HTTP/1.1')
+    expect(seenRequest).toContain('Host: [2001:db8::1]:22')
+    socket.destroy()
+  })
+
+  it('rejects immediately when HTTP proxy closes before sending headers', async () => {
+    const closingServer = createServer((sock) => sock.destroy())
+    await new Promise<void>((resolve) => closingServer.listen(0, '127.0.0.1', resolve))
+    server = closingServer
+    const port = (closingServer.address() as { port: number }).port
+
+    const start = Date.now()
+    await expect(
+      connectViaProxy({ type: 'http', host: '127.0.0.1', port }, 'example.com', 22, 10_000)
+    ).rejects.toMatchObject({ code: 'PROXY_CONNECT' })
+    expect(Date.now() - start).toBeLessThan(2000)
+  })
 })
 
 describe('connectViaProxy (SOCKS5)', () => {

@@ -43,7 +43,9 @@ export function createNodeHost(
       if (!existsSync(p)) {
         return `Could not open ${p}: not found`
       }
-      spawn('explorer.exe', [p], { detached: true, stdio: 'ignore' }).unref()
+      const child = spawn('explorer.exe', [p], { detached: true, stdio: 'ignore' })
+      child.on('error', () => {})
+      child.unref()
       return ''
     },
     pickOpenFile

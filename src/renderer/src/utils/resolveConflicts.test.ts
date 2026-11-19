@@ -46,6 +46,12 @@ describe('resolveConflicts', () => {
     const down: ConflictIntent = { ...up('a.txt', null), direction: 'download', localPath: 'C:\\dst\\a.txt', remotePath: '/srv/a.txt' }
     expect(resolveConflicts([down], targets, 'rename')[0].localPath).toBe('C:\\dst\\a (2).txt')
   })
+
+  it('matches case-insensitively on Windows local downloads', () => {
+    const down: ConflictIntent = { ...up('A.TXT', null), direction: 'download', localPath: 'C:\\dst\\A.TXT', remotePath: '/srv/A.TXT' }
+    expect(resolveConflicts([down], targets, 'skip')).toEqual([])
+    expect(resolveConflicts([down], targets, 'rename')[0].targetName).toBe('A (2).TXT')
+  })
 })
 
 describe('uniqueName', () => {

@@ -49,7 +49,7 @@ export function formatMode(triplets: ModeTriplets): string {
  * The leading (setuid/setgid/sticky) digit is not surfaced — a known v1 simplification.
  */
 export function toTechnical(octal: string): string {
-  const digits = octal.slice(-3)
+  const digits = octal.slice(-3).padStart(3, '0')
   return digits
     .split('')
     .map((d) => tripletToRwx(parseTriplet(Number(d))))
@@ -64,7 +64,8 @@ export function toTechnical(octal: string): string {
  * (e.g. in a tooltip) for anyone who needs the group/other bits too.
  */
 export function toFriendlyLabel(octal: string): string {
-  const ownerDigit = Number(octal.slice(-3, -2))
+  const digits = octal.slice(-3).padStart(3, '0')
+  const ownerDigit = Number(digits[0])
   const owner = parseTriplet(ownerDigit)
   const parts: string[] = []
   if (owner.read) parts.push('Read')

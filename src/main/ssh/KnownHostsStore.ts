@@ -65,16 +65,28 @@ export class KnownHostsStore {
   }
 
   private key(host: string, port: number): string {
-    return `${host}:${port}`
+    return `${host.trim().toLowerCase()}:${port}`
   }
 
   get(host: string, port: number): string | undefined {
-    return this.store.get('hosts')[this.key(host, port)]
+    const hosts = this.store.get('hosts')
+    const normalized = this.key(host, port)
+    if (hosts[normalized] !== undefined) {
+      return hosts[normalized]
+    }
+    const legacy = Object.entries(hosts).find(([k]) => k.toLowerCase() === normalized)
+    return legacy?.[1]
   }
 
   trust(host: string, port: number, fingerprint: string): void {
     const hosts = this.store.get('hosts')
-    hosts[this.key(host, port)] = fingerprint
+    const normalized = this.key(host, port)
+    for (const k of Object.keys(hosts)) {
+      if (k !== normalized && k.toLowerCase() === normalized) {
+        delete hosts[k]
+      }
+    }
+    hosts[normalized] = fingerprint
     this.store.set('hosts', hosts)
   }
 

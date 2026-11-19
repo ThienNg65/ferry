@@ -301,6 +301,21 @@ export class SessionManager {
     return input.localInitialPath ? { ...result, localInitialPath: input.localInitialPath } : result
   }
 
+  private clearPendingPrompts(sessionId: string): void {
+    for (const [requestId, pending] of this.pendingHostKeys) {
+      if (pending.sessionId === sessionId) {
+        this.pendingHostKeys.delete(requestId)
+        pending.resolve(false)
+      }
+    }
+    for (const [requestId, pending] of this.pendingKeyboardInteractive) {
+      if (pending.sessionId === sessionId) {
+        this.pendingKeyboardInteractive.delete(requestId)
+        pending.resolve([])
+      }
+    }
+  }
+
   /** Builds a `hostVerifier`-equipped `ConnectConfig` for one hop (the target host, or a jump host), keyed by its own host:port in `KnownHostsStore`. */
   private async buildConnectConfig(
     sessionId: string,
@@ -308,7 +323,8 @@ export class SessionManager {
     port: number,
     username: string,
     auth: HopAuth,
-    trustedHostKey: TrustedHostKey | undefined
+    trustedHostKey: TrustedHostKey | undefined,
+    isActive: () => boolean
   ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder; agentIdentityCount?: number }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
@@ -317,7 +333,8 @@ export class SessionManager {
     const hostKeyMismatch: HostKeyMismatchHolder = { value: null, rejected: false }
     // Only force-trust a mismatch for the exact host:port the user was warned about and
     // confirmed — every other hop/target in this same connect attempt still verifies normally.
-    const forceTrustThisHop = trustedHostKey?.host === host && trustedHostKey?.port === port
+    const forceTrustThisHop =
+      trustedHostKey?.host.trim().toLowerCase() === host.trim().toLowerCase() && trustedHostKey?.port === port
     const hostVerifier: HostVerifier = (key, verify) => {
       const presented = fingerprintHostKey(key)
       const known = KnownHostsStore.getInstance().get(host, port)
@@ -327,12 +344,12 @@ export class SessionManager {
           logSecurityEvent('ssh.host_key_force_trusted', { host, port, expected: known, presented })
         }
         void this.promptHostKey(sessionId, host, port, presented).then((accept) => {
-          if (accept) {
+          if (accept && isActive()) {
             KnownHostsStore.getInstance().trust(host, port, presented)
-          } else {
+          } else if (!accept) {
             hostKeyMismatch.rejected = true
           }
-          verify(accept)
+          verify(accept && isActive())
         })
         return
       }
@@ -394,6 +411,7 @@ export class SessionManager {
   /** Connects one `ssh2.Client` (either the target host or a jump host), resolving on `ready`. Real keyboard-interactive prompts route through {@link promptKeyboardInteractive} under the given `sessionId`. */
   private connectClient(sessionId: string, client: Client, config: ConnectConfig, password: string | undefined, authMethod?: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let disposed = false
       let timer: ReturnType<typeof setTimeout> | null = null
       const disarm = (): void => {
         if (timer) {
@@ -402,15 +420,18 @@ export class SessionManager {
         }
       }
       const arm = (): void => {
+        if (disposed) return
         disarm()
         timer = setTimeout(onTimeout, DEFAULT_CONNECT_TIMEOUT_MS)
       }
       const cleanup = (): void => {
+        disposed = true
         disarm()
         this.connectTimers.delete(sessionId)
         client.removeListener('ready', onReady)
         client.removeListener('error', onError)
         client.removeListener('timeout', onTimeout)
+        client.removeListener('close', onClose)
       }
       const onReady = (): void => {
         cleanup()
@@ -423,6 +444,10 @@ export class SessionManager {
         cleanup()
         reject(new SshError('SSH_CONNECT', friendlyConnectError(e.message, config.host ?? '', config.port ?? 22)))
       }
+      const onClose = (): void => {
+        cleanup()
+        reject(new SshError('SSH_CONNECT', friendlyConnectError('Connection closed', config.host ?? '', config.port ?? 22)))
+      }
       const onTimeout = (): void => {
         cleanup()
         client.destroy()
@@ -433,6 +458,7 @@ export class SessionManager {
       client.on('ready', onReady)
       client.on('error', onError)
       client.on('timeout', onTimeout)
+      client.on('close', onClose)
       client.on('keyboard-interactive', (name, instructions, _lang, prompts, finish) => {
         const { autoAnswered, needsUser } = partitionPrompts(prompts, password)
         if (needsUser.length === 0) {
@@ -465,7 +491,19 @@ export class SessionManager {
   /** Opens a tunnel through an already-connected jump client to the next hop's (or the final target's) host:port, for use as that connection's `sock`. */
   private forwardThroughJump(jumpClient: Client, targetHost: string, targetPort: number): Promise<ClientChannel> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        reject(new SshError('SSH_TIMEOUT', `Jump host tunnel to ${targetHost}:${targetPort} timed out`))
+      }, DEFAULT_CONNECT_TIMEOUT_MS)
       jumpClient.forwardOut('127.0.0.1', 0, targetHost, targetPort, (err, stream) => {
+        clearTimeout(timer)
+        if (settled) {
+          stream?.destroy()
+          return
+        }
+        settled = true
         if (err) {
           reject(new SshError('SSH_CONNECT', `Jump host tunnel to ${targetHost}:${targetPort} failed: ${err.message}`))
           return
@@ -487,6 +525,9 @@ export class SessionManager {
         'INVALID_PORT' as unknown as IpcErrorCode,
         'Port must be an integer between 1 and 65535'
       )
+    }
+    if (this.sessions.has(sessionId) || this.pendingConnects.has(sessionId)) {
+      this.close(sessionId)
     }
     // Lazy-load ssh2 (a heavy module with a native optional dep) only when the
     // user actually connects, keeping it off the app-startup critical path.
@@ -613,7 +654,8 @@ export class SessionManager {
           hop.port,
           hop.username,
           { authMethod: hop.authMethod, privateKeyPath: hop.privateKeyPath, password: hop.password, passphrase: hop.passphrase },
-          trustedHostKey
+          trustedHostKey,
+          () => !aborted && this.sessions.get(sessionId) === entry
         )
         if (sock) {
           hopConfig.sock = sock
@@ -652,7 +694,8 @@ export class SessionManager {
         input.port,
         input.username,
         { authMethod: input.authMethod, privateKeyPath: input.privateKeyPath, agentPath: input.agentPath, password: input.password, passphrase: input.passphrase },
-        trustedHostKey
+        trustedHostKey,
+        () => !aborted && this.sessions.get(sessionId) === entry
       )
       if (sock) {
         targetConfig.sock = sock
@@ -704,12 +747,16 @@ export class SessionManager {
         sock?.destroy()
         throw e
       }
+      this.clearPendingPrompts(sessionId)
       entry.status = 'error'
       const message = e instanceof Error ? e.message : String(e)
       this.broadcastStatus(sessionId, 'error', message)
       this.sessions.delete(sessionId)
+      client.end()
+      client.destroy()
       for (let i = jumpClients.length - 1; i >= 0; i--) {
         jumpClients[i].end()
+        jumpClients[i].destroy()
       }
       sock?.destroy()
       throw e
@@ -730,9 +777,17 @@ export class SessionManager {
     entry.status = 'connected'
     client.on('close', () => {
       const current = this.sessions.get(sessionId)
-      if (current && current.status === 'connected') {
+      if (current && current === entry && current.status === 'connected') {
         current.status = 'error'
         TailManager.getInstance().stopAllForSession(sessionId)
+        TerminalManager.getInstance().closeAllForSession(sessionId)
+        OperationRegistry.getInstance().cancelAllForSession(sessionId)
+        MonitorManager.getInstance().stopAllForSession(sessionId)
+        EditSessionManager.getInstance().closeAllForSession(sessionId)
+        for (let i = current.jumpClients.length - 1; i >= 0; i--) {
+          current.jumpClients[i].end()
+          current.jumpClients[i].destroy()
+        }
         this.broadcastStatus(sessionId, 'error', 'Connection closed unexpectedly')
       }
     })
@@ -745,24 +800,14 @@ export class SessionManager {
     const entry = this.sessions.get(sessionId)
     if (!entry) {
       this.pendingConnects.get(sessionId)?.()
+      this.clearPendingPrompts(sessionId)
       return
     }
     const wasConnecting = entry.status === 'connecting'
     if (wasConnecting) {
       entry.abort()
     }
-    for (const [requestId, pending] of this.pendingHostKeys) {
-      if (pending.sessionId === sessionId) {
-        this.pendingHostKeys.delete(requestId)
-        pending.resolve(false)
-      }
-    }
-    for (const [requestId, pending] of this.pendingKeyboardInteractive) {
-      if (pending.sessionId === sessionId) {
-        this.pendingKeyboardInteractive.delete(requestId)
-        pending.resolve([])
-      }
-    }
+    this.clearPendingPrompts(sessionId)
     // Stop tails before flipping `entry.status` to `'disconnected'` so `killRemoteTail`
     // can still dispatch `kill <pid>` while the SSH client is connected.
     TailManager.getInstance().stopAllForSession(sessionId)

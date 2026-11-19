@@ -98,6 +98,30 @@ describe('Security Hardening', () => {
     await expect(updater2.checkForUpdates()).rejects.toThrow(/untrusted installer origin/i)
   })
 
+  it('ignores FERRY_UPDATE_FEED_URL override in packaged builds', async () => {
+    setHost({ ...testHost, dataDir: tmpDir, isPackaged: true })
+    const prevEnv = process.env['FERRY_UPDATE_FEED_URL']
+    process.env['FERRY_UPDATE_FEED_URL'] = 'https://evil-override.example.com/updates'
+    const requestedUrls: string[] = []
+    try {
+      const fetchSpy = vi.fn(async (input: string | URL | Request) => {
+        requestedUrls.push(String(input))
+        return new Response('version: 0.0.1\npath: Ferry-Setup-0.0.1.exe\nsha512: ' + 'A'.repeat(86) + '==\n', {
+          status: 200
+        })
+      })
+      const updater = new SidecarUpdater({ fetchImpl: fetchSpy as unknown as typeof fetch })
+      await updater.checkForUpdates().catch(() => undefined)
+      expect(requestedUrls[0]).toMatch(/^https:\/\/github\.com\/ThienNg65\/ferry-release\//)
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env['FERRY_UPDATE_FEED_URL']
+      } else {
+        process.env['FERRY_UPDATE_FEED_URL'] = prevEnv
+      }
+    }
+  })
+
   it('validates IPC site and proxy payloads at the sidecar boundary', () => {
     expect(() => validateProxyConfig({ type: 'ftp', host: 'p', port: 1080 }, 'test')).toThrow()
     expect(() => validateSiteInput({ host: 'h', port: 70000, username: 'u', authMethod: 'password' }, 'test')).toThrow()

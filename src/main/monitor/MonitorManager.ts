@@ -185,6 +185,9 @@ export class MonitorManager {
       entry.consecutiveFailures = 0
       this.broadcastSample(sample)
     } catch (e) {
+      if (entry.stopped || this.entries.get(entry.sessionId) !== entry) {
+        return
+      }
       entry.consecutiveFailures += 1
       if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.broadcastStatus(entry.sessionId, 'error', e instanceof Error ? e.message : String(e))

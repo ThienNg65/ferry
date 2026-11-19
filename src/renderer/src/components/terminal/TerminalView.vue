@@ -61,6 +61,9 @@ function attachContainer(sessionId: string, el: Element | null): void {
   } else {
     void import('@xterm/addon-webgl')
       .then(({ WebglAddon }) => {
+        if (unmounted || terminalStreams.getInstance(sessionId) !== inst) {
+          return
+        }
         const webgl = new WebglAddon()
         webgl.onContextLoss(() => webgl.dispose())
         inst.term.loadAddon(webgl)
@@ -251,6 +254,32 @@ function closeSearch(): void {
     terminalStreams.focus(sessionId)
   }
 }
+
+watch(
+  () => sessions.activeSessionId,
+  (_nextId, prevId) => {
+    if (!searchOpen.value) {
+      return
+    }
+    if (prevId) {
+      terminalStreams.getInstance(prevId)?.search.clearDecorations()
+    }
+    resultsSub?.dispose()
+    resultsSub = null
+    const nextInst = activeInstance()
+    if (!nextInst) {
+      searchOpen.value = false
+      matchCount.value = 0
+      currentMatch.value = 0
+      return
+    }
+    resultsSub = nextInst.search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      matchCount.value = resultCount
+      currentMatch.value = resultIndex + 1
+    })
+    runSearch(true)
+  }
+)
 
 watch([searchQuery, caseSensitive, isRegex], () => {
   if (searchOpen.value) {

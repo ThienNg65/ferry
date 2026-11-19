@@ -129,10 +129,10 @@ export async function readFileText(filePath: string): Promise<FileReadResult> {
   const handle = await fs.open(filePath, 'r')
   try {
     const buffer = Buffer.alloc(length)
-    await handle.read(buffer, 0, length, 0)
+    const { bytesRead } = await handle.read(buffer, 0, length, 0)
     return {
       path: filePath,
-      content: buffer.toString('utf-8'),
+      content: buffer.subarray(0, bytesRead).toString('utf-8'),
       truncated: stats.size > MAX_TEXT_PREVIEW_BYTES,
       size: stats.size
     }
@@ -200,7 +200,8 @@ export async function listRecursive(dirPath: string): Promise<TreeEntry[]> {
   try {
     await walk(dirPath, '')
   } catch (e) {
-    throw new SshError('NOT_FOUND', `Cannot list "${dirPath}": ${(e as Error).message}`)
+    const code = (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'NOT_FOUND' : 'UNKNOWN'
+    throw new SshError(code, `Cannot list "${dirPath}": ${(e as Error).message}`)
   }
   return results
 }
@@ -227,6 +228,7 @@ interface StageDropSession {
   topLevelOrder: string[]
   topLevelMeta: Map<string, { modifiedAt?: string }>
   writtenPaths: Set<string>
+  streams: Set<WriteStream>
 }
 
 const activeStageSessions = new Map<string, StageDropSession>()
@@ -396,7 +398,8 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
     createdAt: Date.now(),
     topLevelOrder: [],
     topLevelMeta: new Map(),
-    writtenPaths: new Set()
+    writtenPaths: new Set(),
+    streams: new Set()
   }
   activeStageDirs.add(stageRoot)
   activeStageSessions.set(stageId, session)
@@ -435,8 +438,11 @@ export async function openStageDropWriteStream(
   const targetPath = resolveStageTarget(session.root, segments)
   await fs.mkdir(path.dirname(targetPath), { recursive: true })
   recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments, modifiedAt)
+  const stream = createWriteStream(targetPath, { highWaterMark: STAGE_WRITE_HIGH_WATER_MARK })
+  session.streams.add(stream)
+  stream.once('close', () => session.streams.delete(stream))
   return {
-    stream: createWriteStream(targetPath, { highWaterMark: STAGE_WRITE_HIGH_WATER_MARK }),
+    stream,
     targetPath
   }
 }
@@ -465,6 +471,20 @@ export async function abortStageDrop(stageId: string): Promise<void> {
   }
   activeStageSessions.delete(stageId)
   activeStageDirs.delete(session.root)
+  await Promise.all(
+    [...session.streams].map(
+      (stream) =>
+        new Promise<void>((resolve) => {
+          if (stream.closed || stream.destroyed) {
+            resolve()
+            return
+          }
+          stream.on('error', () => {})
+          stream.once('close', () => resolve())
+          stream.destroy()
+        })
+    )
+  )
   await fs.rm(session.root, { recursive: true, force: true }).catch(() => undefined)
 }
 

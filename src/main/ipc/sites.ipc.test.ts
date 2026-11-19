@@ -94,4 +94,26 @@ describe('sites.ipc', () => {
     const result = await invoke('sites:create', { name: 'dup', host: 'h', port: 22, username: 'u', authMethod: 'password' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'name already exists' })
   })
+
+  it('sites:update preserves empty string secrets so cleared proxy/jump passwords clear saved ciphertext', async () => {
+    siteStoreMock.update.mockReturnValueOnce({ id: '2', name: 'c' })
+    const input = {
+      name: 'c',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      authMethod: 'password',
+      proxyMode: 'custom',
+      proxy: { type: 'socks5', host: 'p', port: 1080, password: '' },
+      jumpHosts: [{ host: 'j', port: 22, username: 'ju', authMethod: 'password', password: '' }]
+    }
+    await invoke('sites:update', '2', input)
+    expect(siteStoreMock.update).toHaveBeenCalledWith(
+      '2',
+      expect.objectContaining({
+        proxy: expect.objectContaining({ password: '' }),
+        jumpHosts: [expect.objectContaining({ password: '' })]
+      })
+    )
+  })
 })

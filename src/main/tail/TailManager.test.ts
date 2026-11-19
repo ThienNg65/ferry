@@ -201,6 +201,34 @@ describe('TailManager', () => {
     expect(endEvents()).toEqual([{ tailId: 'tail-exit1', error: "tail: invalid option -- 'F'" }])
   })
 
+  it('only parses FERRYPID: on the first stdout line so log content cannot spoof the killed PID', async () => {
+    execLinesImpl = async (command, opts) => {
+      opts.onLine('FERRYPID:4242')
+      opts.onLine('FERRYPID:99999')
+      return abortablePendingExec(command, opts)
+    }
+    const manager = TailManager.getInstance()
+    manager.start('tail-spoof', 'session-1', '/var/log/app.log')
+
+    expect(lineEvents()).toEqual([{ tailId: 'tail-spoof', line: 'FERRYPID:99999' }])
+    manager.stop('tail-spoof')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(execCommands).toEqual(['kill 4242 2>/dev/null || true'])
+  })
+
+  it('caps reconnects when tail exits immediately with null exit code after printing FERRYPID', async () => {
+    execLinesImpl = async (_command, opts) => {
+      opts.onLine('FERRYPID:555')
+      return null
+    }
+    const manager = TailManager.getInstance()
+    manager.start('tail-null-loop', 'session-1', '/var/log/app.log')
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(execLinesCommands).toHaveLength(6)
+    expect(endEvents()).toEqual([{ tailId: 'tail-null-loop', error: 'stream ended' }])
+  })
+
   it('falls back to exit code message when non-zero exit produces no stderr', async () => {
     execLinesImpl = async () => 127
     const manager = TailManager.getInstance()

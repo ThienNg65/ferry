@@ -27,6 +27,10 @@ export interface TransferJob {
   sourceStamp?: string
   /** Contiguous verified byte offsets per destination path, preventing sparse gaps on pipelined pause/resume. */
   contigOffsets?: Map<string, number>
+  /** Completed relative paths for resumable directory-tree transfers. */
+  completedFiles?: Set<string>
+  /** Per-file source stamps (`size:mtime`) for validating `.part` resume in tree transfers. */
+  sourceStamps?: Map<string, string>
 }
 
 /**
@@ -266,11 +270,35 @@ export class TransferQueue {
     }
   }
 
+  private cleanupJobArtifacts(job: TransferJob): void {
+    if (job.kind === 'upload') {
+      void cleanupStagedDropPath(job.localPath).catch(() => undefined)
+    }
+    const remote = job.kind === 'upload'
+    const unlinkPart = (partPath: string): void => {
+      try {
+        const op = remote ? SessionManager.getInstance().shell(job.sessionId).unlink(partPath) : unlink(partPath)
+        void op.catch(() => undefined)
+      } catch {
+        // Session may already be closed.
+      }
+    }
+    if (job.contigOffsets && job.contigOffsets.size > 0) {
+      for (const destPath of job.contigOffsets.keys()) {
+        unlinkPart(`${destPath}${PART_SUFFIX}`)
+      }
+      job.contigOffsets.clear()
+    } else if (!job.isTree) {
+      unlinkPart(`${remote ? job.remotePath : job.localPath}${PART_SUFFIX}`)
+    }
+  }
+
   /** Cancels a transfer, whether still queued or actively streaming. */
   cancel(transferId: string): void {
     const pausedJob = this.retryable.get(transferId)
     if (pausedJob && !this.paused.has(transferId)) {
       this.retryable.delete(transferId)
+      this.cleanupJobArtifacts(pausedJob)
       return
     }
     if (pausedJob) {
@@ -279,14 +307,7 @@ export class TransferQueue {
       const evt = this.jobEvent(pausedJob, 'cancelled')
       this.broadcast(evt)
       this.notifyTerminal(pausedJob, evt)
-      if (pausedJob.kind === 'upload') {
-        void cleanupStagedDropPath(pausedJob.localPath).catch(() => undefined)
-      }
-      if (!pausedJob.isTree) {
-        const remote = pausedJob.kind === 'upload'
-        const part = `${remote ? pausedJob.remotePath : pausedJob.localPath}${PART_SUFFIX}`
-        void (remote ? SessionManager.getInstance().shell(pausedJob.sessionId).unlink(part) : unlink(part)).catch(() => undefined)
-      }
+      this.cleanupJobArtifacts(pausedJob)
       return
     }
     const activeJob = this.active.get(transferId)
@@ -438,12 +459,12 @@ export class TransferQueue {
       }
       throw e
     }
-    opts.contigOffsets.delete(destPath)
     if (opts.kind === 'upload') {
       await commitRemoteFile(opts.shell, partPath, destPath)
     } else {
       await rename(partPath, destPath)
     }
+    opts.contigOffsets.delete(destPath)
   }
 
   private async removePart(opts: { shell: RemoteShell; kind: TransferKind }, partPath: string): Promise<void> {
@@ -490,9 +511,24 @@ export class TransferQueue {
         }
       })
 
+      job.contigOffsets ??= new Map()
+      job.completedFiles ??= new Set()
+      job.sourceStamps ??= new Map()
+
+      const completedSet = job.completedFiles
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
       let filesDone = 0
+      const pendingFiles: Array<{ file: (typeof files)[number]; index: number }> = []
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        if (job.resume && completedSet.has(f.relPath)) {
+          doneBytes += f.size
+          filesDone += 1
+        } else {
+          pendingFiles.push({ file: f, index: i })
+        }
+      }
       // Multiple files stream concurrently now, so "bytes so far" is doneBytes
       // (fully-finished files) plus whatever each still-in-flight file has moved.
       const inFlightBytes = new Map<number, number>()
@@ -516,13 +552,20 @@ export class TransferQueue {
         this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone, filesTotal: files.length })
       }
 
-      job.contigOffsets ??= new Map()
       await runConcurrent(
-        files.map((file, index) => ({ file, index })),
+        pendingFiles,
         TREE_ITEM_CONCURRENCY,
         async ({ file, index }) => {
           if (job.controller.signal.aborted) {
             throw new SshError('CANCELLED', 'Transfer cancelled')
+          }
+          const stamp = `${file.size}:${file.mtimeMs ?? ''}`
+          const prevStamp = job.sourceStamps!.get(file.relPath)
+          const resumeFile = job.resume === true && (prevStamp === undefined || prevStamp === stamp)
+          job.sourceStamps!.set(file.relPath, stamp)
+          const destPath = kind === 'upload' ? joinRemote(job.remotePath, file.relPath) : joinLocal(job.localPath, file.relPath)
+          if (!resumeFile) {
+            job.contigOffsets!.delete(destPath)
           }
           inFlightBytes.set(index, 0)
           await this.runFile({
@@ -532,13 +575,14 @@ export class TransferQueue {
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
             size: file.size,
-            resume: job.resume === true,
+            resume: resumeFile,
             contigOffsets: job.contigOffsets!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
               emitProgress()
             }
           })
+          completedSet.add(file.relPath)
           inFlightBytes.delete(index)
           doneBytes += file.size
           filesDone += 1

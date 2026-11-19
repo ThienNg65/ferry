@@ -80,17 +80,26 @@ function connectHttp(proxy: ProxyConfig, targetHost: string, targetPort: number,
     }
 
     socket.on('error', (e) => fail(`HTTP proxy ${proxy.host}:${proxy.port} connection failed: ${e.message}`))
+    socket.once('close', () => fail(`HTTP proxy ${proxy.host}:${proxy.port} closed connection prematurely`))
 
     socket.once('connect', () => {
       const authHeader = proxy.username
         ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ''}`).toString('base64')}\r\n`
         : ''
+      const formattedTargetHost = targetHost.includes(':') && !targetHost.startsWith('[') ? `[${targetHost}]` : targetHost
+      const targetAuthority = `${formattedTargetHost}:${targetPort}`
       socket.write(
-        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${authHeader}\r\n`
+        `CONNECT ${targetAuthority} HTTP/1.1\r\nHost: ${targetAuthority}\r\n${authHeader}\r\n`
       )
 
+      const MAX_HTTP_HEADER_BYTES = 64 * 1024
       let buffered = Buffer.alloc(0)
       const onData = (chunk: Buffer): void => {
+        if (buffered.length + chunk.length > MAX_HTTP_HEADER_BYTES) {
+          socket.removeListener('data', onData)
+          fail(`HTTP proxy ${proxy.host}:${proxy.port} response headers exceeded ${MAX_HTTP_HEADER_BYTES} bytes`)
+          return
+        }
         buffered = Buffer.concat([buffered, chunk])
         const headerEnd = buffered.indexOf('\r\n\r\n')
         if (headerEnd === -1) {
