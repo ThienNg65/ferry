@@ -274,20 +274,30 @@ function writeRemoteFile(sftp: SFTPWrapper, localPath: string, remotePath: strin
     const readStream = createReadStream(localPath)
     const writeStream = sftp.createWriteStream(remotePath)
     let settled = false
-    readStream.on('error', (e: Error) => {
+    let finished = false
+    const fail = (error: SshError): void => {
       if (settled) return
       settled = true
+      readStream.unpipe(writeStream)
+      readStream.destroy()
       writeStream.destroy()
-      reject(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
+      reject(error)
+    }
+    readStream.on('error', (e: Error) => {
+      fail(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
     })
     writeStream.on('error', (e: Error) => {
-      if (settled) return
-      settled = true
-      readStream.destroy()
-      reject(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`))
+      fail(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`))
+    })
+    writeStream.on('finish', () => {
+      finished = true
     })
     writeStream.on('close', () => {
       if (settled) return
+      if (!finished) {
+        fail(new SshError('SFTP', `Upload stream for "${remotePath}" closed before finishing`))
+        return
+      }
       settled = true
       resolve()
     })
