@@ -52,7 +52,7 @@ const handleReady = (payload: { view: unknown }) => {
 }
 
 watch(
-  () => [props.open, props.localTempPath] as const,
+  () => [props.open, props.localTempPath, props.editId] as const,
   async ([isOpen, tempPath]) => {
     const token = ++loadToken
     if (isOpen && tempPath) {
@@ -87,14 +87,16 @@ watch(
 
 async function onSave(): Promise<void> {
   if (!props.localTempPath || loading.value || saving.value || !isDirty.value) return
+  const token = loadToken
+  const path = props.localTempPath
+  const submittedContent = content.value
   saving.value = true
   try {
-    await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, {
-      path: props.localTempPath,
-      content: content.value
-    })
-    savedContent.value = content.value
-    notify.success('Saved', 'Changes saved and uploading...')
+    await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, { path, content: submittedContent })
+    if (token === loadToken) {
+      savedContent.value = submittedContent
+      notify.success('Saved', 'Changes saved and uploading...')
+    }
   } catch (e) {
     notify.error('Failed to save file', e instanceof Error ? e.message : String(e))
   } finally {

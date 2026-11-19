@@ -37,7 +37,8 @@ export async function list(dirPath?: string): Promise<FileListResult> {
   try {
     dirents = await fs.readdir(resolved, { withFileTypes: true })
   } catch (e) {
-    throw new SshError('NOT_FOUND', `Cannot list "${resolved}": ${(e as Error).message}`)
+    const code = (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'NOT_FOUND' : 'UNKNOWN'
+    throw new SshError(code, `Cannot list "${resolved}": ${(e as Error).message}`)
   }
 
   const statted = await Promise.all(
@@ -114,10 +115,25 @@ export async function touch(filePath: string): Promise<void> {
 }
 
 /** Renames/moves a local path. */
-export async function rename(fromPath: string, toPath: string): Promise<void> {
+export async function rename(fromPath: string, toPath: string, replace?: boolean): Promise<void> {
   try {
+    if (replace === false) {
+      const destination = await fs.lstat(toPath).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== 'ENOENT') throw e
+        return null
+      })
+      if (destination) {
+        const caseOnly = process.platform === 'win32' && fromPath !== toPath
+          && fromPath.toLowerCase() === toPath.toLowerCase()
+        const otherEntry = !caseOnly || (await fs.readdir(path.dirname(toPath))).some((name) =>
+          name.toLowerCase() === path.basename(toPath).toLowerCase() && name !== path.basename(fromPath)
+        )
+        if (otherEntry) throw new SshError('ALREADY_EXISTS', `"${toPath}" already exists.`)
+      }
+    }
     await fs.rename(fromPath, toPath)
   } catch (e) {
+    if (e instanceof SshError) throw e
     throw new SshError('UNKNOWN', `Cannot rename "${fromPath}": ${(e as Error).message}`)
   }
 }

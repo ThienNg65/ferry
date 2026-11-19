@@ -133,8 +133,29 @@ export async function touchRemote(sessionId: string, filePath: string): Promise<
 }
 
 /** Renames/moves a remote path. */
-export async function renameRemote(sessionId: string, fromPath: string, toPath: string): Promise<void> {
-  await SessionManager.getInstance().shell(sessionId).rename(fromPath, toPath)
+export async function renameRemote(sessionId: string, fromPath: string, toPath: string, replace?: boolean): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  if (replace === undefined) {
+    await shell.rename(fromPath, toPath)
+    return
+  }
+
+  const destination = await shell.lstat(toPath).catch((e: unknown) => {
+    if (!(e instanceof SshError) || e.code !== 'NOT_FOUND') throw e
+    return null
+  })
+  if (!destination) {
+    await shell.rename(fromPath, toPath)
+    return
+  }
+  if (!replace) throw new SshError('ALREADY_EXISTS', `"${toPath}" already exists.`)
+  if (await posixRename(await shell.sftp(), fromPath, toPath)) return
+
+  const source = await shell.lstat(fromPath)
+  if (destination.isDirectory() || source.isDirectory()) {
+    throw new SshError('SFTP', 'This server cannot replace folders during rename. Choose an unused name.')
+  }
+  await replaceRemoteFile(shell, fromPath, toPath, true)
 }
 
 /** Sets a remote path's permissions (mode is an octal string, e.g. "0755"). */
@@ -298,7 +319,11 @@ async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: s
   try {
     await shell.rename(tempPath, target)
   } catch (e) {
-    await shell.rename(backup, target).catch(() => undefined)
+    try {
+      await shell.rename(backup, target)
+    } catch {
+      throw new SshError('SFTP', `Could not restore "${target}". Its previous contents are at "${backup}".`)
+    }
     throw e
   }
   await shell.unlink(backup).catch(() => undefined)

@@ -20,6 +20,7 @@ export interface OperationItemState {
   progressTotal?: number
   progressUnit?: 'bytes' | 'items'
   error?: string
+  summary?: string
 }
 
 interface OperationsState {
@@ -81,7 +82,8 @@ export const useOperationsStore = defineStore('operations', {
           progressCurrent: evt.progressCurrent ?? existing?.progressCurrent,
           progressTotal: evt.progressTotal ?? existing?.progressTotal,
           progressUnit: evt.progressUnit ?? existing?.progressUnit,
-          error: evt.error
+          error: evt.error,
+          ...(evt.summary ? { summary: evt.summary } : {})
         })
         if (evt.state === 'done') {
           // Successful rows self-clean; error/cancelled rows stay until

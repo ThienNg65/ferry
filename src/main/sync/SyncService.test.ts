@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { computeDiff, computePlan, type TreeItem } from './SyncService'
+import { writeFileSync } from 'fs'
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SessionManager } from '../ssh/SessionManager'
+import type { RemoteShell } from '../ssh/RemoteShell'
+import type { SyncOptions } from '../../shared/contract'
+import { computeDiff, computePlan, previewSync, runSync, type TreeItem } from './SyncService'
 
 function file(relPath: string, size: number, mtimeMs?: number): TreeItem {
   return { relPath, isDir: false, size, mtimeMs }
@@ -56,13 +63,13 @@ describe('computePlan', () => {
     expect(plan.toDelete).toEqual(['extra.txt'])
   })
 
-  it('identifies a destination-only top-level directory as a single extra, without listing its descendants separately', () => {
+  it('lists every deletion under a destination-only top-level directory', () => {
     const plan = computePlan(
       [file('a.txt', 10, 1000)],
       [file('a.txt', 10, 1000), dir('extra-dir'), file('extra-dir/nested.txt', 3, 1000)],
       true
     )
-    expect(plan.toDelete).toEqual(['extra-dir'])
+    expect(plan.toDelete).toEqual(['extra-dir', 'extra-dir/nested.txt'])
   })
 
   it('does not flag a destination entry as an extra if its top-level name exists anywhere in the source, even if the specific file differs', () => {
@@ -94,5 +101,72 @@ describe('computeDiff', () => {
 
   it('treats equal sizes with unknown mtimes as the same', () => {
     expect(computeDiff([file('a', 1)], [file('a', 1)])[0].status).toBe('same')
+  })
+})
+
+describe('runSync approval and recovery', () => {
+  let localPath: string
+  let options: SyncOptions
+  const remoteTree = vi.fn<() => Promise<TreeItem[]>>()
+
+  beforeEach(async () => {
+    localPath = await mkdtemp(join(tmpdir(), 'ferry-sync-'))
+    options = { sessionId: 'connected-session', localPath, remotePath: '/remote', direction: 'pull', deleteExtras: true }
+    remoteTree.mockResolvedValue([])
+    vi.spyOn(SessionManager.getInstance(), 'shell').mockReturnValue({
+      readdirRecursive: remoteTree
+    } as unknown as RemoteShell)
+  })
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await rm(localPath, { recursive: true, force: true })
+  })
+
+  it('requires new approval when a zero-deletion preview becomes destructive', async () => {
+    const approved = await previewSync(options)
+    await writeFile(join(localPath, 'new.txt'), 'keep')
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: vi.fn()
+    })).rejects.toThrow(/folders changed.*0 destination item/)
+    expect(await readFile(join(localPath, 'new.txt'), 'utf8')).toBe('keep')
+  })
+
+  it('requires new approval when a child arrives under a reviewed top-level extra', async () => {
+    await mkdir(join(localPath, 'extra'))
+    await writeFile(join(localPath, 'extra', 'reviewed.txt'), 'reviewed')
+    const approved = await previewSync(options)
+    await writeFile(join(localPath, 'extra', 'new.txt'), 'unreviewed')
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: vi.fn()
+    })).rejects.toThrow('Preview again')
+    expect(await readFile(join(localPath, 'extra', 'reviewed.txt'), 'utf8')).toBe('reviewed')
+    expect(await readFile(join(localPath, 'extra', 'new.txt'), 'utf8')).toBe('unreviewed')
+  })
+
+  it('stops after cancellation and reports the number of confirmed deletions', async () => {
+    await mkdir(join(localPath, 'extra'))
+    await writeFile(join(localPath, 'extra', 'reviewed.txt'), 'reviewed')
+    const approved = await previewSync(options)
+    const controller = new AbortController()
+    await expect(runSync(options, approved, {
+      signal: controller.signal,
+      reportProgress: () => controller.abort()
+    })).rejects.toMatchObject({ code: 'CANCELLED', message: expect.stringContaining('1 destination item(s) deleted') })
+    expect((await previewSync(options)).toDelete).toEqual(['extra'])
+  })
+
+  it('leaves a newly arrived child alone after execution starts', async () => {
+    await mkdir(join(localPath, 'extra'))
+    await writeFile(join(localPath, 'extra', 'reviewed.txt'), 'reviewed')
+    const approved = await previewSync(options)
+    const laterFile = join(localPath, 'extra', 'new.txt')
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: () => writeFileSync(laterFile, 'unreviewed')
+    })).rejects.toThrow(/Could not confirm deletion.*1 destination item/)
+    expect(await readFile(laterFile, 'utf8')).toBe('unreviewed')
   })
 })

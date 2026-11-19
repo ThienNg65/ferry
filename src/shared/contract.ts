@@ -22,6 +22,7 @@
 export type IpcErrorCode =
   | 'UNKNOWN'
   | 'NOT_FOUND'
+  | 'ALREADY_EXISTS'
   | 'VALIDATION'
   | 'SSH_CONNECT'
   | 'SSH_TIMEOUT'
@@ -412,6 +413,7 @@ export interface TransferEnqueueRequest {
   remotePath: string
   /** True to recursively transfer a whole directory tree instead of a single file. */
   isDir?: boolean
+  createParents?: boolean
 }
 
 /** Result of enqueueing a transfer. */
@@ -485,6 +487,8 @@ export interface OperationEvent {
   progressTotal?: number
   progressUnit?: 'bytes' | 'items'
   error?: string
+  requestId?: string
+  summary?: string
 }
 
 /** Request payload for `fs:remote:deleteMany`. */
@@ -575,6 +579,12 @@ export interface CompareRow {
   remoteSize?: number
   localMtimeMs?: number
   remoteMtimeMs?: number
+}
+
+export interface SyncRunRequest {
+  requestId: string
+  options: SyncOptions
+  approvedPlan: SyncPlan
 }
 
 export interface SyncRunResult {

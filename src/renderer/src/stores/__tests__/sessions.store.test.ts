@@ -515,6 +515,30 @@ describe('sessions.store quick connect and promotion', () => {
     expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sid)
   })
 
+  it('finishes SSH authentication while the initial remote listing is still pending', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    let finishListing!: (loaded: boolean) => void
+    mockRemoteFs.loadForSession.mockReturnValueOnce(new Promise<boolean>((resolve) => { finishListing = resolve }))
+    vi.mocked(api.invoke).mockImplementation(async (channel) => channel === INVOKE_CHANNELS.sessionOpen
+      ? { sessionId: store.activeTab.sessionId, status: 'connected' }
+      : undefined
+    )
+
+    await store.connect({
+      name: 'Test', host: 'example.com', port: 22, username: 'alice', authMethod: 'password', password: 'pw',
+      remoteInitialPath: '/denied'
+    })
+    expect(store.activeTab.connecting).toBe(false)
+    expect(store.status).toBe('connected')
+    expect(mockRemoteFs.loadForSession).toHaveBeenCalledWith(store.activeSessionId, '/denied')
+
+    finishListing(false)
+    await Promise.resolve()
+    expect(store.status).toBe('connected')
+    expect(store.activeSessionId).toBeTruthy()
+  })
+
   it('reconnectAll stops remaining tabs when cancelConnect is triggered mid-batch', async () => {
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()

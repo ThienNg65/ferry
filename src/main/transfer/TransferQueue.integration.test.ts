@@ -6,7 +6,7 @@
  * Electron process) — everything else is real. See RemoteShell.integration.test.ts
  * for the docker command that starts the required test server.
  */
-import { createHash, randomBytes, randomUUID } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -218,7 +218,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
       code: 'NOT_FOUND'
     })
   })
-  it('an upload never exposes a half-written final file and cancel removes the .part', async () => {
+  it('an upload never exposes a half-written final file and cancel removes only its staging file', async () => {
     const { remoteDir, localDir } = await freshDirs()
     const localFile = path.join(localDir, 'slow.bin')
     await fs.writeFile(localFile, Buffer.alloc(1_000_000, 'x'))
@@ -229,27 +229,31 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     queue.setBandwidthLimitKBps(200)
     try {
       const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
-      await waitFor(() => shell.stat(`${remoteFile}.part`).then(() => true, () => false))
+      const stagingFiles = async () => (await shell.readdir(remoteDir))
+        .filter((entry) => entry.filename.startsWith('.ferry-transfer-'))
+      await waitFor(async () => (await stagingFiles()).length === 1)
       expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
       queue.cancel(id)
-      await waitFor(async () => !(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)))
+      await waitFor(async () => (await stagingFiles()).length === 0)
       expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
     } finally {
       queue.setBandwidthLimitKBps(null)
     }
   })
 
-  it('a finished upload leaves no .part behind', async () => {
+  it('a finished upload preserves a user-owned .part file and cleans up its staging file', async () => {
     const { remoteDir, localDir } = await freshDirs()
     const localFile = path.join(localDir, 'ok.txt')
     await fs.writeFile(localFile, 'done')
     const remoteFile = `${remoteDir}/ok.txt`
     const shell = SessionManager.getInstance().shell(sessionId)
 
+    await shell.exec(`printf user-owned > ${remoteFile}.part`)
     TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, remoteFile)
 
     await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
-    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
+    expect((await shell.readFile(`${remoteFile}.part`, 1024)).content).toBe('user-owned')
+    expect((await shell.readdir(remoteDir)).some((entry) => entry.filename.startsWith('.ferry-transfer-'))).toBe(false)
   })
   it('overwriting a remote file keeps its mode and writes through a symlink', async () => {
     const { remoteDir, localDir } = await freshDirs()
@@ -267,44 +271,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     expect((await shell.exec(`test -L ${link} && echo link`)).stdout.trim()).toBe('link')
   })
 
-  it('retry resumes an interrupted upload from the existing .part and the bytes match', async () => {
-    const { remoteDir, localDir } = await freshDirs()
-    const data = randomBytes(900_000)
-    const localFile = path.join(localDir, 'resume.bin')
-    await fs.writeFile(localFile, data)
-    const remoteFile = `${remoteDir}/resume.bin`
-    const shell = SessionManager.getInstance().shell(sessionId)
-    const queue = TransferQueue.getInstance()
-
-    await fs.writeFile(path.join(localDir, 'prefix.bin'), data.subarray(0, 400_000))
-    await shell.exec(`: > ${remoteFile}.part`)
-    const sftp = await shell.sftp()
-    await new Promise<void>((resolve, reject) =>
-      sftp.fastPut(path.join(localDir, 'prefix.bin'), `${remoteFile}.part`, (e) => (e ? reject(e) : resolve()))
-    )
-    const transferId = 'resume-job'
-    ;(queue as unknown as { retryable: Map<string, unknown> }).retryable.set(transferId, {
-      transferId,
-      sessionId,
-      kind: 'upload',
-      localPath: localFile,
-      remotePath: remoteFile,
-      controller: new AbortController(),
-      isTree: false,
-      queuedAt: Date.now()
-    })
-
-    queue.retry(transferId)
-
-    await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
-    const tmp = path.join(localDir, 'back.bin')
-    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
-    expect(createHash('sha256').update(await fs.readFile(tmp)).digest('hex')).toBe(
-      createHash('sha256').update(data).digest('hex')
-    )
-    expect(await shell.stat(`${remoteFile}.part`).then(() => true, () => false)).toBe(false)
-  })
-  it('pause keeps the .part and resume finishes with identical bytes', async () => {
+  it('pause keeps job-owned staging and resume finishes with identical bytes', async () => {
     const { remoteDir, localDir } = await freshDirs()
     const data = randomBytes(1_000_000)
     const localFile = path.join(localDir, 'pause.bin')
@@ -316,10 +283,12 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     queue.setBandwidthLimitKBps(300)
     try {
       const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
-      await waitFor(() => shell.stat(`${remoteFile}.part`).then((st) => st.size > 0, () => false))
+      const findStaging = async () => (await shell.readdir(remoteDir))
+        .find((entry) => entry.filename.startsWith('.ferry-transfer-'))
+      await waitFor(async () => Boolean((await findStaging())?.size))
       queue.pause(id)
       await new Promise((r) => setTimeout(r, 500))
-      const pausedSize = (await shell.stat(`${remoteFile}.part`)).size
+      const pausedSize = (await findStaging())!.size
       expect(pausedSize).toBeLessThan(data.length)
       expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
       queue.setBandwidthLimitKBps(null)

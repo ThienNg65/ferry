@@ -199,6 +199,33 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.entries[0].name).toBe('fast.txt')
   })
 
+  it('keeps the last real listing after overlapping navigation fails and retries the failed path', async () => {
+    const store = useRemoteFsStore()
+    const entry = { name: 'real.txt', path: '/current/real.txt', isDir: false, size: 1 }
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/current', entries: [entry] })
+    await store.load('/current')
+
+    let resolveSlow!: (result: { path: string; entries: [] }) => void
+    const stale = new Promise((resolve) => { resolveSlow = resolve })
+    vi.mocked(api.invoke).mockReturnValueOnce(stale).mockRejectedValueOnce(new Error('Access denied'))
+    const slowLoad = store.load('/slow')
+    await store.load('/denied')
+    resolveSlow({ path: '/slow', entries: [] })
+    await slowLoad
+
+    expect(store.currentPath).toBe('/current')
+    expect(store.entries).toEqual([entry])
+    expect(store.failedPath).toBe('/denied')
+    expect(store.error).toBe('Access denied')
+
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/denied', entries: [] })
+    await store.retryDirectory()
+    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:list', 'sess-1', '/denied', false)
+    expect(store.failedPath).toBeNull()
+    expect(store.currentPath).toBe('/denied')
+    expect(store.entries).toEqual([])
+  })
+
   it('reloads the originating session directory when active tab switches during mkdir', async () => {
     const store = useRemoteFsStore()
     vi.mocked(api.invoke).mockResolvedValueOnce({

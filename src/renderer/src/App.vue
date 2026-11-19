@@ -47,6 +47,13 @@ const needsLegalConsent = computed(
     (!settingsStore.termsAcceptance || settingsStore.termsAcceptance.version !== LEGAL_POLICY_VERSION)
 )
 const isConnected = computed(() => sessions.status === 'connected')
+const isConnecting = computed(() => sessions.connecting && sessions.status === 'connecting')
+const connectionPhase = computed(() => {
+  if (sessions.pendingHostKeyPrompt) return 'Waiting for host-key confirmation…'
+  if (sessions.pendingKeyboardPrompt) return 'Waiting for authentication…'
+  const messages = sessions.activeTab.progressMessages
+  return messages[messages.length - 1] ?? 'Opening SSH connection…'
+})
 const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
@@ -342,8 +349,29 @@ watch(
           instance, which xterm.js does not support (see PROJECT_MAP.md Gotcha #9). v-show only
           toggles CSS display, so the subtree — and its terminal containers — never unmounts.
         -->
+        <section
+          v-if="isConnecting"
+          aria-label="Connection progress"
+          class="absolute inset-0 z-10 flex items-center justify-center p-6"
+        >
+          <div
+            class="w-full max-w-sm rounded-lg border border-default bg-default p-4 shadow-sm"
+            :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+          >
+            <div role="status" aria-live="polite" aria-atomic="true" class="flex items-start gap-3">
+              <UIcon name="i-lucide-loader-circle" aria-hidden="true" class="mt-0.5 size-5 shrink-0 animate-spin text-primary motion-reduce:animate-none" />
+              <div class="min-w-0">
+                <p class="break-words text-sm font-medium">Connecting to {{ sessions.activeTab.label || sessions.activeTab.hostLabel || 'server' }}</p>
+                <p class="mt-1 text-xs text-muted">{{ connectionPhase }}</p>
+              </div>
+            </div>
+            <UButton size="sm" color="neutral" variant="outline" class="mt-4" @click="sessions.cancelConnect(sessions.activeTabId)">
+              Cancel
+            </UButton>
+          </div>
+        </section>
         <Transition name="fade">
-          <SessionManagerView v-if="!isConnected" key="picker" class="absolute inset-0 z-10" />
+          <SessionManagerView v-if="!isConnected && !isConnecting" key="picker" class="absolute inset-0 z-10" />
         </Transition>
         <div
           v-if="hasConnectedOnce"
