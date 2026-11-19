@@ -28,6 +28,14 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.2.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.0...ferry-v1.2.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **ui:** fix footer wrapping, connect preload race, middle-click, and glass menu blur ([239e5ce](https://github.com/ThienNg65/ferry/commit/239e5ce7389763598b2e90ec51b7cb7e07737714))
+* **ui:** fix footer wrapping, connect preload race, middle-click, and glass menu blur ([641fea0](https://github.com/ThienNg65/ferry/commit/641fea01c1438f461918ccf578bdd33c61dee1f1))
+
 ## [1.2.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.1.0...ferry-v1.2.0) (2026-11-19)
 
 
