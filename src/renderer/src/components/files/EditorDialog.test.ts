@@ -37,6 +37,9 @@ const Modal = defineComponent({
     ])
   }
 })
+const Badge = defineComponent({
+  setup(_, { slots }) { return () => h('span', slots.default?.()) }
+})
 const Button = defineComponent({
   props: ['disabled'],
   emits: ['click'],
@@ -55,7 +58,7 @@ async function openEditor() {
   const wrapper = mount(EditorDialog, {
     props: { open: true, editId: 'edit-1', localTempPath: '/tmp/file.txt', remotePath: '/file.txt' },
     global: {
-      stubs: { UModal: Modal, UButton: Button, UBadge: true, USkeleton: true }
+      stubs: { UModal: Modal, UButton: Button, UBadge: Badge, USkeleton: true }
     }
   })
   await vi.waitFor(() => expect(wrapper.find('textarea').exists()).toBe(true))
