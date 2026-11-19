@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import { INVOKE_CHANNELS, LEGAL_POLICY_VERSION } from '@shared/contract'
 import App from '../../../App.vue'
 import SettingsDialog from '../SettingsDialog.vue'
+import SiteTabBar from '../SiteTabBar.vue'
 import FerryLogo from '../FerryLogo.vue'
 import { useSettingsStore } from '../../../stores/settings.store'
 import { useUiStore } from '../../../stores/ui.store'
@@ -44,7 +45,8 @@ const { mockSettingsResponse, invokeMock } = vi.hoisted(() => {
     autoCheckUpdates: true,
     historyRetentionDays: 90,
     openTabSiteIds: [] as string[],
-    termsAcceptance: null as { version: string; acceptedAt: string } | null
+    termsAcceptance: null as { version: string; acceptedAt: string } | null,
+    uiPrefs: {} as Record<string, string>
   }
   const fn = vi.fn(async (channel: string) => {
     switch (channel) {
@@ -154,6 +156,7 @@ describe('Modern Glass UI rollout', () => {
     document.documentElement.classList.remove('ferry-glass', 'dark')
     toastCalls.length = 0
     mockSettingsResponse.termsAcceptance = null
+    mockSettingsResponse.uiPrefs = {}
     vi.clearAllMocks()
     vi.stubGlobal('useToast', () => toastMock)
   })
@@ -272,5 +275,62 @@ describe('Modern Glass UI rollout', () => {
     expect(ui.glassUiPromoDismissed).toBe(false)
     expect(document.documentElement.classList.contains('ferry-glass')).toBe(false)
     expect(localStorage.getItem('ferry:ui:glassUi')).toBeNull()
+  })
+
+  it('restores Glass UI from sidecar uiPrefs on restart even when localStorage is empty and suppresses promo toast', async () => {
+    mockSettingsResponse.termsAcceptance = { version: LEGAL_POLICY_VERSION, acceptedAt: '2026-11-18T00:00:00.000Z' }
+    mockSettingsResponse.uiPrefs = {
+      'ferry:ui:glassUi': 'true',
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    }
+
+    const w = trackMount(mount(App, { global: { stubs: commonStubs } }))
+    const ui = useUiStore()
+    await nextTick()
+    await nextTick()
+
+    expect(ui.glassUiEnabled).toBe(true)
+    expect(ui.glassUiPromoDismissed).toBe(true)
+    expect(document.documentElement.classList.contains('ferry-glass')).toBe(true)
+    expect(w.find('.ferry-ambient-canvas').exists()).toBe(true)
+    expect(toastMock.add).not.toHaveBeenCalled()
+  })
+
+  it('SiteTabBar uses floating pill tabs with inset indicator and hides FerryLogo in Glass mode (outside fullscreen)', async () => {
+    const ui = useUiStore()
+    const w = trackMount(mount(SiteTabBar, { global: { stubs: commonStubs } }))
+
+    // Classic mode: folder tab + FerryLogo visible
+    expect(w.find('[data-ferry-logo]').exists()).toBe(true)
+    const classicTab = w.get('.ferry-site-tab')
+    expect(classicTab.classes()).toContain('rounded-t-md')
+    expect(classicTab.classes()).toContain('border-t-2')
+
+    // Glass mode: centered floating pill tab, no pinched border-t-2, inset bottom indicator, FerryLogo hidden
+    ui.setGlassUiEnabled(true)
+    await nextTick()
+
+    expect(w.find('[data-ferry-logo]').exists()).toBe(false)
+    const glassTab = w.get('.ferry-site-tab')
+    expect(glassTab.classes()).toContain('rounded-lg')
+    expect(glassTab.classes()).toContain('ferry-glass-active-tab')
+    expect(glassTab.classes()).not.toContain('border-t-2')
+    expect(glassTab.find('span.h-0\\.5.rounded-full.bg-primary').exists()).toBe(true)
+  })
+
+  it('does not re-hydrate or overwrite Glass UI edits on subsequent settings.fetch() after initial load', async () => {
+    const ui = useUiStore()
+    const settings = useSettingsStore()
+
+    mockSettingsResponse.uiPrefs = { 'ferry:ui:glassUi': 'false' }
+    await settings.fetch()
+    expect(settings.loaded).toBe(true)
+    expect(ui.glassUiEnabled).toBe(false)
+
+    // User enables Glass UI; a subsequent settings.fetch() (e.g. opening SettingsDialog) with stale snapshot must not undo it
+    ui.setGlassUiEnabled(true)
+    await settings.fetch()
+    expect(ui.glassUiEnabled).toBe(true)
+    expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
   })
 })

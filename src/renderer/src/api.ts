@@ -26,7 +26,8 @@ const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.windowGetState,
   INVOKE_CHANNELS.windowSyncTheme,
   INVOKE_CHANNELS.windowGetDisplays,
-  INVOKE_CHANNELS.updateGetStatus
+  INVOKE_CHANNELS.updateGetStatus,
+  INVOKE_CHANNELS.settingsSetUiPref
 ])
 
 /**

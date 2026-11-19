@@ -11,6 +11,7 @@ const appSettingsStoreMock = {
   setDefaultProxy: vi.fn(),
   setAutoCheckUpdates: vi.fn(),
   setHistoryRetentionDays: vi.fn(),
+  setUiPref: vi.fn(),
   acceptTerms: vi.fn(),
   reset: vi.fn()
 }
@@ -174,6 +175,27 @@ describe('settings.ipc', () => {
     const record = { version: '1.0', acceptedAt: '2026-11-14T00:00:00.000Z' }
     appSettingsStoreMock.acceptTerms.mockReturnValueOnce(record)
     expect(await invoke('settings:acceptTerms', '1.0')).toEqual({ ok: true, data: record })
+  })
+
+  it('settings:setUiPref validates ferry:ui:* keys and forwards string or null values', async () => {
+    expect(await invoke('settings:setUiPref', { key: 'other:key', value: 'true' })).toMatchObject({
+      ok: false,
+      code: 'VALIDATION'
+    })
+    expect(await invoke('settings:setUiPref', { key: 'ferry:ui:glassUi', value: 123 })).toMatchObject({
+      ok: false,
+      code: 'VALIDATION'
+    })
+    expect(await invoke('settings:setUiPref', { key: 'ferry:ui:glassUi', value: 'true' })).toEqual({
+      ok: true,
+      data: undefined
+    })
+    expect(appSettingsStoreMock.setUiPref).toHaveBeenCalledWith('ferry:ui:glassUi', 'true')
+    expect(await invoke('settings:setUiPref', { key: 'ferry:ui:glassUi', value: null })).toEqual({
+      ok: true,
+      data: undefined
+    })
+    expect(appSettingsStoreMock.setUiPref).toHaveBeenCalledWith('ferry:ui:glassUi', null)
   })
 
   it('knownHosts handlers list, forget, and clear entries', async () => {

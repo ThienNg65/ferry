@@ -52,7 +52,8 @@ describe('AppSettingsStore', () => {
       defaultProxy: undefined,
       autoCheckUpdates: true,
       historyRetentionDays: 90,
-      termsAcceptance: null
+      termsAcceptance: null,
+      uiPrefs: {}
     })
   })
 
@@ -173,5 +174,23 @@ describe('AppSettingsStore', () => {
     store.reset()
     expect(new AppSettingsStore().get().historyRetentionDays).toBe(90)
     expect(new AppSettingsStore().get().termsAcceptance).toBeNull()
+  })
+
+  it('persists uiPrefs across fresh instances, deletes null entries, and clears on reset', () => {
+    const store = new AppSettingsStore()
+    store.setUiPref('ferry:ui:glassUi', 'true')
+    store.setUiPref('ferry:ui:glassUiPromoDismissed', 'true')
+    expect(new AppSettingsStore().get().uiPrefs).toEqual({
+      'ferry:ui:glassUi': 'true',
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    })
+
+    store.setUiPref('ferry:ui:glassUi', null)
+    expect(new AppSettingsStore().get().uiPrefs).toEqual({
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    })
+
+    store.reset()
+    expect(new AppSettingsStore().get().uiPrefs).toEqual({})
   })
 })

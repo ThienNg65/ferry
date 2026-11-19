@@ -889,6 +889,11 @@ export interface KnownHostEntry {
   fingerprint: string
 }
 
+export interface UiPrefUpdate {
+  key: string
+  value: string | null
+}
+
 /**
  * App-wide settings persisted across restarts (not per-session/domain state) —
  * mirrors `ui.store.ts`'s `localStorage` prefs, but for state only the main
@@ -907,6 +912,8 @@ export interface AppSettings {
   historyRetentionDays?: number | null
   /** Local acceptance record for Privacy Policy and Terms of Service. */
   termsAcceptance?: TermsAcceptance | null
+  /** Persisted `ferry:ui:*` renderer preferences (survives Neutralino ephemeral localhost ports). */
+  uiPrefs?: Record<string, string>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -981,6 +988,7 @@ export const INVOKE_CHANNELS = {
   settingsSetAutoCheckUpdates: 'settings:setAutoCheckUpdates',
   settingsSetHistoryRetention: 'settings:setHistoryRetention',
   settingsAcceptTerms: 'settings:acceptTerms',
+  settingsSetUiPref: 'settings:setUiPref',
   // privacy & known hosts
   knownHostsList: 'knownHosts:list',
   knownHostsForget: 'knownHosts:forget',
