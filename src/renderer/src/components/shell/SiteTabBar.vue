@@ -16,7 +16,7 @@ import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
 import { ENVIRONMENT_DOT, ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
-import { onTablistKeydown } from '../../utils/tablistKeys'
+import { onTablistKeydown, onTabStripWheel } from '../../utils/tablistKeys'
 import FerryLogo from './FerryLogo.vue'
 
 const SiteFormDialog = defineAsyncComponent(() => import('../sessions/SiteFormDialog.vue'))
@@ -171,13 +171,6 @@ function showHost(label: string | null | undefined, hostLabel: string | null | u
 function onCloseTab(event: MouseEvent, tabId: string): void {
   event.stopPropagation()
   void sessions.closeTab(tabId)
-}
-
-function onTabStripWheel(e: WheelEvent): void {
-  const el = e.currentTarget as HTMLElement | null
-  if (!el || el.scrollWidth <= el.clientWidth || e.deltaY === 0) return
-  el.scrollLeft += e.deltaY
-  e.preventDefault()
 }
 </script>
 

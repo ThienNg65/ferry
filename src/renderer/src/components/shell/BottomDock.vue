@@ -15,7 +15,7 @@ import {
 import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
-import { onTablistKeydown } from '../../utils/tablistKeys'
+import { onTablistKeydown, onTabStripWheel } from '../../utils/tablistKeys'
 import TransferQueue from '../transfers/TransferQueue.vue'
 import LogTailViewer from '../logs/LogTailViewer.vue'
 import LogTailControls from '../logs/LogTailControls.vue'
@@ -270,13 +270,6 @@ function sessionLabel(sessionId: string): string | null {
 
 function openTerminalSearch(): void {
   window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))
-}
-
-function onTabStripWheel(e: WheelEvent): void {
-  const el = e.currentTarget as HTMLElement | null
-  if (!el || el.scrollWidth <= el.clientWidth || e.deltaY === 0) return
-  el.scrollLeft += e.deltaY
-  e.preventDefault()
 }
 </script>
 
