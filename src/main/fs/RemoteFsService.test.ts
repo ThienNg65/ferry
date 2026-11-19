@@ -2,7 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { commitRemoteFile, listRemote, uploadForEditSudo } from './RemoteFsService'
+import { Writable } from 'node:stream'
+import { commitRemoteFile, listRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SessionManager } from '../ssh/SessionManager'
 
 vi.mock('../ssh/SessionManager', () => ({
@@ -131,6 +132,86 @@ describe('RemoteFsService permission & sudo safety', () => {
       await expect(uploadForEditSudo('sess-1', localFile, '/etc/service.conf')).rejects.toThrow('Operation not permitted')
       expect(commands.some((c) => c.includes('mv -f'))).toBe(false)
       expect(commands.some((c) => c.includes('rm -f'))).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('RemoteFsService.uploadForEdit stream completion', () => {
+  async function fixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'ferry-upload-test-'))
+    const localFile = join(dir, 'edit.txt')
+    await writeFile(localFile, 'updated contents')
+    return { dir, localFile }
+  }
+
+  function setup(writeStream: Writable) {
+    const sftp = {
+      realpath: vi.fn((_path: string, cb: (error: Error | null, path: string) => void) => cb(null, '/srv/edit.txt')),
+      createWriteStream: vi.fn(() => writeStream),
+      ext_openssh_rename: vi.fn((_from: string, _to: string, cb: (error: Error | null) => void) => cb(null))
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => ({ mode: 0o100644, mtime: 0, size: 16 })),
+      chmod: vi.fn(async () => undefined),
+      unlink: vi.fn(async () => undefined)
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+    return { shell, sftp }
+  }
+
+  it('rejects close before finish without replacing the original and cleans staging', async () => {
+    const { dir, localFile } = await fixture()
+    const stream = new Writable({
+      write(_chunk, _encoding, _callback) {
+        // Simulate a remote channel that closes before acknowledging the write.
+        queueMicrotask(() => stream.destroy())
+      }
+    })
+    const { shell, sftp } = setup(stream)
+    try {
+      await expect(uploadForEdit('sess-1', localFile, '/srv/edit.txt')).rejects.toThrow('closed before finishing')
+      expect(sftp.ext_openssh_rename).not.toHaveBeenCalled()
+      expect(shell.unlink).toHaveBeenCalledWith(expect.stringMatching(/^\\/srv\\/edit\\.txt\\.ferry-tmp-/))
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('commits only after a successful writable finish and close', async () => {
+    const { dir, localFile } = await fixture()
+    const chunks: Buffer[] = []
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk))
+        callback()
+      }
+    })
+    const { sftp, shell } = setup(stream)
+    try {
+      await uploadForEdit('sess-1', localFile, '/srv/edit.txt')
+      expect(Buffer.concat(chunks).toString()).toBe('updated contents')
+      expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
+      expect(shell.unlink).not.toHaveBeenCalled()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects stream errors and does not commit', async () => {
+    const { dir, localFile } = await fixture()
+    const stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(new Error('channel lost'))
+      }
+    })
+    const { sftp, shell } = setup(stream)
+    try {
+      await expect(uploadForEdit('sess-1', localFile, '/srv/edit.txt')).rejects.toThrow('channel lost')
+      expect(sftp.ext_openssh_rename).not.toHaveBeenCalled()
+      expect(shell.unlink).toHaveBeenCalledTimes(1)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
