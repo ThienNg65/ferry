@@ -63,21 +63,20 @@ const MAX_RETRYABLE = 200
 const PAUSE_REASON = 'pause'
 
 /**
- * Global rate limiter shared by every concurrent transfer, so a configured
- * cap is an app-wide ceiling (matching WinSCP's single "limit bandwidth"
- * setting) rather than a per-file allowance that multiplies with concurrency.
- *
- * Implemented as a virtual schedule rather than a capped token bucket: each
- * `acquire()` reserves the next available time slot proportional to its byte
- * count (synchronously, before awaiting anything, so concurrent callers never
- * race on the reservation) and resolves once that slot arrives. A request for
- * more bytes than one second's worth of budget (e.g. a stream chunk bigger
- * than a very low configured limit) just takes proportionally longer instead
- * of deadlocking against a hard bucket-capacity cap.
+ * Global FIFO bandwidth scheduler. Only granted work consumes virtual bandwidth.
+ * Pending reservations can be cancelled without leaving holes in the schedule.
  */
 export class RateLimiter {
   private limitBytesPerSec: number | null = null
   private nextAvailableAt = 0
+  private pending: Array<{
+    bytes: number
+    signal?: AbortSignal
+    resolve: () => void
+    reject: (error: SshError) => void
+    onAbort: () => void
+  }> = []
+  private timer: ReturnType<typeof setTimeout> | null = null
 
   get isLimited(): boolean {
     return this.limitBytesPerSec !== null
@@ -86,33 +85,60 @@ export class RateLimiter {
   setLimitKBps(limitKBps: number | null): void {
     this.limitBytesPerSec = limitKBps && limitKBps > 0 ? limitKBps * 1024 : null
     this.nextAvailableAt = Date.now()
+    this.schedule()
   }
 
-  /** Resolves once `bytes` worth of budget is available. Resolves immediately when unlimited. */
-  async acquire(bytes: number, signal?: AbortSignal): Promise<void> {
+  /** Only granted requests reserve time; cancellation removes queued work immediately. */
+  acquire(bytes: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
-      throw new SshError('CANCELLED', 'Transfer cancelled')
+      return Promise.reject(new SshError('CANCELLED', 'Transfer cancelled'))
     }
-    const limit = this.limitBytesPerSec
-    if (!limit) {
-      return
+    if (!this.limitBytesPerSec) {
+      return Promise.resolve()
     }
-    const now = Date.now()
-    const slotStart = Math.max(now, this.nextAvailableAt)
-    this.nextAvailableAt = slotStart + (bytes / limit) * 1000
-    const waitMs = slotStart - now
-    if (waitMs > 0) {
-      await new Promise<void>((resolve, reject) => {
-        const onAbort = (): void => {
-          clearTimeout(timer)
+    return new Promise<void>((resolve, reject) => {
+      const entry = {
+        bytes,
+        signal,
+        resolve,
+        reject,
+        onAbort: (): void => {
+          const index = this.pending.indexOf(entry)
+          if (index === -1) return
+          this.pending.splice(index, 1)
+          signal?.removeEventListener('abort', entry.onAbort)
           reject(new SshError('CANCELLED', 'Transfer cancelled'))
+          this.schedule()
         }
-        const timer = setTimeout(() => {
-          signal?.removeEventListener('abort', onAbort)
-          resolve()
+      }
+      this.pending.push(entry)
+      signal?.addEventListener('abort', entry.onAbort, { once: true })
+      this.schedule()
+    })
+  }
+
+  private schedule(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    while (this.pending.length > 0) {
+      const limit = this.limitBytesPerSec
+      const now = Date.now()
+      const waitMs = limit ? Math.max(0, this.nextAvailableAt - now) : 0
+      if (waitMs > 0) {
+        this.timer = setTimeout(() => {
+          this.timer = null
+          this.schedule()
         }, waitMs)
-        signal?.addEventListener('abort', onAbort, { once: true })
-      })
+        return
+      }
+      const entry = this.pending.shift()!
+      entry.signal?.removeEventListener('abort', entry.onAbort)
+      if (limit) {
+        this.nextAvailableAt = Math.max(now, this.nextAvailableAt) + (entry.bytes / limit) * 1000
+      }
+      entry.resolve()
     }
   }
 }
