@@ -1,10 +1,12 @@
 import { writeFileSync } from 'fs'
-import { mkdtemp, mkdir, rm, writeFile, readFile } from 'fs/promises'
+import { lstat, mkdtemp, mkdir, rm, symlink, writeFile, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { Client } from 'ssh2'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '../ssh/SessionManager'
-import type { RemoteShell } from '../ssh/RemoteShell'
+import { RemoteShell, type SftpEntry } from '../ssh/RemoteShell'
+import { TransferQueue } from '../transfer/TransferQueue'
 import type { SyncOptions } from '../../shared/contract'
 import { computeDiff, computePlan, previewSync, runSync, type TreeItem } from './SyncService'
 
@@ -70,6 +72,12 @@ describe('computePlan', () => {
       true
     )
     expect(plan.toDelete).toEqual(['extra-dir', 'extra-dir/nested.txt'])
+  })
+
+  it('uses source symlink names to protect matching top-level entries without transferring the links', () => {
+    const sourceLink: TreeItem = { relPath: 'shared', isDir: false, isSymlink: true, size: 0 }
+    const destination = [dir('shared'), file('shared/keep.txt', 3)]
+    expect(computePlan([sourceLink], destination, true)).toEqual({ toDelete: [], toTransfer: [], totalBytes: 0 })
   })
 
   it('does not flag a destination entry as an extra if its top-level name exists anywhere in the source, even if the specific file differs', () => {
@@ -144,6 +152,67 @@ describe('runSync approval and recovery', () => {
     })).rejects.toThrow('Preview again')
     expect(await readFile(join(localPath, 'extra', 'reviewed.txt'), 'utf8')).toBe('reviewed')
     expect(await readFile(join(localPath, 'extra', 'new.txt'), 'utf8')).toBe('unreviewed')
+  })
+
+  it('previews and unlinks local directory links and broken links before queuing transfers', async () => {
+    const target = join(localPath, 'outside')
+    const missingTarget = join(localPath, 'missing')
+    const targetFile = join(target, 'keep.txt')
+    const destination = join(localPath, 'destination')
+    const extra = join(destination, 'extra')
+    await mkdir(extra, { recursive: true })
+    await mkdir(target)
+    await mkdir(missingTarget)
+    await writeFile(targetFile, 'keep')
+    const linkKind = process.platform === 'win32' ? 'junction' : 'dir'
+    await symlink(target, join(extra, 'folder-link'), linkKind)
+    await symlink(missingTarget, join(extra, 'broken-link'), linkKind)
+    await rm(missingTarget, { recursive: true })
+    options.localPath = destination
+    remoteTree.mockResolvedValue([file('download.txt', 3)])
+    const enqueue = vi.spyOn(TransferQueue.getInstance(), 'enqueue').mockReturnValue('download-job')
+
+    const approved = await previewSync(options)
+    expect([...approved.toDelete].sort()).toEqual(['extra', 'extra/broken-link', 'extra/folder-link'])
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: vi.fn()
+    })).resolves.toEqual({ deletedCount: 3, queuedTransferIds: ['download-job'] })
+    expect(enqueue).toHaveBeenCalledWith(options.sessionId, 'download', join(destination, 'download.txt'), '/remote/download.txt')
+    await expect(lstat(extra)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(targetFile, 'utf8')).toBe('keep')
+  })
+
+  it('previews remote links as leaves and unlinks them before removing the extra directory', async () => {
+    options.direction = 'push'
+    await writeFile(join(localPath, 'upload.txt'), 'new')
+    const shell = new RemoteShell(new Client())
+    vi.mocked(SessionManager.getInstance().shell).mockReturnValue(shell)
+    const entry = (filename: string, isDirectory: boolean, isSymlink: boolean): SftpEntry => ({
+      filename, longname: filename, isDirectory, isSymlink, size: 0, mtimeMs: 0, permissions: '0755'
+    })
+    const readdir = vi.spyOn(shell, 'readdir').mockImplementation(async (directory) => {
+      if (directory === '/remote') return [entry('extra', true, false)]
+      if (directory === '/remote/extra') return [entry('folder-link', false, true)]
+      throw new Error(`Unexpected directory read: ${directory}`)
+    })
+    vi.spyOn(shell, 'mkdirRecursive').mockResolvedValue(undefined)
+    const unlink = vi.spyOn(shell, 'unlink').mockResolvedValue(undefined)
+    const rmdir = vi.spyOn(shell, 'rmdir').mockResolvedValue(undefined)
+    const enqueue = vi.spyOn(TransferQueue.getInstance(), 'enqueue').mockReturnValue('upload-job')
+
+    const approved = await previewSync(options)
+    expect(approved.toDelete).toEqual(['extra', 'extra/folder-link'])
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: vi.fn()
+    })).resolves.toEqual({ deletedCount: 2, queuedTransferIds: ['upload-job'] })
+
+    expect(readdir.mock.calls).toEqual([['/remote'], ['/remote/extra'], ['/remote'], ['/remote/extra']])
+    expect(unlink.mock.calls).toEqual([['/remote/extra/folder-link']])
+    expect(rmdir.mock.calls).toEqual([['/remote/extra']])
+    expect(unlink.mock.invocationCallOrder[0]).toBeLessThan(rmdir.mock.invocationCallOrder[0])
+    expect(rmdir.mock.invocationCallOrder[0]).toBeLessThan(enqueue.mock.invocationCallOrder[0])
   })
 
   it('stops after cancellation and reports the number of confirmed deletions', async () => {

@@ -7,7 +7,7 @@ import { TransferQueue } from '../transfer/TransferQueue'
 import type { CompareRequest, CompareRow, CompareStatus, SyncOptions, SyncPlan, SyncRunResult } from '../../shared/contract'
 
 /**
- * A file/dir entry from either side's recursive tree walk — the shape
+ * An entry from either side's recursive tree walk — the shape
  * `LocalFsService.listRecursive` and `RemoteShell.readdirRecursive` both
  * already return, kept generic here since the diff itself doesn't care which
  * physical side is source vs. destination (the caller resolves that from
@@ -16,6 +16,7 @@ import type { CompareRequest, CompareRow, CompareStatus, SyncOptions, SyncPlan, 
 export interface TreeItem {
   relPath: string
   isDir: boolean
+  isSymlink?: true
   size: number
   mtimeMs?: number
 }
@@ -37,12 +38,12 @@ const MTIME_TOLERANCE_MS = 2000
  * SyncService.test.ts.
  */
 export function computePlan(sourceTree: TreeItem[], destTree: TreeItem[], deleteExtras: boolean): SyncPlan {
-  const destFiles = new Map(destTree.filter((e) => !e.isDir).map((e) => [e.relPath, e]))
+  const destFiles = new Map(destTree.filter((e) => !e.isDir && !e.isSymlink).map((e) => [e.relPath, e]))
   const toTransfer: SyncPlan['toTransfer'] = []
   let totalBytes = 0
 
   for (const src of sourceTree) {
-    if (src.isDir) {
+    if (src.isDir || src.isSymlink) {
       continue
     }
     const dest = destFiles.get(src.relPath)
@@ -128,9 +129,9 @@ function joinRemote(root: string, relPath: string): string {
   return `${root.replace(/\/$/, '')}/${relPath}`
 }
 
-async function listLocalTreeOrEmpty(dirPath: string): Promise<TreeItem[]> {
+async function listLocalTreeOrEmpty(dirPath: string, includeSymlinks = false): Promise<TreeItem[]> {
   try {
-    return await listRecursive(dirPath)
+    return await listRecursive(dirPath, includeSymlinks)
   } catch (e) {
     if (e instanceof SshError && e.code === 'NOT_FOUND') {
       return []
@@ -139,9 +140,9 @@ async function listLocalTreeOrEmpty(dirPath: string): Promise<TreeItem[]> {
   }
 }
 
-async function listRemoteTreeOrEmpty(sessionId: string, dirPath: string): Promise<TreeItem[]> {
+async function listRemoteTreeOrEmpty(sessionId: string, dirPath: string, includeSymlinks = false): Promise<TreeItem[]> {
   try {
-    return await SessionManager.getInstance().shell(sessionId).readdirRecursive(dirPath)
+    return await SessionManager.getInstance().shell(sessionId).readdirRecursive(dirPath, includeSymlinks)
   } catch (e) {
     if (e instanceof SshError && e.code === 'NOT_FOUND') {
       return []
@@ -158,12 +159,14 @@ async function listRemoteTreeOrEmpty(sessionId: string, dirPath: string): Promis
  */
 async function loadTrees(options: SyncOptions): Promise<{ sourceTree: TreeItem[]; destTree: TreeItem[] }> {
   const isPush = options.direction === 'push'
+  // Mirror compares names on both sides, but symlinks are never transfer candidates.
+  const includeSymlinks = options.deleteExtras
   const localTree = isPush
-    ? await listRecursive(options.localPath)
-    : await listLocalTreeOrEmpty(options.localPath)
+    ? await listRecursive(options.localPath, includeSymlinks)
+    : await listLocalTreeOrEmpty(options.localPath, includeSymlinks)
   const remoteTree = isPush
-    ? await listRemoteTreeOrEmpty(options.sessionId, options.remotePath)
-    : await SessionManager.getInstance().shell(options.sessionId).readdirRecursive(options.remotePath)
+    ? await listRemoteTreeOrEmpty(options.sessionId, options.remotePath, includeSymlinks)
+    : await SessionManager.getInstance().shell(options.sessionId).readdirRecursive(options.remotePath, includeSymlinks)
   return isPush ? { sourceTree: localTree, destTree: remoteTree } : { sourceTree: remoteTree, destTree: localTree }
 }
 

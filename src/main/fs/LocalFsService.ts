@@ -189,13 +189,14 @@ export async function remove(targetPath: string, isDir: boolean): Promise<void> 
 export interface TreeEntry {
   relPath: string
   isDir: boolean
+  isSymlink?: true
   size: number
   /** Epoch ms — absent for directory entries (only files need it, for sync's change-detection diff). */
   mtimeMs?: number
 }
 
-/** Recursively walks a local directory, depth-first, parent directories before their children. */
-export async function listRecursive(dirPath: string): Promise<TreeEntry[]> {
+/** Walks parents before children. When requested, includes symlinks as leaves. */
+export async function listRecursive(dirPath: string, includeSymlinks = false): Promise<TreeEntry[]> {
   const results: TreeEntry[] = []
 
   async function walk(currentPath: string, relBase: string): Promise<void> {
@@ -209,6 +210,8 @@ export async function listRecursive(dirPath: string): Promise<TreeEntry[]> {
       } else if (dirent.isFile()) {
         const stats = await fs.stat(fullPath)
         results.push({ relPath, isDir: false, size: stats.size, mtimeMs: stats.mtimeMs })
+      } else if (includeSymlinks && dirent.isSymbolicLink()) {
+        results.push({ relPath, isDir: false, isSymlink: true, size: 0 })
       }
     }
   }
