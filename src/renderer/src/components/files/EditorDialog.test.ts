@@ -48,6 +48,8 @@ const Button = defineComponent({
   }
 })
 
+const confirmDiscard = vi.fn()
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => { resolve = done })
@@ -68,7 +70,8 @@ async function openEditor() {
 describe('EditorDialog asynchronous save', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(useConfirm).mockReturnValue(vi.fn().mockResolvedValue(false) as ReturnType<typeof useConfirm>)
+    confirmDiscard.mockReset().mockResolvedValue(false)
+    vi.mocked(useConfirm).mockReturnValue(confirmDiscard as ReturnType<typeof useConfirm>)
     vi.mocked(invoke).mockResolvedValue({ content: 'original', truncated: false })
   })
 
@@ -93,7 +96,7 @@ describe('EditorDialog asynchronous save', () => {
     // A close attempt must ask whether to discard the second edit.
     await wrapper.find('[data-test="close"]').trigger('click')
     await nextTick()
-    expect(useConfirm()).toHaveBeenCalled()
+    expect(confirmDiscard).toHaveBeenCalled()
     expect(wrapper.emitted('update:open')).toBeUndefined()
     expect(wrapper.text()).toContain('Unsaved')
     wrapper.unmount()
@@ -112,7 +115,7 @@ describe('EditorDialog asynchronous save', () => {
     await wrapper.find('[data-test="close"]').trigger('click')
     await nextTick()
     expect(wrapper.emitted('update:open')).toBeUndefined()
-    expect(useConfirm()).not.toHaveBeenCalled()
+    expect(confirmDiscard).not.toHaveBeenCalled()
     write.resolve()
     await vi.waitFor(() => expect(wrapper.text()).not.toContain('Unsaved'))
     wrapper.unmount()
