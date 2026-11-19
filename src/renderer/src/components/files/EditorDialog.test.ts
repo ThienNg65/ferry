@@ -102,6 +102,23 @@ describe('EditorDialog asynchronous save', () => {
     wrapper.unmount()
   })
 
+  it('does not discard edits typed while confirmation is pending', async () => {
+    const decision = deferred<boolean>()
+    confirmDiscard.mockReturnValue(decision.promise)
+    const wrapper = await openEditor()
+    await wrapper.find('textarea').setValue('first draft')
+    await wrapper.find('[data-test="close"]').trigger('click')
+    expect(confirmDiscard).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('textarea').setValue('new text during confirmation')
+    decision.resolve(true)
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Unsaved'))
+    await nextTick()
+    expect(wrapper.emitted('update:open')).toBeUndefined()
+    expect(wrapper.find('textarea').element.value).toBe('new text during confirmation')
+    wrapper.unmount()
+  })
+
   it('does not close while a write is in flight', async () => {
     const write = deferred<void>()
     vi.mocked(invoke).mockImplementation(async (channel) => {
