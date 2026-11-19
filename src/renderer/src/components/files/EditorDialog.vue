@@ -87,14 +87,21 @@ watch(
 
 async function onSave(): Promise<void> {
   if (!props.localTempPath || loading.value || saving.value || !isDirty.value) return
+  // Snapshot the exact bytes submitted. Edits made while the write is pending
+  // must remain dirty rather than being silently marked as saved.
+  const pathAtSave = props.localTempPath
+  const contentAtSave = content.value
+  const tokenAtSave = loadToken
   saving.value = true
   try {
     await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, {
-      path: props.localTempPath,
-      content: content.value
+      path: pathAtSave,
+      content: contentAtSave
     })
-    savedContent.value = content.value
-    notify.success('Saved', 'Changes saved and uploading...')
+    if (tokenAtSave === loadToken && props.open && props.localTempPath === pathAtSave) {
+      savedContent.value = contentAtSave
+      notify.success('Saved', 'Changes saved and uploading...')
+    }
   } catch (e) {
     notify.error('Failed to save file', e instanceof Error ? e.message : String(e))
   } finally {
@@ -127,6 +134,8 @@ async function onOpenExternal(): Promise<void> {
 }
 
 async function onUpdateOpen(nextOpen: boolean): Promise<void> {
+  // Do not discard the editor while an in-flight write can still complete.
+  if (!nextOpen && saving.value) return
   if (!nextOpen && isDirty.value) {
     const ok = await confirm({
       title: 'Discard unsaved changes?',
