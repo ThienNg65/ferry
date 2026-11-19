@@ -199,6 +199,38 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.entries[0].name).toBe('fast.txt')
   })
 
+  it('deletes only from the explicitly confirmed session, not the active tab', async () => {
+    const store = useRemoteFsStore()
+    const a = { name: 'a.txt', path: '/a/a.txt', isDir: false, size: 10, permissions: '0644' }
+    const b = { name: 'b.txt', path: '/b/b.txt', isDir: false, size: 10, permissions: '0644' }
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/a', entries: [a] })
+    await store.loadForSession('sess-1', '/a')
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/b', entries: [b] })
+    await store.loadForSession('sess-2', '/b')
+    vi.mocked(api.invoke).mockResolvedValueOnce(undefined)
+    await store.remove(a, 'sess-1')
+    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:delete', 'sess-1', '/a/a.txt')
+    expect(store.bySession['sess-1'].entries).toHaveLength(0)
+    expect(store.bySession['sess-2'].entries.map((e) => e.name)).toEqual(['b.txt'])
+  })
+
+  it('batches deletion using the confirmed session and leaves other session buckets intact', async () => {
+    const store = useRemoteFsStore()
+    const a = { name: 'a.txt', path: '/a/a.txt', isDir: false, size: 10, permissions: '0644' }
+    const b = { name: 'b.txt', path: '/a/b.txt', isDir: false, size: 10, permissions: '0644' }
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/a', entries: [a, b] })
+    await store.loadForSession('sess-1', '/a')
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/other', entries: [] })
+    await store.loadForSession('sess-2', '/other')
+    vi.mocked(api.invoke).mockResolvedValueOnce({ deletedPaths: [a.path, b.path], failures: [] })
+    await store.removeMany([a, b], 'sess-1')
+    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:deleteMany', {
+      sessionId: 'sess-1', paths: [a.path, b.path]
+    })
+    expect(store.bySession['sess-1'].entries).toHaveLength(0)
+    expect(store.bySession['sess-2'].currentPath).toBe('/other')
+  })
+
   it('reloads the originating session directory when active tab switches during mkdir', async () => {
     const store = useRemoteFsStore()
     vi.mocked(api.invoke).mockResolvedValueOnce({
