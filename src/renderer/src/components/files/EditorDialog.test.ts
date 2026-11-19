@@ -119,6 +119,25 @@ describe('EditorDialog asynchronous save', () => {
     wrapper.unmount()
   })
 
+  it('does not open the external editor after newer edits invalidate discard approval', async () => {
+    const decision = deferred<boolean>()
+    confirmDiscard.mockReturnValue(decision.promise)
+    const wrapper = await openEditor()
+    await wrapper.find('textarea').setValue('draft before prompt')
+    const external = wrapper.findAll('button').find((button) => button.attributes('aria-label') === 'Open in External Editor')!
+    await external.trigger('click')
+    expect(confirmDiscard).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('textarea').setValue('newer unsaved draft')
+    decision.resolve(true)
+    await nextTick()
+    await nextTick()
+    expect(invoke).not.toHaveBeenCalledWith('edit:openExternal', expect.anything())
+    expect(vi.mocked(invoke).mock.calls).toHaveLength(1) // initial file read only
+    expect(wrapper.emitted('update:open')).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('does not close while a write is in flight', async () => {
     const write = deferred<void>()
     vi.mocked(invoke).mockImplementation(async (channel) => {
