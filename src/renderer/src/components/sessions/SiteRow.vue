@@ -22,6 +22,7 @@ defineProps<{
 const emit = defineEmits<{
   select: []
   connect: []
+  connectNewTab: []
   toggle: [checked: boolean]
   delete: []
 }>()
@@ -59,6 +60,8 @@ const emit = defineEmits<{
       :aria-describedby="selectMode ? undefined : `site-hint-${site.id}`"
       @click="selectMode ? emit('toggle', !checked) : emit('select')"
       @dblclick="!selectMode && emit('connect')"
+      @mousedown.middle.prevent
+      @auxclick.middle.prevent="!selectMode && emit('connectNewTab')"
       @keydown.enter.prevent="!selectMode && emit('connect')"
       @keydown.delete.prevent="!selectMode && emit('delete')"
     >

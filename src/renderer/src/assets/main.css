@@ -87,10 +87,7 @@ html,
 body,
 #app {
   height: 100%;
-}
-
-body {
-  overflow: hidden;
+  overflow: clip;
 }
 
 /* Custom scrollbar — thin, rounded, using @nuxt/ui's own neutral-scale vars
@@ -484,8 +481,10 @@ html.ferry-glass {
   /* Tier 2B: High-Legibility Content Wells (FileList, LogTailViewer, Monitor) */
   --ferry-glass-well-bg: rgba(255, 255, 255, 0.82);
 
-  /* Tier 3: Floating Overlays (Modals, CommandPalette, Popovers, ContextMenu) */
-  --ferry-glass-overlay-bg: rgba(255, 255, 255, 0.78);
+  /* Tier 3: Floating Overlays (Modals vs Menus/Select Listboxes/Popovers) */
+  --ferry-glass-overlay-bg: rgba(255, 255, 255, 0.86);
+  --ferry-glass-menu-bg: rgba(255, 255, 255, 0.95);
+  --ferry-glass-menu-nested-bg: #ffffff;
   --ferry-glass-overlay-blur: blur(24px) saturate(180%);
   --ferry-glass-overlay-border: rgba(255, 255, 255, 0.82);
   --ferry-glass-overlay-shadow:
@@ -540,7 +539,9 @@ html.dark.ferry-glass {
   --ferry-glass-well-bg: rgba(11, 15, 25, 0.78);
 
   /* Tier 3: Floating Overlays */
-  --ferry-glass-overlay-bg: rgba(15, 23, 42, 0.72);
+  --ferry-glass-overlay-bg: rgba(15, 23, 42, 0.82);
+  --ferry-glass-menu-bg: rgba(15, 23, 42, 0.95);
+  --ferry-glass-menu-nested-bg: #111827;
   --ferry-glass-overlay-blur: blur(24px) saturate(180%);
   --ferry-glass-overlay-border: rgba(255, 255, 255, 0.18);
   --ferry-glass-overlay-shadow:
@@ -650,8 +651,9 @@ html.ferry-glass .ferry-site-row[data-active='true']:not([data-selected='true'])
 /* Tier 3 Teleported Portals (Dialogs, Popovers, Menus, Select Listboxes, Toasts — excluding Tooltips) */
 html.ferry-glass [role="dialog"],
 html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass [role="listbox"],
+html.ferry-glass [role="menu"],
 html.ferry-glass [data-slot="viewport"] > li {
-  background-color: var(--ferry-glass-overlay-bg) !important;
   backdrop-filter: var(--ferry-glass-overlay-blur);
   -webkit-backdrop-filter: var(--ferry-glass-overlay-blur);
   border: 1px solid var(--ferry-glass-overlay-border);
@@ -659,7 +661,24 @@ html.ferry-glass [data-slot="viewport"] > li {
 }
 
 html.ferry-glass [role="dialog"] {
+  background-color: var(--ferry-glass-overlay-bg) !important;
   border-radius: var(--ferry-radius-overlay);
+}
+
+html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass [role="listbox"],
+html.ferry-glass [role="menu"],
+html.ferry-glass [data-slot="viewport"] > li {
+  background-color: var(--ferry-glass-menu-bg) !important;
+}
+
+/* Blink skips nested backdrop-filter over an already-filtered dialog sheet; use an opaque menu surface to prevent text bleed-through. */
+html.ferry-glass:has([role="dialog"]) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass:has([role="dialog"]) [role="listbox"],
+html.ferry-glass:has([role="dialog"]) [role="menu"] {
+  background-color: var(--ferry-glass-menu-nested-bg) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 html.ferry-glass [role="dialog"][data-state="open"],
@@ -714,6 +733,8 @@ html.ferry-glass .ferry-glass-overlay [role="combobox"] {
     --ferry-glass-card-blur: none;
     --ferry-glass-well-bg: #ffffff;
     --ferry-glass-overlay-bg: #ffffff;
+    --ferry-glass-menu-bg: #ffffff;
+    --ferry-glass-menu-nested-bg: #ffffff;
     --ferry-glass-overlay-blur: none;
     --ferry-surface-subtle: #f1f5f9;
   }
@@ -726,6 +747,8 @@ html.ferry-glass .ferry-glass-overlay [role="combobox"] {
     --ferry-glass-card-blur: none;
     --ferry-glass-well-bg: #0b0f19;
     --ferry-glass-overlay-bg: #0f172a;
+    --ferry-glass-menu-bg: #0f172a;
+    --ferry-glass-menu-nested-bg: #0f172a;
     --ferry-glass-overlay-blur: none;
     --ferry-surface-subtle: #1e293b;
   }

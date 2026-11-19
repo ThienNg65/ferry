@@ -177,7 +177,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
 <template>
   <!-- The hairline is an inset shadow (not a border) so Classic's flush active tab paints over it, while Glass uses centered floating pills. -->
   <header
-    class="relative flex justify-between gap-2"
+    class="relative flex shrink-0 justify-between gap-2"
     :class="
       ui.glassUiEnabled
         ? 'ferry-glass-chrome items-center px-2.5 py-1.5 shadow-[inset_0_-1px_0_var(--ferry-glass-chrome-border)]'
@@ -213,6 +213,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
                 ]
           ]"
           :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
+          @mousedown.middle.prevent
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
           <span

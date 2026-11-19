@@ -51,8 +51,21 @@ describe('SiteDetailsPanel', () => {
     expect(w.emitted('connect')).toHaveLength(1)
   })
 
-  it('reads "Switch to tab" when connected', () => {
-    expect(findBtn(mountPanel({ connected: true }), 'Switch to tab')).toBeTruthy()
+  it('reads "Switch to tab" when connected and prevents wrapping or orphaning the delete button', () => {
+    const w = mountPanel({ connected: true })
+    const switchBtn = findBtn(w, 'Switch to tab')
+    expect(switchBtn).toBeTruthy()
+    expect(switchBtn.classes()).toContain('whitespace-nowrap')
+    expect(switchBtn.classes()).toContain('min-w-fit')
+
+    const disconnectBtn = findBtn(w, 'Disconnect')
+    expect(disconnectBtn.classes()).toContain('whitespace-nowrap')
+
+    // Secondary actions (Edit, Duplicate, Delete) stay grouped together in one shrink-0 container
+    const editBtn = findBtn(w, 'Edit')
+    const deleteBtn = w.get('[aria-label="Delete site"]')
+    expect(editBtn.element.parentElement).toBe(deleteBtn.element.parentElement?.parentElement)
+    expect(editBtn.element.parentElement?.className).toContain('shrink-0')
   })
 
   it('Connect is disabled while any connection is opening', () => {

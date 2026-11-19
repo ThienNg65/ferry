@@ -653,4 +653,46 @@ describe('sessions.store quick connect and promotion', () => {
     expect(mockLocalFs.load).toHaveBeenNthCalledWith(1, 'C:/missing')
     expect(mockLocalFs.load).toHaveBeenNthCalledWith(2)
   })
+
+  it('holds tab.status at connecting when sessionStatus connected arrives before sessionOpen resolves', async () => {
+    const statusListener: { fn: ((evt: { sessionId: string; status: string; message?: string }) => void) | null } = {
+      fn: null
+    }
+    vi.mocked(api.onEvent).mockImplementation((channel, cb) => {
+      if (channel === 'session:status') {
+        statusListener.fn = cb as typeof statusListener.fn
+      }
+      return () => {}
+    })
+
+    let resolveOpen!: (v: { sessionId: string; status: string }) => void
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    vi.mocked(api.invoke).mockImplementation((channel) =>
+      channel === INVOKE_CHANNELS.sessionOpen
+        ? new Promise((resolve) => {
+            resolveOpen = resolve as typeof resolveOpen
+          })
+        : Promise.resolve(undefined)
+    )
+
+    const connectPromise = store.connect({
+      name: 'Slow Open',
+      host: 'host.example.com',
+      port: 22,
+      username: 'user',
+      authMethod: 'password',
+      password: 'pw'
+    })
+
+    const reqSessionId = store.activeTab.sessionId!
+    statusListener.fn?.({ sessionId: reqSessionId, status: 'connected' })
+    expect(store.activeTab.connecting).toBe(true)
+    expect(store.activeTab.status).toBe('connecting')
+
+    resolveOpen({ sessionId: reqSessionId, status: 'connected' })
+    await connectPromise
+    expect(store.activeTab.connecting).toBe(false)
+    expect(store.activeTab.status).toBe('connected')
+  })
 })

@@ -108,4 +108,19 @@ describe('SiteRow', () => {
     await wEnv.get('[data-site-row]').trigger('keydown', { key: 'Delete' })
     expect(wEnv.emitted('delete')).toHaveLength(1)
   })
+
+  it('middle-click emits connectNewTab outside selectMode and ignores selectMode', async () => {
+    const w = mountRow()
+    const btn = w.get('[data-site-row]')
+    const mousedown = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true })
+    btn.element.dispatchEvent(mousedown)
+    expect(mousedown.defaultPrevented).toBe(true)
+
+    await btn.trigger('auxclick', { button: 1 })
+    expect(w.emitted('connectNewTab')).toHaveLength(1)
+
+    const wSelect = mountRow({ selectMode: true })
+    await wSelect.get('[data-site-row]').trigger('auxclick', { button: 1 })
+    expect(wSelect.emitted('connectNewTab')).toBeUndefined()
+  })
 })

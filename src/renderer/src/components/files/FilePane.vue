@@ -271,7 +271,7 @@ if (props.side === 'local') {
   // caches each session's listing, so switching back to an already-loaded tab
   // is instant and re-fetches nothing).
   watch(
-    () => sessions.status === 'connected' ? sessions.activeSessionId : null,
+    () => (sessions.status === 'connected' ? sessions.activeSessionId : null),
     (id) => {
       filterText.value = ''
       if (id && remoteFs.needsLoad(id)) {
