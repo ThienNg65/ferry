@@ -881,16 +881,33 @@ function onRemoveEntry(entry: FileEntry): void {
 async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
   if (entries.length === 0) return
   const single = entries.length === 1 ? entries[0] : null
+  // Bind the confirmation to the SSH session that displayed the files. A tab
+  // switch or reconnect must never redirect a destructive operation.
+  const sessionAtPrompt = props.side === 'remote' ? sessions.activeSessionId : null
+  if (props.side === 'remote' && !sessionAtPrompt) return
+  const paths = entries.map((entry) => entry.path)
   await confirm({
     title: 'Delete',
     body: single
-      ? `Delete ${single.name}${single.isDir ? ' and everything inside it' : ''}? This cannot be undone.`
-      : `Delete these ${entries.length} items? This cannot be undone.`,
-    items: single ? undefined : entries.map((e) => e.name),
+      ? `Delete ${single.path}${single.isDir ? ' and everything inside it' : ''}?${sessionAtPrompt ? ` (SSH session: ${sessionAtPrompt})` : ''} This cannot be undone.`
+      : `Delete these ${entries.length} items?${sessionAtPrompt ? ` (SSH session: ${sessionAtPrompt})` : ''} This cannot be undone.`,
+    items: single ? undefined : paths,
     confirmLabel: 'Delete',
     confirmColor: 'error',
     destructive: true,
-    action: () => (entries.length > 1 ? store.removeMany(entries) : store.remove(entries[0]))
+    action: async () => {
+      if (props.side === 'remote' && sessions.activeSessionId !== sessionAtPrompt) {
+        throw new Error('Connection changed since confirmation opened. Review the files and try again.')
+      }
+      if (props.side === 'remote') {
+        if (entries.length > 1) await remoteFs.removeMany(entries, sessionAtPrompt!)
+        else await remoteFs.remove(entries[0], sessionAtPrompt!)
+      } else if (entries.length > 1) {
+        await localFs.removeMany(entries)
+      } else {
+        await localFs.remove(entries[0])
+      }
+    }
   })
 }
 
