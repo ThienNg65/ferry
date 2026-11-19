@@ -20,7 +20,11 @@ import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useSitesStore } from './sites.store'
 import { useMonitorStore } from './monitor.store'
-import { useFileFiltersStore } from './fileFilters.store'
+import {
+  resolveConnectionFilterKey,
+  resolveLegacyConnectionFilterKey,
+  useFileFiltersStore
+} from './fileFilters.store'
 
 export interface RecentQuickConnect {
   host: string
@@ -544,8 +548,11 @@ export const useSessionsStore = defineStore('sessions', {
       if (!tab) {
         return
       }
-      if (tab.hostLabel) {
-        useFileFiltersStore().migrateConnectionFilter(`host:${tab.hostLabel}`, `site:${site.id}`)
+      const fromKey = resolveConnectionFilterKey(tab)
+      if (fromKey) {
+        const filters = useFileFiltersStore()
+        filters.getFilter(fromKey, resolveLegacyConnectionFilterKey(tab))
+        filters.migrateConnectionFilter(fromKey, `site:${site.id}`)
       }
       tab.siteId = site.id
       tab.label = site.name

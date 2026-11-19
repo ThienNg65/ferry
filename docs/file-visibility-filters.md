@@ -17,7 +17,11 @@ Click the **Filter files** button (funnel icon) in the remote pane toolbar to co
 - **Independent of search, sort, and hidden files:**
   - `Ctrl+F` (**Search files**) remains a quick per-folder substring search.
   - `Ctrl+H` (**Show/hide hidden files**) and column sorting work alongside visibility filters.
-- **Per-connection persistence:** Filters persist per saved site (or Quick Connect `username@host`) across directory navigation, tab switches, reconnects, and app restarts without affecting other connections.
+- **Per-connection persistence:** Filters persist per saved site (site ID) or Quick Connect endpoint (case-sensitive username, normalized hostname, and SSH port) across directory navigation, tab switches, reconnects, and app restarts. Connections to different SSH ports do not share rules.
+
+### Existing Quick Connect filters
+
+Earlier Ferry versions stored Quick Connect filters under `username@host` without the port. When the same endpoint is next opened on **port 22**, Ferry copies that legacy filter to its new port-specific key and deletes the old shared key. Connections on other ports start with no inherited filter; configure them individually. If a port-specific filter already exists, it takes precedence over the legacy filter. Saved-site filters are not migrated or changed.
 
 ## Pattern syntax
 
