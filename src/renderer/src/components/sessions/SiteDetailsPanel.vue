@@ -151,10 +151,10 @@ const rows = computed(() => {
     </dl>
 
     <template #footer>
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2 [flex-wrap:balance]">
         <UButton
           icon="i-lucide-play"
-          class="flex-1 justify-center"
+          class="min-w-fit flex-1 justify-center whitespace-nowrap"
           :loading="connecting"
           :disabled="busy"
           @click="emit('connect')"
@@ -166,32 +166,37 @@ const rows = computed(() => {
           color="neutral"
           variant="outline"
           icon="i-lucide-unplug"
+          class="shrink-0 whitespace-nowrap"
           @click="emit('disconnect')"
         >
           Disconnect
         </UButton>
-        <UButton color="neutral" variant="outline" icon="i-lucide-pencil" @click="emit('edit')">Edit</UButton>
-        <UTooltip text="Duplicate site">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            size="sm"
-            icon="i-lucide-copy"
-            aria-label="Duplicate site"
-            :loading="duplicating"
-            @click="emit('duplicate')"
-          />
-        </UTooltip>
-        <UTooltip text="Delete site">
-          <UButton
-            color="error"
-            variant="ghost"
-            size="sm"
-            icon="i-lucide-trash-2"
-            aria-label="Delete site"
-            @click="emit('delete')"
-          />
-        </UTooltip>
+        <div class="ml-auto flex shrink-0 items-center gap-1.5">
+          <UButton color="neutral" variant="outline" icon="i-lucide-pencil" class="whitespace-nowrap" @click="emit('edit')">
+            Edit
+          </UButton>
+          <UTooltip text="Duplicate site">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-copy"
+              aria-label="Duplicate site"
+              :loading="duplicating"
+              @click="emit('duplicate')"
+            />
+          </UTooltip>
+          <UTooltip text="Delete site">
+            <UButton
+              color="error"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-trash-2"
+              aria-label="Delete site"
+              @click="emit('delete')"
+            />
+          </UTooltip>
+        </div>
       </div>
       <p class="mt-2 text-xs text-muted">Tip: double-click or press Enter on a site to connect.</p>
     </template>

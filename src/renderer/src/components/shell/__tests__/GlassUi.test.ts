@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -361,5 +363,13 @@ describe('Modern Glass UI rollout', () => {
     await settings.fetch()
     expect(ui.glassUiEnabled).toBe(true)
     expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
+  })
+
+  it('main.css separates menu surface tokens and disables nested backdrop-filter over open dialogs', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8')
+    expect(css).toContain('--ferry-glass-menu-bg:')
+    expect(css).toContain('--ferry-glass-menu-nested-bg:')
+    expect(css).toContain('html.ferry-glass [role="listbox"]')
+    expect(css).toContain('html.ferry-glass:has([role="dialog"])')
   })
 })

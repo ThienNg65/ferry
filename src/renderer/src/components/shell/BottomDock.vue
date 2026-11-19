@@ -488,6 +488,7 @@ function openTerminalSearch(): void {
                 ? 'bg-default border-default text-default font-medium shadow-xs ring-1 ring-primary/20'
                 : 'border-transparent text-muted hover:bg-muted/60 hover:text-default'
             "
+            @mousedown.middle.prevent
             @auxclick.middle.prevent="tailStreams.close(openTail.tailId)"
           >
             <button

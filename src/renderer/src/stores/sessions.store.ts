@@ -303,6 +303,11 @@ export const useSessionsStore = defineStore('sessions', {
           return
         }
         const wasConnected = tab.status === 'connected'
+        if (evt.status === 'connected' && tab.connecting) {
+          // Wait for performOpenSession() to finish remoteFs.loadForSession() before flipping status.
+          tab.statusMessage = evt.message ?? null
+          return
+        }
         tab.status = evt.status
         if (evt.status === 'connected') {
           tab.hadConnected = true

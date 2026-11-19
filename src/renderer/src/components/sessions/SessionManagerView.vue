@@ -230,10 +230,10 @@ async function onConnect(): Promise<void> {
   }
 }
 
-async function onConnectSite(site: Site): Promise<void> {
+async function onConnectSite(site: Site, options?: { newTabIfBusy?: boolean }): Promise<void> {
   if (sessions.connecting) return
   try {
-    await sessions.connectToSite(site)
+    await sessions.connectToSite(site, options)
   } catch {
     // Surfaced via sessions.status/statusMessage in the template below.
   }
@@ -813,6 +813,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                         :menu-items="siteMenuItems(site)"
                         @select="selectedSiteId = site.id"
                         @connect="onConnectSite(site)"
+                        @connect-new-tab="onConnectSite(site, { newTabIfBusy: true })"
                         @toggle="(v) => toggleSelected(site.id, v)"
                         @delete="confirmDelete(site)"
                       />

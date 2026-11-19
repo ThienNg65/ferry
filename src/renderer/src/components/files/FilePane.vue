@@ -269,10 +269,10 @@ if (props.side === 'local') {
   // caches each session's listing, so switching back to an already-loaded tab
   // is instant and re-fetches nothing).
   watch(
-    () => sessions.activeSessionId,
-    (id) => {
+    () => [sessions.activeSessionId, sessions.activeTab.status] as const,
+    ([id, status]) => {
       filterText.value = ''
-      if (id && remoteFs.needsLoad(id)) {
+      if (id && status === 'connected' && remoteFs.needsLoad(id)) {
         void remoteFs.load()
       }
     },

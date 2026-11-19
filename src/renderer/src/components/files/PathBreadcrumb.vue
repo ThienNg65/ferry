@@ -12,7 +12,7 @@ const ui = useUiStore()
 const editing = ref(false)
 const draft = ref(props.path)
 
-const segments = computed(() => parseBreadcrumbSegments(props.path))
+const segments = computed(() => (props.path.trim() ? parseBreadcrumbSegments(props.path) : []))
 const breadcrumbs = computed(() => collapseBreadcrumbSegments(segments.value))
 const collapsedMenuItems = computed(() =>
   breadcrumbs.value.collapsed.map((seg) => ({

@@ -76,8 +76,10 @@ html.ferry-glass {
   /* Tier 2B: High-Legibility Content Wells (FileList, LogTailViewer, Monitor) */
   --ferry-glass-well-bg: rgba(255, 255, 255, 0.82);
 
-  /* Tier 3: Floating Overlays (Modals, CommandPalette, Popovers, ContextMenu) */
-  --ferry-glass-overlay-bg: rgba(255, 255, 255, 0.78);
+  /* Tier 3: Floating Overlays (Modals vs Menus/Select Listboxes/Popovers) */
+  --ferry-glass-overlay-bg: rgba(255, 255, 255, 0.86);
+  --ferry-glass-menu-bg: rgba(255, 255, 255, 0.95);
+  --ferry-glass-menu-nested-bg: #ffffff;
   --ferry-glass-overlay-blur: blur(24px) saturate(180%);
   --ferry-glass-overlay-border: rgba(255, 255, 255, 0.82);
   --ferry-glass-overlay-shadow:
@@ -126,7 +128,9 @@ html.dark.ferry-glass {
   --ferry-glass-well-bg: rgba(11, 15, 25, 0.78);
 
   /* Tier 3: Floating Overlays */
-  --ferry-glass-overlay-bg: rgba(15, 23, 42, 0.72);
+  --ferry-glass-overlay-bg: rgba(15, 23, 42, 0.82);
+  --ferry-glass-menu-bg: rgba(15, 23, 42, 0.95);
+  --ferry-glass-menu-nested-bg: #111827;
   --ferry-glass-overlay-blur: blur(24px) saturate(180%);
   --ferry-glass-overlay-border: rgba(255, 255, 255, 0.18);
   --ferry-glass-overlay-shadow:
@@ -195,16 +199,37 @@ Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single co
 1. **Portal Overlays (`[role="dialog"]`, Menus/Popovers/Selects, and `UToast` — Excluding `UTooltip`):**
    - Nuxt UI v4 (built on Reka UI) teleports modals, popovers, dropdowns, context menus, and tooltips to `<body>`.
    - **Important:** `UTooltip` also renders inside `[data-reka-popper-content-wrapper]`, whereas `UToast` (`ToastRoot` inside `UToaster`) renders as an `<li role="status">` / `[data-slot="root"]` toast item rather than a Reka popper.
-   - Therefore, we target `[role="dialog"]`, `[role="menu"]`, `[role="listbox"]`, and `UToaster` toast roots (`[data-slot="viewport"] > li`) for Tier 3 refractive glass while explicitly excluding `[role="tooltip"]` so small 24px tooltips stay lightweight:
+   - Therefore, we target `[role="dialog"]`, `[role="menu"]`, `[role="listbox"]`, and `UToaster` toast roots (`[data-slot="viewport"] > li`) for Tier 3 refractive glass while explicitly excluding `[role="tooltip"]` so small 24px tooltips stay lightweight, and using an opaque surface (`--ferry-glass-menu-nested-bg`) when a menu/select opens over an already-filtered `[role="dialog"]` to avoid Blink nested-`backdrop-filter` text bleed-through:
    ```css
    html.ferry-glass [role="dialog"],
    html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+   html.ferry-glass [role="listbox"],
+   html.ferry-glass [role="menu"],
    html.ferry-glass [data-slot="viewport"] > li {
-     background-color: var(--ferry-glass-overlay-bg) !important;
      backdrop-filter: var(--ferry-glass-overlay-blur);
      -webkit-backdrop-filter: var(--ferry-glass-overlay-blur);
      border: 1px solid var(--ferry-glass-overlay-border);
      box-shadow: var(--ferry-glass-overlay-shadow);
+   }
+
+   html.ferry-glass [role="dialog"] {
+     background-color: var(--ferry-glass-overlay-bg) !important;
+     border-radius: var(--ferry-radius-overlay);
+   }
+
+   html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+   html.ferry-glass [role="listbox"],
+   html.ferry-glass [role="menu"],
+   html.ferry-glass [data-slot="viewport"] > li {
+     background-color: var(--ferry-glass-menu-bg) !important;
+   }
+
+   html.ferry-glass:has([role="dialog"]) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+   html.ferry-glass:has([role="dialog"]) [role="listbox"],
+   html.ferry-glass:has([role="dialog"]) [role="menu"] {
+     background-color: var(--ferry-glass-menu-nested-bg) !important;
+     backdrop-filter: none;
+     -webkit-backdrop-filter: none;
    }
    ```
 2. **Form Inputs Inside Glass Cards & Overlays (`UInput`, `USelect`):**

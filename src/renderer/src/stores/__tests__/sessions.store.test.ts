@@ -629,4 +629,54 @@ describe('sessions.store quick connect and promotion', () => {
     expect(mockLocalFs.load).toHaveBeenNthCalledWith(1, 'C:/missing')
     expect(mockLocalFs.load).toHaveBeenNthCalledWith(2)
   })
+
+  it('holds tab.status at connecting when sessionStatus connected arrives before remoteFs preload finishes', async () => {
+    let statusCb: ((evt: { sessionId: string; status: string; message?: string }) => void) | null = null
+    vi.mocked(api.onEvent).mockImplementation((channel, cb) => {
+      if (channel === 'session:status') {
+        statusCb = cb as typeof statusCb
+      }
+      return () => {}
+    })
+
+    let resolveRemoteLoad!: () => void
+    mockRemoteFs.loadForSession.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoteLoad = resolve
+        })
+    )
+
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    const sid = 'sess-race'
+    vi.mocked(api.invoke).mockImplementation(async (channel, payload) => {
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        const reqSessionId = (payload as { sessionId: string }).sessionId
+        statusCb?.({ sessionId: reqSessionId, status: 'connected' })
+        return { sessionId: reqSessionId, status: 'connected' }
+      }
+      return undefined
+    })
+
+    const connectPromise = store.connect({
+      name: 'Slow List',
+      host: 'host.example.com',
+      port: 22,
+      username: 'user',
+      authMethod: 'password',
+      password: 'pw'
+    })
+
+    // Wait for remoteFs.loadForSession to be called while still awaiting its resolution
+    await vi.waitFor(() => expect(mockRemoteFs.loadForSession).toHaveBeenCalledTimes(1))
+    expect(store.activeTab.connecting).toBe(true)
+    expect(store.activeTab.status).toBe('connecting')
+
+    resolveRemoteLoad()
+    await connectPromise
+    expect(store.activeTab.connecting).toBe(false)
+    expect(store.activeTab.status).toBe('connected')
+    expect(store.activeTab.sessionId).not.toBe(sid)
+  })
 })
