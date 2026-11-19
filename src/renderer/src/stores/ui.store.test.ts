@@ -527,4 +527,19 @@ describe('ui store layout state', () => {
       captionColor: 0xfbf6f4
     })
   })
+
+  it('protects locally modified preferences from being overwritten by delayed hydrateFromPrefs', async () => {
+    const { ui, data } = await freshStore()
+    ui.setGlassUiEnabled(true)
+
+    ui.hydrateFromPrefs({
+      'ferry:ui:glassUi': 'false',
+      'ferry:ui:glassUiPromoDismissed': 'true'
+    })
+
+    expect(ui.glassUiEnabled).toBe(true)
+    expect(data.get('ferry:ui:glassUi')).toBe('true')
+    expect(ui.glassUiPromoDismissed).toBe(true)
+    expect(data.get('ferry:ui:glassUiPromoDismissed')).toBe('true')
+  })
 })

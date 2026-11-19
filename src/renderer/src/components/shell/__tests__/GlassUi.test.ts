@@ -317,4 +317,20 @@ describe('Modern Glass UI rollout', () => {
     expect(glassTab.classes()).not.toContain('border-t-2')
     expect(glassTab.find('span.h-0\\.5.rounded-full.bg-primary').exists()).toBe(true)
   })
+
+  it('does not re-hydrate or overwrite Glass UI edits on subsequent settings.fetch() after initial load', async () => {
+    const ui = useUiStore()
+    const settings = useSettingsStore()
+
+    mockSettingsResponse.uiPrefs = { 'ferry:ui:glassUi': 'false' }
+    await settings.fetch()
+    expect(settings.loaded).toBe(true)
+    expect(ui.glassUiEnabled).toBe(false)
+
+    // User enables Glass UI; a subsequent settings.fetch() (e.g. opening SettingsDialog) with stale snapshot must not undo it
+    ui.setGlassUiEnabled(true)
+    await settings.fetch()
+    expect(ui.glassUiEnabled).toBe(true)
+    expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
+  })
 })

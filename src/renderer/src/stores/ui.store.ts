@@ -43,7 +43,8 @@ function readStored(key: string): string | null {
   }
 }
 
-function writeStored(key: string, value: string): void {
+function writeStored(key: string, value: string, dirtyKeys?: Set<string>): void {
+  dirtyKeys?.add(key)
   try {
     localStorage.setItem(key, value)
   } catch {
@@ -155,6 +156,8 @@ interface UiState {
   terminalLineHeight: number
   /** Which file pane the user last interacted with — per-launch layout state, not persisted. */
   activePane: 'local' | 'remote'
+  /** Keys modified locally during this session so delayed initial hydration cannot clobber newer edits. */
+  dirtyPrefKeys: Set<string>
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
@@ -330,7 +333,8 @@ export const useUiStore = defineStore('ui', {
     terminalFontCustom: (localStorage.getItem(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
     terminalFontSize: loadTerminalNumber(TERM_FONT_SIZE_KEY, DEFAULT_FONT_SIZE, clampFontSize),
     terminalLineHeight: loadTerminalNumber(TERM_LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT, clampLineHeight),
-    activePane: 'remote'
+    activePane: 'remote',
+    dirtyPrefKeys: new Set()
   }),
 
   getters: {
@@ -345,27 +349,27 @@ export const useUiStore = defineStore('ui', {
   actions: {
     setTerminalScheme(id: string): void {
       this.terminalScheme = isSchemeId(id) ? id : DEFAULT_SCHEME_ID
-      writeStored(TERM_SCHEME_KEY, this.terminalScheme)
+      writeStored(TERM_SCHEME_KEY, this.terminalScheme, this.dirtyPrefKeys)
     },
 
     setTerminalFont(id: string): void {
       this.terminalFont = isFontId(id) ? id : DEFAULT_FONT_ID
-      writeStored(TERM_FONT_KEY, this.terminalFont)
+      writeStored(TERM_FONT_KEY, this.terminalFont, this.dirtyPrefKeys)
     },
 
     setTerminalFontCustom(name: string): void {
       this.terminalFontCustom = name.slice(0, 60)
-      writeStored(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom)
+      writeStored(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom, this.dirtyPrefKeys)
     },
 
     setTerminalFontSize(size: number): void {
       this.terminalFontSize = clampFontSize(size)
-      writeStored(TERM_FONT_SIZE_KEY, String(this.terminalFontSize))
+      writeStored(TERM_FONT_SIZE_KEY, String(this.terminalFontSize), this.dirtyPrefKeys)
     },
 
     setTerminalLineHeight(height: number): void {
       this.terminalLineHeight = clampLineHeight(height)
-      writeStored(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight))
+      writeStored(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight), this.dirtyPrefKeys)
     },
 
     resetTerminalAppearance(): void {
@@ -378,12 +382,12 @@ export const useUiStore = defineStore('ui', {
 
     toggleLocalPane(): void {
       this.showLocalPane = !this.showLocalPane
-      writeStored(STORAGE_KEY, String(this.showLocalPane))
+      writeStored(STORAGE_KEY, String(this.showLocalPane), this.dirtyPrefKeys)
     },
 
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
-      writeStored(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
+      writeStored(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay, this.dirtyPrefKeys)
     },
 
     setColumnVisible(key: ColumnKey, visible: boolean): void {
@@ -398,7 +402,7 @@ export const useUiStore = defineStore('ui', {
 
     persistColumns(): void {
       try {
-        writeStored(COLUMNS_KEY, JSON.stringify(this.columns))
+        writeStored(COLUMNS_KEY, JSON.stringify(this.columns), this.dirtyPrefKeys)
       } catch {
         return
       }
@@ -406,27 +410,27 @@ export const useUiStore = defineStore('ui', {
 
     setTerminalScrollback(lines: number): void {
       this.terminalScrollback = SCROLLBACK_OPTIONS.includes(lines) ? lines : 5000
-      writeStored(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
+      writeStored(TERM_SCROLLBACK_KEY, String(this.terminalScrollback), this.dirtyPrefKeys)
     },
 
     setTerminalPredictiveEcho(enabled: boolean): void {
       this.terminalPredictiveEcho = enabled
-      writeStored(TERM_PREDICTIVE_ECHO_KEY, String(enabled))
+      writeStored(TERM_PREDICTIVE_ECHO_KEY, String(enabled), this.dirtyPrefKeys)
     },
 
     toggleShowHidden(): void {
       this.showHidden = !this.showHidden
-      writeStored(SHOW_HIDDEN_KEY, String(this.showHidden))
+      writeStored(SHOW_HIDDEN_KEY, String(this.showHidden), this.dirtyPrefKeys)
     },
 
     setDensity(density: Density): void {
       this.density = density
-      writeStored(DENSITY_KEY, density)
+      writeStored(DENSITY_KEY, density, this.dirtyPrefKeys)
     },
 
     setShortenPath(shorten: boolean): void {
       this.shortenPath = shorten
-      writeStored(SHORTEN_PATH_KEY, String(shorten))
+      writeStored(SHORTEN_PATH_KEY, String(shorten), this.dirtyPrefKeys)
     },
 
     /** Applies the persisted theme to the document and OS window frame — call once on app start. */
@@ -437,7 +441,7 @@ export const useUiStore = defineStore('ui', {
     toggleTheme(): void {
       clearAccentThemeSyncTimer()
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
-      writeStored(THEME_KEY, this.theme)
+      writeStored(THEME_KEY, this.theme, this.dirtyPrefKeys)
       void applyTheme(this.theme)
     },
 
@@ -448,19 +452,20 @@ export const useUiStore = defineStore('ui', {
     setGlassUiEnabled(enabled: boolean): void {
       clearAccentThemeSyncTimer()
       this.glassUiEnabled = enabled
-      writeStored(GLASS_UI_KEY, String(enabled))
+      writeStored(GLASS_UI_KEY, String(enabled), this.dirtyPrefKeys)
       applyGlassUiClass(enabled)
       void applyTheme(this.theme)
     },
 
     dismissGlassUiPromo(): void {
       this.glassUiPromoDismissed = true
-      writeStored(GLASS_PROMO_DISMISSED_KEY, 'true')
+      writeStored(GLASS_PROMO_DISMISSED_KEY, 'true', this.dirtyPrefKeys)
     },
 
     /** Resets Glass UI state and root class after `localStorage.clear()` without re-writing storage keys. */
     resetGlassUi(): void {
       clearAccentThemeSyncTimer()
+      this.dirtyPrefKeys.clear()
       this.glassUiEnabled = false
       this.glassUiPromoDismissed = false
       applyGlassUiClass(false)
@@ -470,7 +475,7 @@ export const useUiStore = defineStore('ui', {
     /** Hydrates UI preferences from sidecar `app-settings.json` (survives Neutralino ephemeral ports). */
     hydrateFromPrefs(prefs: Record<string, string>): void {
       const entries = Object.entries(prefs).filter(
-        ([key, value]) => key.startsWith('ferry:ui:') && typeof value === 'string'
+        ([key, value]) => key.startsWith('ferry:ui:') && typeof value === 'string' && !this.dirtyPrefKeys.has(key)
       )
       if (entries.length === 0) return
 
@@ -515,7 +520,7 @@ export const useUiStore = defineStore('ui', {
 
     setAccentColor(hex: string): void {
       this.accentColor = hex
-      writeStored(ACCENT_KEY, hex)
+      writeStored(ACCENT_KEY, hex, this.dirtyPrefKeys)
       applyAccentColor(hex)
       if (this.glassUiEnabled) {
         clearAccentThemeSyncTimer()
@@ -529,19 +534,19 @@ export const useUiStore = defineStore('ui', {
     /** Clamps + persists a new dock height — call once at drag-end, and again on window resize to re-clamp against the new viewport. */
     setDockHeight(px: number): void {
       this.dockHeight = clampDockHeight(px, window.innerHeight)
-      writeStored(DOCK_HEIGHT_KEY, String(this.dockHeight))
+      writeStored(DOCK_HEIGHT_KEY, String(this.dockHeight), this.dirtyPrefKeys)
     },
 
     toggleDockPosition(): void {
       this.dockPosition = this.dockPosition === 'bottom' ? 'right' : 'bottom'
-      writeStored(DOCK_POSITION_KEY, this.dockPosition)
+      writeStored(DOCK_POSITION_KEY, this.dockPosition, this.dirtyPrefKeys)
     },
 
     /** Clamps + persists a new right-dock width. */
     setDockWidth(px: number): void {
       const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
       this.dockWidth = clampDockWidth(px, width)
-      writeStored(DOCK_WIDTH_KEY, String(this.dockWidth))
+      writeStored(DOCK_WIDTH_KEY, String(this.dockWidth), this.dirtyPrefKeys)
     },
 
     setLocalPaneWidth(percent: number): void {
@@ -549,7 +554,7 @@ export const useUiStore = defineStore('ui', {
     },
 
     saveLocalPaneWidth(): void {
-      writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
+      writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth), this.dirtyPrefKeys)
     }
   }
 })
