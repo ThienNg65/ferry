@@ -4,6 +4,10 @@ Ferry's signature is a white vessel seen bow-on, with twin bridge windows, a sho
 
 ![The release icon, the first PR revision, and the glass revision, with actual-size samples and a grayscale check](media/ferry-icon-review.png)
 
+The final mast has a shorter, thinner crossbar so the bridge windows draw the eye first.
+
+![Previous and refined masts at 96, 64, 32, 24, and 16 pixels](media/ferry-mast-comparison.png)
+
 ## Design decisions
 
 | Direction | Decision |
