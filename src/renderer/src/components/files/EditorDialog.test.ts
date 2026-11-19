@@ -28,8 +28,10 @@ vi.mock('vue-codemirror', () => ({
 }))
 
 const Modal = defineComponent({
-  setup(_, { slots }) {
+  emits: ['update:open'],
+  setup(_, { slots, emit }) {
     return () => h('div', [
+      h('button', { 'data-test': 'close', onClick: () => emit('update:open', false) }, 'Close'),
       slots.actions?.(),
       slots.body?.()
     ])
@@ -70,14 +72,14 @@ describe('EditorDialog asynchronous save', () => {
   it('keeps edits typed during a pending save unsaved and prompts on close', async () => {
     const write = deferred<void>()
     vi.mocked(invoke).mockImplementation(async (channel) => {
-      if (channel === 'fs:local:read-file') return { content: 'original', truncated: false } as never
+      if (channel === 'fs:local:readFile') return { content: 'original', truncated: false } as never
       return write.promise as never
     })
     const wrapper = await openEditor()
     await wrapper.find('textarea').setValue('first edit')
     await wrapper.findAll('button').find((button) => button.text().includes('Save'))!.trigger('click')
     await nextTick()
-    expect(invoke).toHaveBeenCalledWith('fs:local:write-file', {
+    expect(invoke).toHaveBeenCalledWith('fs:local:writeFile', {
       path: '/tmp/file.txt', content: 'first edit'
     })
     await wrapper.find('textarea').setValue('second edit')
@@ -86,8 +88,10 @@ describe('EditorDialog asynchronous save', () => {
     const save = wrapper.findAll('button').find((button) => button.text().includes('Save'))!
     expect(save.attributes('disabled')).toBeUndefined()
     // A close attempt must ask whether to discard the second edit.
-    await wrapper.vm.$.exposed?.onUpdateOpen?.(false)
-    // Trigger the modal's update event through the stub if no exposed method exists.
+    await wrapper.find('[data-test="close"]').trigger('click')
+    await nextTick()
+    expect(useConfirm()).toHaveBeenCalled()
+    expect(wrapper.emitted('update:open')).toBeUndefined()
     expect(wrapper.text()).toContain('Unsaved')
     wrapper.unmount()
   })
@@ -95,14 +99,17 @@ describe('EditorDialog asynchronous save', () => {
   it('does not close while a write is in flight', async () => {
     const write = deferred<void>()
     vi.mocked(invoke).mockImplementation(async (channel) => {
-      if (channel === 'fs:local:read-file') return { content: 'original', truncated: false } as never
+      if (channel === 'fs:local:readFile') return { content: 'original', truncated: false } as never
       return write.promise as never
     })
     const wrapper = await openEditor()
     await wrapper.find('textarea').setValue('first edit')
     await wrapper.findAll('button').find((button) => button.text().includes('Save'))!.trigger('click')
     await nextTick()
+    await wrapper.find('[data-test="close"]').trigger('click')
+    await nextTick()
     expect(wrapper.emitted('update:open')).toBeUndefined()
+    expect(useConfirm()).not.toHaveBeenCalled()
     write.resolve()
     await vi.waitFor(() => expect(wrapper.text()).not.toContain('Unsaved'))
     wrapper.unmount()
