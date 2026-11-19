@@ -28,6 +28,28 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.0.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.0.0...ferry-v1.0.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* isolate Quick Connect visibility filters by SSH port ([2baa888](https://github.com/ThienNg65/ferry/commit/2baa888bac8679a6d8910f58a5c448e657e12c4c))
+* preserve fractional bandwidth scheduling credit ([4de4061](https://github.com/ThienNg65/ferry/commit/4de406193aed66fe0180424d4c0b0f59449db925))
+* reclaim cancelled bandwidth reservations ([f4d040b](https://github.com/ThienNg65/ferry/commit/f4d040b8e78f9df6abe222ea9f9e148df5b81c7d))
+* reclaim cancelled bandwidth reservations with FIFO scheduling ([4e9aaf9](https://github.com/ThienNg65/ferry/commit/4e9aaf9ccb2a215d5586ed093daa1cc6c8a1473a))
+* reject premature updater stream closure and test write failures ([eeee0d0](https://github.com/ThienNg65/ferry/commit/eeee0d05a03ad24dac478225fb3f36891f276658))
+* reject prematurely closed updater streams and enable write fault injection ([b0362c1](https://github.com/ThienNg65/ferry/commit/b0362c1d605c3279a86b5637b0ec70b3a9cce84d))
+* **ui:** persist Glass UI prefs across restarts and refine Glass tab bar ([9ce6894](https://github.com/ThienNg65/ferry/commit/9ce68946c0784914b372ab9a8b9d9c06a0a1003b))
+* **ui:** persist Glass UI prefs across restarts and refine Glass tab bar ([3709083](https://github.com/ThienNg65/ferry/commit/370908324c9c22402750b3996112e8a605db124f))
+* **ui:** protect newer UI edits from in-flight settings hydration ([d7cb670](https://github.com/ThienNg65/ferry/commit/d7cb670a69036792732ea15fe1051ffa8f873b78))
+
+
+### Tests
+
+* cover bandwidth cancellation and cap changes ([9f20562](https://github.com/ThienNg65/ferry/commit/9f20562a133c933913279e26072227fd94f1c44d))
+* cover updater ENOSPC EACCES backpressure and premature close ([ce0f021](https://github.com/ThienNg65/ferry/commit/ce0f021dd71d7575873be0043cc9d659a91b1a70))
+* guard sustained bandwidth throughput and bounded catch-up ([2af4dc6](https://github.com/ThienNg65/ferry/commit/2af4dc6f44fadac6b30980f3e2a49d57842b8a22))
+
 ## [1.0.0](https://github.com/ThienNg65/ferry/compare/ferry-v0.32.0...ferry-v1.0.0) (2026-11-18)
 
 
