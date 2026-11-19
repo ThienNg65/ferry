@@ -62,7 +62,10 @@ const MAX_CONCURRENT = 3
 const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
-const PART_SUFFIX = '.part'
+/** Job-scoped staging paths never overlap user-owned .part files or other transfers. */
+export function transferPartPath(destination: string, transferId: string): string {
+  return `${destination}.ferry-${transferId}.part`
+}
 const MAX_RETRYABLE = 200
 const PAUSE_REASON = 'pause'
 /** Maximum virtual bandwidth credit to absorb timer scheduling jitter without unbounded catch-up bursts. */
@@ -285,11 +288,11 @@ export class TransferQueue {
     }
     if (job.contigOffsets && job.contigOffsets.size > 0) {
       for (const destPath of job.contigOffsets.keys()) {
-        unlinkPart(`${destPath}${PART_SUFFIX}`)
+        unlinkPart(transferPartPath(destPath, job.transferId))
       }
       job.contigOffsets.clear()
     } else if (!job.isTree) {
-      unlinkPart(`${remote ? job.remotePath : job.localPath}${PART_SUFFIX}`)
+      unlinkPart(transferPartPath(remote ? job.remotePath : job.localPath, job.transferId))
     }
   }
 
@@ -376,6 +379,7 @@ export class TransferQueue {
       await this.runFile({
         shell,
         kind,
+        transferId: job.transferId,
         localPath: job.localPath,
         remotePath: job.remotePath,
         signal: job.controller.signal,
@@ -420,6 +424,7 @@ export class TransferQueue {
   private async runFile(opts: {
     shell: RemoteShell
     kind: TransferKind
+    transferId: string
     localPath: string
     remotePath: string
     signal: AbortSignal
@@ -430,7 +435,7 @@ export class TransferQueue {
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
     const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
-    const partPath = `${destPath}${PART_SUFFIX}`
+    const partPath = transferPartPath(destPath, opts.transferId)
     const partSize = opts.resume
       ? await (opts.kind === 'upload' ? opts.shell.stat(partPath) : stat(partPath)).then((s) => s.size, () => 0)
       : 0
@@ -576,6 +581,7 @@ export class TransferQueue {
           await this.runFile({
             shell,
             kind,
+            transferId: job.transferId,
             localPath: joinLocal(job.localPath, file.relPath),
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
