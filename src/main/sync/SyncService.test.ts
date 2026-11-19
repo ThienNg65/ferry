@@ -154,7 +154,10 @@ describe('runSync approval and recovery', () => {
     await expect(runSync(options, approved, {
       signal: controller.signal,
       reportProgress: () => controller.abort()
-    })).rejects.toMatchObject({ code: 'CANCELLED', message: expect.stringContaining('1 destination item(s) deleted') })
+    })).rejects.toMatchObject({
+      code: 'CANCELLED',
+      message: expect.stringContaining(`Confirmed deletions\n${join(localPath, 'extra', 'reviewed.txt')}`)
+    })
     expect((await previewSync(options)).toDelete).toEqual(['extra'])
   })
 

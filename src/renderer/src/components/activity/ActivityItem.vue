@@ -101,7 +101,7 @@ const statusIcon = computed(() => {
     <UProgress v-if="determinate" :model-value="percent" :color="statusColor" size="xs" />
     <UProgress v-else-if="running" :model-value="null" color="primary" size="xs" />
     <div class="flex items-center justify-between text-2xs text-muted">
-      <span v-if="error" :class="kind === 'sync' ? 'break-words' : 'truncate'" class="text-error">{{ error }}</span>
+      <span v-if="error" :class="kind === 'sync' ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words' : 'truncate'" class="text-error">{{ error }}</span>
       <span v-else-if="summary">{{ summary }}</span>
       <span v-else-if="progressText">{{ progressText }}</span>
       <span v-else>{{ state }}</span>

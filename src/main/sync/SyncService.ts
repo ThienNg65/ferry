@@ -193,6 +193,8 @@ export async function runSync(
 ): Promise<SyncRunResult> {
   const isPush = options.direction === 'push'
   const result: SyncRunResult = { queuedTransferIds: [], deletedCount: 0 }
+  const deletedPaths: string[] = []
+  const queuedPaths: string[] = []
   const checkCancellation = (): void => {
     if (ctx.signal.aborted) throw new SshError('CANCELLED', 'Sync cancelled.')
   }
@@ -238,18 +240,19 @@ export async function runSync(
       } catch (e) {
         throw new Error(`Could not confirm deletion of "${target}": ${e instanceof Error ? e.message : String(e)}`)
       }
+      deletedPaths.push(target)
       result.deletedCount++
       ctx.reportProgress(result.deletedCount, total, 'items')
     }
 
     for (const item of plan.toTransfer) {
       checkCancellation()
+      const localFile = joinLocal(options.localPath, item.relPath)
+      const remoteFile = joinRemote(options.remotePath, item.relPath)
       const transferId = TransferQueue.getInstance().enqueue(
-        options.sessionId,
-        isPush ? 'upload' : 'download',
-        joinLocal(options.localPath, item.relPath),
-        joinRemote(options.remotePath, item.relPath)
+        options.sessionId, isPush ? 'upload' : 'download', localFile, remoteFile
       )
+      queuedPaths.push(isPush ? remoteFile : localFile)
       result.queuedTransferIds.push(transferId)
       ctx.reportProgress(result.deletedCount + result.queuedTransferIds.length, total, 'items')
     }
@@ -257,6 +260,9 @@ export async function runSync(
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     const code = ctx.signal.aborted ? 'CANCELLED' : e instanceof SshError ? e.code : 'UNKNOWN'
-    throw new SshError(code, `${message} ${summarizeSync(result)}`)
+    const outcome = [`${message} ${summarizeSync(result)}`]
+    if (deletedPaths.length) outcome.push('\nConfirmed deletions', deletedPaths.join('\n'))
+    if (queuedPaths.length) outcome.push('\nQueued destinations', queuedPaths.join('\n'))
+    throw new SshError(code, outcome.join('\n'))
   }
 }

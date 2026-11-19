@@ -134,7 +134,7 @@ function finishRun(title: string, description: string | undefined, completed: bo
     if (!props.open) notify.success(title, description)
   } else {
     error.value = description ? `${title}. ${description}` : title
-    if (!props.open) notify.error(title, description)
+    if (!props.open) notify.error(title, description?.split('\n', 1)[0])
   }
 }
 
@@ -238,7 +238,9 @@ function close(): void {
         </UButton>
 
         <p v-if="status" role="status" aria-live="polite" class="text-sm">{{ status }}</p>
-        <UAlert v-if="error" role="alert" color="error" variant="soft" :title="error" />
+        <div v-if="error" role="alert" class="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-error/10 p-3 text-sm text-error">
+          {{ error }}
+        </div>
 
         <div v-if="plan" class="rounded-md border border-default p-3 text-sm">
           <div>{{ plan.toTransfer.length }} file(s) to transfer ({{ formatBytes(plan.totalBytes) }})</div>
