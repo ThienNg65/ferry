@@ -318,13 +318,13 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           class="flex items-center gap-2.5 rounded-sm px-1.5"
           :class="ui.density === 'compact' ? 'h-6' : 'h-8'"
         >
-          <USkeleton class="size-4 shrink-0 rounded-xs" />
-          <USkeleton class="h-3 flex-1 max-w-[55%]" :style="{ maxWidth: `${35 + ((i * 17) % 40)}%` }" />
-          <USkeleton class="ml-auto h-3 w-12 shrink-0" />
-          <USkeleton class="h-3 w-20 shrink-0" />
+          <USkeleton class="size-4 shrink-0 rounded-xs motion-reduce:animate-none" />
+          <USkeleton class="h-3 flex-1 max-w-[55%] motion-reduce:animate-none" :style="{ maxWidth: `${35 + ((i * 17) % 40)}%` }" />
+          <USkeleton class="ml-auto h-3 w-12 shrink-0 motion-reduce:animate-none" />
+          <USkeleton class="h-3 w-20 shrink-0 motion-reduce:animate-none" />
         </div>
       </div>
-      <div v-else-if="entries.length === 0 && (visibilityFiltered || searchFiltered || filtered)" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
+      <div v-else-if="directoryPath && entries.length === 0 && (visibilityFiltered || searchFiltered || filtered)" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
         <UIcon name="i-lucide-search-x" class="size-5 text-muted" />
         <p class="text-xs text-muted">
           <template v-if="visibilityFiltered && searchFiltered">No files match the active visibility filters and search</template>
@@ -343,11 +343,11 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           </UButton>
         </div>
       </div>
-      <div v-else-if="entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+      <div v-else-if="directoryPath && entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-folder-open" class="size-5 text-muted" />
         <p class="text-xs text-muted">Empty folder</p>
       </div>
-      <div v-else role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
+      <div v-else-if="entries.length" role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
         <div
           v-for="virtualRow in virtualRows"
           :key="virtualRow.key as string | number"

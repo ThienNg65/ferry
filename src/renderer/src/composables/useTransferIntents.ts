@@ -17,6 +17,7 @@ export interface TransferIntent {
   targetName: string
   sourceSize: number | null
   sourceModifiedAt: string | null
+  createParents?: boolean
 }
 
 export function useTransferIntents() {
@@ -79,7 +80,7 @@ export function useTransferIntents() {
 
   async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
     for (const intent of intents) {
-      await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
+      await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir, intent.createParents)
     }
   }
 

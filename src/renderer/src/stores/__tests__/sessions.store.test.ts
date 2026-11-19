@@ -515,6 +515,30 @@ describe('sessions.store quick connect and promotion', () => {
     expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sid)
   })
 
+  it('finishes SSH authentication while the initial remote listing is still pending', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    let finishListing!: (loaded: boolean) => void
+    mockRemoteFs.loadForSession.mockReturnValueOnce(new Promise<boolean>((resolve) => { finishListing = resolve }))
+    vi.mocked(api.invoke).mockImplementation(async (channel) => channel === INVOKE_CHANNELS.sessionOpen
+      ? { sessionId: store.activeTab.sessionId, status: 'connected' }
+      : undefined
+    )
+
+    await store.connect({
+      name: 'Test', host: 'example.com', port: 22, username: 'alice', authMethod: 'password', password: 'pw',
+      remoteInitialPath: '/denied'
+    })
+    expect(store.activeTab.connecting).toBe(false)
+    expect(store.status).toBe('connected')
+    expect(mockRemoteFs.loadForSession).toHaveBeenCalledWith(store.activeSessionId, '/denied')
+
+    finishListing(false)
+    await Promise.resolve()
+    expect(store.status).toBe('connected')
+    expect(store.activeSessionId).toBeTruthy()
+  })
+
   it('reconnectAll stops remaining tabs when cancelConnect is triggered mid-batch', async () => {
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()
@@ -630,37 +654,30 @@ describe('sessions.store quick connect and promotion', () => {
     expect(mockLocalFs.load).toHaveBeenNthCalledWith(2)
   })
 
-  it('holds tab.status at connecting when sessionStatus connected arrives before remoteFs preload finishes', async () => {
-    let statusCb: ((evt: { sessionId: string; status: string; message?: string }) => void) | null = null
+  it('holds tab.status at connecting when sessionStatus connected arrives before sessionOpen resolves', async () => {
+    const statusListener: { fn: ((evt: { sessionId: string; status: string; message?: string }) => void) | null } = {
+      fn: null
+    }
     vi.mocked(api.onEvent).mockImplementation((channel, cb) => {
       if (channel === 'session:status') {
-        statusCb = cb as typeof statusCb
+        statusListener.fn = cb as typeof statusListener.fn
       }
       return () => {}
     })
 
-    let resolveRemoteLoad!: () => void
-    mockRemoteFs.loadForSession.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveRemoteLoad = resolve
-        })
-    )
-
+    let resolveOpen!: (v: { sessionId: string; status: string }) => void
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()
-    const sid = 'sess-race'
-    vi.mocked(api.invoke).mockImplementation(async (channel, payload) => {
-      if (channel === INVOKE_CHANNELS.sessionOpen) {
-        const reqSessionId = (payload as { sessionId: string }).sessionId
-        statusCb?.({ sessionId: reqSessionId, status: 'connected' })
-        return { sessionId: reqSessionId, status: 'connected' }
-      }
-      return undefined
-    })
+    vi.mocked(api.invoke).mockImplementation((channel) =>
+      channel === INVOKE_CHANNELS.sessionOpen
+        ? new Promise((resolve) => {
+            resolveOpen = resolve as typeof resolveOpen
+          })
+        : Promise.resolve(undefined)
+    )
 
     const connectPromise = store.connect({
-      name: 'Slow List',
+      name: 'Slow Open',
       host: 'host.example.com',
       port: 22,
       username: 'user',
@@ -668,15 +685,14 @@ describe('sessions.store quick connect and promotion', () => {
       password: 'pw'
     })
 
-    // Wait for remoteFs.loadForSession to be called while still awaiting its resolution
-    await vi.waitFor(() => expect(mockRemoteFs.loadForSession).toHaveBeenCalledTimes(1))
+    const reqSessionId = store.activeTab.sessionId!
+    statusListener.fn?.({ sessionId: reqSessionId, status: 'connected' })
     expect(store.activeTab.connecting).toBe(true)
     expect(store.activeTab.status).toBe('connecting')
 
-    resolveRemoteLoad()
+    resolveOpen({ sessionId: reqSessionId, status: 'connected' })
     await connectPromise
     expect(store.activeTab.connecting).toBe(false)
     expect(store.activeTab.status).toBe('connected')
-    expect(store.activeTab.sessionId).not.toBe(sid)
   })
 })

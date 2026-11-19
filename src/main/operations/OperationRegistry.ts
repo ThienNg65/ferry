@@ -13,6 +13,7 @@ export interface OperationMeta {
   label: string
   sessionId?: string
   cancellable: boolean
+  requestId?: string
 }
 
 /** What `run()` hands the wrapped function. */
@@ -87,7 +88,11 @@ export class OperationRegistry {
    * `done`/`error`/`cancelled`, removes the entry — and returns/rethrows
    * `fn`'s result so callers' IPC envelopes are unchanged.
    */
-  async run<T>(meta: OperationMeta, fn: (ctx: OperationContext) => Promise<T>): Promise<T> {
+  async run<T>(
+    meta: OperationMeta,
+    fn: (ctx: OperationContext) => Promise<T>,
+    summarize?: (result: T) => string
+  ): Promise<T> {
     const operationId = randomUUID()
     const siteName = meta.sessionId ? this.siteNameResolver?.(meta.sessionId) : undefined
     const entry: OperationEntry = {
@@ -120,13 +125,17 @@ export class OperationRegistry {
 
     try {
       const result = await fn({ signal: entry.controller.signal, reportProgress })
-      this.notifyTerminal(this.broadcast(operationId, entry, { state: 'done' }), entry.siteName)
+      const done: Partial<OperationEvent> = { state: 'done' }
+      if (summarize) done.summary = summarize(result)
+      this.notifyTerminal(this.broadcast(operationId, entry, done), entry.siteName)
       return result
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || entry.controller.signal.aborted
-      const evt = cancelled
-        ? this.broadcast(operationId, entry, { state: 'cancelled' })
-        : this.broadcast(operationId, entry, { state: 'error', error: e instanceof Error ? e.message : String(e) })
+      const message = e instanceof Error ? e.message : String(e)
+      const evt = this.broadcast(operationId, entry, {
+        state: cancelled ? 'cancelled' : 'error',
+        ...(!cancelled || summarize ? { error: message } : {})
+      })
       this.notifyTerminal(evt, entry.siteName)
       throw e
     } finally {
@@ -157,6 +166,7 @@ export class OperationRegistry {
       sessionId: entry.meta.sessionId,
       startedAt: entry.startedAt,
       cancellable: entry.meta.cancellable,
+      ...(entry.meta.requestId ? { requestId: entry.meta.requestId } : {}),
       ...partial
     }
     host().broadcast(EVENT_CHANNELS.operationEvent, evt)

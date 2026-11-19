@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import {
   list,
   MAX_STAGE_DROP_BYTES,
   openStageDropWriteStream,
+  rename,
   stageDroppedEntries
 } from './LocalFsService'
 
@@ -133,4 +134,22 @@ describe('LocalFsService.stageDroppedEntries', () => {
     const res = await list(mixed)
     expect(res.path).toBe(path.resolve(tmpSub))
   })
+})
+
+it('keeps both files when inline rename has no replacement approval', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-rename-'))
+  try {
+    const source = path.join(root, 'source.txt')
+    const destination = path.join(root, 'destination.txt')
+    writeFileSync(source, 'source')
+    writeFileSync(destination, 'destination')
+    await expect(rename(source, destination, false)).rejects.toMatchObject({ code: 'ALREADY_EXISTS' })
+    expect(readFileSync(source, 'utf8')).toBe('source')
+    expect(readFileSync(destination, 'utf8')).toBe('destination')
+    await rename(source, destination, true)
+    expect(readFileSync(destination, 'utf8')).toBe('source')
+    expect(existsSync(source)).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -24,6 +24,8 @@ export interface PipelinedTransferOptions {
   rateLimiter: RateLimiterLike
   onProgress: (bytesTransferred: number, offset: number) => void
   onContigOffset?: (contigOffset: number) => void
+  /** Uses exclusive create and records ownership only after the destination opens. */
+  onDestinationCreated?: () => void
   concurrency?: number
   chunkSize?: number
 }
@@ -136,17 +138,20 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
   let workersPromiseRef: Promise<unknown> | null = null
 
   try {
-    const localFlags = kind === 'upload' ? 'r' : offset > 0 ? 'r+' : 'w'
-    const remoteFlags: OpenMode = kind === 'upload' ? (offset > 0 ? 'r+' : 'w') : 'r'
+    const writeFlags: OpenMode = opts.onDestinationCreated ? 'wx' : offset > 0 ? 'r+' : 'w'
+    const localFlags = kind === 'upload' ? 'r' : writeFlags
+    const remoteFlags = kind === 'download' ? 'r' : writeFlags
 
     if (kind === 'upload') {
       localHandle = await openLocal(localPath, localFlags)
       checkAborted(signal)
       remoteHandle = await sftpOpen(sftp, remotePath, remoteFlags)
+      opts.onDestinationCreated?.()
     } else {
       remoteHandle = await sftpOpen(sftp, remotePath, remoteFlags)
       checkAborted(signal)
       localHandle = await openLocal(localPath, localFlags, 0o600)
+      opts.onDestinationCreated?.()
       if (offset > 0) {
         await localHandle.truncate(offset)
       }
@@ -164,6 +169,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
     let contigEnd = offset
     const completedRanges = new Map<number, number>()
     let stopped = false
+    const workerAbort = new AbortController()
 
     const markRangeComplete = (start: number, end: number): void => {
       if (end <= contigEnd) return
@@ -208,7 +214,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
           if (stopped || signal.aborted) break
 
           if (rateLimiter.isLimited) {
-            await rateLimiter.acquire(transferred, signal)
+            await rateLimiter.acquire(transferred, workerAbort.signal)
           }
           if (stopped || signal.aborted) break
 
@@ -224,7 +230,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
           if (stopped || signal.aborted) break
 
           if (rateLimiter.isLimited) {
-            await rateLimiter.acquire(transferred, signal)
+            await rateLimiter.acquire(transferred, workerAbort.signal)
           }
           if (stopped || signal.aborted) break
 
@@ -242,8 +248,9 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
       }
     }
 
-    const workersPromise = Promise.all(Array.from({ length: workerCount }, () => runWorker())).then(() => undefined)
-    workersPromiseRef = Promise.allSettled([workersPromise])
+    const workers = Array.from({ length: workerCount }, () => runWorker())
+    const workersPromise = Promise.all(workers).then(() => undefined)
+    workersPromiseRef = Promise.allSettled(workers)
     // Prevent unhandled rejection when abortPromise wins the race while workers unwind.
     workersPromise.catch(() => undefined)
 
@@ -251,6 +258,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
       await Promise.race([workersPromise, abortPromise])
     } finally {
       stopped = true
+      workerAbort.abort()
       if (onAbortHandler) {
         signal.removeEventListener('abort', onAbortHandler)
       }

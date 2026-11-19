@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
-import { invoke } from '../../api'
+import { invoke, IpcError } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
@@ -17,7 +17,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
-import { formatBytes, formatShortDate } from '../../utils/format'
+import { formatBytes } from '../../utils/format'
 import {
   composePaneEntries,
   emptyVisibilityFilter,
@@ -30,6 +30,7 @@ import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
+import TransferConflictDialog from './TransferConflictDialog.vue'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./FilePreviewDialog.vue'))
 const EditorDialog = defineAsyncComponent(() => import('./EditorDialog.vue'))
@@ -143,6 +144,7 @@ const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
+let renameInFlight = false
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
@@ -150,7 +152,7 @@ const editorState = ref<{ editId: string; localTempPath: string; remotePath: str
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
-  () => store.currentPath,
+  () => [store.currentPath, props.side === 'remote' ? sessions.activeSessionId : null],
   () => {
     renamingPath.value = null
     filterText.value = ''
@@ -269,11 +271,11 @@ if (props.side === 'local') {
   // caches each session's listing, so switching back to an already-loaded tab
   // is instant and re-fetches nothing).
   watch(
-    () => [sessions.activeSessionId, sessions.activeTab.status] as const,
-    ([id, status]) => {
+    () => (sessions.status === 'connected' ? sessions.activeSessionId : null),
+    (id) => {
       filterText.value = ''
-      if (id && status === 'connected' && remoteFs.needsLoad(id)) {
-        void remoteFs.load()
+      if (id && remoteFs.needsLoad(id)) {
+        void remoteFs.loadForSession(id)
       }
     },
     { immediate: true }
@@ -848,12 +850,56 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
 }
 
 async function onRename(entry: FileEntry, newName: string): Promise<void> {
-  renamingPath.value = null
+  if (renameInFlight || renamingPath.value !== entry.path) return
+  const target = { ...entry }
+  const local = props.side === 'local'
+  const windows = local && (/^[A-Za-z]:/.test(entry.path) || entry.path.startsWith('\\\\'))
+  if (!newName.trim() || newName === '.' || newName === '..' || /[/\\]/.test(newName) || newName.includes('\0')) {
+    notify.error('Enter a single file or folder name', 'Use a name without path separators.')
+    return
+  }
+  if (windows && (/[<>:"|?*\x00-\x1f]|[. ]$/.test(newName) ||
+    /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\.|$)/i.test(newName))) {
+    notify.error('Invalid Windows filename', 'Choose a name without reserved characters, device names, or a trailing space or period.')
+    return
+  }
+
+  const sessionId = sessions.activeSessionId
+  const rename = (replace: boolean): Promise<void> => {
+    if (renamingPath.value !== target.path) throw new Error('Select the item and start the rename again.')
+    if (local) return localFs.rename(target, newName, replace)
+    if (!sessionId || sessions.activeSessionId !== sessionId || sessions.status !== 'connected') {
+      throw new Error('Return to the original server and start the rename again.')
+    }
+    return remoteFs.rename(target, newName, replace, sessionId)
+  }
+
+  renameInFlight = true
   try {
-    await store.rename(entry, newName)
+    try {
+      await rename(false)
+    } catch (e) {
+      if (!(e instanceof IpcError) || e.code !== 'ALREADY_EXISTS') throw e
+      const destination = target.path.slice(0, target.path.length - target.name.length) + newName
+      const replaced = await confirm({
+        title: 'Replace existing item?',
+        body: 'Renaming will replace the item at this path.',
+        items: [destination],
+        confirmLabel: 'Replace',
+        confirmColor: 'error',
+        destructive: true,
+        action: () => rename(true)
+      })
+      if (!replaced) return
+    }
+    if (renamingPath.value === target.path && (local || sessions.activeSessionId === sessionId)) {
+      renamingPath.value = null
+      paneEl.value?.focus()
+    }
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    notify.error('Rename failed', message)
+    notify.error('Rename failed', e instanceof Error ? e.message : String(e))
+  } finally {
+    renameInFlight = false
   }
 }
 
@@ -880,17 +926,33 @@ function onRemoveEntry(entry: FileEntry): void {
 
 async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
   if (entries.length === 0) return
-  const single = entries.length === 1 ? entries[0] : null
+  const targets = entries.map((entry) => ({ ...entry }))
+  const single = targets.length === 1 ? targets[0] : null
+  const sessionId = props.side === 'remote' ? sessions.activeSessionId : null
+  if (props.side === 'remote' && !sessionId) return
+  const server = sessionId ? sessions.activeTab.hostLabel || sessions.activeTab.label : null
   await confirm({
     title: 'Delete',
     body: single
-      ? `Delete ${single.name}${single.isDir ? ' and everything inside it' : ''}? This cannot be undone.`
-      : `Delete these ${entries.length} items? This cannot be undone.`,
-    items: single ? undefined : entries.map((e) => e.name),
+      ? `Delete this ${single.isDir ? 'folder and everything inside it' : 'item'}${server ? ` on ${server}` : ''}? This cannot be undone.`
+      : `Delete these ${targets.length} items${server ? ` on ${server}` : ''}? This cannot be undone.`,
+    items: targets.map((entry) => entry.path),
     confirmLabel: 'Delete',
     confirmColor: 'error',
     destructive: true,
-    action: () => (entries.length > 1 ? store.removeMany(entries) : store.remove(entries[0]))
+    action: async () => {
+      if (sessionId) {
+        if (!sessions.tabs.some((tab) => tab.sessionId === sessionId && tab.status === 'connected')) {
+          throw new Error('The original server connection ended. Reconnect and select the items again.')
+        }
+        if (single) await remoteFs.remove(single, sessionId)
+        else await remoteFs.removeMany(targets, sessionId)
+      } else if (single) {
+        await localFs.remove(single)
+      } else {
+        await localFs.removeMany(targets)
+      }
+    }
   })
 }
 
@@ -1025,13 +1087,16 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error"
           :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
         >
-          <span class="min-w-0 flex-1 truncate" :title="store.error">{{ store.error }}</span>
+          <span class="min-w-0 flex-1 break-all">
+            <template v-if="store.failedPath !== null">Could not open {{ store.failedPath || 'the starting folder' }}. </template>
+            {{ store.error }}
+          </span>
           <button
             type="button"
             class="shrink-0 font-medium hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
-            @click="store.load(store.currentPath, { forceRefresh: true })"
+            @click="store.retryDirectory()"
           >
-            Retry
+            {{ store.failedPath !== null ? 'Retry folder' : 'Retry' }}
           </button>
         </div>
       </Transition>
@@ -1165,34 +1230,11 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
         </template>
       </UModal>
-      <UModal
-        :open="Boolean(transferConflict)"
-        title="File Conflict"
-        :ui="{ footer: 'flex-wrap justify-end' }"
-        @update:open="(v: boolean) => { if (!v) dismissTransferConflict() }"
-      >
-        <template #body>
-          <p class="mb-2 text-sm text-default">These items already exist in the target directory:</p>
-          <ul class="flex max-h-60 flex-col gap-2 overflow-y-auto rounded-md bg-muted p-2 text-xs text-default">
-            <li v-for="c in transferConflict?.conflicts" :key="c.intent.targetName" class="flex flex-col gap-0.5">
-              <span class="truncate font-medium">{{ c.intent.targetName }}</span>
-              <span class="text-muted">
-                New: {{ c.intent.isDir ? 'folder' : formatBytes(c.intent.sourceSize ?? 0) }}, {{ formatShortDate(c.intent.sourceModifiedAt) || 'unknown date' }}
-              </span>
-              <span class="text-muted">
-                Existing: {{ c.target.isDir ? 'folder' : formatBytes(c.target.size) }}, {{ formatShortDate(c.target.modifiedAt) || 'unknown date' }}
-              </span>
-            </li>
-          </ul>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="dismissTransferConflict">Cancel</UButton>
-          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('skip')">Skip existing</UButton>
-          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('rename')">Keep both</UButton>
-          <UButton color="neutral" variant="outline" @click="resolveTransferConflict('newer')">Overwrite if newer</UButton>
-          <UButton color="primary" @click="resolveTransferConflict('overwrite')">Overwrite all</UButton>
-        </template>
-      </UModal>
+      <TransferConflictDialog
+        :conflicts="transferConflict?.conflicts ?? []"
+        @dismiss="dismissTransferConflict"
+        @resolve="resolveTransferConflict"
+      />
     </template>
   </div>
 </template>

@@ -302,12 +302,9 @@ export const useSessionsStore = defineStore('sessions', {
         if (!tab) {
           return
         }
+        // Publish connected alongside the first directory request when session:open resolves.
+        if (evt.status === 'connected' && tab.connecting) return
         const wasConnected = tab.status === 'connected'
-        if (evt.status === 'connected' && tab.connecting) {
-          // Wait for performOpenSession() to finish remoteFs.loadForSession() before flipping status.
-          tab.statusMessage = evt.message ?? null
-          return
-        }
         tab.status = evt.status
         if (evt.status === 'connected') {
           tab.hadConnected = true
@@ -472,21 +469,19 @@ export const useSessionsStore = defineStore('sessions', {
         if (isAbandoned()) {
           return
         }
-        // Pre-open the interactive shell in parallel with the initial SFTP/exec listing so
-        // default connections use direct client.shell() and the terminal is ready sooner.
+        if (tab.status === 'error' || tab.status === 'disconnected') return
+        const siteRemotePath = 'quickConnect' in request
+          ? request.quickConnect.remoteInitialPath
+          : useSitesStore().sites.find((site) => site.id === request.siteId)?.remoteInitialPath
+        const remoteFs = useRemoteFsStore()
+        if (siteRemotePath) void remoteFs.loadForSession(result.sessionId, siteRemotePath)
+        else void remoteFs.loadForSession(result.sessionId)
+        tab.status = result.status
+        tab.hadConnected = result.status === 'connected'
+        tab.connecting = false
+        tab.preConnectSnapshot = null
+        notify.success(`Connected to ${label}`)
         void useTerminalStreamsStore().ensureTerminal(result.sessionId).catch(() => {})
-        // tab.sessionId is already set during openSession prep
-        // Preload the initial listing before flipping `status` — App.vue's
-        // picker→file-browser swap is gated on `status`, so this keeps the
-        // connecting/spinner UI up through the SFTP readdir too, instead of
-        // swapping to an empty file-browser shell first. Uses the
-        // explicit-sessionId variant, not `load()`, since this tab may no
-        // longer be `activeTab` by the time this resolves if the user
-        // switched tabs mid-connect.
-        await useRemoteFsStore().loadForSession(result.sessionId)
-        if (isAbandoned()) {
-          return
-        }
         const siteLocalPath =
           result.localInitialPath ??
           ('quickConnect' in request
@@ -507,18 +502,6 @@ export const useSessionsStore = defineStore('sessions', {
               }
             }
           }
-        }
-        // An intervening `sessionStatus` event (e.g. the connection dropping
-        // mid-load) may already have moved this tab to a terminal state —
-        // don't fight that with a stale success overwrite/toast.
-        const alreadyTerminal = tab.status === 'error' || tab.status === 'disconnected'
-        if (!alreadyTerminal) {
-          tab.status = result.status
-          if (result.status === 'connected') {
-            tab.hadConnected = true
-          }
-          tab.preConnectSnapshot = null
-          notify.success(`Connected to ${label}`)
         }
       } catch (e) {
         if (startedSessionId) {

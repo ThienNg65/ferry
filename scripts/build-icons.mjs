@@ -1,0 +1,170 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { Data } from 'resedit'
+
+const root = fileURLToPath(new URL('../', import.meta.url))
+const temp = mkdtempSync(join(tmpdir(), 'ferry-icons-'))
+const renderer = 'src/renderer/public'
+const faviconSizes = [16, 32, 48]
+const windowsSizes = [16, 24, 32, 48, 64, 128, 256]
+const tile = 'M33 1 H95 C116 1 127 12 127 33 V95 C127 116 116 127 95 127 H33 C12 127 1 116 1 95 V33 C1 12 12 1 33 1 Z'
+
+function readLayer(filename) {
+  const source = readFileSync(join(root, 'resources/icon-layers', filename), 'utf8')
+  const layer = source.match(/<svg\b[^>]*>\s*([\s\S]*?)\s*<\/svg>/)
+  if (!layer) throw new Error(`Missing SVG artwork in ${filename}`)
+  return layer[1]
+}
+
+function classicArtwork(vessel, wake) {
+  return `  <defs>
+    <linearGradient id="sea" x2="0" y2="1">
+      <stop stop-color="#2485ec" />
+      <stop offset="1" stop-color="#075bbb" />
+    </linearGradient>
+  </defs>
+  <path fill="url(#sea)" d="${tile}" />
+  <g fill="#ffffff">
+    ${vessel}
+  </g>
+  <g fill="#91dfff">
+    ${wake}
+  </g>`
+}
+
+function glassArtwork(vessel, wake) {
+  return `  <defs>
+    <path id="tile" d="${tile}" />
+    <g id="vessel">
+      ${vessel}
+    </g>
+    <g id="wake">
+      ${wake}
+    </g>
+    <clipPath id="tile-clip">
+      <use href="#tile" />
+    </clipPath>
+    <linearGradient id="sea" gradientUnits="userSpaceOnUse" x1="25" y1="0" x2="104" y2="128">
+      <stop stop-color="#2c98f3" />
+      <stop offset=".52" stop-color="#1457bc" />
+      <stop offset="1" stop-color="#102b76" />
+    </linearGradient>
+    <radialGradient id="sea-light" cx=".24" cy=".08" r=".64">
+      <stop stop-color="#b5f6ff" stop-opacity=".6" />
+      <stop offset="1" stop-color="#67dfff" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="water-light" cx=".62" cy=".97" r=".49" gradientTransform="matrix(1 0 0 .7 0 .291)">
+      <stop stop-color="#25b9ff" stop-opacity=".46" />
+      <stop offset="1" stop-color="#25b9ff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="tile-edge" gradientUnits="userSpaceOnUse" x1="17" y1="2" x2="111" y2="126">
+      <stop stop-color="#e1fbff" stop-opacity=".85" />
+      <stop offset=".28" stop-color="#c4f0ff" stop-opacity=".24" />
+      <stop offset=".67" stop-color="#7bd9ff" stop-opacity=".08" />
+      <stop offset="1" stop-color="#7bd9ff" stop-opacity=".62" />
+    </linearGradient>
+    <linearGradient id="hull" gradientUnits="userSpaceOnUse" x1="49" y1="23" x2="82" y2="100">
+      <stop stop-color="#f7fdff" stop-opacity=".99" />
+      <stop offset=".44" stop-color="#e4f9ff" stop-opacity=".93" />
+      <stop offset=".75" stop-color="#d2f1ff" stop-opacity=".86" />
+      <stop offset="1" stop-color="#8ddbff" stop-opacity=".72" />
+    </linearGradient>
+    <linearGradient id="hull-edge" gradientUnits="userSpaceOnUse" x1="38" y1="32" x2="81" y2="97">
+      <stop stop-color="#ffffff" stop-opacity=".98" />
+      <stop offset=".51" stop-color="#effdff" stop-opacity=".56" />
+      <stop offset="1" stop-color="#9aeaff" stop-opacity=".12" />
+    </linearGradient>
+    <linearGradient id="wake-glass" gradientUnits="userSpaceOnUse" x1="50" y1="85" x2="65" y2="106">
+      <stop stop-color="#cefdff" stop-opacity=".95" />
+      <stop offset=".42" stop-color="#84edff" stop-opacity=".88" />
+      <stop offset="1" stop-color="#3fc8ff" stop-opacity=".82" />
+    </linearGradient>
+    <linearGradient id="wake-edge" gradientUnits="userSpaceOnUse" x1="50" y1="86" x2="65" y2="104">
+      <stop stop-color="#edffff" stop-opacity=".92" />
+      <stop offset=".7" stop-color="#b4f6ff" stop-opacity=".28" />
+      <stop offset="1" stop-color="#8ce9ff" stop-opacity=".14" />
+    </linearGradient>
+    <filter id="lift" x="-12%" y="-15%" width="124%" height="142%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.2" />
+    </filter>
+  </defs>
+  <g clip-path="url(#tile-clip)">
+    <use href="#tile" fill="url(#sea)" />
+    <use href="#tile" fill="url(#sea-light)" />
+    <use href="#tile" fill="url(#water-light)" />
+    <use href="#vessel" transform="translate(0 2.5)" fill="#062c70" opacity=".47" filter="url(#lift)" />
+    <use href="#vessel" fill="url(#hull)" stroke="url(#hull-edge)" stroke-width="1.25" stroke-linejoin="round" />
+    <use href="#wake" transform="translate(0 1.75)" fill="#073d87" opacity=".44" filter="url(#lift)" />
+    <use href="#wake" fill="url(#wake-glass)" stroke="url(#wake-edge)" stroke-width="1.1" />
+    <use href="#tile" fill="none" stroke="url(#tile-edge)" stroke-width="2.4" />
+  </g>`
+}
+
+function writeSvg(variant, artwork) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 128 128">
+  <!-- Generated by scripts/build-icons.mjs -->
+${artwork}
+</svg>
+`
+  const path = join(root, renderer, `ferry-${variant}.svg`)
+  writeFileSync(path, svg)
+  return path
+}
+
+function renderMaster(svg, variant) {
+  const path = join(temp, `${variant}.png`)
+  execFileSync('inkscape', [svg, '--export-width=1024', `--export-filename=${path}`])
+  return path
+}
+
+function rasterize(master, size) {
+  return execFileSync('magick', [
+    master, '-colorspace', 'sRGB', '-filter', 'Lanczos', '-resize', `${size}x${size}`,
+    '-strip', '-depth', '8', 'PNG32:-'
+  ])
+}
+
+function writeIco(path, images, sizes) {
+  const ico = new Data.IconFile()
+  ico.icons = sizes.map((size) => ({
+    data: new Data.RawIconItem(images.get(size), size, size, 32)
+  }))
+  writeFileSync(join(root, path), Buffer.from(ico.generate()))
+}
+
+try {
+  const vessel = readLayer('01-vessel.svg')
+  const wake = readLayer('02-wake.svg')
+  const glass = renderMaster(writeSvg('glass', glassArtwork(vessel, wake)), 'glass')
+  const classic = renderMaster(writeSvg('classic', classicArtwork(vessel, wake)), 'classic')
+
+  const pngExports = [
+    ['resources/ferry.png', 1024],
+    ['resources/1024x1024.png', 1024],
+    ['resources/60x60.png', 60],
+    ['resources/40x40.png', 40],
+    ['resources/20x20.png', 20],
+    ['build/msix/assets/Square150x150Logo.png', 150],
+    ['build/msix/assets/Square44x44Logo.png', 44],
+    ['build/msix/assets/StoreLogo.png', 50]
+  ]
+  const glassSizes = new Set([...windowsSizes, ...pngExports.map(([, size]) => size)])
+  const glassImages = new Map([...glassSizes].map((size) => [size, rasterize(glass, size)]))
+  const classicImages = new Map(faviconSizes.map((size) => [size, rasterize(classic, size)]))
+
+  for (const [path, size] of pngExports) {
+    writeFileSync(join(root, path), glassImages.get(size))
+  }
+
+  writeIco('resources/icon.ico', glassImages, windowsSizes)
+  writeIco('resources/16x16.ico', glassImages, [16])
+  writeIco('resources/32x32.ico', glassImages, [32])
+  writeIco('resources/favicon.ico', glassImages, faviconSizes)
+  writeIco(`${renderer}/favicon.ico`, glassImages, faviconSizes)
+  writeIco(`${renderer}/favicon-classic.ico`, classicImages, faviconSizes)
+} finally {
+  rmSync(temp, { recursive: true, force: true })
+}

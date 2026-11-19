@@ -67,6 +67,7 @@ const hasFinished = computed(() => operations.list.some((op) => op.state !== 'st
         :progress-total="op.progressTotal"
         :progress-unit="op.progressUnit"
         :error="op.error"
+        :summary="op.summary"
         :now="now"
         @cancel="operations.cancel(op.operationId)"
       />

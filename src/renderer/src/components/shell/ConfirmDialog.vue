@@ -69,7 +69,7 @@ async function onConfirm(event?: MouseEvent): Promise<void> {
       <div class="flex flex-col gap-3">
         <p v-if="body" class="text-sm text-default">{{ body }}</p>
         <ul v-if="items?.length" class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
-          <li v-for="item in items" :key="item" class="truncate text-xs text-default">{{ item }}</li>
+          <li v-for="item in items" :key="item" class="break-all text-xs text-default">{{ item }}</li>
         </ul>
         <UAlert v-if="error" role="alert" color="error" variant="soft" :title="error" />
       </div>
