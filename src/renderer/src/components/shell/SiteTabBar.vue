@@ -172,6 +172,13 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
   event.stopPropagation()
   void sessions.closeTab(tabId)
 }
+
+function onTabStripWheel(e: WheelEvent): void {
+  const el = e.currentTarget as HTMLElement | null
+  if (!el || el.scrollWidth <= el.clientWidth || e.deltaY === 0) return
+  el.scrollLeft += e.deltaY
+  e.preventDefault()
+}
 </script>
 
 <template>
@@ -186,11 +193,12 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
   >
     <FerryLogo v-if="!ui.glassUiEnabled || isFullScreen" :size="20" class="self-center ml-0.5 mr-0.5 shrink-0" decorative />
     <nav
-      class="flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto"
       :class="ui.glassUiEnabled ? 'items-center' : 'items-end pb-px'"
       aria-label="Open connections"
+      @wheel="onTabStripWheel"
     >
-      <TransitionGroup name="site-tab" tag="div" class="flex min-w-0 items-center gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+      <TransitionGroup name="site-tab" tag="div" class="flex shrink-0 items-center gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
         <div
           v-for="tab in sessions.tabs"
           :key="tab.tabId"
@@ -215,10 +223,17 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
         >
           <span
-            v-if="ui.glassUiEnabled && envIndicator(tab.siteId, tab.tabId === sessions.activeTabId)"
+            v-if="ui.glassUiEnabled"
             aria-hidden="true"
-            class="pointer-events-none absolute inset-x-2.5 bottom-0 h-0.5 rounded-full"
-            :class="envIndicator(tab.siteId, tab.tabId === sessions.activeTabId)"
+            class="pointer-events-none absolute inset-x-2.5 bottom-0 h-0.5 origin-center rounded-full transition-[transform,opacity] duration-[var(--ferry-motion-standard)] ease-[var(--ferry-motion-ease-emphasized)]"
+            :class="[
+              envIndicator(tab.siteId, true),
+              tab.tabId === sessions.activeTabId
+                ? 'scale-x-100 opacity-100'
+                : envIndicator(tab.siteId, false)
+                  ? 'scale-x-75 opacity-80'
+                  : 'scale-x-0 opacity-0'
+            ]"
           />
           <ContextMenu :items="tabMenuItems(tab)">
             <div class="flex min-w-0 items-center">
@@ -283,7 +298,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       <UTooltip text="New tab">
         <UButton
           icon="i-lucide-plus"
-          class="shrink-0"
+          class="ferry-pressable shrink-0"
           :class="ui.glassUiEnabled ? '' : 'mb-0.5'"
           size="xs"
           variant="ghost"
@@ -341,7 +356,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         <button
           type="button"
           aria-label="Search commands — open command palette"
-          class="flex min-h-6 items-center gap-1.5 border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
+          class="ferry-pressable flex min-h-6 items-center gap-1.5 border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
           :class="ui.glassUiEnabled ? 'rounded-lg' : 'rounded-md'"
           @click="commandPalette.open()"
         >
@@ -352,6 +367,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -362,6 +378,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip v-if="canSaveActiveQuickConnect" text="Save as site">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -372,6 +389,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip text="Transfer History">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -382,6 +400,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip text="Settings">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -392,6 +411,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip v-if="isFullScreen" text="Exit full screen (F11)">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"
@@ -402,6 +422,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       </UTooltip>
       <UTooltip v-if="sessions.status === 'connected'" :text="ui.showLocalPane ? 'Hide Local pane' : 'Show Local pane'">
         <UButton
+          class="ferry-pressable"
           size="xs"
           variant="ghost"
           color="neutral"

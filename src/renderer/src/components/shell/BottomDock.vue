@@ -69,6 +69,15 @@ const dockTabs = computed(() => [
   { id: 'edits' as const, label: 'Edits', icon: 'i-lucide-file-pen', tooltip: 'External file edits', badge: editSessions.activeCount }
 ])
 
+const dockSlideX = ref(0)
+watch(tab, (next, prev) => {
+  const nextIdx = dockTabs.value.findIndex((t) => t.id === next)
+  const prevIdx = dockTabs.value.findIndex((t) => t.id === prev)
+  if (nextIdx !== -1 && prevIdx !== -1 && nextIdx !== prevIdx) {
+    dockSlideX.value = nextIdx > prevIdx ? 8 : -8
+  }
+})
+
 // Drag-to-resize: liveHeight / liveWidth track the drag in real time (bound
 // directly to the container's inline style) so localStorage only gets written
 // once, at drag-end, rather than on every pointermove.
@@ -340,14 +349,14 @@ function onTabStripWheel(e: WheelEvent): void {
       </UTooltip>
     </div>
 
-    <div v-show="!(isRight && collapsed)" class="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div v-show="!(isRight && collapsed)" class="@container flex min-h-0 min-w-0 flex-1 flex-col">
       <div
-        class="@container flex min-h-9 items-center justify-between gap-1 px-2 py-1 select-none"
+        class="flex min-h-9 items-center justify-between gap-1 px-2 py-1 select-none"
         :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted'"
         @dblclick.self="collapsed = !collapsed"
       >
         <div
-          class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-1 items-center overflow-x-auto"
+          class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-1 touch-pan-x items-center overflow-x-auto"
           :class="compactRightTabs ? 'gap-0.5' : 'gap-1'"
           role="tablist"
           aria-label="Dock panels"
@@ -398,6 +407,7 @@ function onTabStripWheel(e: WheelEvent): void {
             </span>
             <UTooltip text="Find in terminal (Ctrl+Shift+F)">
               <UButton
+                class="ferry-pressable"
                 icon="i-lucide-search"
                 color="neutral"
                 variant="ghost"
@@ -415,6 +425,7 @@ function onTabStripWheel(e: WheelEvent): void {
           </kbd>
           <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">
             <UButton
+              class="ferry-pressable"
               :icon="isRight ? 'i-lucide-panel-bottom' : 'i-lucide-panel-right'"
               color="neutral"
               variant="ghost"
@@ -425,6 +436,7 @@ function onTabStripWheel(e: WheelEvent): void {
           </UTooltip>
           <UTooltip :text="isMaximized ? 'Restore dock size (Esc)' : 'Maximize dock'">
             <UButton
+              class="ferry-pressable"
               :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
               :color="isMaximized ? 'primary' : 'neutral'"
               :variant="isMaximized ? 'soft' : 'ghost'"
@@ -436,6 +448,7 @@ function onTabStripWheel(e: WheelEvent): void {
           </UTooltip>
           <UTooltip :text="collapsed ? 'Expand dock' : 'Collapse dock'">
             <UButton
+              class="ferry-pressable"
               :icon="isRight ? 'i-lucide-chevron-right' : (collapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down')"
               color="neutral"
               variant="ghost"
@@ -454,6 +467,7 @@ function onTabStripWheel(e: WheelEvent): void {
         v-if="!collapsed && tab !== 'terminal' && tab !== 'tail'"
         class="flex min-h-0 flex-1 flex-col border-t border-muted"
         :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+        :style="{ '--ferry-dock-slide-x': `${dockSlideX}px` }"
       >
         <Transition name="dock-panel" mode="out-in">
           <TransferQueue v-if="tab === 'transfers'" />
@@ -471,7 +485,7 @@ function onTabStripWheel(e: WheelEvent): void {
     >
       <!-- Tail Tabs Header Bar -->
       <div v-if="tailStreams.tabs.length > 0" class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-muted bg-muted/30 px-2 py-1">
-        <div class="flex min-w-[120px] flex-1 items-center gap-1 overflow-x-auto scrollbar-none" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)">
+        <div class="ferry-scroll-fade-x scrollbar-none flex min-w-[120px] flex-1 touch-pan-x items-center gap-1 overflow-x-auto" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)" @wheel="onTabStripWheel">
           <div
             v-for="openTail in tailStreams.tabs"
             :key="openTail.tailId"
@@ -525,7 +539,7 @@ function onTabStripWheel(e: WheelEvent): void {
 
               <span
                 v-if="sessions.tabs.length > 1 && sessionLabel(openTail.sessionId)"
-                class="hidden sm:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-3xs font-mono text-muted"
+                class="hidden @[480px]:inline-block max-w-[90px] truncate rounded bg-muted px-1 py-0.2 text-3xs font-mono text-muted"
               >
                 {{ sessionLabel(openTail.sessionId) }}
               </span>

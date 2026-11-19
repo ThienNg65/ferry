@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } f
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { FileEntry } from '@shared/contract'
 import type { SortColumn, SortDirection } from '../../utils/fileSort'
+import { FERRY_MOTION_TOKENS, prefersReducedMotion } from '../../utils/motionTokens'
 import { useUiStore } from '../../stores/ui.store'
 import FileRow from './FileRow.vue'
 
@@ -63,7 +64,7 @@ watch(
     directoryAnimation?.cancel()
     directoryAnimation = null
 
-    if (!previousDirectory || (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+    if (!previousDirectory || prefersReducedMotion()) {
       return
     }
 
@@ -72,7 +73,7 @@ watch(
         { opacity: 0.65, transform: 'translate3d(0, 6px, 0)' },
         { opacity: 1, transform: 'translate3d(0, 0, 0)' }
       ],
-      { duration: 170, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
+      { duration: FERRY_MOTION_TOKENS.duration.standard, easing: FERRY_MOTION_TOKENS.ease.out }
     )
   },
   { flush: 'post', immediate: true }

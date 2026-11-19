@@ -319,6 +319,7 @@ watch(
 <template>
   <UApp
     :locale="appLocale"
+    :tooltip="{ delayDuration: 250, skipDelayDuration: 300 }"
     :toaster="{
       position: 'bottom-right',
       duration: 3500,
@@ -371,7 +372,7 @@ watch(
                 :aria-valuenow="Math.round(effectiveLocalWidth)"
                 aria-valuemin="0"
                 aria-valuemax="100"
-                class="absolute top-0 bottom-0 -ml-1 w-2 cursor-col-resize outline-none transition-colors hover:bg-primary/50 focus-visible:bg-primary"
+                class="absolute top-0 bottom-0 -ml-1 w-2 touch-none select-none cursor-col-resize outline-none transition-colors hover:bg-primary/50 focus-visible:bg-primary"
                 :class="isResizingPane ? 'bg-primary' : ''"
                 @mousedown.prevent="onPaneResizerMouseDown"
                 @keydown="onPaneResizerKeyDown"

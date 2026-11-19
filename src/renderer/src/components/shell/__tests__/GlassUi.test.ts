@@ -9,6 +9,7 @@ import SettingsDialog from '../SettingsDialog.vue'
 import SiteTabBar from '../SiteTabBar.vue'
 import FerryLogo from '../FerryLogo.vue'
 import { useSettingsStore } from '../../../stores/settings.store'
+import { useSessionsStore } from '../../../stores/sessions.store'
 import { useUiStore } from '../../../stores/ui.store'
 
 const toastCalls: Array<Record<string, unknown>> = []
@@ -98,7 +99,11 @@ vi.mock('../../../utils/windowBounds', () => ({
 }))
 
 const commonStubs = {
-  UApp: { template: '<div><slot /></div>' },
+  UApp: {
+    props: ['tooltip', 'toaster', 'locale'],
+    template:
+      '<div :data-tooltip-delay="tooltip?.delayDuration" :data-tooltip-skip-delay="tooltip?.skipDelayDuration"><slot /></div>'
+  },
   UModal: {
     props: ['open', 'title'],
     template: '<div v-if="open" role="dialog"><slot name="body" /><slot name="content" /></div>'
@@ -298,6 +303,7 @@ describe('Modern Glass UI rollout', () => {
 
   it('SiteTabBar uses floating pill tabs with inset indicator and hides FerryLogo in Glass mode (outside fullscreen)', async () => {
     const ui = useUiStore()
+    const sessions = useSessionsStore()
     const w = trackMount(mount(SiteTabBar, { global: { stubs: commonStubs } }))
 
     // Classic mode: folder tab + FerryLogo visible
@@ -311,11 +317,34 @@ describe('Modern Glass UI rollout', () => {
     await nextTick()
 
     expect(w.find('[data-ferry-logo]').exists()).toBe(false)
+    const nav = w.get('nav[aria-label="Open connections"]')
+    expect(nav.classes()).toContain('ferry-scroll-fade-x')
+    expect(nav.classes()).toContain('touch-pan-x')
+    const tablist = w.get('[role="tablist"]')
+    expect(tablist.classes()).toContain('shrink-0')
+    expect(tablist.classes()).not.toContain('min-w-0')
     const glassTab = w.get('.ferry-site-tab')
     expect(glassTab.classes()).toContain('rounded-lg')
     expect(glassTab.classes()).toContain('ferry-glass-active-tab')
     expect(glassTab.classes()).not.toContain('border-t-2')
-    expect(glassTab.find('span.h-0\\.5.rounded-full.bg-primary').exists()).toBe(true)
+    const indicator = glassTab.find('span.h-0\\.5.rounded-full.bg-primary')
+    expect(indicator.exists()).toBe(true)
+    expect(indicator.classes()).toContain('scale-x-100')
+
+    // Opening a second tab keeps both indicators mounted so scale-x transitions cleanly
+    sessions.openNewTab()
+    await nextTick()
+    const tabs = w.findAll('.ferry-site-tab')
+    expect(tabs).toHaveLength(2)
+    expect(tabs[0].find('span.h-0\\.5.rounded-full.bg-primary').classes()).toContain('scale-x-0')
+    expect(tabs[1].find('span.h-0\\.5.rounded-full.bg-primary').classes()).toContain('scale-x-100')
+  })
+
+  it('App.vue configures sibling tooltip warmup delay and skipDelayDuration on UApp', () => {
+    const w = trackMount(mount(App, { global: { stubs: commonStubs } }))
+    const root = w.get('[data-tooltip-delay]')
+    expect(root.attributes('data-tooltip-delay')).toBe('250')
+    expect(root.attributes('data-tooltip-skip-delay')).toBe('300')
   })
 
   it('does not re-hydrate or overwrite Glass UI edits on subsequent settings.fetch() after initial load', async () => {

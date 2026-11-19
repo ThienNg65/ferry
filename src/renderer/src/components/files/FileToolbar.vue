@@ -113,16 +113,17 @@ function onFilterInput(value: string | number): void {
   >
     <div role="group" aria-label="Navigation" class="flex shrink-0 items-center gap-0.5">
       <UTooltip text="Back (Alt+Left)">
-        <UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
+        <UButton class="ferry-pressable" icon="i-lucide-arrow-left" color="neutral" variant="ghost" size="xs" aria-label="Back" :disabled="!canGoBack" @click="emit('back')" />
       </UTooltip>
       <UTooltip text="Forward (Alt+Right)">
-        <UButton icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
+        <UButton class="ferry-pressable" icon="i-lucide-arrow-right" color="neutral" variant="ghost" size="xs" aria-label="Forward" :disabled="!canGoForward" @click="emit('forward')" />
       </UTooltip>
       <UTooltip text="Go up one level (Backspace)">
-        <UButton icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
+        <UButton class="ferry-pressable" icon="i-lucide-arrow-up" color="neutral" variant="ghost" size="xs" aria-label="Go up one level" @click="emit('up')" />
       </UTooltip>
       <UTooltip text="Refresh (Ctrl+R)">
         <UButton
+          class="ferry-pressable"
           icon="i-lucide-refresh-cw"
           color="neutral"
           variant="ghost"
@@ -141,7 +142,7 @@ function onFilterInput(value: string | number): void {
     />
     <div role="group" aria-label="File actions" class="flex shrink-0 items-center gap-0.5">
       <UTooltip text="New folder">
-        <UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
+        <UButton class="ferry-pressable" icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="emit('mkdir')" />
       </UTooltip>
       <UTooltip text="New file">
         <UButton
@@ -150,7 +151,7 @@ function onFilterInput(value: string | number): void {
           variant="ghost"
           size="xs"
           aria-label="New file"
-          class="hidden @[480px]:inline-flex"
+          class="ferry-pressable hidden @[480px]:inline-flex"
           @click="emit('touch')"
         />
       </UTooltip>
@@ -162,7 +163,7 @@ function onFilterInput(value: string | number): void {
           size="xs"
           aria-label="Search files"
           :aria-pressed="showFilterInput"
-          :class="showFilterInput ? '@[480px]:hidden' : ''"
+          :class="['ferry-pressable', showFilterInput ? '@[480px]:hidden' : '']"
           @mousedown.prevent
           @click="showFilterInput ? clearAndCollapseFilter() : focusFilter()"
         />
@@ -174,7 +175,7 @@ function onFilterInput(value: string | number): void {
         icon="i-lucide-search"
         placeholder="Search…"
         size="xs"
-        class="hidden @[480px]:inline-flex shrink-0 w-32 @[580px]:w-36 focus-within:w-40 transition-[width]"
+        class="hidden @[480px]:inline-flex shrink-0 w-32 @[580px]:w-36 focus-within:w-40 transition-[width] duration-[var(--ferry-motion-standard)] ease-[var(--ferry-motion-ease-emphasized)]"
         :ui="{ trailing: 'pointer-events-auto' }"
         @update:model-value="onFilterInput"
         @blur="collapseEmptyFilter"
@@ -203,13 +204,13 @@ function onFilterInput(value: string | number): void {
         v-if="selectedCount && transferIcon"
         :text="side === 'local' ? `Upload ${selectedCount} selected` : `Download ${selectedCount} selected`"
       >
-        <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" class="tabular-nums" @click="emit('transfer-selected')">
+        <UButton :icon="transferIcon" color="primary" variant="soft" size="xs" class="ferry-pressable tabular-nums" @click="emit('transfer-selected')">
           {{ selectedCount }}
         </UButton>
       </UTooltip>
       <Popover v-if="canBookmark !== false">
         <UTooltip text="Bookmarks">
-          <UButton icon="i-lucide-bookmark" color="neutral" variant="ghost" size="xs" aria-label="Bookmarks" />
+          <UButton class="ferry-pressable" icon="i-lucide-bookmark" color="neutral" variant="ghost" size="xs" aria-label="Bookmarks" />
         </UTooltip>
         <template #content>
           <div class="flex w-64 flex-col gap-1 p-2">
@@ -254,7 +255,7 @@ function onFilterInput(value: string | number): void {
         </template>
       </Popover>
       <UDropdownMenu :items="moreItems">
-        <UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
+        <UButton class="ferry-pressable" icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
       </UDropdownMenu>
     </div>
     <div v-if="showFilterInput" class="basis-full pt-0.5 @[480px]:hidden">
