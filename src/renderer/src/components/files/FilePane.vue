@@ -884,13 +884,14 @@ async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
   // Bind the confirmation to the SSH session that displayed the files. A tab
   // switch or reconnect must never redirect a destructive operation.
   const sessionAtPrompt = props.side === 'remote' ? sessions.activeSessionId : null
+  const serverAtPrompt = sessionAtPrompt ? (sessions.activeTab.hostLabel ?? sessions.activeTab.label ?? sessionAtPrompt) : null
   if (props.side === 'remote' && !sessionAtPrompt) return
   const paths = entries.map((entry) => entry.path)
   await confirm({
     title: 'Delete',
     body: single
-      ? `Delete ${single.path}${single.isDir ? ' and everything inside it' : ''}?${sessionAtPrompt ? ` (SSH session: ${sessionAtPrompt})` : ''} This cannot be undone.`
-      : `Delete these ${entries.length} items?${sessionAtPrompt ? ` (SSH session: ${sessionAtPrompt})` : ''} This cannot be undone.`,
+      ? `Delete ${single.path}${single.isDir ? ' and everything inside it' : ''}?${sessionAtPrompt ? ` (server: ${serverAtPrompt})` : ''} This cannot be undone.`
+      : `Delete these ${entries.length} items?${sessionAtPrompt ? ` (server: ${serverAtPrompt})` : ''} This cannot be undone.`,
     items: single ? undefined : paths,
     confirmLabel: 'Delete',
     confirmColor: 'error',
