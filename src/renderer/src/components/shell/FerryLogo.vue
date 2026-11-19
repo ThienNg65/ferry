@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed } from 'vue'
 import { useUiStore } from '../../stores/ui.store'
 
 const props = withDefaults(
@@ -16,161 +16,18 @@ const props = withDefaults(
 )
 
 const ui = useUiStore()
-const uid = useId()
-const isGlass = computed(() =>
-  props.variant === 'auto' ? ui.glassUiEnabled : props.variant === 'glass'
+const variant = computed(() =>
+  props.variant === 'auto' ? (ui.glassUiEnabled ? 'glass' : 'classic') : props.variant
 )
 </script>
 
 <template>
-  <svg
+  <img
+    :src="`./ferry-${variant}.svg`"
     :width="size"
     :height="size"
-    viewBox="0 0 128 128"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
+    :alt="decorative ? '' : 'Ferry'"
     class="shrink-0 select-none"
-    :data-ferry-logo="isGlass ? 'glass' : 'classic'"
-    :aria-hidden="decorative ? 'true' : undefined"
-    :role="decorative ? undefined : 'img'"
-    :aria-label="decorative ? undefined : 'Ferry'"
-  >
-    <template v-if="isGlass">
-      <defs>
-        <clipPath :id="`${uid}-fg-clip`">
-          <rect x="2" y="2" width="124" height="124" rx="28" />
-        </clipPath>
-        <linearGradient :id="`${uid}-fg-bg`" x1="64" y1="2" x2="64" y2="126" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#87ceff" />
-          <stop offset="48%" stop-color="#2c8ef7" />
-          <stop offset="100%" stop-color="#0066d6" />
-        </linearGradient>
-        <radialGradient :id="`${uid}-fg-glass-sheen`" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(28 18) rotate(35) scale(96 78)">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.34" />
-          <stop offset="55%" stop-color="#bae6fd" stop-opacity="0.10" />
-          <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
-        </radialGradient>
-        <radialGradient :id="`${uid}-fg-bottom-depth`" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(88 112) rotate(-140) scale(80 60)">
-          <stop offset="0%" stop-color="#0245a3" stop-opacity="0.35" />
-          <stop offset="100%" stop-color="#0066d6" stop-opacity="0" />
-        </radialGradient>
-        <linearGradient :id="`${uid}-fg-rim`" x1="18" y1="4" x2="110" y2="124" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.72" />
-          <stop offset="45%" stop-color="#e0f2fe" stop-opacity="0.28" />
-          <stop offset="100%" stop-color="#ffffff" stop-opacity="0.42" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-hull-left`" x1="36" y1="30" x2="64" y2="88" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96" />
-          <stop offset="70%" stop-color="#f8fcff" stop-opacity="0.88" />
-          <stop offset="100%" stop-color="#e6f4ff" stop-opacity="0.82" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-hull-right`" x1="64" y1="30" x2="96" y2="88" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#eef7ff" stop-opacity="0.88" />
-          <stop offset="65%" stop-color="#dbeeff" stop-opacity="0.78" />
-          <stop offset="100%" stop-color="#c4e3ff" stop-opacity="0.70" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-window`" x1="64" y1="42" x2="64" y2="54" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#3c9cff" stop-opacity="0.88" />
-          <stop offset="100%" stop-color="#146dd8" stop-opacity="0.94" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-cloud`" x1="94" y1="26" x2="94" y2="37" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.76" />
-          <stop offset="100%" stop-color="#e0f2fe" stop-opacity="0.40" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-wave-1`" x1="64" y1="79" x2="64" y2="89" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.54" />
-          <stop offset="100%" stop-color="#93d5ff" stop-opacity="0.34" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-wave-2`" x1="64" y1="90" x2="64" y2="99" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#e0f2fe" stop-opacity="0.34" />
-          <stop offset="100%" stop-color="#60b5ff" stop-opacity="0.18" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fg-ship-stroke`" x1="32" y1="28" x2="96" y2="86" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.92" />
-          <stop offset="100%" stop-color="#ffffff" stop-opacity="0.38" />
-        </linearGradient>
-      </defs>
-
-      <g :clip-path="`url(#${uid}-fg-clip)`">
-        <rect x="2" y="2" width="124" height="124" rx="28" :fill="`url(#${uid}-fg-bg)`" />
-        <rect x="2" y="2" width="124" height="124" rx="28" :fill="`url(#${uid}-fg-glass-sheen)`" />
-        <rect x="2" y="2" width="124" height="124" rx="28" :fill="`url(#${uid}-fg-bottom-depth)`" />
-
-        <path d="M2 86 L16 60 C18.5 55.5 23.5 55.5 26.5 60 L41 86 H2 Z" fill="#0d5bb8" fill-opacity="0.24" />
-        <path d="M87 86 L101 62 C104 57.8 109 57.8 112 62 L126 86 H87 Z" fill="#0d5bb8" fill-opacity="0.22" />
-        <path d="M83 37.5 H103.5 C103.5 35.3 101.8 33.7 99.6 33.7 C99.3 30.8 96.8 28.6 93.7 28.6 C90.6 28.6 88.1 30.9 88 33.9 C85.2 34.1 83 35.6 83 37.5 Z" :fill="`url(#${uid}-fg-cloud)`" />
-
-        <path d="M62.2 28 C62.2 27 63 26.2 64 26.2 C65 26.2 65.8 27 65.8 28 V31 H69.5 C70.4 31 71.2 31.7 71.2 32.7 C71.2 33.6 70.4 34.3 69.5 34.3 H65.8 V38 H62.2 V34.3 H58.5 C57.6 34.3 56.8 33.6 56.8 32.7 C56.8 31.7 57.6 31 58.5 31 H62.2 V28 Z" :fill="`url(#${uid}-fg-hull-left)`" />
-
-        <path d="M46.5 40.5 C46.5 38.8 47.9 37.5 49.6 37.5 H64 V55 H43 L46.5 40.5 Z" :fill="`url(#${uid}-fg-hull-left)`" />
-        <path d="M64 37.5 H78.4 C80.1 37.5 81.5 38.8 81.5 40.5 L85 55 H64 V37.5 Z" :fill="`url(#${uid}-fg-hull-right)`" />
-
-        <path d="M49 43 C49.2 41.9 50.2 41.2 51.3 41.2 H60.5 C61.3 41.2 62 41.9 62 42.7 V51 C62 51.8 61.3 52.5 60.5 52.5 H48.2 C47.3 52.5 46.6 51.7 46.8 50.8 L49 43 Z" :fill="`url(#${uid}-fg-window)`" />
-        <path d="M66 42.7 C66 41.9 66.7 41.2 67.5 41.2 H76.7 C77.8 41.2 78.8 41.9 79 43 L81.2 50.8 C81.4 51.7 80.7 52.5 79.8 52.5 H67.5 C66.7 52.5 66 51.8 66 51 V42.7 Z" :fill="`url(#${uid}-fg-window)`" />
-        <path d="M50 42.4 H55.5 L50.8 51.2 H48.2 L50 42.4 Z" fill="#ffffff" fill-opacity="0.24" />
-        <path d="M67.8 42.4 H73.2 L68.8 51.2 H66.8 L67.8 42.4 Z" fill="#ffffff" fill-opacity="0.18" />
-
-        <path d="M37 57.8 C37 56.2 38.3 55 39.8 55 H64 V62 H37 V57.8 Z" :fill="`url(#${uid}-fg-hull-left)`" />
-        <path d="M64 55 H88.2 C89.7 55 91 56.2 91 57.8 V62 H64 V55 Z" :fill="`url(#${uid}-fg-hull-right)`" />
-
-        <path d="M30 65.2 C30 63.4 31.4 62 33.2 62 H64 V86.5 L38 82.8 C33.8 77.6 30.8 71.2 30 65.2 Z" :fill="`url(#${uid}-fg-hull-left)`" />
-        <path d="M64 62 H94.8 C96.6 62 98 63.4 98 65.2 C97.2 71.2 94.2 77.6 90 82.8 L64 86.5 V62 Z" :fill="`url(#${uid}-fg-hull-right)`" />
-
-        <path d="M46.5 40.5 C46.5 38.8 47.9 37.5 49.6 37.5 H78.4 C80.1 37.5 81.5 38.8 81.5 40.5 L85 55 H88.2 C89.7 55 91 56.2 91 57.8 V62 H94.8 C96.6 62 98 63.4 98 65.2 C97.2 71.2 94.2 77.6 90 82.8 L64 86.5 L38 82.8 C33.8 77.6 30.8 71.2 30 65.2 C30 63.4 31.4 62 33.2 62 H37 V57.8 C37 56.2 38.3 55 39.8 55 H43 L46.5 40.5 Z" :stroke="`url(#${uid}-fg-ship-stroke)`" stroke-width="1.15" />
-
-        <path d="M2 82.5 C12 78.5 22 78.5 32 82.5 C42 86.5 52 86.5 64 82.5 C76 78.5 86 78.5 96 82.5 C106 86.5 116 86.5 126 82.5 V88 C116 92 106 92 96 88 C86 84 76 84 64 88 C52 92 42 92 32 88 C22 84 12 84 2 88 Z" :fill="`url(#${uid}-fg-wave-1)`" />
-        <path d="M2 82.5 C12 78.5 22 78.5 32 82.5 C42 86.5 52 86.5 64 82.5 C76 78.5 86 78.5 96 82.5 C106 86.5 116 86.5 126 82.5" stroke="#ffffff" stroke-opacity="0.64" stroke-width="1.05" stroke-linecap="round" />
-
-        <path d="M2 93 C12 89.5 22 89.5 32 93 C42 96.5 52 96.5 64 93 C76 89.5 86 89.5 96 93 C106 96.5 116 96.5 126 93 V97.5 C116 101 106 101 96 97.5 C86 94 76 94 64 97.5 C52 101 42 101 32 97.5 C22 94 12 94 2 97.5 Z" :fill="`url(#${uid}-fg-wave-2)`" />
-        <path d="M2 93 C12 89.5 22 89.5 32 93 C42 96.5 52 96.5 64 93 C76 89.5 86 89.5 96 93 C106 96.5 116 96.5 126 93" stroke="#ffffff" stroke-opacity="0.34" stroke-width="0.9" stroke-linecap="round" />
-      </g>
-
-      <rect x="2.75" y="2.75" width="122.5" height="122.5" rx="27.25" :stroke="`url(#${uid}-fg-rim)`" stroke-width="1.5" />
-    </template>
-
-    <template v-else>
-      <defs>
-        <clipPath :id="`${uid}-fc-clip`">
-          <rect x="2" y="2" width="124" height="124" rx="28" />
-        </clipPath>
-        <linearGradient :id="`${uid}-fc-bg`" x1="64" y1="2" x2="64" y2="126" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#7cc3ff" />
-          <stop offset="55%" stop-color="#2185f3" />
-          <stop offset="100%" stop-color="#0066cc" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fc-hull-left`" x1="36" y1="30" x2="64" y2="88" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#ffffff" />
-          <stop offset="100%" stop-color="#f1f5f9" />
-        </linearGradient>
-        <linearGradient :id="`${uid}-fc-hull-right`" x1="64" y1="30" x2="96" y2="88" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#f1f5f9" />
-          <stop offset="100%" stop-color="#dbeafe" />
-        </linearGradient>
-      </defs>
-
-      <g :clip-path="`url(#${uid}-fc-clip)`">
-        <rect x="2" y="2" width="124" height="124" rx="28" :fill="`url(#${uid}-fc-bg)`" />
-        <path d="M2 86 L16 60 C18.5 55.5 23.5 55.5 26.5 60 L41 86 H2 Z" fill="#1d74d8" fill-opacity="0.45" />
-        <path d="M87 86 L101 62 C104 57.8 109 57.8 112 62 L126 86 H87 Z" fill="#1d74d8" fill-opacity="0.45" />
-        <path d="M83 37.5 H103.5 C103.5 35.3 101.8 33.7 99.6 33.7 C99.3 30.8 96.8 28.6 93.7 28.6 C90.6 28.6 88.1 30.9 88 33.9 C85.2 34.1 83 35.6 83 37.5 Z" fill="#ffffff" fill-opacity="0.92" />
-
-        <path d="M62.2 28 C62.2 27 63 26.2 64 26.2 C65 26.2 65.8 27 65.8 28 V31 H69.5 C70.4 31 71.2 31.7 71.2 32.7 C71.2 33.6 70.4 34.3 69.5 34.3 H65.8 V38 H62.2 V34.3 H58.5 C57.6 34.3 56.8 33.6 56.8 32.7 C56.8 31.7 57.6 31 58.5 31 H62.2 V28 Z" fill="#ffffff" />
-
-        <path d="M46.5 40.5 C46.5 38.8 47.9 37.5 49.6 37.5 H64 V55 H43 L46.5 40.5 Z" :fill="`url(#${uid}-fc-hull-left)`" />
-        <path d="M64 37.5 H78.4 C80.1 37.5 81.5 38.8 81.5 40.5 L85 55 H64 V37.5 Z" :fill="`url(#${uid}-fc-hull-right)`" />
-
-        <path d="M49 43 C49.2 41.9 50.2 41.2 51.3 41.2 H60.5 C61.3 41.2 62 41.9 62 42.7 V51 C62 51.8 61.3 52.5 60.5 52.5 H48.2 C47.3 52.5 46.6 51.7 46.8 50.8 L49 43 Z" fill="#1e7ae6" />
-        <path d="M66 42.7 C66 41.9 66.7 41.2 67.5 41.2 H76.7 C77.8 41.2 78.8 41.9 79 43 L81.2 50.8 C81.4 51.7 80.7 52.5 79.8 52.5 H67.5 C66.7 52.5 66 51.8 66 51 V42.7 Z" fill="#1e7ae6" />
-
-        <path d="M37 57.8 C37 56.2 38.3 55 39.8 55 H64 V62 H37 V57.8 Z" :fill="`url(#${uid}-fc-hull-left)`" />
-        <path d="M64 55 H88.2 C89.7 55 91 56.2 91 57.8 V62 H64 V55 Z" :fill="`url(#${uid}-fc-hull-right)`" />
-
-        <path d="M30 65.2 C30 63.4 31.4 62 33.2 62 H64 V86.5 L38 82.8 C33.8 77.6 30.8 71.2 30 65.2 Z" :fill="`url(#${uid}-fc-hull-left)`" />
-        <path d="M64 62 H94.8 C96.6 62 98 63.4 98 65.2 C97.2 71.2 94.2 77.6 90 82.8 L64 86.5 V62 Z" :fill="`url(#${uid}-fc-hull-right)`" />
-
-        <path d="M2 82.5 C12 78.5 22 78.5 32 82.5 C42 86.5 52 86.5 64 82.5 C76 78.5 86 78.5 96 82.5 C106 86.5 116 86.5 126 82.5 V88 C116 92 106 92 96 88 C86 84 76 84 64 88 C52 92 42 92 32 88 C22 84 12 84 2 88 Z" fill="#82c9ff" fill-opacity="0.72" />
-        <path d="M2 93 C12 89.5 22 89.5 32 93 C42 96.5 52 96.5 64 93 C76 89.5 86 89.5 96 93 C106 96.5 116 96.5 126 93 V97.5 C116 101 106 101 96 97.5 C86 94 76 94 64 97.5 C52 101 42 101 32 97.5 C22 94 12 94 2 97.5 Z" fill="#63b5ff" fill-opacity="0.45" />
-      </g>
-    </template>
-  </svg>
+    :data-ferry-logo="variant"
+  />
 </template>
