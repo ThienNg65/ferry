@@ -150,6 +150,54 @@ describe('RateLimiter', () => {
     expect(next).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves fractional deadlines for a sustained high-bandwidth queue', async () => {
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(102_400) // 100 MiB/s
+    const chunkBytes = 128 * 1024 // 1.25 ms per chunk
+    await limiter.acquire(chunkBytes)
+
+    const granted = vi.fn()
+    const pending = Array.from({ length: 300 }, () => limiter.acquire(chunkBytes).then(granted))
+    // The 300 pending chunks need about 375 ms of virtual bandwidth. Timer
+    // rounding must not compound into hundreds of extra milliseconds.
+    await vi.advanceTimersByTimeAsync(400)
+    expect(granted).toHaveBeenCalledTimes(300)
+    await Promise.all(pending)
+  })
+
+  it('does not bank bandwidth credit across a long idle period', async () => {
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(1)
+    await limiter.acquire(1024)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    await limiter.acquire(1024)
+    const granted = vi.fn()
+    const next = limiter.acquire(1024).then(granted)
+    await Promise.resolve()
+    expect(granted).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000)
+    await next
+    expect(granted).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds catch-up after a stalled timer while preserving FIFO', async () => {
+    const limiter = new RateLimiter()
+    limiter.setLimitKBps(1)
+    await limiter.acquire(1024)
+
+    const granted: number[] = []
+    const first = limiter.acquire(1024).then(() => granted.push(1))
+    // setSystemTime models a stalled event loop: time jumps, but timers do not fire.
+    vi.setSystemTime(Date.now() + 60_000)
+    const second = limiter.acquire(1024).then(() => granted.push(2))
+    await first
+    expect(granted).toEqual([1])
+    await vi.advanceTimersByTimeAsync(1000)
+    await second
+    expect(granted).toEqual([1, 2])
+  })
+
   it('does not retain abort listeners or timers after queued cancellation', async () => {
     const limiter = new RateLimiter()
     limiter.setLimitKBps(1)
