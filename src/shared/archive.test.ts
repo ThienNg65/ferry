@@ -54,4 +54,9 @@ describe('archiveBaseName', () => {
   it('leaves an unrecognized name untouched', () => {
     expect(archiveBaseName('notes.txt')).toBe('notes.txt')
   })
+
+  it('keeps full name when stripping an archive suffix would leave an empty string', () => {
+    expect(archiveBaseName('.zip')).toBe('.zip')
+    expect(archiveBaseName('.tar.gz')).toBe('.tar.gz')
+  })
 })

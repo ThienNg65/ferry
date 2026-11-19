@@ -31,7 +31,7 @@ export function buildExtractCommand(kind: ArchiveKind, archivePath: string, targ
   // shell, regardless of its own nested single-quoting.
   const inner =
     `command -v ${tool} >/dev/null 2>&1 || ` +
-    `{ echo ${shellEscape(EXTRACT_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; mkdir -p ${target} && ${cmd}`
+    `{ echo ${shellEscape(EXTRACT_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; mkdir -p -- ${target} && ${cmd}`
   return `sh -c ${shellEscape(inner)}`
 }
 

@@ -229,16 +229,20 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     raw: WebSocket.RawData | string,
     sendReply: (id: unknown, result: unknown) => void
   ): Promise<void> => {
-    let msg: { event?: string; data?: Record<string, unknown> }
+    let parsed: unknown
     try {
       const text = typeof raw === 'string' ? raw : raw.toString('utf8')
-      msg = JSON.parse(text) as { event?: string; data?: Record<string, unknown> }
+      parsed = JSON.parse(text)
     } catch {
       return
     }
-    if (msg.event === 'rpc_send' && msg.data) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return
+    }
+    const msg = parsed as { event?: string; data?: Record<string, unknown> }
+    if (msg.event === 'rpc_send' && msg.data && typeof msg.data === 'object') {
       dispatchSend(msg.data.channel, msg.data.payload)
-    } else if (msg.event === 'rpc_invoke' && msg.data) {
+    } else if (msg.event === 'rpc_invoke' && msg.data && typeof msg.data === 'object') {
       const { id, channel, args } = msg.data
       const result = await dispatchInvoke(channel, args)
       sendReply(id, result)
@@ -280,7 +284,11 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     }
     closing = true
     if (initialized) {
-      await shutdownSidecarServices()
+      try {
+        await shutdownSidecarServices()
+      } catch (e) {
+        console.error('sidecar: error during shutdown:', e)
+      }
     }
     for (const client of directClients) {
       try {

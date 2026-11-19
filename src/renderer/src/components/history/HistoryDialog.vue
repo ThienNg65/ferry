@@ -35,7 +35,8 @@ watch(
       statusFilter.value = 'all'
       void refresh()
     }
-  }
+  },
+  { immediate: true }
 )
 
 watch([search, statusFilter], () => {

@@ -95,6 +95,21 @@ describe('sidecar protocol', () => {
     await settle()
     expect(hooks.shutdown).toHaveBeenCalledTimes(1)
   })
+
+  it('ignores valid JSON null lines and catches throwing send handlers without crashing', async () => {
+    handle('sites:list', () => [])
+    onSend('terminal:input', () => {
+      throw new Error('boom')
+    })
+    const { input, out } = harness()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    input.write('null\n')
+    send(input, { type: 'send', channel: 'terminal:input', payload: { terminalId: 't1', data: 'x' } })
+    send(input, { id: 9, channel: 'sites:list', args: [] })
+    await settle()
+    expect(out).toEqual([{ id: 9, result: { ok: true, data: [] } }])
+    errorSpy.mockRestore()
+  })
 })
 
 describe('encodeLine', () => {
@@ -120,5 +135,12 @@ describe('encodeLine', () => {
     const decoded = decodeB64Deep({ entries: [{ data: { __b64: '/wAb' } }] }) as { entries: [{ data: Buffer }] }
     expect(Buffer.isBuffer(decoded.entries[0].data)).toBe(true)
     expect(Array.from(decoded.entries[0].data)).toEqual([0xff, 0x00, 0x1b])
+  })
+
+  it('ignores __proto__ keys during decodeB64Deep', () => {
+    const raw = JSON.parse('{"__proto__":{"polluted":true},"safe":1}') as unknown
+    const decoded = decodeB64Deep(raw) as Record<string, unknown>
+    expect(decoded.safe).toBe(1)
+    expect((decoded as { polluted?: boolean }).polluted).toBeUndefined()
   })
 })

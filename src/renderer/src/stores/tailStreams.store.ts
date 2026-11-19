@@ -382,6 +382,12 @@ export const useTailStreamsStore = defineStore('tailStreams', () => {
    * stale entry can never be matched against a later, unrelated session (see `open`'s dedup). */
   async function closeForSession(sessionId: string): Promise<void> {
     sessionCloseCounts.set(sessionId, (sessionCloseCounts.get(sessionId) ?? 0) + 1)
+    if (sessionCloseCounts.size > MAX_CLOSED_TOMBSTONES) {
+      const oldest = sessionCloseCounts.keys().next().value
+      if (oldest !== undefined) {
+        sessionCloseCounts.delete(oldest)
+      }
+    }
     const targets = tabs.value.filter((t) => t.sessionId === sessionId)
     await Promise.all(targets.map((t) => close(t.tailId)))
   }

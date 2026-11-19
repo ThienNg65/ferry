@@ -16,8 +16,10 @@ export function registerTerminalHandlers(): void {
   handle<TerminalOpenResult>(INVOKE_CHANNELS.terminalOpen, async (req) => {
     const request = requireObject(req, INVOKE_CHANNELS.terminalOpen) as unknown as TerminalOpenRequest
     const sessionId = requireNonEmptyString(request.sessionId, 'sessionId', INVOKE_CHANNELS.terminalOpen)
+    const cols = Number.isInteger(request.cols) && request.cols >= 1 ? request.cols : 80
+    const rows = Number.isInteger(request.rows) && request.rows >= 1 ? request.rows : 24
     const terminalId = randomUUID()
-    await TerminalManager.getInstance().open(terminalId, sessionId, request.cols, request.rows)
+    await TerminalManager.getInstance().open(terminalId, sessionId, cols, rows)
     return { terminalId }
   })
 

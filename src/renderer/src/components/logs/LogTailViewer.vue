@@ -224,6 +224,7 @@ const filteredLines = computed(() => {
   if (filterOnly.value && searchRegex.value) {
     const re = searchRegex.value
     all = all.filter((l) => {
+      if (l.text.length > MAX_REGEX_LINE_LENGTH) return false
       re.lastIndex = 0
       return re.test(l.text)
     })
@@ -643,10 +644,12 @@ watch(totalSize, () => void nextTick(updateThumb))
 
 let scrollObserver: ResizeObserver | null = null
 let lastScrollWidth = 0
+let isUnmounted = false
 
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown)
   void nextTick(() => {
+    if (isUnmounted) return
     scrollToBottom()
     updateThumb()
     const el = scrollEl.value
@@ -681,6 +684,7 @@ function releaseControls(): void {
 }
 
 onUnmounted(() => {
+  isUnmounted = true
   window.removeEventListener('keydown', onWindowKeydown)
   scrollObserver?.disconnect()
   clearInterval(rateTimer)

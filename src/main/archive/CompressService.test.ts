@@ -32,6 +32,11 @@ describe('splitRemotePath', () => {
   it('splits a folder path the same way as a file path', () => {
     expect(splitRemotePath('/srv/www/site')).toEqual({ dir: '/srv/www', base: 'site' })
   })
+
+  it('strips trailing slashes and uses "." for bare relative names', () => {
+    expect(splitRemotePath('/var/log/')).toEqual({ dir: '/var', base: 'log' })
+    expect(splitRemotePath('file.txt')).toEqual({ dir: '.', base: 'file.txt' })
+  })
 })
 
 describe('compressLocal', () => {

@@ -155,8 +155,8 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       return this.bySession[sessionId]
     },
 
-    async load(dirPath?: string, options?: { forceRefresh?: boolean; skipHistory?: boolean }): Promise<void> {
-      await this.loadForSession(this.activeSessionId(), dirPath, options)
+    async load(dirPath?: string, options?: { forceRefresh?: boolean; skipHistory?: boolean }): Promise<boolean> {
+      return this.loadForSession(this.activeSessionId(), dirPath, options)
     },
 
     /**
@@ -168,7 +168,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       sessionId: string,
       dirPath?: string,
       options?: { forceRefresh?: boolean; skipHistory?: boolean }
-    ): Promise<void> {
+    ): Promise<boolean> {
       const entry = this.ensureBucket(sessionId)
       const fromPath = entry.currentPath
       const recordFrom = (newPath: string): void => {
@@ -183,7 +183,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const loadKey = `${sessionId}:${normalized || '.'}`
       const existingLoad = !isCacheValid && !options?.forceRefresh ? inFlightLoads.get(loadKey) : undefined
       if (existingLoad && existingLoad.seq === (this.requestSeq[sessionId] ?? 0)) {
-        return existingLoad.promise
+        return existingLoad.promise.then(() => this.requestSeq[sessionId] === existingLoad.seq && !entry.error)
       }
 
       const seq = (this.requestSeq[sessionId] ?? 0) + 1
@@ -213,7 +213,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
             // Background revalidation failure does not disturb current display
           }
         })()
-        return
+        return true
       }
 
       const previousPath = entry.currentPath
@@ -234,6 +234,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         entry.error = null
       }
 
+      let committed = false
       const run = (async () => {
         try {
           const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, dirPath, false)
@@ -249,6 +250,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
           entry.entries = result.entries.sort(compareEntries(entry.sortColumn, entry.sortDirection))
           entry.selected = new Set()
           entry.selectAnchor = null
+          committed = true
         } catch (e) {
           if (this.requestSeq[sessionId] !== seq || !this.bySession[sessionId]) {
             return
@@ -271,7 +273,8 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       })()
 
       inFlightLoads.set(loadKey, { seq, promise: run })
-      return run
+      await run
+      return committed
     },
 
     /** Invalidates SWR cache for `targetDir` and quietly refreshes the listing if `sessionId` is currently viewing it, preserving selection and scroll. */
@@ -361,8 +364,8 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const bucket = this.ensureBucket(sessionId)
       const step = stepBack(bucket.history, bucket.currentPath)
       if (!step) return
-      await this.loadForSession(sessionId, step.target, { skipHistory: true })
-      if (!bucket.error) bucket.history = step.next
+      const committed = await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (committed && this.bySession[sessionId] === bucket) bucket.history = step.next
     },
 
     async goForward(): Promise<void> {
@@ -370,8 +373,8 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       const bucket = this.ensureBucket(sessionId)
       const step = stepForward(bucket.history, bucket.currentPath)
       if (!step) return
-      await this.loadForSession(sessionId, step.target, { skipHistory: true })
-      if (!bucket.error) bucket.history = step.next
+      const committed = await this.loadForSession(sessionId, step.target, { skipHistory: true })
+      if (committed && this.bySession[sessionId] === bucket) bucket.history = step.next
     },
 
     async goUp(): Promise<void> {
@@ -382,29 +385,36 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async mkdir(name: string): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
-      const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
+      const dirPath = bucket.currentPath
+      const target = `${dirPath.replace(/\/$/, '')}/${name}`
       await invoke<void>(INVOKE_CHANNELS.fsRemoteMkdir, sessionId, target)
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
-      await this.load(this.currentPath, { forceRefresh: true })
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
+      if (this.bySession[sessionId] === bucket && bucket.currentPath === dirPath) {
+        await this.loadForSession(sessionId, dirPath, { forceRefresh: true })
+      }
     },
 
     async touch(name: string): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
-      const target = `${this.currentPath.replace(/\/$/, '')}/${name}`
+      const dirPath = bucket.currentPath
+      const target = `${dirPath.replace(/\/$/, '')}/${name}`
       await invoke<void>(INVOKE_CHANNELS.fsRemoteTouch, sessionId, target)
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
-      await this.load(this.currentPath, { forceRefresh: true })
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
+      if (this.bySession[sessionId] === bucket && bucket.currentPath === dirPath) {
+        await this.loadForSession(sessionId, dirPath, { forceRefresh: true })
+      }
     },
 
     /** Deletes `entry` and drops it from the in-memory listing directly — no full directory reload. */
     async remove(entry: FileEntry): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
+      const dirPath = bucket.currentPath
       await invoke<void>(INVOKE_CHANNELS.fsRemoteDelete, sessionId, entry.path)
       bucket.entries = bucket.entries.filter((e) => e.path !== entry.path)
       bucket.selected.delete(entry.path)
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
     },
 
     /**
@@ -415,6 +425,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async removeMany(entries: FileEntry[]): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
+      const dirPath = bucket.currentPath
       const result = await invoke<DeleteManyResult>(INVOKE_CHANNELS.fsRemoteDeleteMany, {
         sessionId,
         paths: entries.map((e) => e.path)
@@ -424,7 +435,7 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       for (const path of removedPaths) {
         bucket.selected.delete(path)
       }
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
       if (result.failures.length > 0) {
         const failedNames = result.failures.map(
           (f) => entries.find((e) => e.path === f.path)?.name ?? f.path
@@ -437,14 +448,22 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async rename(entry: FileEntry, newName: string): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
+      const dirPath = bucket.currentPath
       const parent = entry.path.slice(0, entry.path.length - entry.name.length)
       const newPath = `${parent}${newName}`
       await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessionId, entry.path, newPath)
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
       const target = bucket.entries.find((e) => e.path === entry.path)
       if (target) {
         target.name = newName
         target.path = newPath
+        if (bucket.selected.has(entry.path)) {
+          bucket.selected.delete(entry.path)
+          bucket.selected.add(newPath)
+        }
+        if (bucket.selectAnchor === entry.path) {
+          bucket.selectAnchor = newPath
+        }
         bucket.entries = [...bucket.entries].sort(compareEntries(bucket.sortColumn, bucket.sortDirection))
       }
     },
@@ -453,8 +472,9 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async chmod(entry: FileEntry, mode: string): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
+      const dirPath = bucket.currentPath
       await invoke<void>(INVOKE_CHANNELS.fsRemoteChmod, sessionId, entry.path, mode)
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
       const target = bucket.entries.find((e) => e.path === entry.path)
       if (target) {
         target.permissions = mode.length === 3 ? `0${mode}` : mode
@@ -464,9 +484,12 @@ export const useRemoteFsStore = defineStore('remoteFs', {
     async admin(entry: FileEntry, options: { mode?: string; owner?: string; group?: string; recursive?: boolean }): Promise<void> {
       const sessionId = this.activeSessionId()
       const bucket = this.ensureBucket(sessionId)
+      const dirPath = bucket.currentPath
       await invoke<void>(INVOKE_CHANNELS.fsRemoteAdmin, { sessionId, path: entry.path, ...options })
-      bucket.dirCache.delete(normalizeDirPath(this.currentPath))
-      await this.load(this.currentPath, { forceRefresh: true })
+      bucket.dirCache.delete(normalizeDirPath(dirPath))
+      if (this.bySession[sessionId] === bucket && bucket.currentPath === dirPath) {
+        await this.loadForSession(sessionId, dirPath, { forceRefresh: true })
+      }
     },
 
     /** Plain click — selects exactly one entry. */

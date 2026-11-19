@@ -19,6 +19,7 @@ export interface PaneKeyboardContext {
 
 export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent) => Promise<void> {
   const ui = useUiStore()
+  let focusPath: string | null = null
   const getVisibleSelected = (): FileEntry[] =>
     ctx.filteredEntries.value.filter((e) => ctx.store.selected.has(e.path))
   return async function onKeydown(event: KeyboardEvent): Promise<void> {
@@ -102,6 +103,7 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
         ctx.filterText.value = ''
       } else if (ctx.store.selected.size > 0) {
         event.preventDefault()
+        focusPath = null
         ctx.store.selectAll([])
       }
       return
@@ -129,8 +131,11 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
       event.preventDefault()
       const visiblePaths = new Set(list.map((e) => e.path))
       const selectedPaths = Array.from(ctx.store.selected).filter((p) => visiblePaths.has(p))
-      const lastSelectedPath = selectedPaths[selectedPaths.length - 1]
-      const currentIdx = lastSelectedPath ? list.findIndex((e) => e.path === lastSelectedPath) : -1
+      const anchorOrLast =
+        focusPath && ctx.store.selected.has(focusPath) && visiblePaths.has(focusPath)
+          ? focusPath
+          : selectedPaths[selectedPaths.length - 1]
+      const currentIdx = anchorOrLast ? list.findIndex((e) => e.path === anchorOrLast) : -1
       const pageStep = 10
       let nextIdx = 0
       if (event.key === 'Home') {
@@ -147,6 +152,7 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
         nextIdx = currentIdx <= 0 ? 0 : currentIdx - 1
       }
       const nextPath = list[nextIdx].path
+      focusPath = nextPath
       if (event.shiftKey) {
         ctx.store.selectRange(nextPath, ctx.filteredEntries.value)
       } else {

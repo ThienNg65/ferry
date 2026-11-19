@@ -30,6 +30,8 @@ const emit = defineEmits<{
 
 const sites = useSitesStore()
 const confirm = useConfirm()
+const generatingKey = ref(false)
+const generateKeyOpen = ref(false)
 const saving = ref(false)
 const savingAndConnect = ref(false)
 const error = ref<string | null>(null)
@@ -300,9 +302,6 @@ async function browseLocalPath(): Promise<void> {
     form.localInitialPath = path
   }
 }
-
-const generatingKey = ref(false)
-const generateKeyOpen = ref(false)
 
 function onKeyGenerated(result: KeyGenerateResult): void {
   form.privateKeyPath = result.privateKeyPath

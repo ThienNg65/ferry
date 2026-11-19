@@ -14,7 +14,10 @@ try:
     for e in it:
       try:
         is_sym = e.is_symlink()
-        st = e.stat(follow_symlinks=False)
+        try:
+          st = e.stat(follow_symlinks=True) if is_sym else e.stat(follow_symlinks=False)
+        except OSError:
+          st = e.stat(follow_symlinks=False)
         try:
           is_dir = e.is_dir(follow_symlinks=True) if is_sym else e.is_dir()
         except OSError:

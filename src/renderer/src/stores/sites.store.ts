@@ -38,9 +38,12 @@ export const useSitesStore = defineStore('sites', {
   },
 
   actions: {
-    async fetchSites(): Promise<void> {
+    async fetchSites(force = false): Promise<void> {
       if (this.inFlightFetch) {
-        return this.inFlightFetch
+        if (!force) {
+          return this.inFlightFetch
+        }
+        await this.inFlightFetch.catch(() => {})
       }
       this.loading = true
       this.error = null
@@ -59,7 +62,7 @@ export const useSitesStore = defineStore('sites', {
 
     async createSite(input: SiteInput): Promise<Site> {
       const site = await invoke<Site>(INVOKE_CHANNELS.sitesCreate, withNameFallback(input))
-      await this.fetchSites()
+      await this.fetchSites(true)
       return site
     },
 
@@ -70,7 +73,7 @@ export const useSitesStore = defineStore('sites', {
 
     async updateSite(id: string, input: SiteInput): Promise<Site> {
       const site = await invoke<Site>(INVOKE_CHANNELS.sitesUpdate, id, withNameFallback(input))
-      await this.fetchSites()
+      await this.fetchSites(true)
       return site
     },
 
@@ -81,14 +84,27 @@ export const useSitesStore = defineStore('sites', {
 
     /** Deletes multiple sites (e.g. cleaning up duplicate imports) in parallel — independent deletes, no shared state between them. */
     async deleteSites(ids: string[]): Promise<void> {
-      await Promise.all(ids.map((id) => invoke<void>(INVOKE_CHANNELS.sitesDelete, id)))
-      const removed = new Set(ids)
-      this.sites = this.sites.filter((s) => !removed.has(s.id))
+      const results = await Promise.allSettled(ids.map((id) => invoke<void>(INVOKE_CHANNELS.sitesDelete, id)))
+      const removed = new Set<string>()
+      let firstError: unknown = null
+      results.forEach((res, idx) => {
+        if (res.status === 'fulfilled') {
+          removed.add(ids[idx])
+        } else if (firstError === null) {
+          firstError = res.reason
+        }
+      })
+      if (removed.size > 0) {
+        this.sites = this.sites.filter((s) => !removed.has(s.id))
+      }
+      if (firstError !== null) {
+        throw firstError
+      }
     },
 
     async duplicateSite(id: string): Promise<void> {
       await invoke<Site>(INVOKE_CHANNELS.sitesDuplicate, id)
-      await this.fetchSites()
+      await this.fetchSites(true)
     },
 
     /** Scans WinSCP/PuTTY's saved sessions (Windows only) — read-only, does not create anything. */

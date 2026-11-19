@@ -39,11 +39,18 @@ export function useTransferIntents() {
     }
     const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
     if (sourceSide === 'local') {
-      const remoteTarget = `${(targetDir ?? remoteFs.currentPath).replace(/\/$/, '')}/${entry.name}`
+      const remoteBase = targetDir ?? remoteFs.currentPath
+      if (!remoteBase) {
+        return null
+      }
+      const remoteTarget = `${remoteBase.replace(/\/+$/, '')}/${entry.name}`
       return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name, ...source }
     } else {
       const localBase = targetDir ?? localFs.currentPath
-      const localDir = localBase.replace(/[/\\]$/, '')
+      if (!localBase) {
+        return null
+      }
+      const localDir = localBase.replace(/[/\\]+$/, '')
       const sep = localBase.includes('\\') ? '\\' : '/'
       const localTarget = `${localDir}${sep}${entry.name}`
       return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name, ...source }
@@ -53,12 +60,17 @@ export function useTransferIntents() {
   async function checkAndQueueTransfers(intents: TransferIntent[], targetStore: { entries: FileEntry[] }): Promise<void> {
     const conflicts: Array<{ intent: TransferIntent; target: FileEntry }> = []
     for (const intent of intents) {
-      const target = targetStore.entries.find((e) => e.name === intent.targetName)
+      const caseInsensitive = intent.direction === 'download' && intent.localPath.includes('\\')
+      const needle = caseInsensitive ? intent.targetName.toLowerCase() : intent.targetName
+      const target = targetStore.entries.find((e) => (caseInsensitive ? e.name.toLowerCase() : e.name) === needle)
       if (target) {
         conflicts.push({ intent, target })
       }
     }
     if (conflicts.length > 0) {
+      if (transferConflict.value) {
+        cleanupUnusedStagedPaths(transferConflict.value.intents, [])
+      }
       transferConflict.value = { intents, targets: [...targetStore.entries], conflicts }
       return
     }

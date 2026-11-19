@@ -40,5 +40,6 @@ export function isArchive(name: string): boolean {
 /** Strips the recognized archive suffix, e.g. `report.tar.gz` -> `report` — used to name the extraction target folder. */
 export function archiveBaseName(name: string): string {
   const match = matchSuffix(name)
-  return match ? name.slice(0, name.length - match.suffix.length) : name
+  const stripped = match ? name.slice(0, name.length - match.suffix.length) : name
+  return stripped || name
 }

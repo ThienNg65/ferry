@@ -25,6 +25,8 @@ interface TerminalEntry {
 export class TerminalManager {
   private static instance: TerminalManager | null = null
   private readonly terminals = new Map<string, TerminalEntry>()
+  private readonly openingTerminals = new Set<string>()
+  private readonly cancelledOpens = new Set<string>()
 
   static getInstance(): TerminalManager {
     if (TerminalManager.instance === null) {
@@ -45,28 +47,55 @@ export class TerminalManager {
 
   /** Opens a PTY shell on `sessionId`'s connection. `terminalId` is caller-chosen. */
   async open(terminalId: string, sessionId: string, cols: number, rows: number): Promise<void> {
-    const shell = SessionManager.getInstance().shell(sessionId)
-    const cwd = SessionManager.getInstance().cwd(sessionId)
-    const hasCwd = Boolean(cwd) && cwd !== '.'
-    const openPlain = async (): Promise<void> => {
-      const plain = await shell.openShell({ cols, rows })
-      this.attach(terminalId, sessionId, plain)
-      if (hasCwd) {
-        plain.write(` cd ${shellEscape(cwd)}\n`)
-      }
-    }
-    if (!hasCwd) {
-      await openPlain()
-      return
-    }
-    let stream: ClientChannel
+    this.cancelledOpens.delete(terminalId)
+    this.openingTerminals.add(terminalId)
     try {
-      stream = await shell.openShellAt(cwd, { cols, rows })
-    } catch {
-      await openPlain()
-      return
+      const shell = SessionManager.getInstance().shell(sessionId)
+      const cwd = SessionManager.getInstance().cwd(sessionId)
+      const hasCwd = Boolean(cwd) && cwd !== '.'
+      const openPlain = async (): Promise<void> => {
+        this.openingTerminals.add(terminalId)
+        try {
+          const plain = await shell.openShell({ cols, rows })
+          if (this.cancelledOpens.has(terminalId)) {
+            this.cancelledOpens.delete(terminalId)
+            plain.end()
+            ;(plain as unknown as { destroy?: () => void }).destroy?.()
+            return
+          }
+          this.attach(terminalId, sessionId, plain)
+          if (hasCwd) {
+            plain.write(` cd ${shellEscape(cwd)}\n`)
+          }
+        } finally {
+          this.openingTerminals.delete(terminalId)
+        }
+      }
+      if (!hasCwd) {
+        await openPlain()
+        return
+      }
+      let stream: ClientChannel
+      try {
+        stream = await shell.openShellAt(cwd, { cols, rows })
+      } catch {
+        if (this.cancelledOpens.has(terminalId)) {
+          this.cancelledOpens.delete(terminalId)
+          return
+        }
+        await openPlain()
+        return
+      }
+      if (this.cancelledOpens.has(terminalId)) {
+        this.cancelledOpens.delete(terminalId)
+        stream.end()
+        ;(stream as unknown as { destroy?: () => void }).destroy?.()
+        return
+      }
+      this.attach(terminalId, sessionId, stream, openPlain)
+    } finally {
+      this.openingTerminals.delete(terminalId)
     }
-    this.attach(terminalId, sessionId, stream, openPlain)
   }
 
   private attach(terminalId: string, sessionId: string, stream: ClientChannel, fallback?: () => Promise<void>): void {
@@ -87,8 +116,16 @@ export class TerminalManager {
       flow.sent(text.length)
       this.broadcastData(terminalId, text)
     }
-    const batcher = new OutputBatcher((buf) => emitText(decoder.write(buf)))
+    const batcher = new OutputBatcher((buf) => {
+      if (this.terminals.get(terminalId) !== entry) {
+        return
+      }
+      emitText(decoder.write(buf))
+    })
     stream.on('data', (chunk: Buffer) => {
+      if (this.terminals.get(terminalId) !== entry) {
+        return
+      }
       sawData = true
       batcher.push(chunk)
     })
@@ -96,15 +133,19 @@ export class TerminalManager {
       entry.exitCode = code
     })
     stream.on('close', () => {
-      batcher.flush()
-      emitText(decoder.end())
       const closedByUser = this.terminals.get(terminalId) !== entry
-      this.terminals.delete(terminalId)
+      batcher.flush()
+      if (!closedByUser) {
+        emitText(decoder.end())
+        this.terminals.delete(terminalId)
+      }
       if (fallback && !closedByUser && !sawData && Date.now() - startedAt < EARLY_EXIT_MS) {
         void fallback().catch(() => this.broadcastExit(terminalId, entry.exitCode))
         return
       }
-      this.broadcastExit(terminalId, entry.exitCode)
+      if (!closedByUser) {
+        this.broadcastExit(terminalId, entry.exitCode)
+      }
     })
   }
 
@@ -126,10 +167,15 @@ export class TerminalManager {
   close(terminalId: string): void {
     const entry = this.terminals.get(terminalId)
     if (!entry) {
+      if (this.openingTerminals.has(terminalId)) {
+        this.cancelledOpens.add(terminalId)
+      }
       return
     }
-    entry.stream.end()
     this.terminals.delete(terminalId)
+    entry.stream.end()
+    ;(entry.stream as unknown as { close?: () => void; destroy?: () => void }).close?.()
+    ;(entry.stream as unknown as { destroy?: () => void }).destroy?.()
   }
 
   /** Closes every terminal bound to a session — called when that session closes. */

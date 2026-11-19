@@ -44,7 +44,25 @@ function toCloneable(value: unknown): unknown {
   if (value === null || value === undefined || typeof value !== 'object') {
     return value
   }
-  return JSON.parse(JSON.stringify(value))
+  if (value instanceof Uint8Array) {
+    return new Uint8Array(value)
+  }
+  if (value instanceof ArrayBuffer) {
+    return value.slice(0)
+  }
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  if (Array.isArray(value)) {
+    return value.map(toCloneable)
+  }
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry !== undefined && typeof entry !== 'function' && typeof entry !== 'symbol') {
+      out[key] = toCloneable(entry)
+    }
+  }
+  return out
 }
 
 const MAX_PERF_SAMPLES = 100

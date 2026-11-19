@@ -38,6 +38,15 @@ describe('partitionPrompts', () => {
     expect(autoAnswered.get(0)).toBe('secret123')
     expect(needsUser).toEqual([{ index: 1, prompt: 'Verification code:', echo: false }])
   })
+
+  it('does not auto-answer one-time or TOTP password prompts with the login password', () => {
+    const { autoAnswered, needsUser } = partitionPrompts(
+      [{ prompt: 'One-time password:' }, { prompt: 'TOTP password:' }],
+      'secret123'
+    )
+    expect(autoAnswered.size).toBe(0)
+    expect(needsUser).toHaveLength(2)
+  })
 })
 
 describe('mergeAnswers', () => {

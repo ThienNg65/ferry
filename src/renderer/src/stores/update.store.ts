@@ -152,6 +152,7 @@ export const useUpdateStore = defineStore('update', {
       if (this.installing || this.status !== 'downloaded') {
         return
       }
+      this.installing = true
 
       const activeWorkItems: string[] = []
       const transfers = useTransferQueueStore()
@@ -183,19 +184,25 @@ export const useUpdateStore = defineStore('update', {
 
       if (activeWorkItems.length > 0) {
         const confirm = useConfirm()
-        const ok = await confirm({
-          title: this.availableVersion ? `Restart Ferry to install v${this.availableVersion}?` : 'Restart Ferry to install update?',
-          body: 'Restarting now will close the application and launch the installer:',
-          items: activeWorkItems,
-          confirmLabel: 'Restart & Install',
-          confirmColor: 'warning'
-        })
+        let ok = false
+        try {
+          ok = await confirm({
+            title: this.availableVersion ? `Restart Ferry to install v${this.availableVersion}?` : 'Restart Ferry to install update?',
+            body: 'Restarting now will close the application and launch the installer:',
+            items: activeWorkItems,
+            confirmLabel: 'Restart & Install',
+            confirmColor: 'warning'
+          })
+        } catch {
+          this.installing = false
+          return
+        }
         if (!ok) {
+          this.installing = false
           return
         }
       }
 
-      this.installing = true
       const notify = useNotify()
       try {
         await invoke<void>(INVOKE_CHANNELS.updateInstallNow)

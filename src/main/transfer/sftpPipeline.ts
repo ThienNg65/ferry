@@ -133,6 +133,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
 
   let localHandle: FileHandle | null = null
   let remoteHandle: Buffer | null = null
+  let workersPromiseRef: Promise<unknown> | null = null
 
   try {
     const localFlags = kind === 'upload' ? 'r' : offset > 0 ? 'r+' : 'w'
@@ -242,6 +243,7 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
     }
 
     const workersPromise = Promise.all(Array.from({ length: workerCount }, () => runWorker())).then(() => undefined)
+    workersPromiseRef = Promise.allSettled([workersPromise])
     // Prevent unhandled rejection when abortPromise wins the race while workers unwind.
     workersPromise.catch(() => undefined)
 
@@ -254,9 +256,17 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
       }
     }
   } finally {
-    await Promise.all([
-      remoteHandle ? sftpClose(sftp, remoteHandle).catch(() => undefined) : Promise.resolve(),
-      localHandle ? localHandle.close().catch(() => undefined) : Promise.resolve()
-    ])
+    // Close the remote handle first so any stuck SFTP read/write unwinds, then wait for all
+    // workers to settle before closing the local FileHandle (closing a Node FileHandle with
+    // in-flight read/write rejects with EBUSY and leaks the FD on Windows).
+    if (remoteHandle) {
+      await sftpClose(sftp, remoteHandle).catch(() => undefined)
+    }
+    if (workersPromiseRef) {
+      await workersPromiseRef
+    }
+    if (localHandle) {
+      await localHandle.close().catch(() => undefined)
+    }
   }
 }

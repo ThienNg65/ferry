@@ -419,6 +419,12 @@ export const useSessionsStore = defineStore('sessions', {
       tab.sessionId = nextSessionId
       if (previousSessionId) {
         useTailStreamsStore().rebindSession?.(previousSessionId, nextSessionId)
+        this.clearPromptsForSession(previousSessionId)
+        useRemoteFsStore().clearSession(previousSessionId)
+        useFileFiltersStore().clearEphemeralSession(previousSessionId)
+        useMonitorStore().clearSession(previousSessionId)
+        void useTerminalStreamsStore().disposeForSession(previousSessionId).catch(() => {})
+        void invoke<void>(INVOKE_CHANNELS.sessionClose, previousSessionId).catch(() => {})
       }
       tab.progressMessages = []
       tab.statusMessage = null
@@ -615,7 +621,10 @@ export const useSessionsStore = defineStore('sessions', {
       if (existing) {
         const previousTab = this.activeTab
         const previousWasEmptyPicker =
-          previousTab.sessionId === null && previousTab.status === null && !previousTab.connecting
+          previousTab.sessionId === null &&
+          previousTab.siteId === null &&
+          previousTab.status === null &&
+          !previousTab.connecting
         this.setActiveTab(existing.tabId)
         if (previousWasEmptyPicker && previousTab.tabId !== existing.tabId) {
           this.tabs = this.tabs.filter((t) => t.tabId !== previousTab.tabId)

@@ -165,18 +165,42 @@ export function parseUpdateManifest(yamlText: string): UpdateManifest | null {
 
 /** Returns > 0 when `a` is strictly newer than `b` (`x.y.z[-pre]` ordering). */
 export function compareSemver(a: string, b: string): number {
-  const [aCore, aPre] = a.replace(/^v/, '').split('-', 2)
-  const [bCore, bPre] = b.replace(/^v/, '').split('-', 2)
-  const aParts = aCore.split('.').map((n) => Number.parseInt(n, 10) || 0)
-  const bParts = bCore.split('.').map((n) => Number.parseInt(n, 10) || 0)
-  const len = Math.max(aParts.length, bParts.length, 3)
+  const splitVer = (raw: string): { parts: number[]; pre: string[] } => {
+    const clean = raw.replace(/^v/, '').split('+', 1)[0]
+    const dash = clean.indexOf('-')
+    const core = dash === -1 ? clean : clean.slice(0, dash)
+    const preRaw = dash === -1 ? '' : clean.slice(dash + 1)
+    return {
+      parts: core.split('.').map((n) => Number.parseInt(n, 10) || 0),
+      pre: preRaw ? preRaw.split('.') : []
+    }
+  }
+  const av = splitVer(a)
+  const bv = splitVer(b)
+  const len = Math.max(av.parts.length, bv.parts.length, 3)
   for (let i = 0; i < len; i++) {
-    const diff = (aParts[i] ?? 0) - (bParts[i] ?? 0)
+    const diff = (av.parts[i] ?? 0) - (bv.parts[i] ?? 0)
     if (diff !== 0) return diff
   }
-  if (!aPre && bPre) return 1
-  if (aPre && !bPre) return -1
-  if (aPre && bPre) return aPre.localeCompare(bPre)
+  if (av.pre.length === 0 && bv.pre.length > 0) return 1
+  if (av.pre.length > 0 && bv.pre.length === 0) return -1
+  const preLen = Math.max(av.pre.length, bv.pre.length)
+  for (let i = 0; i < preLen; i++) {
+    const ap = av.pre[i]
+    const bp = bv.pre[i]
+    if (ap === undefined) return -1
+    if (bp === undefined) return 1
+    if (ap === bp) continue
+    const aNum = /^\d+$/.test(ap)
+    const bNum = /^\d+$/.test(bp)
+    if (aNum && bNum) {
+      return Number(ap) - Number(bp)
+    }
+    if (aNum !== bNum) {
+      return aNum ? -1 : 1
+    }
+    return ap < bp ? -1 : 1
+  }
   return 0
 }
 
@@ -201,6 +225,7 @@ const DEFAULT_MANIFEST_TIMEOUT_MS = 15_000
 const DEFAULT_DOWNLOAD_IDLE_TIMEOUT_MS = 30_000
 const DEFAULT_EXIT_DELAY_MS = 1_500
 const MAX_REDIRECTS = 5
+const MAX_INSTALLER_BYTES = 512 * 1024 * 1024
 
 type ExitShutdownHandler = (code: number) => Promise<void> | void
 let registeredExitHandler: ExitShutdownHandler | null = null
@@ -323,12 +348,15 @@ export class SidecarUpdater extends EventEmitter {
   private downloadInFlight: Promise<string> | null = null
   private pendingDownloadVersion: string | null = null
   private exitTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly hasExplicitFeedUrl: boolean
   private readonly deps: Required<SidecarUpdaterDeps>
 
   constructor(deps: SidecarUpdaterDeps = {}) {
     super()
+    this.hasExplicitFeedUrl = typeof deps.feedUrl === 'string' && deps.feedUrl.length > 0
+    const envFeedUrl = !host().isPackaged ? process.env['FERRY_UPDATE_FEED_URL'] : undefined
     this.deps = {
-      feedUrl: deps.feedUrl ?? (process.env['FERRY_UPDATE_FEED_URL'] || DEFAULT_UPDATE_FEED_URL),
+      feedUrl: deps.feedUrl ?? (envFeedUrl || DEFAULT_UPDATE_FEED_URL),
       downloadDir: deps.downloadDir ?? path.join(os.tmpdir(), 'ferry-updater'),
       fetchImpl: deps.fetchImpl ?? fetch,
       createWriteStreamImpl: deps.createWriteStreamImpl ?? createWriteStream,
@@ -362,6 +390,10 @@ export class SidecarUpdater extends EventEmitter {
       throw new Error(`Refusing insecure non-HTTPS update URL: ${parsed.toString()}`)
     }
     if (kind === 'feed') {
+      if (!this.hasExplicitFeedUrl && host().isPackaged && !TRUSTED_GITHUB_HOSTS.has(parsed.hostname)) {
+        logSecurityEvent('updater.untrusted_feed_origin', { url: parsed.toString() })
+        throw new Error(`Refusing untrusted update feed origin: ${parsed.origin}`)
+      }
       return
     }
     if (parsed.origin !== feedOrigin && !TRUSTED_GITHUB_HOSTS.has(parsed.hostname)) {
@@ -374,7 +406,8 @@ export class SidecarUpdater extends EventEmitter {
   }
 
   private getFeedBase(): string {
-    const raw = (process.env['FERRY_UPDATE_FEED_URL'] || this.deps.feedUrl).replace(/\/+$/, '')
+    const envFeedUrl = !host().isPackaged ? process.env['FERRY_UPDATE_FEED_URL'] : undefined
+    const raw = (this.hasExplicitFeedUrl ? this.deps.feedUrl : envFeedUrl || this.deps.feedUrl).replace(/\/+$/, '')
     let parsed: URL
     try {
       parsed = new URL(raw)
@@ -519,6 +552,8 @@ export class SidecarUpdater extends EventEmitter {
     }
 
     const total = Number(res.headers.get('content-length')) || manifest.size || 0
+    const maxBytes =
+      manifest.size && manifest.size > 0 ? Math.min(manifest.size, MAX_INSTALLER_BYTES) : MAX_INSTALLER_BYTES
     const hash = createHash('sha512')
     const fileStream = this.deps.createWriteStreamImpl(tmpPath)
     let streamError: Error | null = null
@@ -540,8 +575,11 @@ export class SidecarUpdater extends EventEmitter {
         if (done) break
         if (streamError) throw streamError
         const buf = Buffer.from(value)
-        hash.update(buf)
         transferred += buf.length
+        if (transferred > maxBytes) {
+          throw new Error(`Installer download exceeded expected size limit (${maxBytes} bytes)`)
+        }
+        hash.update(buf)
         if (!fileStream.write(buf)) {
           await waitForStreamDrain(fileStream, () => streamError)
         }
@@ -578,8 +616,34 @@ export class SidecarUpdater extends EventEmitter {
       throw new Error(`SHA-512 verification failed for ${safeName}`)
     }
 
-    rmSync(finalPath, { force: true })
-    renameSync(tmpPath, finalPath)
+    try {
+      rmSync(finalPath, { force: true })
+      let lastRenameErr: unknown = null
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          renameSync(tmpPath, finalPath)
+          lastRenameErr = null
+          break
+        } catch (err) {
+          lastRenameErr = err
+          const code = (err as NodeJS.ErrnoException)?.code
+          if (code !== 'EBUSY' && code !== 'EPERM') {
+            throw err
+          }
+          await new Promise((r) => setTimeout(r, 50 * (attempt + 1)))
+        }
+      }
+      if (lastRenameErr) {
+        throw lastRenameErr
+      }
+    } catch (err) {
+      try {
+        rmSync(tmpPath, { force: true })
+      } catch {
+        // Best-effort cleanup.
+      }
+      throw err
+    }
     return finalPath
   }
 

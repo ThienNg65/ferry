@@ -193,4 +193,45 @@ describe('usePaneKeyboard Home/End/PageUp/PageDown', () => {
     await onKeydown(makeKeyEvent('ArrowDown'))
     expect(selectOnly).toHaveBeenLastCalledWith('/dir/file-3.txt')
   })
+
+  it('extends Shift+ArrowUp multi-row selection upward beyond one item', async () => {
+    const entries = makeEntries(6)
+    let selected = new Set<string>(['/dir/file-4.txt'])
+    let anchor: string | null = '/dir/file-4.txt'
+    const store = {
+      get selected() {
+        return selected
+      },
+      selectOnly: (p: string) => {
+        selected = new Set([p])
+        anchor = p
+      },
+      selectRange: (p: string) => {
+        const a = entries.findIndex((e) => e.path === anchor)
+        const b = entries.findIndex((e) => e.path === p)
+        const lo = Math.min(a, b)
+        const hi = Math.max(a, b)
+        selected = new Set(entries.slice(lo, hi + 1).map((e) => e.path))
+      }
+    }
+
+    const onKeydown = usePaneKeyboard({
+      side: 'local',
+      store: store as never,
+      renamingPath: ref(null),
+      filterText: ref(''),
+      filteredEntries: ref(entries),
+      toolbarRef: ref(null),
+      fileListRef: ref({ scrollToIndex: vi.fn() }),
+      onTransferSelected: vi.fn(),
+      onOpen: vi.fn(),
+      confirmDeleteEntries: vi.fn()
+    })
+
+    await onKeydown(makeKeyEvent('ArrowUp', true))
+    expect([...selected]).toEqual(['/dir/file-3.txt', '/dir/file-4.txt'])
+
+    await onKeydown(makeKeyEvent('ArrowUp', true))
+    expect([...selected]).toEqual(['/dir/file-2.txt', '/dir/file-3.txt', '/dir/file-4.txt'])
+  })
 })

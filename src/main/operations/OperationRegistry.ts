@@ -25,6 +25,7 @@ export interface OperationContext {
 interface OperationEntry {
   controller: AbortController
   meta: OperationMeta
+  siteName?: string
   startedAt: number
   lastProgressEmit: number
 }
@@ -57,17 +58,22 @@ export class OperationRegistry {
 
   private readonly operations = new Map<string, OperationEntry>()
   /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect an operation's own outcome (see `notifyTerminal`). */
-  private readonly terminalListeners: Array<(evt: OperationEvent) => void> = []
+  private readonly terminalListeners: Array<(evt: OperationEvent, siteName?: string) => void> = []
+  private siteNameResolver: ((sessionId: string) => string | undefined) | null = null
+
+  setSiteNameResolver(resolver: (sessionId: string) => string | undefined): void {
+    this.siteNameResolver = resolver
+  }
 
   /** Subscribes to every operation's terminal event (done/error/cancelled) — additive to the existing `webContents.send` broadcast, not a replacement for it. */
-  onTerminalEvent(listener: (evt: OperationEvent) => void): void {
+  onTerminalEvent(listener: (evt: OperationEvent, siteName?: string) => void): void {
     this.terminalListeners.push(listener)
   }
 
-  private notifyTerminal(evt: OperationEvent): void {
+  private notifyTerminal(evt: OperationEvent, siteName?: string): void {
     for (const listener of this.terminalListeners) {
       try {
-        listener(evt)
+        listener(evt, siteName)
       } catch {
         // A listener's own failure (e.g. HistoryStore disk write) must never
         // surface as an operation failure — this channel is purely additive.
@@ -83,9 +89,11 @@ export class OperationRegistry {
    */
   async run<T>(meta: OperationMeta, fn: (ctx: OperationContext) => Promise<T>): Promise<T> {
     const operationId = randomUUID()
+    const siteName = meta.sessionId ? this.siteNameResolver?.(meta.sessionId) : undefined
     const entry: OperationEntry = {
       controller: new AbortController(),
       meta,
+      siteName,
       startedAt: Date.now(),
       lastProgressEmit: 0
     }
@@ -93,6 +101,9 @@ export class OperationRegistry {
     this.broadcast(operationId, entry, { state: 'started' })
 
     const reportProgress = (current: number, total?: number, unit?: 'bytes' | 'items'): void => {
+      if (this.operations.get(operationId) !== entry) {
+        return
+      }
       const now = Date.now()
       const isFinal = total !== undefined && current >= total
       if (now - entry.lastProgressEmit < PROGRESS_THROTTLE_MS && !isFinal) {
@@ -109,14 +120,14 @@ export class OperationRegistry {
 
     try {
       const result = await fn({ signal: entry.controller.signal, reportProgress })
-      this.notifyTerminal(this.broadcast(operationId, entry, { state: 'done' }))
+      this.notifyTerminal(this.broadcast(operationId, entry, { state: 'done' }), entry.siteName)
       return result
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || entry.controller.signal.aborted
       const evt = cancelled
         ? this.broadcast(operationId, entry, { state: 'cancelled' })
         : this.broadcast(operationId, entry, { state: 'error', error: e instanceof Error ? e.message : String(e) })
-      this.notifyTerminal(evt)
+      this.notifyTerminal(evt, entry.siteName)
       throw e
     } finally {
       this.operations.delete(operationId)

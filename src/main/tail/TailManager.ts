@@ -161,6 +161,9 @@ export class TailManager {
     }
     let currentAttempt = attempt
     let readyEmitted = false
+    let pidConsumed = false
+    let sawLogLine = false
+    const attemptStartMs = Date.now()
     let stderrBuf = ''
     const flushStderr = (final: boolean): void => {
       const parts = stderrBuf.split('\n')
@@ -182,7 +185,7 @@ export class TailManager {
     }
     try {
       const shell = SessionManager.getInstance().shell(entry.sessionId)
-      const command = `printf '${PID_MARKER}%s\\n' $$; exec tail -n ${historyLines} -F ${shellEscape(entry.remotePath)}`
+      const command = `printf '${PID_MARKER}%s\\n' $$; exec tail -n ${historyLines} -F -- ${shellEscape(entry.remotePath)}`
       const exitCode = await shell.execLines(command, {
         signal: entry.controller.signal,
         timeoutMs: 6 * 60 * 60 * 1000, // effectively unbounded; the reaper handles idle streams
@@ -190,15 +193,19 @@ export class TailManager {
           if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
             return
           }
-          entry.lastActive = Date.now()
-          if (line.startsWith(PID_MARKER)) {
-            const pid = parseInt(line.slice(PID_MARKER.length).trim(), 10)
-            if (!Number.isNaN(pid) && pid > 0) {
-              entry.remotePid = pid
+          if (!pidConsumed) {
+            pidConsumed = true
+            if (line.startsWith(PID_MARKER)) {
+              const pid = parseInt(line.slice(PID_MARKER.length).trim(), 10)
+              if (!Number.isNaN(pid) && pid > 0) {
+                entry.remotePid = pid
+              }
+              markHealthy()
+              return
             }
-            markHealthy()
-            return
           }
+          sawLogLine = true
+          entry.lastActive = Date.now()
           markHealthy()
           this.broadcastLine(tailId, line)
         },
@@ -219,7 +226,8 @@ export class TailManager {
         return
       }
       entry.remotePid = null
-      await this.reconnect(tailId, historyLines, currentAttempt)
+      const nextAttempt = !sawLogLine && Date.now() - attemptStartMs < 5_000 ? attempt : currentAttempt
+      await this.reconnect(tailId, historyLines, nextAttempt)
     } catch (e) {
       flushStderr(true)
       if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {

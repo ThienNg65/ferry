@@ -19,7 +19,7 @@ export function useNotify() {
             variant: 'outline' as const,
             onClick: (e) => {
               e?.stopPropagation()
-              void navigator.clipboard.writeText(description ? `${title}: ${description}` : title)
+              void navigator.clipboard.writeText(description ? `${title}: ${description}` : title).catch(() => {})
             }
           }
         ]

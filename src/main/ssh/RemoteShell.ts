@@ -95,21 +95,65 @@ export class RemoteShell {
     })
   }
 
-  execWithStdin(command: string, input?: Buffer): Promise<{ stdout: Buffer; stderr: string; code: number | null }> {
+  execWithStdin(
+    command: string,
+    input?: Buffer,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+  ): Promise<{ stdout: Buffer; stderr: string; code: number | null }> {
+    const timeoutMs = opts.timeoutMs ?? 120_000
     return new Promise((resolve, reject) => {
+      if (opts.signal?.aborted) {
+        reject(new SshError('CANCELLED', 'Command cancelled'))
+        return
+      }
+      let settled = false
+      let activeStream: ClientChannel | null = null
+      let timer: ReturnType<typeof setTimeout> | null = null
+
+      const cleanup = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+        opts.signal?.removeEventListener('abort', onAbort)
+      }
+      const fail = (e: SshError): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        activeStream?.destroy()
+        reject(e)
+      }
+      const onAbort = (): void => fail(new SshError('CANCELLED', 'Command cancelled'))
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+
+      timer = setTimeout(() => {
+        fail(new SshError('SSH_TIMEOUT', `Command timed out after ${timeoutMs}ms`, true))
+      }, timeoutMs)
+
       this.client.exec(command, (execErr, stream) => {
         if (execErr) {
-          reject(new SshError('SSH_EXEC', execErr.message))
+          fail(new SshError('SSH_EXEC', execErr.message))
           return
         }
+        if (settled) {
+          stream.destroy()
+          return
+        }
+        activeStream = stream
         const out: Buffer[] = []
         let stderr = ''
         stream.on('data', (chunk: Buffer) => out.push(chunk))
         stream.stderr.on('data', (chunk: Buffer) => {
           stderr += chunk.toString()
         })
-        stream.on('close', (code: number | null) => resolve({ stdout: Buffer.concat(out), stderr, code }))
-        stream.on('error', (e: Error) => reject(new SshError('SSH_EXEC', e.message)))
+        stream.on('close', (code: number | null) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          resolve({ stdout: Buffer.concat(out), stderr, code })
+        })
+        stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message)))
         stream.end(input)
       })
     })
@@ -128,6 +172,7 @@ export class RemoteShell {
       const cleanup = (): void => {
         if (timer) {
           clearTimeout(timer)
+          timer = null
         }
         opts.signal?.removeEventListener('abort', onAbort)
       }
@@ -148,6 +193,10 @@ export class RemoteShell {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
 
+      timer = setTimeout(() => {
+        fail(new SshError('SSH_TIMEOUT', `Command timed out after ${timeoutMs}ms`, true))
+      }, timeoutMs)
+
       this.client.exec(command, (execErr, stream) => {
         if (execErr) {
           fail(new SshError('SSH_EXEC', execErr.message, true))
@@ -160,11 +209,6 @@ export class RemoteShell {
         }
         activeStream = stream
 
-        timer = setTimeout(() => {
-          stream.destroy()
-          fail(new SshError('SSH_TIMEOUT', `Command timed out after ${timeoutMs}ms`, true))
-        }, timeoutMs)
-
         let stdout = ''
         let stderr = ''
         stream.on('data', (chunk: Buffer) => {
@@ -173,6 +217,7 @@ export class RemoteShell {
         stream.stderr.on('data', (chunk: Buffer) => {
           stderr += chunk.toString()
         })
+        stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message, true)))
         stream.on('close', (code: number | null) => {
           if (settled) {
             return
@@ -230,6 +275,16 @@ export class RemoteShell {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
 
+      const arm = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+        }
+        timer = setTimeout(() => {
+          fail(new SshError('SSH_TIMEOUT', `Stream idle for ${timeoutMs}ms`, true))
+        }, timeoutMs)
+      }
+      arm()
+
       this.client.exec(command, (execErr, stream) => {
         if (execErr) {
           fail(new SshError('SSH_EXEC', execErr.message, true))
@@ -241,16 +296,6 @@ export class RemoteShell {
           return
         }
         activeStream = stream
-
-        const arm = (): void => {
-          if (timer) {
-            clearTimeout(timer)
-          }
-          timer = setTimeout(() => {
-            stream.destroy()
-            fail(new SshError('SSH_TIMEOUT', `Stream idle for ${timeoutMs}ms`, true))
-          }, timeoutMs)
-        }
         arm()
 
         let buf = ''
@@ -274,6 +319,7 @@ export class RemoteShell {
           arm()
           opts.onStderr?.(chunk.toString())
         })
+        stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message, true)))
         stream.on('close', (code: number | null) => {
           if (settled) {
             return
@@ -314,7 +360,7 @@ export class RemoteShell {
 
   openShellAt(cwd: string, opts: { cols: number; rows: number }): Promise<ClientChannel> {
     return new Promise((resolve, reject) => {
-      const command = `cd ${shellEscape(cwd)} 2>/dev/null; exec "$SHELL" -l`
+      const command = `cd ${shellEscape(cwd)} 2>/dev/null; exec "\${SHELL:-/bin/sh}" -l`
       this.client.exec(command, { pty: { term: 'xterm-256color', cols: opts.cols, rows: opts.rows } }, (err, stream) => {
         if (err) {
           reject(new SshError('SSH_EXEC', err.message))
@@ -330,16 +376,26 @@ export class RemoteShell {
   /** Lazily opens (and caches) the SFTP subsystem for this connection. */
   sftp(): Promise<SFTPWrapper> {
     if (!this.sftpPromise) {
-      this.sftpPromise = new Promise<SFTPWrapper>((resolve, reject) => {
+      const pending = new Promise<SFTPWrapper>((resolve, reject) => {
         this.client.sftp((sftpErr, sftp) => {
           if (sftpErr) {
-            this.sftpPromise = null
+            if (this.sftpPromise === pending) {
+              this.sftpPromise = null
+            }
             reject(new SshError('SFTP', `SFTP subsystem error: ${sftpErr.message}`, true))
             return
           }
+          const clear = (): void => {
+            if (this.sftpPromise === pending) {
+              this.sftpPromise = null
+            }
+          }
+          sftp.once('close', clear)
+          sftp.on('error', clear)
           resolve(sftp)
         })
       })
+      this.sftpPromise = pending
     }
     return this.sftpPromise
   }
@@ -350,7 +406,8 @@ export class RemoteShell {
     return new Promise<SftpEntry[]>((resolve, reject) => {
       sftp.readdir(remotePath, (readErr, list) => {
         if (readErr) {
-          reject(new SshError('SFTP', `Failed to list "${remotePath}": ${readErr.message}`))
+          const code = (readErr as { code?: number }).code === 2 ? 'NOT_FOUND' : 'SFTP'
+          reject(new SshError(code, `Failed to list "${remotePath}": ${readErr.message}`))
           return
         }
         resolve(
@@ -396,13 +453,28 @@ export class RemoteShell {
     })
   }
 
-  /** Stats a remote path. */
+  /** Stats a remote path (following symlinks). */
   async stat(remotePath: string): Promise<Stats> {
     const sftp = await this.sftp()
     return new Promise<Stats>((resolve, reject) => {
       sftp.stat(remotePath, (statErr, stats) => {
         if (statErr) {
           reject(new SshError('NOT_FOUND', `"${remotePath}" not found: ${statErr.message}`))
+          return
+        }
+        resolve(stats)
+      })
+    })
+  }
+
+  /** Stats a remote path without following symlinks. */
+  async lstat(remotePath: string): Promise<Stats> {
+    const sftp = await this.sftp()
+    return new Promise<Stats>((resolve, reject) => {
+      sftp.lstat(remotePath, (statErr, stats) => {
+        if (statErr) {
+          const code = (statErr as { code?: number }).code === 2 ? 'NOT_FOUND' : 'SFTP'
+          reject(new SshError(code, `"${remotePath}" not found: ${statErr.message}`))
           return
         }
         resolve(stats)
@@ -523,7 +595,44 @@ export class RemoteShell {
 
   /** Creates a remote directory and any missing parent directories (`mkdir -p`; no error if it already exists). */
   async mkdirRecursive(remotePath: string): Promise<void> {
-    await this.exec(`mkdir -p ${shellEscape(remotePath)}`)
+    try {
+      const result = await this.exec(`mkdir -p -- ${shellEscape(remotePath)}`)
+      if (result.code === 0) {
+        return
+      }
+    } catch (e) {
+      if (e instanceof SshError && (e.code === 'CANCELLED' || e.code === 'SSH_TIMEOUT')) {
+        throw e
+      }
+    }
+    await this.mkdirRecursiveSftp(remotePath)
+  }
+
+  private async mkdirRecursiveSftp(remotePath: string): Promise<void> {
+    const isAbsolute = remotePath.startsWith('/')
+    const parts = remotePath.split('/').filter(Boolean)
+    let current = isAbsolute ? '' : '.'
+    for (const part of parts) {
+      current = current === '.' ? part : `${current}/${part}`
+      try {
+        const existing = await this.stat(current)
+        if (!existing.isDirectory()) {
+          throw new SshError('SFTP', `Cannot create directory "${current}": path exists as a non-directory`)
+        }
+      } catch (e) {
+        if (e instanceof SshError && e.code !== 'NOT_FOUND') {
+          throw e
+        }
+        try {
+          await this.mkdir(current)
+        } catch (mkdirErr) {
+          const check = await this.stat(current).catch(() => null)
+          if (!check?.isDirectory()) {
+            throw mkdirErr
+          }
+        }
+      }
+    }
   }
 
   /** Recursively walks a remote directory over SFTP, depth-first, parent directories before their children. */
@@ -546,6 +655,9 @@ export class RemoteShell {
             'SFTP',
             `Refusing to process unsafe remote entry name "${entry.filename}" under "${currentPath}"`
           )
+        }
+        if (entry.isSymlink) {
+          continue
         }
         const relPath = relBase ? `${relBase}/${entry.filename}` : entry.filename
         const childPath = `${currentPath.replace(/\/$/, '')}/${entry.filename}`
@@ -597,9 +709,9 @@ export class RemoteShell {
    * normal callers should use.
    */
   private async deleteRecursiveSftp(remotePath: string): Promise<void> {
-    const stats = await this.stat(remotePath)
-    const isDir = stats.isDirectory()
-    if (!isDir) {
+    const stats = await this.lstat(remotePath)
+    // Never follow symlinks during recursive delete — unlink the link itself.
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
       await this.unlink(remotePath)
       return
     }
@@ -607,6 +719,12 @@ export class RemoteShell {
     for (const entry of entries) {
       if (entry.filename === '.' || entry.filename === '..') {
         continue
+      }
+      if (!entry.filename || entry.filename.includes('/') || entry.filename.includes('\\')) {
+        throw new SshError(
+          'SFTP',
+          `Refusing to delete unsafe remote entry name "${entry.filename}" under "${remotePath}"`
+        )
       }
       const childPath = `${remotePath.replace(/\/$/, '')}/${entry.filename}`
       await this.deleteRecursiveSftp(childPath)

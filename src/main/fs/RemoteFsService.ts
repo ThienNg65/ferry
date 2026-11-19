@@ -15,10 +15,10 @@ import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
-  const trimmed = basePath.length > 1 && basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+  const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')
   return {
     name: entry.filename,
-    path: `${trimmed}/${entry.filename}`,
+    path: `${prefix}/${entry.filename}`,
     isDir: entry.isDirectory,
     size: entry.size,
     modifiedAt: entry.mtimeMs > 0 ? new Date(entry.mtimeMs).toISOString() : null,
@@ -179,7 +179,16 @@ export async function downloadForEdit(
     // shared-/tmp Linux/macOS setup.
     const writeStream = createWriteStream(localPath, { mode: 0o600 })
     
+    let settled = false
+    let finished = false
+    const onAbort = (): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new Error('Operation cancelled'))
+    }
     const cleanup = (): void => {
+      signal?.removeEventListener('abort', onAbort)
       readStream.destroy()
       writeStream.destroy()
     }
@@ -189,10 +198,7 @@ export async function downloadForEdit(
         cleanup()
         return reject(new Error('Operation cancelled'))
       }
-      signal.addEventListener('abort', () => {
-        cleanup()
-        reject(new Error('Operation cancelled'))
-      })
+      signal.addEventListener('abort', onAbort, { once: true })
     }
 
     let bytesTransferred = 0
@@ -201,22 +207,42 @@ export async function downloadForEdit(
       onProgress?.(bytesTransferred)
     })
     readStream.on('error', (e: Error) => {
+      if (settled) return
+      settled = true
       cleanup()
       reject(new SshError('SFTP', `Failed to download "${remotePath}": ${e.message}`))
     })
     writeStream.on('error', (e: Error) => {
+      if (settled) return
+      settled = true
       cleanup()
       reject(new SshError('UNKNOWN', `Failed to write "${localPath}": ${e.message}`))
     })
-    writeStream.on('close', () => resolve())
+    writeStream.on('finish', () => {
+      finished = true
+    })
+    writeStream.on('close', () => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      if (!finished) {
+        reject(new SshError('UNKNOWN', `Download stream for "${localPath}" closed before finishing`))
+        return
+      }
+      resolve()
+    })
     readStream.pipe(writeStream)
   })
 }
 
-export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number } | null> {
+export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number | null } | null> {
   try {
     const stats = await SessionManager.getInstance().shell(sessionId).stat(remotePath)
-    return { mtime: stats.mtime ?? 0, size: stats.size ?? 0, mode: stats.mode & 0o7777 }
+    return {
+      mtime: stats.mtime ?? 0,
+      size: stats.size ?? 0,
+      mode: typeof stats.mode === 'number' ? stats.mode & 0o7777 : null
+    }
   } catch {
     return null
   }
@@ -226,12 +252,24 @@ function writeRemoteFile(sftp: SFTPWrapper, localPath: string, remotePath: strin
   return new Promise<void>((resolve, reject) => {
     const readStream = createReadStream(localPath)
     const writeStream = sftp.createWriteStream(remotePath)
+    let settled = false
     readStream.on('error', (e: Error) => {
+      if (settled) return
+      settled = true
       writeStream.destroy()
       reject(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
     })
-    writeStream.on('error', (e: Error) => reject(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`)))
-    writeStream.on('close', () => resolve())
+    writeStream.on('error', (e: Error) => {
+      if (settled) return
+      settled = true
+      readStream.destroy()
+      reject(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`))
+    })
+    writeStream.on('close', () => {
+      if (settled) return
+      settled = true
+      resolve()
+    })
     readStream.pipe(writeStream)
   })
 }
@@ -270,16 +308,23 @@ export async function commitRemoteFile(shell: RemoteShell, tempPath: string, tar
   const sftp = await shell.sftp()
   const resolved = await resolveRemotePath(sftp, target)
   const existing = await shell.stat(resolved).then((s) => s, () => null)
-  if (existing) {
-    await shell.chmod(tempPath, (existing.mode & 0o7777).toString(8).padStart(4, '0'))
+  if (existing && typeof existing.mode === 'number') {
+    const existingMode = existing.mode & 0o7777
+    await shell.chmod(tempPath, existingMode.toString(8).padStart(4, '0')).catch(() => undefined)
   }
   if (!(await posixRename(sftp, tempPath, resolved))) {
     await replaceRemoteFile(shell, tempPath, resolved, existing !== null)
   }
 }
 
-async function sudoExec(shell: RemoteShell, command: string, input?: Buffer, prefix = ''): Promise<Buffer> {
-  const result = await shell.execWithStdin(`${prefix}sudo -n ${command}`, input)
+async function sudoExec(
+  shell: RemoteShell,
+  command: string,
+  input?: Buffer,
+  prefix = '',
+  opts?: { timeoutMs?: number; signal?: AbortSignal }
+): Promise<Buffer> {
+  const result = await shell.execWithStdin(`${prefix}sudo -n ${command}`, input, opts)
   if (result.code !== 0) {
     const message = result.stderr.trim()
     if (/password is required|a terminal is required|no tty present/i.test(message)) {
@@ -301,9 +346,14 @@ export async function statRemoteSudo(sessionId: string, remotePath: string): Pro
   }
 }
 
-export async function downloadForEditSudo(sessionId: string, remotePath: string, localPath: string): Promise<void> {
+export async function downloadForEditSudo(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  signal?: AbortSignal
+): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
-  const content = await sudoExec(shell, `cat -- ${shellEscape(remotePath)}`)
+  const content = await sudoExec(shell, `cat -- ${shellEscape(remotePath)}`, undefined, '', { signal })
   await writeLocalFile(localPath, content, { mode: 0o600 })
 }
 
@@ -339,8 +389,8 @@ export async function uploadForEdit(sessionId: string, localPath: string, remote
       }
       throw e
     }
-    if (existing) {
-      await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0'))
+    if (existing && existing.mode !== null) {
+      await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0')).catch(() => undefined)
     }
     if (!(await posixRename(sftp, tempPath, target))) {
       await replaceRemoteFile(shell, tempPath, target, existing !== null)

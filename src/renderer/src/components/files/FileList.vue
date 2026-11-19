@@ -126,6 +126,14 @@ const bandStyle = computed(() => {
     : {}
 })
 
+let activeBandCleanup: (() => void) | null = null
+let activeResizeCleanup: (() => void) | null = null
+
+onBeforeUnmount(() => {
+  activeBandCleanup?.()
+  activeResizeCleanup?.()
+})
+
 function onBandStart(event: MouseEvent): void {
   const el = scrollEl.value
   if (!el || event.button !== 0) return
@@ -134,6 +142,7 @@ function onBandStart(event: MouseEvent): void {
   if (!onEmptySpace && !event.altKey) return
   if (event.offsetX > el.clientWidth && target === el) return
   event.preventDefault()
+  activeBandCleanup?.()
   const rect = el.getBoundingClientRect()
   const toLocal = (e: MouseEvent): { x: number; y: number } => ({
     x: e.clientX - rect.left + el.scrollLeft,
@@ -155,13 +164,17 @@ function onBandStart(event: MouseEvent): void {
     }
     emit('select-many', [...paths])
   }
-  const onUp = (): void => {
+  const cleanup = (): void => {
     band.value = null
     window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
+    window.removeEventListener('mouseup', cleanup)
+    if (activeBandCleanup === cleanup) {
+      activeBandCleanup = null
+    }
   }
+  activeBandCleanup = cleanup
   window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
+  window.addEventListener('mouseup', cleanup)
 }
 
 function ariaSort(column: SortColumn): 'ascending' | 'descending' | 'none' {
@@ -192,16 +205,27 @@ const columnMenuItems = computed(() => {
 })
 
 function startResize(key: ColumnKey, event: PointerEvent): void {
+  activeResizeCleanup?.()
   const startX = event.clientX
   const startWidth = ui.columns.widths[key] ?? DEFAULT_COLUMN_WIDTHS[key]
   const onMove = (e: PointerEvent): void => ui.setColumnWidth(key, startWidth + (startX - e.clientX))
-  const onUp = (): void => {
+  const cleanup = (persist: boolean): void => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
-    ui.persistColumns()
+    window.removeEventListener('pointercancel', onCancel)
+    if (activeResizeCleanup === onCancel) {
+      activeResizeCleanup = null
+    }
+    if (persist) {
+      ui.persistColumns()
+    }
   }
+  const onUp = (): void => cleanup(true)
+  const onCancel = (): void => cleanup(false)
+  activeResizeCleanup = onCancel
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onCancel)
 }
 </script>
 

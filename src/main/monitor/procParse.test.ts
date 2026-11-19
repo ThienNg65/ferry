@@ -79,6 +79,11 @@ describe('parseProcStat', () => {
     expect(parseProcStat('')).toEqual([])
     expect(parseProcStat('not a stat file\nat all')).toEqual([])
   })
+
+  it('does not double-count guest and guest_nice columns (9th and 10th fields)', () => {
+    const rows = parseProcStat('cpu  100 20 30 800 50 0 0 0 40 10')
+    expect(rows[0].total).toBe(1000)
+  })
 })
 
 describe('cpuPercentages', () => {

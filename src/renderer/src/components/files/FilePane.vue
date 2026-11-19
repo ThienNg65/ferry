@@ -468,7 +468,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
       const sep = store.currentPath.includes('\\') ? '\\' : '/'
       await invoke<void>(INVOKE_CHANNELS.archiveCompressLocal, {
         sourcePath: entry.path,
-        destPath: `${store.currentPath}${sep}${zipName}`
+        destPath: `${store.currentPath.replace(/[/\\]+$/, '')}${sep}${zipName}`
       })
     } else {
       const sessionId = sessions.activeSessionId

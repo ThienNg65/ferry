@@ -91,7 +91,8 @@ export const useMonitorStore = defineStore('monitor', {
         return
       }
       const sampleUnsub = onEvent<MonitorSample>(EVENT_CHANNELS.monitorSample, (sample) => {
-        const bucket = this.ensureBucket(sample.sessionId)
+        const bucket = this.bySession[sample.sessionId]
+        if (!bucket) return
         bucket.latest = sample
         bucket.status = 'started'
         bucket.statusMessage = null
@@ -101,7 +102,11 @@ export const useMonitorStore = defineStore('monitor', {
         }
       })
       const statusUnsub = onEvent<MonitorStatusEvent>(EVENT_CHANNELS.monitorStatus, (evt) => {
-        const bucket = this.ensureBucket(evt.sessionId)
+        const bucket = this.bySession[evt.sessionId]
+        if (!bucket) return
+        if (evt.state === 'stopped' && (bucket.status === 'unsupported' || bucket.status === 'error')) {
+          return
+        }
         bucket.status = evt.state
         bucket.statusMessage = evt.message ?? null
       })

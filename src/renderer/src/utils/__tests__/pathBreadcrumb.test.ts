@@ -66,4 +66,16 @@ describe('pathBreadcrumb', () => {
       current: { label: 'Documents', fullPath: 'C:\\Users\\ferry\\Documents' }
     })
   })
+
+  it('preserves Windows UNC share prefix and relative POSIX paths', () => {
+    expect(parseBreadcrumbSegments('\\\\fileserver\\share\\logs\\nginx')).toEqual([
+      { label: '\\\\fileserver\\share', fullPath: '\\\\fileserver\\share' },
+      { label: 'logs', fullPath: '\\\\fileserver\\share\\logs' },
+      { label: 'nginx', fullPath: '\\\\fileserver\\share\\logs\\nginx' }
+    ])
+    expect(parseBreadcrumbSegments('foo/bar')).toEqual([
+      { label: 'foo', fullPath: 'foo' },
+      { label: 'bar', fullPath: 'foo/bar' }
+    ])
+  })
 })

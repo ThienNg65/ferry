@@ -187,7 +187,10 @@ export function parseSshConfig(
       for (const host of current) {
         if (key === 'hostname' && host.hostName === undefined) host.hostName = value
         else if (key === 'user' && host.user === undefined) host.user = value
-        else if (key === 'port' && host.port === undefined) host.port = parseInt(value, 10) || 22
+        else if (key === 'port' && host.port === undefined) {
+          const parsedPort = parseInt(value, 10)
+          host.port = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : 22
+        }
         else if (key === 'identityfile' && host.identityFile === undefined) host.identityFile = expandHome(value, home)
         else if (key === 'proxyjump' && host.proxyJump === undefined) host.proxyJump = value
       }
@@ -195,7 +198,12 @@ export function parseSshConfig(
   }
 
   const byAlias = new Map(hosts.map((h) => [h.alias, h]))
-  const toHop = (spec: string): JumpHostConfig => {
+const parseValidPort = (raw: string | undefined): number => {
+  const n = raw ? Number.parseInt(raw, 10) : 22
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 22
+}
+
+const toHop = (spec: string): JumpHostConfig => {
     const known = byAlias.get(spec)
     if (known) {
       return {
@@ -208,8 +216,26 @@ export function parseSshConfig(
     }
     const at = spec.indexOf('@')
     const username = at >= 0 ? spec.slice(0, at) : defaultUser
-    const [host, port] = spec.slice(at + 1).split(':')
-    return { host, port: parseInt(port, 10) || 22, username, authMethod: 'password' }
+    const hostPort = spec.slice(at + 1)
+    let host = hostPort
+    let portStr: string | undefined
+    if (hostPort.startsWith('[')) {
+      const closeIdx = hostPort.indexOf(']')
+      if (closeIdx !== -1) {
+        host = hostPort.slice(1, closeIdx)
+        if (hostPort[closeIdx + 1] === ':') {
+          portStr = hostPort.slice(closeIdx + 2)
+        }
+      }
+    } else {
+      const firstColon = hostPort.indexOf(':')
+      const lastColon = hostPort.lastIndexOf(':')
+      if (firstColon !== -1 && firstColon === lastColon) {
+        host = hostPort.slice(0, firstColon)
+        portStr = hostPort.slice(firstColon + 1)
+      }
+    }
+    return { host, port: parseValidPort(portStr), username, authMethod: 'password' }
   }
 
   return hosts.map((h) => ({

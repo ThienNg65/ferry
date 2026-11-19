@@ -174,6 +174,7 @@ function createDefaultTransport(): NeutralinoTransport {
         directWs = null
         directOpen = false
         helloSent = false
+        directEndpoint = null
         flushQueueViaNeutralino()
       }
     })
@@ -223,8 +224,12 @@ function createDefaultTransport(): NeutralinoTransport {
     dispatchExtension: (extensionId, event, data) => {
       if (extensionId === SIDECAR_EXTENSION_ID) {
         if (directOpen && directWs?.readyState === WebSocket.OPEN) {
-          directWs.send(JSON.stringify({ event, data }))
-          return Promise.resolve()
+          try {
+            directWs.send(JSON.stringify({ event, data }))
+            return Promise.resolve()
+          } catch (e) {
+            return Promise.reject(e)
+          }
         }
         if (directWs && directWs.readyState === WebSocket.CONNECTING) {
           return new Promise<void>((resolve, reject) => {
@@ -559,6 +564,9 @@ export function createNeutralinoApi(
       }
     } catch {
       // Transport not ready yet; fall through to wait for the ready event.
+    }
+    if (sidecarReady) {
+      return
     }
     await new Promise<void>((resolve, reject) => {
       const waiter = {

@@ -27,13 +27,17 @@ export const useSettingsStore = defineStore('settings', {
   }),
 
   actions: {
-    async fetch(): Promise<void> {
+    async fetch(force = false): Promise<void> {
       if (this.inFlightFetch) {
-        return this.inFlightFetch
+        if (!force) {
+          return this.inFlightFetch
+        }
+        await this.inFlightFetch.catch(() => {})
       }
       this.inFlightFetch = (async () => {
         try {
           const settings = await invoke<AppSettings>(INVOKE_CHANNELS.settingsGet)
+          if (!settings) return
           this.bandwidthLimitKBps = settings.bandwidthLimitKBps
           this.defaultProxy = settings.defaultProxy
           this.autoCheckUpdates = settings.autoCheckUpdates ?? true
@@ -58,7 +62,7 @@ export const useSettingsStore = defineStore('settings', {
     /** `null` clears the default proxy. */
     async setDefaultProxy(proxy: ProxyConfig | null): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.settingsSetDefaultProxy, proxy)
-      await this.fetch()
+      await this.fetch(true)
     },
 
     async setAutoCheckUpdates(enabled: boolean): Promise<void> {

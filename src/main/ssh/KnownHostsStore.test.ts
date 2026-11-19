@@ -81,4 +81,11 @@ describe('KnownHostsStore', () => {
     store.clear()
     expect(store.list()).toEqual([])
   })
+
+  it('normalizes hostnames case-insensitively on get and trust', () => {
+    const store = new KnownHostsStore()
+    store.trust('Prod.Example.COM', 22, 'SHA256:prod')
+    expect(store.get('prod.example.com', 22)).toBe('SHA256:prod')
+    expect(store.list()).toEqual([{ hostPort: 'prod.example.com:22', fingerprint: 'SHA256:prod' }])
+  })
 })

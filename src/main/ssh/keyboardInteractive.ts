@@ -25,11 +25,13 @@ export interface PartitionedPrompts {
  * challenge), which the caller must forward to the user instead of blindly
  * replaying the password into it.
  */
+const OTP_PROMPT_RE = /one[- ]?time|\botp\b|\btotp\b|verification|token|passcode/i
+
 export function partitionPrompts(prompts: KiPrompt[], password: string | undefined): PartitionedPrompts {
   const autoAnswered = new Map<number, string>()
   const needsUser: UnresolvedPrompt[] = []
   prompts.forEach((p, index) => {
-    if (password !== undefined && /password/i.test(p.prompt)) {
+    if (password !== undefined && /password/i.test(p.prompt) && !OTP_PROMPT_RE.test(p.prompt)) {
       autoAnswered.set(index, password)
     } else {
       needsUser.push({ index, prompt: p.prompt, echo: p.echo ?? false })
