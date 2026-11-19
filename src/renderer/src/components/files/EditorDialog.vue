@@ -137,13 +137,19 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
   // Do not discard the editor while an in-flight write can still complete.
   if (!nextOpen && saving.value) return
   if (!nextOpen && isDirty.value) {
+    // The confirmation itself is asynchronous. Never discard edits made while
+    // the prompt is open, or close a different document loaded in the meantime.
+    const contentAtPrompt = content.value
+    const tokenAtPrompt = loadToken
+    const pathAtPrompt = props.localTempPath
     const ok = await confirm({
       title: 'Discard unsaved changes?',
       body: 'You have unsaved edits that have not been saved yet.',
       confirmLabel: 'Discard',
       confirmColor: 'warning'
     })
-    if (!ok) return
+    if (!ok || saving.value || tokenAtPrompt !== loadToken ||
+      pathAtPrompt !== props.localTempPath || contentAtPrompt !== content.value) return
   }
   emit('update:open', nextOpen)
 }
