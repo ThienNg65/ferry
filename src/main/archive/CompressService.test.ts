@@ -207,6 +207,17 @@ describe('buildCompressCommand', () => {
     expect(output).not.toContain('INJECTED')
   }
 
+  it.runIf(hasShell())('fails without writing into an existing directory at the requested ZIP path', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-remote-zip-directory-'))
+    const source = path.join(tmpDir, 'report.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    await fs.writeFile(source, 'new report')
+    await fs.mkdir(dest)
+    const result = spawnSync('sh', ['-c', buildCompressCommand(source, dest)], { encoding: 'utf8' })
+    expect(result.status).not.toBe(0)
+    expect(await fs.readdir(dest)).toEqual([])
+  })
+
   it.runIf(hasShell())('is safe against a remote path containing a command-substitution payload', () => {
     assertPayloadNotExecuted(buildCompressCommand('/tmp/$(echo INJECTED)file', '/tmp/out.zip'))
   })

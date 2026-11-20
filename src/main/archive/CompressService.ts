@@ -132,23 +132,28 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
   const { dir, base } = splitRemotePath(sourcePath)
   const cwd = shellEscape(dir)
   const source = shellEscape(base)
-  const dest = shellEscape(destZipPath)
+  const destination = splitRemotePath(destZipPath)
+  const destDir = shellEscape(destination.dir)
+  const destName = shellEscape(destination.base)
   // Stage in the destination directory so the final rename stays on the same
   // filesystem. The old archive is never touched until zip and its integrity
   // check both succeed. A trap removes only the private staging directory.
   const inner = [
     `command -v zip >/dev/null 2>&1 || { echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }`,
-    `cd ${cwd} || exit 1`,
+    `cd -P -- ${cwd} || exit 1`,
     `source_name=${source}`,
-    `destination=${dest}`,
-    'destination_dir=$(dirname -- "$destination") || exit 1',
-    'destination_dir=$(cd "$destination_dir" && pwd -P) || exit 1',
-    'destination="$destination_dir/$(basename -- "$destination")"',
-    // Refuse an output inside its input tree rather than silently embedding
-    // an old archive (or the temporary archive) in the new ZIP.
+    `destination_name=${destName}`,
+    `destination_dir=${destDir}`,
+    'destination_dir=$(cd -P -- "$destination_dir" && printf "%s." "$PWD") || exit 1',
+    'destination_dir=${destination_dir%.}',
+    'destination="${destination_dir%/}/$destination_name"',
+    'if [ -z "$destination_name" ] || [ -d "$destination" ]; then echo "ZIP destination is a directory" >&2; exit 1; fi',
+    'if [ "$destination" = "${PWD%/}/$source_name" ]; then echo "ZIP destination is the source file" >&2; exit 1; fi',
+    // Resolve directory aliases before checking whether the output is inside the input.
     'if [ -d "$source_name" ]; then',
-    '  source_dir=$(cd "$source_name" && pwd -P) || exit 1',
-    '  case "$destination/" in "$source_dir/"*) echo "Destination cannot be inside the source directory" >&2; exit 1;; esac',
+    '  source_dir=$(cd -P -- "./$source_name" && printf "%s." "$PWD") || exit 1',
+    '  source_dir=${source_dir%.}',
+    '  case "$destination" in "${source_dir%/}/"*) echo "Destination cannot be inside the source directory" >&2; exit 1;; esac',
     'fi',
     'staging=$(mktemp -d "$destination_dir/.ferry-zip-XXXXXXXX") || exit 1',
     'trap \'rm -rf -- "$staging"\' EXIT',
