@@ -158,7 +158,7 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
     'zip -rq "$staging/archive.zip" "./$source_name" || exit $?',
     'zip -T "$staging/archive.zip" >/dev/null || exit $?',
     'mv -f -- "$staging/archive.zip" "$destination" || exit $?'
-  ].join('; ')
+  ].join('\n')
 
   return `sh -c ${shellEscape(inner)}`
 }
