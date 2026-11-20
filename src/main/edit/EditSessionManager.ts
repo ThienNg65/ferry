@@ -40,6 +40,10 @@ function sanitizeSessionSegment(sessionId: string): string {
 /** Debounce window after the last file-change before re-uploading — many editors write-then-rename on save, firing several raw fs events per save. */
 const REUPLOAD_DEBOUNCE_MS = 450
 
+function localRevision(stats: { mtimeMs: number; ctimeMs: number; size: number; ino: number }): string {
+  return `${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}:${stats.ino}`
+}
+
 interface EditEntry {
   editId: string
   sessionId: string
@@ -47,8 +51,8 @@ interface EditEntry {
   localTempPath: string
   watcher: FSWatcher | null
   debounceTimer: ReturnType<typeof setTimeout> | null
-  /** mtime (ms) of localTempPath as of its last successful upload (or the initial download) — used by disposeAll() to avoid deleting an edit that never made it back to the server. */
-  lastSyncedMtimeMs: number
+  /** File metadata from the initial download or the most recent successful upload. */
+  lastSyncedRevision: string
   remoteStamp: { mtime: number; size: number } | null
   conflictNotified: boolean
   /** True once the underlying SSH session has closed — the watcher is stopped but the temp file is kept. */
@@ -169,7 +173,7 @@ export class EditSessionManager {
           localTempPath,
           watcher: null,
           debounceTimer: null,
-          lastSyncedMtimeMs: stats.mtimeMs,
+          lastSyncedRevision: localRevision(stats),
           remoteStamp,
           conflictNotified: false,
           sessionClosed: false,
@@ -206,7 +210,7 @@ export class EditSessionManager {
       let dirty = false
       try {
         const stats = await fs.stat(entry.localTempPath)
-        dirty = stats.mtimeMs > entry.lastSyncedMtimeMs
+        dirty = localRevision(stats) !== entry.lastSyncedRevision
       } catch {
         // Missing/inaccessible temp file — nothing to sync, treat as not dirty.
       }
@@ -286,6 +290,11 @@ export class EditSessionManager {
     }
     entry.uploading = true
     try {
+      const preUploadStats = await fs.stat(entry.localTempPath).catch(() => null)
+      const revision = preUploadStats && localRevision(preUploadStats)
+      if (entry.sessionClosed || !this.edits.has(entry.editId)) return
+      // An explicit upload may already have handled this pending watch event.
+      if (!force && revision === entry.lastSyncedRevision) return
       if (!force && entry.remoteStamp) {
         const current = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
         if (entry.sessionClosed || !this.edits.has(entry.editId)) {
@@ -306,7 +315,6 @@ export class EditSessionManager {
           return
         }
       }
-      const preUploadStats = await fs.stat(entry.localTempPath).catch(() => null)
       const basename = path.basename(entry.localTempPath)
       this.broadcast({
         editId: entry.editId,
@@ -325,8 +333,7 @@ export class EditSessionManager {
         if (entry.sessionClosed || !this.edits.has(entry.editId)) {
           return
         }
-        const postStats = preUploadStats ?? (await fs.stat(entry.localTempPath))
-        entry.lastSyncedMtimeMs = postStats.mtimeMs
+        if (revision !== null) entry.lastSyncedRevision = revision
         entry.remoteStamp = await this.remoteStamp(entry.sessionId, entry.remotePath, entry.viaSudo)
         entry.conflictNotified = false
         this.broadcast({
@@ -407,7 +414,7 @@ export class EditSessionManager {
     this.edits.delete(editId)
     try {
       const stats = await fs.stat(entry.localTempPath)
-      if (stats.mtimeMs <= entry.lastSyncedMtimeMs) {
+      if (localRevision(stats) === entry.lastSyncedRevision) {
         await fs.rm(path.dirname(entry.localTempPath), { recursive: true, force: true })
       }
     } catch {
@@ -437,7 +444,7 @@ export class EditSessionManager {
       }
       try {
         const stats = await fs.stat(entry.localTempPath)
-        if (stats.mtimeMs > entry.lastSyncedMtimeMs) {
+        if (localRevision(stats) !== entry.lastSyncedRevision) {
           continue
         }
         await fs.rm(path.dirname(entry.localTempPath), { recursive: true, force: true })

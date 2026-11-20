@@ -66,16 +66,10 @@ describe('EditSessionManager', () => {
     expect(unsyncedSubdir).toBeDefined()
     const unsyncedPath = path.join(os.tmpdir(), 'ferry-edit', sessionId, unsyncedSubdir as string, 'unsynced.txt')
 
-    // Simulate a local edit that hasn't made it back to the server yet (the
-    // debounced re-upload is still pending) — disposeAll must cancel that
-    // pending timer rather than let it race the dispose, and must never
-    // delete a file whose mtime moved past its last confirmed upload. The
-    // small delay guarantees a measurably later mtime than the initial
-    // download's — without it, two writes this close together can land
-    // within the same filesystem mtime tick and make the test itself flaky,
-    // which isn't a realistic concern for real human-editing-timescale saves.
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Some editors preserve the original modification time on save.
     await fs.writeFile(unsyncedPath, 'edited but not yet synced')
+    const older = new Date('2001-01-01T00:00:00.000Z')
+    await fs.utimes(unsyncedPath, older, older)
 
     await manager.disposeAll()
 
