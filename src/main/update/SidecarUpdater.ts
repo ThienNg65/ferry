@@ -163,15 +163,23 @@ export function parseUpdateManifest(yamlText: string): UpdateManifest | null {
   }
 }
 
+/** Compare decimal identifiers without rounding values above Number.MAX_SAFE_INTEGER. */
+function compareVersionNumber(a: string, b: string): number {
+  const left = a.replace(/^0+(?=\d)/, '')
+  const right = b.replace(/^0+(?=\d)/, '')
+  if (left.length !== right.length) return left.length - right.length
+  return left === right ? 0 : left < right ? -1 : 1
+}
+
 /** Returns > 0 when `a` is strictly newer than `b` (`x.y.z[-pre]` ordering). */
 export function compareSemver(a: string, b: string): number {
-  const splitVer = (raw: string): { parts: number[]; pre: string[] } => {
+  const splitVer = (raw: string): { parts: string[]; pre: string[] } => {
     const clean = raw.replace(/^v/, '').split('+', 1)[0]
     const dash = clean.indexOf('-')
     const core = dash === -1 ? clean : clean.slice(0, dash)
     const preRaw = dash === -1 ? '' : clean.slice(dash + 1)
     return {
-      parts: core.split('.').map((n) => Number.parseInt(n, 10) || 0),
+      parts: core.split('.').map((part) => /^\d+/.exec(part)?.[0] ?? '0'),
       pre: preRaw ? preRaw.split('.') : []
     }
   }
@@ -179,7 +187,7 @@ export function compareSemver(a: string, b: string): number {
   const bv = splitVer(b)
   const len = Math.max(av.parts.length, bv.parts.length, 3)
   for (let i = 0; i < len; i++) {
-    const diff = (av.parts[i] ?? 0) - (bv.parts[i] ?? 0)
+    const diff = compareVersionNumber(av.parts[i] ?? '0', bv.parts[i] ?? '0')
     if (diff !== 0) return diff
   }
   if (av.pre.length === 0 && bv.pre.length > 0) return 1
@@ -194,7 +202,9 @@ export function compareSemver(a: string, b: string): number {
     const aNum = /^\d+$/.test(ap)
     const bNum = /^\d+$/.test(bp)
     if (aNum && bNum) {
-      return Number(ap) - Number(bp)
+      const diff = compareVersionNumber(ap, bp)
+      if (diff !== 0) return diff
+      continue
     }
     if (aNum !== bNum) {
       return aNum ? -1 : 1
