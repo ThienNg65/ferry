@@ -174,7 +174,7 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
     try {
       await expect(uploadForEdit('sess-1', localFile, '/srv/edit.txt')).rejects.toThrow('closed before finishing')
       expect(sftp.ext_openssh_rename).not.toHaveBeenCalled()
-      expect(shell.unlink).toHaveBeenCalledWith(expect.stringMatching(/^\\/srv\\/edit\\.txt\\.ferry-tmp-/))
+      expect(shell.unlink).toHaveBeenCalledWith(expect.stringContaining('/srv/edit.txt.ferry-tmp-'))
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
