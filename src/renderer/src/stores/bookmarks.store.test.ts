@@ -50,10 +50,11 @@ describe('bookmarks.store', () => {
     expect(port22).not.toBe(port2222)
     expect(port22).toBe(resolveConnectionFilterKey(endpoint(22, 'reconnected')))
 
+    const createdAt = '2026-11-20T00:00:00.000Z'
     store.bookmarks = [
-      { id: 'a', scope: 'remote', siteId: port22, path: '/srv/a', label: 'a' },
-      { id: 'b', scope: 'remote', siteId: port2222, path: '/srv/b', label: 'b' },
-      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old' }
+      { id: 'a', scope: 'remote', siteId: port22, path: '/srv/a', label: 'a', createdAt },
+      { id: 'b', scope: 'remote', siteId: port2222, path: '/srv/b', label: 'b', createdAt },
+      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old', createdAt }
     ]
     expect(store.forSite(port22).map((b) => b.id)).toEqual(['a'])
     expect(store.forSite(port2222).map((b) => b.id)).toEqual(['b'])
@@ -63,9 +64,10 @@ describe('bookmarks.store', () => {
 
   it('retains exact saved-site bookmark IDs', () => {
     const store = useBookmarksStore()
+    const createdAt = '2026-11-20T00:00:00.000Z'
     store.bookmarks = [
-      { id: 'saved', scope: 'remote', siteId: 'saved-site', path: '/srv/site', label: 'site' },
-      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old' }
+      { id: 'saved', scope: 'remote', siteId: 'saved-site', path: '/srv/site', label: 'site', createdAt },
+      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old', createdAt }
     ]
     expect(store.forSite('saved-site').map((b) => b.id)).toEqual(['saved'])
   })
