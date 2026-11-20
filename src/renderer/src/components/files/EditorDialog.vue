@@ -105,38 +105,47 @@ async function onSave(): Promise<void> {
 }
 
 async function openExternalNow(): Promise<void> {
-  if (!props.editId) return
+  const editId = props.editId
+  if (!editId) return
+  const token = loadToken
+  const previousContent = content.value
   try {
-    await invoke<void>(INVOKE_CHANNELS.editOpenExternal, { editId: props.editId })
-    emit('update:open', false)
+    await invoke<void>(INVOKE_CHANNELS.editOpenExternal, { editId })
+    if (token === loadToken && props.open && content.value === previousContent && !saving.value) {
+      emit('update:open', false)
+    }
   } catch (e) {
-    notify.error('Failed to open external editor', e instanceof Error ? e.message : String(e))
+    if (token === loadToken) {
+      notify.error('Failed to open external editor', e instanceof Error ? e.message : String(e))
+    }
   }
+}
+
+async function confirmDiscard(external: boolean): Promise<boolean> {
+  if (!isDirty.value) return true
+  const token = loadToken
+  const previousContent = content.value
+  const approved = await confirm({
+    title: 'Discard unsaved changes?',
+    body: external
+      ? 'Opening in an external editor will discard your unsaved changes in this window.'
+      : 'You have unsaved edits that have not been saved yet.',
+    confirmLabel: external ? 'Discard & Open' : 'Discard',
+    confirmColor: 'warning'
+  })
+  return approved && token === loadToken && props.open && content.value === previousContent && !saving.value
 }
 
 async function onOpenExternal(): Promise<void> {
   if (!props.editId || loading.value || saving.value) return
-  if (isDirty.value) {
-    const ok = await confirm({
-      title: 'Discard unsaved changes?',
-      body: 'Opening in an external editor will discard your unsaved changes in this window.',
-      confirmLabel: 'Discard & Open',
-      confirmColor: 'warning'
-    })
-    if (!ok) return
-  }
+  if (isDirty.value && !(await confirmDiscard(true))) return
   await openExternalNow()
 }
 
 async function onUpdateOpen(nextOpen: boolean): Promise<void> {
-  if (!nextOpen && isDirty.value) {
-    const ok = await confirm({
-      title: 'Discard unsaved changes?',
-      body: 'You have unsaved edits that have not been saved yet.',
-      confirmLabel: 'Discard',
-      confirmColor: 'warning'
-    })
-    if (!ok) return
+  if (!nextOpen) {
+    if (saving.value) return
+    if (isDirty.value && !(await confirmDiscard(false))) return
   }
   emit('update:open', nextOpen)
 }

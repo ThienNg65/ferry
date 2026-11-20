@@ -208,6 +208,46 @@ it('keeps text typed during an editor save dirty and asks before closing', async
   expect(wrapper.text()).not.toContain('Unsaved')
 })
 
+it.each(['close', 'external editor'])('does not discard newer text with a stale %s approval', async (action) => {
+  const approval = deferred<boolean>()
+  vi.mocked(invoke).mockResolvedValueOnce({ content: 'original', truncated: false })
+  confirm.mockReturnValueOnce(approval.promise)
+  wrapper = mount(EditorDialog, {
+    props: { open: true, editId: 'edit', localTempPath: '/tmp/edit.txt', remotePath: '/file' },
+    global: { stubs }
+  })
+  await flushPromises()
+  await wrapper.get('textarea').setValue('first edit')
+  if (action === 'close') {
+    wrapper.getComponent({ name: 'UModal' }).vm.$emit('update:open', false)
+  } else {
+    await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+  }
+  await wrapper.get('textarea').setValue('newer edit')
+  approval.resolve(true)
+  await flushPromises()
+  expect(wrapper.emitted('update:open')).toBeUndefined()
+  expect(wrapper.text()).toContain('Unsaved')
+  expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenExternal, expect.anything())
+})
+
+it('keeps the built-in editor open when text changes during external handoff', async () => {
+  const opened = deferred<void>()
+  vi.mocked(invoke).mockResolvedValueOnce({ content: 'original', truncated: false }).mockReturnValueOnce(opened.promise)
+  wrapper = mount(EditorDialog, {
+    props: { open: true, editId: 'edit', localTempPath: '/tmp/edit.txt', remotePath: '/file' },
+    global: { stubs }
+  })
+  await flushPromises()
+  await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+  expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenExternal, { editId: 'edit' })
+  await wrapper.get('textarea').setValue('edit during handoff')
+  opened.resolve()
+  await flushPromises()
+  expect(wrapper.emitted('update:open')).toBeUndefined()
+  expect(wrapper.text()).toContain('Unsaved')
+})
+
 describe('remote deletion', () => {
   const entry: FileEntry = { name: 'data.txt', path: '/shared/data.txt', isDir: false, isSymlink: false, size: 1, modifiedAt: null }
   const second: FileEntry = { ...entry, name: 'more.txt', path: '/shared/more.txt' }
