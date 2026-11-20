@@ -184,6 +184,7 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
     const { dir, localFile } = await fixture()
     const chunks: Buffer[] = []
     const stream = new Writable({
+      autoDestroy: false,
       write(chunk, _encoding, callback) {
         chunks.push(Buffer.from(chunk))
         callback()
@@ -193,6 +194,10 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
     try {
       await uploadForEdit('sess-1', localFile, '/srv/edit.txt')
       expect(Buffer.concat(chunks).toString()).toBe('updated contents')
+      expect(sftp.createWriteStream).toHaveBeenCalledWith(
+        expect.stringContaining('/srv/edit.txt.ferry-tmp-'),
+        { autoClose: false }
+      )
       expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
       expect(shell.unlink).not.toHaveBeenCalled()
     } finally {

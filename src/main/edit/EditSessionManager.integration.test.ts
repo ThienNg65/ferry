@@ -2,17 +2,21 @@ import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { Writable } from 'node:stream'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'ssh2'
 
 import { testHost } from '../host/testHost.setup'
 import { setHost } from '../host/host'
+import { EVENT_CHANNELS, type EditEvent } from '../../shared/contract'
 
-const events: Array<{ editId: string; state: string }> = []
+const events: EditEvent[] = []
 
 setHost({
   ...testHost,
-  broadcast: (_c, evt) => events.push(evt as { editId: string; state: string }),
+  broadcast: (channel, event) => {
+    if (channel === EVENT_CHANNELS.editEvent) events.push(event as EditEvent)
+  },
   openPath: vi.fn(async () => '')
 })
 
@@ -113,6 +117,7 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
 
     const listing = await remote.listRemote(sessionId, REMOTE_BASE)
     expect(listing.entries.some((e) => e.name.includes('.ferry-tmp-'))).toBe(false)
+    await manager.closeEdit(editId)
     await SessionManager.getInstance().shell(sessionId).unlink(remotePath)
   }, 30_000)
 
@@ -130,6 +135,57 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
     expect(await readRemote(real)).toBe('after')
     await shell.unlink(link)
     await shell.unlink(real)
+  }, 30_000)
+
+  it('keeps a failed external edit unsaved and retries when the editor saves again', async () => {
+    const remotePath = `${REMOTE_BASE}/interrupted-${randomUUID()}.txt`
+    await putRemote(remotePath, 'original')
+    const manager = EditSessionManager.getInstance()
+    const { editId, localTempPath } = await manager.openRemote(sessionId, remotePath)
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const sftp = await shell.sftp()
+    const createWriteStream = vi.spyOn(sftp, 'createWriteStream').mockImplementationOnce((stagingPath) => {
+      const stream = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          sftp.writeFile(stagingPath, chunk.subarray(0, 1), (error) => {
+            if (error) {
+              callback(error)
+            } else {
+              stream.destroy()
+            }
+          })
+        }
+      })
+      return stream as ReturnType<typeof sftp.createWriteStream>
+    })
+    try {
+      await fs.writeFile(localTempPath, 'edited content')
+      const editedAt = new Date(Date.now() + 1_000)
+      await fs.utimes(localTempPath, editedAt, editedAt)
+      await waitFor(() => events.some((e) => e.editId === editId && e.state === 'upload-error'))
+      expect(events).toContainEqual(expect.objectContaining({
+        editId, state: 'upload-error', error: 'Upload stream closed before finishing'
+      }))
+      expect(events.some((e) => e.editId === editId && e.state === 'reuploaded')).toBe(false)
+      expect(await manager.listEdits()).toContainEqual(expect.objectContaining({ editId, dirty: true }))
+      expect(await fs.readFile(localTempPath, 'utf-8')).toBe('edited content')
+      expect(await readRemote(remotePath)).toBe('original')
+      const stagedPath = createWriteStream.mock.calls[0][0]
+      expect(await shell.readdir(REMOTE_BASE)).not.toContainEqual(
+        expect.objectContaining({ filename: path.posix.basename(stagedPath) })
+      )
+
+      // A legitimate empty save also has to finish and close successfully.
+      await fs.writeFile(localTempPath, '')
+      await waitFor(() => events.some((e) => e.editId === editId && e.state === 'reuploaded'))
+      expect(await readRemote(remotePath)).toBe('')
+      expect(await manager.listEdits()).toContainEqual(expect.objectContaining({ editId, dirty: false }))
+    } finally {
+      createWriteStream.mockRestore()
+      await manager.closeEdit(editId)
+      await fs.rm(path.dirname(localTempPath), { recursive: true, force: true })
+      await shell.unlink(remotePath)
+    }
   }, 30_000)
 
   it('keeps the original when the fallback rename fails', async () => {
