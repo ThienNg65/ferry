@@ -37,9 +37,12 @@ def read_manifest(archive, version):
         actual = identity.get(attribute)
         require(actual == value, f"Manifest Identity/{attribute}: expected {value!r}, got {actual!r}")
 
-    application = manifest.find(f"{MANIFEST_NS}Applications/{MANIFEST_NS}Application")
-    require(application is not None, "AppxManifest.xml is missing Package/Applications/Application")
-    require(application.get("Executable") == "ferry-win_x64.exe", "Unexpected application executable")
+    applications = manifest.findall(f"{MANIFEST_NS}Applications/{MANIFEST_NS}Application")
+    require(len(applications) == 1, "Expected exactly one application in the Store manifest")
+    application = applications[0]
+    require(application.get("Id") == "Ferry", "Unexpected application ID")
+    require(application.get("Executable") == "PsfLauncher64.exe", "Expected the MSIX compatibility launcher")
+    require(application.get("EntryPoint") == "Windows.FullTrustApplication", "Unexpected application entry point")
 
     logo = manifest.findtext(f"{MANIFEST_NS}Properties/{MANIFEST_NS}Logo")
     visual = application.find(f"{VISUAL_NS}VisualElements")
@@ -84,8 +87,23 @@ def verify_package(package, version):
         archive.getinfo("[Content_Types].xml")
         require("AppxSignature.p7x" not in names, "Expected the unsigned Store submission package")
         identity, logos = read_manifest(archive, version)
+        config = json.loads(archive.read("config.json"))
+        require(
+            config == {"applications": [{
+                "id": "Ferry",
+                "executable": "ferry-win_x64.exe",
+                "workingDirectory": ".",
+                "inPackageContext": True,
+            }]} and config["applications"][0]["inPackageContext"] is True,
+            "PSF must launch the Ferry host and keep its child processes in the package context",
+        )
         required_files = {
             "AppxManifest.xml",
+            "config.json",
+            "PACKAGE_SUPPORT_FRAMEWORK_LICENSE.txt",
+            "PsfLauncher64.exe",
+            "PsfRuntime64.dll",
+            "PsfRunDll64.exe",
             "ferry-win_x64.exe",
             "resources.neu",
             "extensions/js.ferry.sidecar/index.cjs",

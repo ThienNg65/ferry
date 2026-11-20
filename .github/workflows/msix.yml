@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       run_wack:
-        description: Run the Windows App Certification Kit (requires an active Windows session)
+        description: Also run the Windows App Certification Kit
         type: boolean
         default: false
   pull_request:
@@ -44,12 +44,15 @@ jobs:
           | $($report.file) | $($report.bytes) | $($report.sha256) |
           "@ >> $env:GITHUB_STEP_SUMMARY
 
-      - name: Run Windows App Certification Kit
-        if: inputs.run_wack
+      - name: Smoke test the installed MSIX
+        env:
+          RUN_WACK: ${{ inputs.run_wack }}
         shell: pwsh
         run: |
           $report = Get-Content dist/msix-validation.json -Raw | ConvertFrom-Json
-          ./scripts/test-msix-certification.ps1 -PackagePath "dist/$($report.file)" -ReportPath dist/wack-report.xml
+          $testOptions = @{ PackagePath = "dist/$($report.file)" }
+          if ($env:RUN_WACK -eq 'true') { $testOptions.ReportPath = 'dist/wack-report.xml' }
+          ./scripts/test-msix-certification.ps1 @testOptions
 
       - name: Upload validation reports
         if: '!cancelled()'

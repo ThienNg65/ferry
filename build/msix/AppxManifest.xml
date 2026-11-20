@@ -28,7 +28,7 @@
   <Applications>
     <Application
       Id="Ferry"
-      Executable="ferry-win_x64.exe"
+      Executable="PsfLauncher64.exe"
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Ferry File Client"

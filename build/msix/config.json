@@ -1,0 +1,10 @@
+{
+  "applications": [
+    {
+      "id": "Ferry",
+      "executable": "ferry-win_x64.exe",
+      "workingDirectory": ".",
+      "inPackageContext": true
+    }
+  ]
+}
