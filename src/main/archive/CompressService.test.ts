@@ -21,7 +21,7 @@ function hasShell(): boolean {
 let tmpDir: string | undefined
 
 afterEach(async () => {
-  vi.mocked(createWriteStream).mockReset()
+  vi.mocked(createWriteStream).mockClear()
   if (tmpDir) {
     await fs.rm(tmpDir, { recursive: true, force: true })
     tmpDir = undefined
