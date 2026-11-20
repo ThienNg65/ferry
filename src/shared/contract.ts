@@ -437,6 +437,8 @@ export interface TransferEvent {
   filesDone?: number
   filesTotal?: number
   error?: string
+  reconnectRequired?: boolean
+  restartRequired?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

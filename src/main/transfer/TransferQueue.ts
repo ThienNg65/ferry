@@ -15,6 +15,10 @@ import { EVENT_CHANNELS, type TransferEvent, type TransferKind, type TransferSta
 export interface TransferJob {
   transferId: string
   sessionId: string
+  connectionIdentity?: string
+  retryError?: string
+  restartRequired?: boolean
+  reconnectRequired?: boolean
   kind: TransferKind
   localPath: string
   remotePath: string
@@ -65,6 +69,12 @@ const TREE_ITEM_CONCURRENCY = 4
 const PROGRESS_THROTTLE_MS = 200
 const MAX_RETRYABLE = 200
 const PAUSE_REASON = 'pause'
+
+class TransferRestartRequired extends SshError {
+  constructor(message: string) {
+    super('VALIDATION', message)
+  }
+}
 /** Maximum virtual bandwidth credit to absorb timer scheduling jitter without unbounded catch-up bursts. */
 const MAX_BANDWIDTH_CATCH_UP_MS = 20
 
@@ -196,6 +206,19 @@ export class TransferQueue {
     }
   }
 
+  /** Recompute retry availability after a connection opens or closes. */
+  static refreshRetryConnections(): void {
+    const queue = TransferQueue.instance
+    if (!queue) return
+    const sessions = SessionManager.getInstance()
+    for (const job of queue.retryable.values()) {
+      const reconnectRequired = sessions.connectedTransferSession(job.sessionId, job.connectionIdentity) === null
+      if (job.reconnectRequired === reconnectRequired) continue
+      job.reconnectRequired = reconnectRequired
+      queue.broadcast(queue.retryEvent(job))
+    }
+  }
+
   /** Sets (or clears, with `null`) the app-wide transfer rate cap — applies to every transfer already in flight, not just new ones. */
   setBandwidthLimitKBps(limitKBps: number | null): void {
     this.rateLimiter.setLimitKBps(limitKBps)
@@ -220,6 +243,7 @@ export class TransferQueue {
     const job: TransferJob = {
       transferId,
       sessionId,
+      connectionIdentity: SessionManager.getInstance().transferIdentity(sessionId),
       kind,
       localPath,
       remotePath,
@@ -235,21 +259,53 @@ export class TransferQueue {
     return transferId
   }
 
-  retry(transferId: string): void {
+  retry(transferId: string, restart = false): void {
     const old = this.retryable.get(transferId)
     if (!old) {
       throw new SshError('NOT_FOUND', 'Transfer cannot be retried')
     }
+    const sessionId = SessionManager.getInstance().connectedTransferSession(old.sessionId, old.connectionIdentity)
+    if (!sessionId) {
+      throw new SshError('SSH_CONNECT', 'Reconnect to the original server and account to continue this transfer.')
+    }
+    if (old.restartRequired && !restart) {
+      throw new TransferRestartRequired(old.retryError ?? 'The transfer must be restarted.')
+    }
     this.retryable.delete(transferId)
     this.paused.delete(transferId)
-    const job: TransferJob = { ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true }
+    const job: TransferJob = {
+      ...old,
+      sessionId,
+      controller: new AbortController(),
+      queuedAt: Date.now(),
+      resume: !restart,
+      retryError: undefined,
+      restartRequired: undefined,
+      reconnectRequired: undefined
+    }
+    if (restart) {
+      this.cleanupStaging(job)
+      job.sourceStamp = undefined
+      job.completedFiles = undefined
+      job.sourceStamps = undefined
+    }
     this.pending.push(job)
-    this.broadcast(this.jobEvent(job, 'queued'))
+    this.broadcast(this.jobEvent(job, 'queued', restart ? { bytesTransferred: 0, filesDone: 0 } : undefined))
     this.pump()
+  }
+
+  private retryEvent(job: TransferJob): TransferEvent {
+    return this.jobEvent(job, this.paused.has(job.transferId) ? 'paused' : 'error', {
+      error: job.retryError,
+      restartRequired: job.restartRequired,
+      reconnectRequired: job.reconnectRequired
+    })
   }
 
   private rememberRetryable(job: TransferJob): void {
     this.retryable.delete(job.transferId)
+    job.reconnectRequired =
+      SessionManager.getInstance().connectedTransferSession(job.sessionId, job.connectionIdentity) === null
     this.retryable.set(job.transferId, job)
     if (this.retryable.size > MAX_RETRYABLE) {
       const oldestId = this.retryable.keys().next().value as string
@@ -271,7 +327,7 @@ export class TransferQueue {
       const [job] = this.pending.splice(idx, 1)
       this.rememberRetryable(job)
       this.paused.add(transferId)
-      this.broadcast(this.jobEvent(job, 'paused'))
+      this.broadcast(this.retryEvent(job))
     }
   }
 
@@ -285,9 +341,12 @@ export class TransferQueue {
   private cleanupStaging(job: TransferJob): void {
     for (const part of job.staging?.values() ?? []) {
       try {
+        const sessions = SessionManager.getInstance()
+        const sessionId = sessions.connectedTransferSession(job.sessionId, job.connectionIdentity)
         const op = job.kind === 'upload'
-          ? SessionManager.getInstance().shell(job.sessionId).unlink(part.path)
+          ? sessionId && sessions.shell(sessionId).unlink(part.path)
           : unlink(part.path)
+        if (!op) continue
         void op.catch(() => undefined)
       } catch {
         // The session may already be closed.
@@ -356,7 +415,9 @@ export class TransferQueue {
       const source = kind === 'upload' ? await stat(job.localPath) : await shell.stat(job.remotePath)
       const totalBytes = source.size ?? 0
       const stamp = `${totalBytes}:${kind === 'upload' ? (source as { mtimeMs: number }).mtimeMs : source.mtime}`
-      const resume = job.resume === true && (job.sourceStamp === undefined || job.sourceStamp === stamp)
+      if (job.resume && job.sourceStamp !== undefined && job.sourceStamp !== stamp) {
+        throw new TransferRestartRequired('The source file changed. Restart the transfer to copy the current file.')
+      }
       job.sourceStamp = stamp
 
       const startedAt = Date.now()
@@ -386,7 +447,7 @@ export class TransferQueue {
         remotePath: job.remotePath,
         signal: job.controller.signal,
         size: totalBytes,
-        resume,
+        resume: job.resume === true,
         staging: job.staging,
         onProgress: emitProgress
       })
@@ -398,21 +459,7 @@ export class TransferQueue {
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
-      const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
-      const message = e instanceof Error ? e.message : String(e)
-      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
-      if (!cancelled || pausedNow) {
-        this.rememberRetryable(job)
-      }
-      if (pausedNow) {
-        this.paused.add(transferId)
-        this.broadcast(this.jobEvent(job, 'paused'))
-        return
-      }
-      if (cancelled) this.cleanupJobArtifacts(job)
-      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
-      this.broadcast(evt)
-      this.notifyTerminal(job, evt)
+      this.handleRunFailure(job, e)
     }
   }
 
@@ -435,10 +482,20 @@ export class TransferQueue {
     const sftp = await opts.shell.sftp()
     const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
     let part = opts.staging.get(destPath)
-    const partSize = part && opts.resume
-      ? await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path)).then((s) => s.size, () => 0)
-      : 0
-    const offset = part && partSize <= opts.size ? Math.min(partSize, part.offset) : 0
+    let offset = 0
+    if (part && opts.resume && part.offset > 0) {
+      const partSize = await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path))
+        .then((info) => info.size)
+        .catch((error: unknown) => {
+          const code = (error as NodeJS.ErrnoException | undefined)?.code
+          if (code === 'ENOENT' || code === 'NOT_FOUND') return 0
+          throw error
+        })
+      if (partSize < part.offset || partSize > opts.size) {
+        throw new TransferRestartRequired('The partial file is missing or has an unexpected size. Restart the transfer.')
+      }
+      offset = part.offset
+    }
     if (!offset && part) {
       await this.removePart(opts, part.path)
       opts.staging.delete(destPath)
@@ -456,7 +513,8 @@ export class TransferQueue {
       offset,
       signal: opts.signal,
       rateLimiter: this.rateLimiter,
-      onProgress: opts.onProgress,
+      // Display the contiguous prefix the next attempt can actually reuse.
+      onProgress: (_bytesMoved, startOffset) => opts.onProgress(staging.offset, startOffset),
       onContigOffset: (contig) => { staging.offset = contig },
       onDestinationCreated: fresh ? () => { opts.staging.set(destPath, staging) } : undefined
     })
@@ -493,6 +551,16 @@ export class TransferQueue {
       const shell = SessionManager.getInstance().shell(job.sessionId)
       const tree = kind === 'upload' ? await listRecursive(job.localPath) : await shell.readdirRecursive(job.remotePath)
 
+      const files = tree.filter((e) => !e.isDir)
+      const stampFor = (file: (typeof files)[number]): string => `${file.size}:${file.mtimeMs ?? ''}`
+      if (job.resume && job.sourceStamps?.size) {
+        const currentStamps = new Map(files.map((file) => [file.relPath, stampFor(file)]))
+        for (const [relativePath, stamp] of job.sourceStamps) {
+          if (currentStamps.get(relativePath) !== stamp) {
+            throw new TransferRestartRequired('A source file in the folder changed. Restart the transfer to copy the current folder.')
+          }
+        }
+      }
       if (kind === 'upload') {
         await shell.mkdirRecursive(job.remotePath)
       } else {
@@ -500,7 +568,6 @@ export class TransferQueue {
       }
 
       const dirs = tree.filter((e) => e.isDir)
-      const files = tree.filter((e) => !e.isDir)
 
       await runConcurrent(dirs, TREE_ITEM_CONCURRENCY, async (dir) => {
         if (job.controller.signal.aborted) {
@@ -524,15 +591,10 @@ export class TransferQueue {
       const pendingFiles: Array<{ file: (typeof files)[number]; index: number }> = []
       for (let i = 0; i < files.length; i++) {
         const f = files[i]
-        const stamp = `${f.size}:${f.mtimeMs ?? ''}`
-        const prevStamp = job.sourceStamps.get(f.relPath)
-        if (job.resume && completedSet.has(f.relPath) && prevStamp === stamp) {
+        if (job.resume && completedSet.has(f.relPath)) {
           doneBytes += f.size
           filesDone += 1
         } else {
-          if (prevStamp !== undefined && prevStamp !== stamp) {
-            completedSet.delete(f.relPath)
-          }
           pendingFiles.push({ file: f, index: i })
         }
       }
@@ -566,10 +628,7 @@ export class TransferQueue {
           if (job.controller.signal.aborted) {
             throw new SshError('CANCELLED', 'Transfer cancelled')
           }
-          const stamp = `${file.size}:${file.mtimeMs ?? ''}`
-          const prevStamp = job.sourceStamps!.get(file.relPath)
-          const resumeFile = job.resume === true && (prevStamp === undefined || prevStamp === stamp)
-          job.sourceStamps!.set(file.relPath, stamp)
+          job.sourceStamps!.set(file.relPath, stampFor(file))
           inFlightBytes.set(index, 0)
           await this.runFile({
             shell,
@@ -578,7 +637,7 @@ export class TransferQueue {
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
             size: file.size,
-            resume: resumeFile,
+            resume: job.resume === true,
             staging: job.staging!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
@@ -602,22 +661,21 @@ export class TransferQueue {
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
-      const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
-      const message = e instanceof Error ? e.message : String(e)
-      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
-      if (!cancelled || pausedNow) {
-        this.rememberRetryable(job)
-      }
-      if (pausedNow) {
-        this.paused.add(transferId)
-        this.broadcast(this.jobEvent(job, 'paused'))
-        return
-      }
-      if (cancelled) this.cleanupJobArtifacts(job)
-      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
-      this.broadcast(evt)
-      this.notifyTerminal(job, evt)
+      this.handleRunFailure(job, e)
     }
+  }
+
+  private handleRunFailure(job: TransferJob, error: unknown): void {
+    const cancelled = (error instanceof SshError && error.code === 'CANCELLED') || job.controller.signal.aborted
+    const paused = cancelled && job.controller.signal.reason === PAUSE_REASON
+    if (paused) this.paused.add(job.transferId)
+    job.retryError = cancelled ? undefined : error instanceof Error ? error.message : String(error)
+    job.restartRequired = error instanceof TransferRestartRequired
+    if (!cancelled || paused) this.rememberRetryable(job)
+    if (cancelled && !paused) this.cleanupJobArtifacts(job)
+    const event = paused || !cancelled ? this.retryEvent(job) : this.jobEvent(job, 'cancelled')
+    this.broadcast(event)
+    if (!paused) this.notifyTerminal(job, event)
   }
 
   private jobEvent(

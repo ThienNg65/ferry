@@ -10,8 +10,10 @@ import { randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'ssh2'
+import { host } from '../host/host'
+import { EVENT_CHANNELS, type TransferEvent } from '../../shared/contract'
 
 const HOST = '127.0.0.1'
 const PORT = 2299
@@ -240,6 +242,133 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
       queue.setBandwidthLimitKBps(null)
     }
   })
+
+  it.each(['upload', 'download'] as const)('resumes a paused %s through a new verified SSH session', async (kind) => {
+    const { remoteDir, localDir } = await freshDirs()
+    const content = randomBytes(900_000)
+    const localFile = path.join(localDir, 'reconnect.bin')
+    const remoteFile = `${remoteDir}/reconnect.bin`
+    const manager = SessionManager.getInstance()
+    const originalId = sessionId
+    const shell = manager.shell(originalId)
+    const sftp = await shell.sftp()
+    if (kind === 'download') {
+      const seed = path.join(localDir, 'seed.bin')
+      await fs.writeFile(seed, content)
+      await new Promise<void>((resolve, reject) =>
+        sftp.fastPut(seed, remoteFile, (error) => error ? reject(error) : resolve()))
+    } else {
+      await fs.writeFile(localFile, content)
+    }
+
+    const queue = TransferQueue.getInstance()
+    const broadcast = vi.spyOn(host(), 'broadcast')
+    let unrelatedId: string | undefined
+    queue.setBandwidthLimitKBps(256)
+    try {
+      const id = queue.enqueue(originalId, kind, localFile, remoteFile)
+      const events = (): TransferEvent[] => broadcast.mock.calls
+        .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+        .map(([, event]) => event as TransferEvent)
+        .filter((event) => event.transferId === id)
+      const last = (): TransferEvent | undefined => events().at(-1)
+      await waitFor(async () => events().some((event) =>
+        event.state === 'progress' && (event.bytesTransferred ?? 0) > 0))
+      queue.pause(id)
+      await waitFor(async () => last()?.state === 'paused')
+
+      const stagingPaths = async (): Promise<string[]> => kind === 'upload'
+        ? (await manager.shell(sessionId).readdir(remoteDir)).map((entry) => entry.filename).filter((name) => name.endsWith('.part'))
+        : (await fs.readdir(localDir)).filter((name) => name.endsWith('.part'))
+      const staged = await stagingPaths()
+      expect(staged).toHaveLength(1)
+
+      manager.close(originalId)
+      expect(last()).toMatchObject({ state: 'paused', reconnectRequired: true })
+      expect(() => queue.retry(id)).toThrow('Reconnect to the original server')
+      unrelatedId = (await manager.openQuickConnect({
+        name: 'unrelated address', host: 'localhost', port: PORT, username: USERNAME, authMethod: 'password', password: PASSWORD
+      }, randomUUID())).sessionId
+      expect(() => queue.retry(id)).toThrow('Reconnect to the original server')
+
+      sessionId = (await manager.openQuickConnect({
+        name: 'reconnected', host: HOST, port: PORT, username: USERNAME, authMethod: 'password', password: PASSWORD
+      }, randomUUID())).sessionId
+      expect(last()).toMatchObject({ state: 'paused', reconnectRequired: false })
+      queue.retry(id)
+      // While still throttled, verify the resumed attempt retains its owned staging file.
+      await waitFor(async () => last()?.state === 'progress')
+      expect(await stagingPaths()).toEqual(staged)
+      queue.setBandwidthLimitKBps(null)
+      await waitFor(async () => last()?.state === 'done')
+      expect(last()?.sessionId).toBe(sessionId)
+
+      if (kind === 'upload') {
+        const copy = path.join(localDir, 'downloaded.bin')
+        const target = await manager.shell(sessionId).sftp()
+        await new Promise<void>((resolve, reject) =>
+          target.fastGet(remoteFile, copy, (error) => error ? reject(error) : resolve()))
+        expect(await fs.readFile(copy)).toEqual(content)
+      } else {
+        expect(await fs.readFile(localFile)).toEqual(content)
+      }
+      expect(await stagingPaths()).toEqual([])
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+      if (unrelatedId) manager.close(unrelatedId)
+      if (sessionId === originalId) {
+        sessionId = (await manager.openQuickConnect({
+          name: 'cleanup', host: HOST, port: PORT, username: USERNAME, authMethod: 'password', password: PASSWORD
+        }, randomUUID())).sessionId
+      }
+      broadcast.mockRestore()
+    }
+  }, 20_000)
+
+  it.each(['source changed', 'staging missing'])('offers a fresh transfer when the %s', async (problem) => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'restart.bin')
+    const remoteFile = `${remoteDir}/restart.bin`
+    const original = Buffer.alloc(1_800_000, 'x')
+    await fs.writeFile(localFile, original)
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+    const broadcast = vi.spyOn(host(), 'broadcast')
+    queue.setBandwidthLimitKBps(192)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      const last = (): TransferEvent | undefined => broadcast.mock.calls
+        .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+        .map(([, event]) => event as TransferEvent)
+        .filter((event) => event.transferId === id).at(-1)
+      await waitFor(async () => {
+        const event = last()
+        const bytes = event?.bytesTransferred ?? 0
+        return event?.state === 'progress' && bytes > 0 && bytes < original.length
+      })
+      queue.pause(id)
+      await waitFor(async () => last()?.state === 'paused')
+      const replacement = problem === 'source changed' ? Buffer.from('updated') : original
+      if (problem === 'source changed') {
+        await fs.writeFile(localFile, replacement)
+      } else {
+        const staging = (await shell.readdir(remoteDir)).find((entry) => entry.filename.endsWith('.part'))!
+        await shell.unlink(`${remoteDir}/${staging.filename}`)
+      }
+      queue.retry(id)
+      await waitFor(async () => last()?.state === 'error')
+      expect(last()).toMatchObject({ restartRequired: true, error: expect.stringContaining('Restart the transfer') })
+      expect(() => queue.retry(id)).toThrow('Restart the transfer')
+      await expect(shell.stat(remoteFile)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      queue.setBandwidthLimitKBps(null)
+      queue.retry(id, true)
+      await waitFor(async () => last()?.state === 'done')
+      expect((await shell.readFile(remoteFile, replacement.length + 1)).content).toBe(replacement.toString())
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+      broadcast.mockRestore()
+    }
+  }, 25_000)
 
   it('a finished upload preserves a user-owned .part file and cleans up its staging file', async () => {
     const { remoteDir, localDir } = await freshDirs()

@@ -13,6 +13,8 @@ const props = defineProps<{
   bytesPerSec?: number
   etaMs: number
   error?: string
+  reconnectRequired?: boolean
+  restartRequired?: boolean
 }>()
 
 const emit = defineEmits<{ cancel: []; retry: []; pause: [] }>()
@@ -52,7 +54,11 @@ const cancellable = computed(
   () => props.state === 'queued' || props.state === 'started' || props.state === 'progress' || props.state === 'paused'
 )
 const pausable = computed(() => props.state === 'queued' || props.state === 'started' || props.state === 'progress')
-const retryable = computed(() => props.state === 'error' || props.state === 'cancelled' || props.state === 'paused')
+const retryable = computed(() => props.state === 'error' || props.state === 'paused')
+const retryLabel = computed(() => {
+  if (props.restartRequired) return 'Restart transfer'
+  return props.state === 'paused' ? 'Resume transfer' : 'Retry transfer'
+})
 
 function formatEta(ms: number): string {
   if (!ms || ms <= 0) {
@@ -99,8 +105,15 @@ const progressRightLabel = computed(() => {
         <UTooltip v-if="cancellable" text="Cancel transfer">
           <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" aria-label="Cancel transfer" @click="emit('cancel')" />
         </UTooltip>
-        <UTooltip v-if="retryable" :text="state === 'paused' ? 'Resume transfer' : 'Retry transfer'">
-          <UButton :icon="state === 'paused' ? 'i-lucide-play' : 'i-lucide-rotate-cw'" color="neutral" variant="ghost" size="xs" :aria-label="state === 'paused' ? 'Resume transfer' : 'Retry transfer'" @click="emit('retry')" />
+        <UTooltip v-if="retryable" :text="reconnectRequired ? 'Reconnect to the original server' : retryLabel">
+          <UButton
+            :icon="state === 'paused' && !restartRequired ? 'i-lucide-play' : 'i-lucide-rotate-cw'"
+            :label="restartRequired ? retryLabel : undefined"
+            :aria-label="retryLabel"
+            :disabled="reconnectRequired"
+            color="neutral" variant="ghost" size="xs"
+            @click="emit('retry')"
+          />
         </UTooltip>
       </div>
     </div>
@@ -108,7 +121,8 @@ const progressRightLabel = computed(() => {
     <div class="flex items-center justify-between text-2xs text-muted">
       <span v-if="error" class="text-error truncate">{{ error }}</span>
       <span v-else class="tabular-nums">{{ formatBytes(bytesTransferred) }} / {{ formatBytes(totalBytes) }} ({{ percent }}%)</span>
-      <span class="font-mono tabular-nums">{{ progressRightLabel }}</span>
+      <span v-if="reconnectRequired" class="shrink-0">Reconnect to continue</span>
+      <span v-else class="font-mono tabular-nums">{{ progressRightLabel }}</span>
     </div>
   </div>
 </template>
