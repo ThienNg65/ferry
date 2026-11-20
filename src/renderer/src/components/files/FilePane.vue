@@ -209,9 +209,11 @@ const onKeydown = usePaneKeyboard({
 
 void bookmarks.ensureLoaded()
 
-/** The current pane's bookmark scope key: saved siteId, Quick Connect hostLabel, or null for local. */
+/** Saved sites retain their IDs; Quick Connect uses the port-aware endpoint key. */
 const currentSiteId = computed(() =>
-  props.side === 'remote' ? (sessions.activeTab.siteId ?? sessions.activeTab.hostLabel ?? null) : null
+  props.side === 'remote'
+    ? (sessions.activeTab.siteId ?? resolveConnectionFilterKey(sessions.activeTab))
+    : null
 )
 const canBookmark = computed(
   () => props.side === 'local' || (sessions.status === 'connected' && Boolean(currentSiteId.value))
@@ -221,7 +223,16 @@ const currentBookmarks = computed(() => {
     return bookmarks.localBookmarks
   }
   return currentSiteId.value
-    ? bookmarks.forSite(currentSiteId.value, sessions.activeTab.hostLabel)
+    ? bookmarks.forSite(
+        currentSiteId.value,
+        // Legacy hostLabel bookmarks can only be read on the default SSH port.
+        // Never expose them to a different service on the same hostname.
+        sessions.activeTab.siteId
+          ? sessions.activeTab.hostLabel
+          : sessions.activeTab.quickConnectInput?.port === 22
+            ? sessions.activeTab.hostLabel
+            : null
+      )
     : []
 })
 
