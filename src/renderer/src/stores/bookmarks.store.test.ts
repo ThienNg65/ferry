@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBookmarksStore } from './bookmarks.store'
+import { resolveConnectionFilterKey } from './fileFilters.store'
 import * as api from '../api'
 
 vi.mock('../api', () => ({
@@ -36,4 +37,37 @@ describe('bookmarks.store', () => {
     await store.ensureLoaded()
     expect(api.invoke).toHaveBeenCalledTimes(1)
   })
+  it('isolates Quick Connect bookmarks across ports and reconnects', () => {
+    const store = useBookmarksStore()
+    const endpoint = (port: number, sessionId: string) => ({
+      siteId: null,
+      hostLabel: 'user@example.test',
+      sessionId,
+      quickConnectInput: { username: 'user', host: 'EXAMPLE.test', port }
+    })
+    const port22 = resolveConnectionFilterKey(endpoint(22, 'first'))!
+    const port2222 = resolveConnectionFilterKey(endpoint(2222, 'second'))!
+    expect(port22).not.toBe(port2222)
+    expect(port22).toBe(resolveConnectionFilterKey(endpoint(22, 'reconnected')))
+
+    store.bookmarks = [
+      { id: 'a', scope: 'remote', siteId: port22, path: '/srv/a', label: 'a' },
+      { id: 'b', scope: 'remote', siteId: port2222, path: '/srv/b', label: 'b' },
+      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old' }
+    ]
+    expect(store.forSite(port22, 'user@example.test').map((b) => b.id)).toEqual(['a', 'legacy'])
+    expect(store.forSite(port2222, null).map((b) => b.id)).toEqual(['b'])
+    store.bookmarks = store.bookmarks.filter((b) => b.id !== 'b')
+    expect(store.forSite(port2222, null)).toEqual([])
+  })
+
+  it('retains saved-site bookmark identity', () => {
+    expect(resolveConnectionFilterKey({
+      siteId: 'saved-site',
+      hostLabel: 'user@example.test',
+      sessionId: 'session',
+      quickConnectInput: { username: 'user', host: 'example.test', port: 2222 }
+    })).toBe('site:saved-site')
+  })
+
 })
