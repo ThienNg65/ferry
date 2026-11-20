@@ -266,6 +266,7 @@ describe('TailManager', () => {
     let drops = 0
     execLinesImpl = async (_command, opts) => {
       opts.onLine(`FERRYPID:${100 + drops}`)
+      opts.onLine('log after reconnect')
       drops++
       if (drops <= 7) {
         throw new Error('read ECONNRESET')
@@ -333,20 +334,23 @@ describe('TailManager', () => {
     expect(execLinesCommands).toHaveLength(1) // never retried
   })
 
-  it('reaps a stream with a notice once idle past IDLE_TTL_MS even when stderr arrives', async () => {
+  it('keeps a quiet tail connected and delivers lines when activity returns', async () => {
     execLinesImpl = async (command, opts) => {
-      setTimeout(() => opts.onStderr?.('tail: still waiting\n'), 20 * 60 * 1000)
+      expect(opts.timeoutMs).toBeNull()
+      opts.onLine('FERRYPID:4242')
+      setTimeout(() => opts.onLine('log after seven hours'), 7 * 60 * 60 * 1000)
       return abortablePendingExec(command, opts)
     }
     const manager = TailManager.getInstance()
 
     manager.start('tail-5', 'session-1', '/var/log/app.log')
-    await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 60_000) // IDLE_TTL_MS plus one reaper tick
+    await vi.advanceTimersByTimeAsync(7 * 60 * 60 * 1000)
 
-    expect(noticeEvents()).toEqual([
-      { tailId: 'tail-5', message: 'tail: still waiting' },
-      { tailId: 'tail-5', message: 'Stream closed after 30 minutes of inactivity' }
-    ])
+    expect(lineEvents()).toEqual([{ tailId: 'tail-5', line: 'log after seven hours' }])
+    expect(execLinesCommands).toHaveLength(1)
+    expect(endEvents()).toEqual([])
+    manager.stop('tail-5')
+    expect(execCommands).toEqual(['kill 4242 2>/dev/null || true'])
     expect(endEvents()).toEqual([{ tailId: 'tail-5', error: undefined }])
   })
 

@@ -25,7 +25,9 @@ export interface RemoteOptions {
 }
 
 /** Options for {@link RemoteShell.execLines}. */
-export interface ExecLinesOptions extends RemoteOptions {
+export interface ExecLinesOptions extends Omit<RemoteOptions, 'timeoutMs'> {
+  /** Idle timeout after channel open. Null keeps a quiet stream connected. */
+  timeoutMs?: number | null
   /** Called for each complete stdout line (newline-stripped). */
   onLine: (line: string) => void
   /** Called for each chunk of stderr. */
@@ -243,7 +245,7 @@ export class RemoteShell {
    * @param opts    - line callback plus timeout / signal
    */
   execLines(command: string, opts: ExecLinesOptions): Promise<number | null> {
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const timeoutMs = opts.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutMs
 
     return new Promise<number | null>((resolve, reject) => {
       let settled = false
@@ -275,15 +277,19 @@ export class RemoteShell {
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
 
-      const arm = (): void => {
+      const arm = (delayMs: number | null): void => {
         if (timer) {
           clearTimeout(timer)
+          timer = null
         }
-        timer = setTimeout(() => {
-          fail(new SshError('SSH_TIMEOUT', `Stream idle for ${timeoutMs}ms`, true))
-        }, timeoutMs)
+        if (delayMs !== null) {
+          timer = setTimeout(() => {
+            fail(new SshError('SSH_TIMEOUT', `Stream idle for ${delayMs}ms`, true))
+          }, delayMs)
+        }
       }
-      arm()
+      // Even an indefinitely quiet stream must open its channel promptly.
+      arm(timeoutMs ?? DEFAULT_TIMEOUT_MS)
 
       this.client.exec(command, (execErr, stream) => {
         if (execErr) {
@@ -296,7 +302,7 @@ export class RemoteShell {
           return
         }
         activeStream = stream
-        arm()
+        arm(timeoutMs)
 
         let buf = ''
         const flush = (final: boolean): void => {
@@ -311,12 +317,12 @@ export class RemoteShell {
         }
 
         stream.on('data', (chunk: Buffer) => {
-          arm()
+          arm(timeoutMs)
           buf += chunk.toString()
           flush(false)
         })
         stream.stderr.on('data', (chunk: Buffer) => {
-          arm()
+          arm(timeoutMs)
           opts.onStderr?.(chunk.toString())
         })
         stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message, true)))
