@@ -49,6 +49,7 @@ export async function compressLocal(
       const output = createWriteStream(destZipPath)
       const archive = new ZipArchive({ zlib: { level: 9 } })
       let settled = false
+      let outputFinished = false
       let pendingErr: Error | undefined
       const finish = (err?: Error): void => {
         if (settled) {
@@ -71,14 +72,26 @@ export async function compressLocal(
         }
       }
       opts.signal?.addEventListener('abort', onAbort, { once: true })
-      output.on('close', () => finish(pendingErr))
-      output.on('error', (err) => finish(pendingErr ?? err))
+      output.on('finish', () => {
+        outputFinished = true
+      })
+      output.on('close', () => {
+        if (!outputFinished && !pendingErr) {
+          pendingErr = new SshError('UNKNOWN', `ZIP output "${destZipPath}" closed before finishing`)
+          archive.abort()
+        }
+        finish(pendingErr)
+      })
+      output.on('error', (err) => {
+        pendingErr ??= err
+        // Wait for close before rejecting so Windows can unlink the partial file.
+        output.destroy()
+        if (output.closed) finish(pendingErr)
+      })
       archive.on('error', (err) => {
         pendingErr ??= err
         output.destroy()
-        if (output.closed) {
-          finish(pendingErr)
-        }
+        if (output.closed) finish(pendingErr)
       })
       if (opts.onProgress) {
         // archiver's totalBytes grows as it scans the tree — callers just
@@ -91,7 +104,11 @@ export async function compressLocal(
       } else {
         archive.file(sourcePath, { name: path.basename(sourcePath) })
       }
-      void archive.finalize()
+      void archive.finalize().catch((err: Error) => {
+        pendingErr ??= err
+        output.destroy()
+        if (output.closed) finish(pendingErr)
+      })
     })
   } catch (e) {
     // Best-effort removal of the partial/corrupt zip any failed run leaves
