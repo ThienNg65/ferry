@@ -7,6 +7,14 @@ describe('remoteExecList', () => {
     expect(cmd).toContain("'/var/log'")
   })
 
+  it('fails the fast listing instead of silently skipping entries with unreadable metadata', () => {
+    const cmd = buildRemoteListCommand('/restricted')
+    // The remote command must fail nonzero so listRemoteExec retries through SFTP.
+    expect(cmd).toContain('except OSError:')
+    expect(cmd).toContain('sys.exit(3)')
+    expect(cmd).not.toMatch(/except OSError:\\n\\s+continue/)
+  })
+
   it('parses valid JSON output with files, directories, and symlinks', () => {
     const sampleOutput = JSON.stringify({
       path: '/var/log',
