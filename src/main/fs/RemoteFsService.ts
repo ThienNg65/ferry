@@ -133,8 +133,29 @@ export async function touchRemote(sessionId: string, filePath: string): Promise<
 }
 
 /** Renames/moves a remote path. */
-export async function renameRemote(sessionId: string, fromPath: string, toPath: string): Promise<void> {
-  await SessionManager.getInstance().shell(sessionId).rename(fromPath, toPath)
+export async function renameRemote(sessionId: string, fromPath: string, toPath: string, replace?: boolean): Promise<void> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  if (replace === undefined) {
+    await shell.rename(fromPath, toPath)
+    return
+  }
+
+  const destination = await shell.lstat(toPath).catch((e: unknown) => {
+    if (!(e instanceof SshError) || e.code !== 'NOT_FOUND') throw e
+    return null
+  })
+  if (!destination) {
+    await shell.rename(fromPath, toPath)
+    return
+  }
+  if (!replace) throw new SshError('ALREADY_EXISTS', `"${toPath}" already exists.`)
+  if (await posixRename(await shell.sftp(), fromPath, toPath)) return
+
+  const source = await shell.lstat(fromPath)
+  if (destination.isDirectory() || source.isDirectory()) {
+    throw new SshError('SFTP', 'This server cannot replace folders during rename. Choose an unused name.')
+  }
+  await replaceRemoteFile(shell, fromPath, toPath, true)
 }
 
 /** Sets a remote path's permissions (mode is an octal string, e.g. "0755"). */
@@ -250,23 +271,36 @@ export async function statRemoteForEdit(sessionId: string, remotePath: string): 
 
 function writeRemoteFile(sftp: SFTPWrapper, localPath: string, remotePath: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    // ssh2's automatic close destroys the writable in _final, suppressing
+    // Node's finish event. Close it explicitly after the writes finish.
+    const writeStream = sftp.createWriteStream(remotePath, { autoClose: false })
     const readStream = createReadStream(localPath)
-    const writeStream = sftp.createWriteStream(remotePath)
     let settled = false
-    readStream.on('error', (e: Error) => {
+    let finished = false
+    const fail = (error: SshError): void => {
       if (settled) return
       settled = true
+      readStream.unpipe(writeStream)
+      readStream.destroy()
       writeStream.destroy()
-      reject(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
+      reject(error)
+    }
+    readStream.on('error', (e: Error) => {
+      fail(new SshError('UNKNOWN', `Failed to read "${localPath}": ${e.message}`))
     })
     writeStream.on('error', (e: Error) => {
-      if (settled) return
-      settled = true
-      readStream.destroy()
-      reject(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`))
+      fail(new SshError('SFTP', `Failed to upload to "${remotePath}": ${e.message}`))
+    })
+    writeStream.on('finish', () => {
+      finished = true
+      writeStream.destroy()
     })
     writeStream.on('close', () => {
       if (settled) return
+      if (!finished) {
+        fail(new SshError('SFTP', 'Upload stream closed before finishing'))
+        return
+      }
       settled = true
       resolve()
     })
@@ -298,7 +332,11 @@ async function replaceRemoteFile(shell: RemoteShell, tempPath: string, target: s
   try {
     await shell.rename(tempPath, target)
   } catch (e) {
-    await shell.rename(backup, target).catch(() => undefined)
+    try {
+      await shell.rename(backup, target)
+    } catch {
+      throw new SshError('SFTP', `Could not restore "${target}". Its previous contents are at "${backup}".`)
+    }
     throw e
   }
   await shell.unlink(backup).catch(() => undefined)

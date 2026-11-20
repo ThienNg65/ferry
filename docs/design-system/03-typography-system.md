@@ -2,7 +2,7 @@
 
 - **Parent Entrypoint:** [DESIGN.md](../../DESIGN.md)
 - **Design Spec:** [2026-11-18-glassmorphism-ui-research-design.md](../superpowers/specs/2026-11-18-glassmorphism-ui-research-design.md)
-- **Related Docs:** [01 — Visual Direction](./01-visual-direction.md) · [02 — Styling & Tokens](./02-styling-and-tokens.md) · [04 — Design Patterns & Rollout](./04-design-patterns-and-rollout.md)
+- **Related Docs:** [01 — Visual Direction](./01-visual-direction.md) · [02 — Styling & Tokens](./02-styling-and-tokens.md) · [04 — Design Patterns & Rollout](./04-design-patterns-and-rollout.md) · [Motion System](../motion-system.md)
 
 ---
 
@@ -42,6 +42,12 @@ Rendering text over a `backdrop-filter: blur()` surface introduces subtle lumina
    - Every numeric column or live counter—file sizes (`FileRow.vue`), modified timestamps (`FileRow.vue`), transfer speeds/percentages (`TransferQueue.vue`), port numbers (`SessionManagerView.vue`), and CPU/RAM metrics (`MonitorPanel.vue`)—**must** apply `tabular-nums` (`font-variant-numeric: tabular-nums`) so digits align vertically and never jitter during live updates.
 4. **Subpixel Antialiasing & OpenType Stylistic Sets:**
    - Enable `font-feature-settings: "ss01"` scoped strictly to `--font-sans` elements (never globally on `html.ferry-glass` where it would bleed into `JetBrains Mono`'s character variants) for clean single-story `a` and disambiguated `I`/`l` legibility in filenames.
+5. **Weight Discipline & Halation Prevention (`400` / `500` / `600` Cap):**
+   - Heavy bold weights (`700`–`800`) bloom ("halate") over dark smoked glass (`html.dark.ferry-glass`). Following Arc UI's typographic restraint, Ferry keeps standard UI controls and lists at `400` (Regular) and `500` (Medium), reserving `600` (SemiBold) strictly for card/dialog headers and `10px` micro-badges (`--text-3xs`)—never `700+` in dense workspace views.
+6. **Sentence Case, `text-wrap` & Dynamic Streaming Stability:**
+   - Use **sentence case** across buttons, tabs, menu items, dialogs, and empty states (reserving uppercase exclusively for `10px` `--text-3xs` environment/protocol pills like `PROD`, `STAGE`, `SFTP`).
+   - Apply `text-wrap: balance` to dialog titles and empty-state headers, and `text-wrap: pretty` to toast descriptions and confirmation copy to eliminate orphan words.
+   - For rapidly updating streams and counters (`TransferQueue` speed/ETA, `LogTailViewer` line counters, `MonitorPanel` CPU/RAM), pair `font-variant-numeric: tabular-nums` with fixed minimum inline widths (`min-w-[...]`) or reserved action slots so live data updates never cause horizontal layout jitter.
 
 ---
 

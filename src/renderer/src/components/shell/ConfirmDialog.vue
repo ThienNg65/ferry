@@ -17,13 +17,28 @@ const emit = defineEmits<{ close: [value: boolean] }>()
 
 const busy = ref(false)
 const error = ref<string | null>(null)
+let openedAt = performance.now()
+
+function onModalEnter(): void {
+  openedAt = performance.now()
+}
 
 async function onSecondary(): Promise<void> {
   emit('close', false)
   await props.secondaryAction?.()
 }
 
-async function onConfirm(): Promise<void> {
+async function onConfirm(event?: MouseEvent): Promise<void> {
+  if (busy.value) return
+  if (
+    props.destructive &&
+    event &&
+    typeof event.detail === 'number' &&
+    event.detail > 0 &&
+    performance.now() - openedAt < 280
+  ) {
+    return
+  }
   if (!props.action) {
     emit('close', true)
     return
@@ -47,13 +62,14 @@ async function onConfirm(): Promise<void> {
     :dismissible="!busy"
     :close="!busy"
     :ui="{ footer: 'flex-wrap justify-end' }"
+    @enter="onModalEnter"
     @update:open="(v: boolean) => { if (!v && !busy) emit('close', false) }"
   >
     <template #body>
       <div class="flex flex-col gap-3">
         <p v-if="body" class="text-sm text-default">{{ body }}</p>
         <ul v-if="items?.length" class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
-          <li v-for="item in items" :key="item" class="truncate text-xs text-default">{{ item }}</li>
+          <li v-for="item in items" :key="item" class="break-all text-xs text-default">{{ item }}</li>
         </ul>
         <UAlert v-if="error" role="alert" color="error" variant="soft" :title="error" />
       </div>
@@ -61,7 +77,14 @@ async function onConfirm(): Promise<void> {
     <template #footer>
       <UButton color="neutral" variant="outline" :disabled="busy" :autofocus="destructive" @click="emit('close', false)">Cancel</UButton>
       <UButton v-if="secondaryLabel" color="neutral" variant="soft" :disabled="busy" @click="onSecondary">{{ secondaryLabel }}</UButton>
-      <UButton :color="confirmColor ?? 'primary'" :loading="busy" :autofocus="!destructive" @click="onConfirm">
+      <UButton
+        :color="confirmColor ?? 'primary'"
+        :loading="busy"
+        :aria-busy="busy || undefined"
+        :aria-disabled="busy || undefined"
+        :autofocus="!destructive"
+        @click="onConfirm($event)"
+      >
         {{ confirmLabel ?? 'Confirm' }}
       </UButton>
     </template>

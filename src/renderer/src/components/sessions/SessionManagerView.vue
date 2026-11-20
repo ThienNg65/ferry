@@ -230,10 +230,10 @@ async function onConnect(): Promise<void> {
   }
 }
 
-async function onConnectSite(site: Site): Promise<void> {
+async function onConnectSite(site: Site, options?: { newTabIfBusy?: boolean }): Promise<void> {
   if (sessions.connecting) return
   try {
-    await sessions.connectToSite(site)
+    await sessions.connectToSite(site, options)
   } catch {
     // Surfaced via sessions.status/statusMessage in the template below.
   }
@@ -581,7 +581,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
 
 <template>
   <div
-    class="flex h-full items-start justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-8"
+    class="@container flex h-full items-start justify-center overflow-y-auto px-4 py-6 sm:px-6 sm:py-8"
     :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
     @keydown.esc="onViewEsc"
   >
@@ -630,7 +630,13 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               >
                 Reconnect all ({{ sessions.restoredSiteTabs.length }})
               </UButton>
-              <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onConnectSite(activeTabSite)">
+              <UButton
+                icon="i-lucide-play"
+                size="sm"
+                :loading="sessions.connecting"
+                :aria-busy="sessions.connecting || undefined"
+                @click="onConnectSite(activeTabSite)"
+              >
                 {{ sessions.status === 'error' || sessions.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
               </UButton>
             </template>
@@ -645,7 +651,13 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               >
                 Edit Quick Connect
               </UButton>
-              <UButton icon="i-lucide-play" size="sm" :loading="sessions.connecting" @click="onReconnectQuickConnect">
+              <UButton
+                icon="i-lucide-play"
+                size="sm"
+                :loading="sessions.connecting"
+                :aria-busy="sessions.connecting || undefined"
+                @click="onReconnectQuickConnect"
+              >
                 Reconnect
               </UButton>
             </template>
@@ -653,7 +665,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
         </div>
       </UCard>
 
-      <div class="grid grid-cols-1 gap-6 md:grid-cols-[1.2fr_1fr] md:items-start">
+      <div class="grid grid-cols-1 gap-6 @[860px]:grid-cols-[1.2fr_1fr] @[860px]:items-start">
         <section aria-labelledby="sites-heading">
           <UCard :class="ui.glassUiEnabled ? 'ferry-glass-card' : ''">
             <template #header>
@@ -714,8 +726,8 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 <UIcon name="i-lucide-server" class="size-5 text-muted" />
               </div>
               <div class="space-y-1">
-                <p class="text-sm font-medium text-default">No saved sites yet</p>
-                <p class="max-w-xs text-xs text-muted">
+                <p class="text-balance text-sm font-medium text-default">No saved sites yet</p>
+                <p class="text-pretty max-w-xs text-xs text-muted">
                   Save a server for one-click access, import existing sessions from WinSCP, PuTTY, or ~/.ssh/config, or use Quick Connect.
                 </p>
               </div>
@@ -779,7 +791,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 />
               </div>
               <div
-                class="flex flex-col gap-1 pr-0.5 md:max-h-[58vh] md:overflow-y-auto"
+                class="flex flex-col gap-1 pr-0.5 @[860px]:max-h-[58vh] @[860px]:overflow-y-auto"
                 @keydown="onTablistKeydown($event, !selectMode, true, '[data-site-row]')"
               >
                 <div v-for="section in groupedSites" :key="section.name ?? ''" class="flex flex-col gap-1">
@@ -801,6 +813,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                         :menu-items="siteMenuItems(site)"
                         @select="selectedSiteId = site.id"
                         @connect="onConnectSite(site)"
+                        @connect-new-tab="onConnectSite(site, { newTabIfBusy: true })"
                         @toggle="(v) => toggleSelected(site.id, v)"
                         @delete="confirmDelete(site)"
                       />
@@ -812,7 +825,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
           </UCard>
         </section>
 
-        <Transition name="fade" mode="out-in">
+        <Transition name="slide-up" mode="out-in">
           <section v-if="selectedSite" :key="selectedSite.id" aria-labelledby="connect-panel-heading">
             <SiteDetailsPanel
               :class="ui.glassUiEnabled ? 'ferry-glass-card' : ''"
@@ -942,6 +955,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     class="flex-1 justify-center"
                     :disabled="sessions.connecting"
                     :loading="sessions.connecting"
+                    :aria-busy="sessions.connecting || undefined"
                   >
                     Connect
                   </UButton>
@@ -951,6 +965,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     icon="i-lucide-save"
                     :loading="savingQuickSite"
                     :disabled="savingQuickSite"
+                    :aria-busy="savingQuickSite || undefined"
                     @click="onSaveQuickAsSite"
                   >
                     Save as site

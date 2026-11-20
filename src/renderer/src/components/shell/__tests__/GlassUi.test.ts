@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -9,6 +11,7 @@ import SettingsDialog from '../SettingsDialog.vue'
 import SiteTabBar from '../SiteTabBar.vue'
 import FerryLogo from '../FerryLogo.vue'
 import { useSettingsStore } from '../../../stores/settings.store'
+import { useSessionsStore } from '../../../stores/sessions.store'
 import { useUiStore } from '../../../stores/ui.store'
 
 const toastCalls: Array<Record<string, unknown>> = []
@@ -98,7 +101,11 @@ vi.mock('../../../utils/windowBounds', () => ({
 }))
 
 const commonStubs = {
-  UApp: { template: '<div><slot /></div>' },
+  UApp: {
+    props: ['tooltip', 'toaster', 'locale'],
+    template:
+      '<div :data-tooltip-delay="tooltip?.delayDuration" :data-tooltip-skip-delay="tooltip?.skipDelayDuration"><slot /></div>'
+  },
   UModal: {
     props: ['open', 'title'],
     template: '<div v-if="open" role="dialog"><slot name="body" /><slot name="content" /></div>'
@@ -182,7 +189,10 @@ describe('Modern Glass UI rollout', () => {
     expect(panel.text()).toContain('In Development')
 
     const logo = trackMount(mount(FerryLogo))
-    expect(logo.get('[data-ferry-logo]').attributes('data-ferry-logo')).toBe('classic')
+    const image = logo.get('img[data-ferry-logo]')
+    expect(image.attributes('data-ferry-logo')).toBe('classic')
+    expect(image.attributes('src')).toBe('./ferry-classic.svg')
+    expect(image.attributes('alt')).toBe('Ferry')
 
     const toggle = panel.get('[aria-label="Modern Glass UI (In Development)"]')
     expect(ui.glassUiEnabled).toBe(false)
@@ -193,7 +203,10 @@ describe('Modern Glass UI rollout', () => {
     expect(ui.glassUiPromoDismissed).toBe(true)
     expect(document.documentElement.classList.contains('ferry-glass')).toBe(true)
     expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
-    expect(logo.get('[data-ferry-logo]').attributes('data-ferry-logo')).toBe('glass')
+    expect(image.attributes('data-ferry-logo')).toBe('glass')
+    expect(image.attributes('src')).toBe('./ferry-glass.svg')
+    await logo.setProps({ decorative: true })
+    expect(image.attributes('alt')).toBe('')
   })
 
   it('App.vue keeps Classic UI untouched by default and mounts .ferry-ambient-canvas only when enabled', async () => {
@@ -298,6 +311,7 @@ describe('Modern Glass UI rollout', () => {
 
   it('SiteTabBar uses floating pill tabs with inset indicator and hides FerryLogo in Glass mode (outside fullscreen)', async () => {
     const ui = useUiStore()
+    const sessions = useSessionsStore()
     const w = trackMount(mount(SiteTabBar, { global: { stubs: commonStubs } }))
 
     // Classic mode: folder tab + FerryLogo visible
@@ -311,11 +325,34 @@ describe('Modern Glass UI rollout', () => {
     await nextTick()
 
     expect(w.find('[data-ferry-logo]').exists()).toBe(false)
+    const nav = w.get('nav[aria-label="Open connections"]')
+    expect(nav.classes()).toContain('ferry-scroll-fade-x')
+    expect(nav.classes()).toContain('touch-pan-x')
+    const tablist = w.get('[role="tablist"]')
+    expect(tablist.classes()).toContain('shrink-0')
+    expect(tablist.classes()).not.toContain('min-w-0')
     const glassTab = w.get('.ferry-site-tab')
     expect(glassTab.classes()).toContain('rounded-lg')
     expect(glassTab.classes()).toContain('ferry-glass-active-tab')
     expect(glassTab.classes()).not.toContain('border-t-2')
-    expect(glassTab.find('span.h-0\\.5.rounded-full.bg-primary').exists()).toBe(true)
+    const indicator = glassTab.find('span.h-0\\.5.rounded-full.bg-primary')
+    expect(indicator.exists()).toBe(true)
+    expect(indicator.classes()).toContain('scale-x-100')
+
+    // Opening a second tab keeps both indicators mounted so scale-x transitions cleanly
+    sessions.openNewTab()
+    await nextTick()
+    const tabs = w.findAll('.ferry-site-tab')
+    expect(tabs).toHaveLength(2)
+    expect(tabs[0].find('span.h-0\\.5.rounded-full.bg-primary').classes()).toContain('scale-x-0')
+    expect(tabs[1].find('span.h-0\\.5.rounded-full.bg-primary').classes()).toContain('scale-x-100')
+  })
+
+  it('App.vue configures sibling tooltip warmup delay and skipDelayDuration on UApp', () => {
+    const w = trackMount(mount(App, { global: { stubs: commonStubs } }))
+    const root = w.get('[data-tooltip-delay]')
+    expect(root.attributes('data-tooltip-delay')).toBe('250')
+    expect(root.attributes('data-tooltip-skip-delay')).toBe('300')
   })
 
   it('does not re-hydrate or overwrite Glass UI edits on subsequent settings.fetch() after initial load', async () => {
@@ -332,5 +369,13 @@ describe('Modern Glass UI rollout', () => {
     await settings.fetch()
     expect(ui.glassUiEnabled).toBe(true)
     expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
+  })
+
+  it('main.css separates menu surface tokens and disables nested backdrop-filter over open dialogs', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8')
+    expect(css).toContain('--ferry-glass-menu-bg:')
+    expect(css).toContain('--ferry-glass-menu-nested-bg:')
+    expect(css).toContain('html.ferry-glass [role="listbox"]')
+    expect(css).toContain('html.ferry-glass:has([role="dialog"])')
   })
 })

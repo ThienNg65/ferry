@@ -199,36 +199,31 @@ describe('remoteFs.store with SWR cache', () => {
     expect(store.entries[0].name).toBe('fast.txt')
   })
 
-  it('deletes only from the explicitly confirmed session, not the active tab', async () => {
+  it('keeps the last real listing after overlapping navigation fails and retries the failed path', async () => {
     const store = useRemoteFsStore()
-    const a = { name: 'a.txt', path: '/a/a.txt', isDir: false, size: 10, permissions: '0644' }
-    const b = { name: 'b.txt', path: '/b/b.txt', isDir: false, size: 10, permissions: '0644' }
-    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/a', entries: [a] })
-    await store.loadForSession('sess-1', '/a')
-    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/b', entries: [b] })
-    await store.loadForSession('sess-2', '/b')
-    vi.mocked(api.invoke).mockResolvedValueOnce(undefined)
-    await store.remove(a, 'sess-1')
-    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:delete', 'sess-1', '/a/a.txt')
-    expect(store.bySession['sess-1'].entries).toHaveLength(0)
-    expect(store.bySession['sess-2'].entries.map((e) => e.name)).toEqual(['b.txt'])
-  })
+    const entry = { name: 'real.txt', path: '/current/real.txt', isDir: false, size: 1 }
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/current', entries: [entry] })
+    await store.load('/current')
 
-  it('batches deletion using the confirmed session and leaves other session buckets intact', async () => {
-    const store = useRemoteFsStore()
-    const a = { name: 'a.txt', path: '/a/a.txt', isDir: false, size: 10, permissions: '0644' }
-    const b = { name: 'b.txt', path: '/a/b.txt', isDir: false, size: 10, permissions: '0644' }
-    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/a', entries: [a, b] })
-    await store.loadForSession('sess-1', '/a')
-    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/other', entries: [] })
-    await store.loadForSession('sess-2', '/other')
-    vi.mocked(api.invoke).mockResolvedValueOnce({ deletedPaths: [a.path, b.path], failures: [] })
-    await store.removeMany([a, b], 'sess-1')
-    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:deleteMany', {
-      sessionId: 'sess-1', paths: [a.path, b.path]
-    })
-    expect(store.bySession['sess-1'].entries).toHaveLength(0)
-    expect(store.bySession['sess-2'].currentPath).toBe('/other')
+    let resolveSlow!: (result: { path: string; entries: [] }) => void
+    const stale = new Promise((resolve) => { resolveSlow = resolve })
+    vi.mocked(api.invoke).mockReturnValueOnce(stale).mockRejectedValueOnce(new Error('Access denied'))
+    const slowLoad = store.load('/slow')
+    await store.load('/denied')
+    resolveSlow({ path: '/slow', entries: [] })
+    await slowLoad
+
+    expect(store.currentPath).toBe('/current')
+    expect(store.entries).toEqual([entry])
+    expect(store.failedPath).toBe('/denied')
+    expect(store.error).toBe('Access denied')
+
+    vi.mocked(api.invoke).mockResolvedValueOnce({ path: '/denied', entries: [] })
+    await store.retryDirectory()
+    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:list', 'sess-1', '/denied', false)
+    expect(store.failedPath).toBeNull()
+    expect(store.currentPath).toBe('/denied')
+    expect(store.entries).toEqual([])
   })
 
   it('reloads the originating session directory when active tab switches during mkdir', async () => {

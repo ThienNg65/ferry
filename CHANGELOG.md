@@ -28,6 +28,55 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.2.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.1...ferry-v1.2.2) (2026-11-20)
+
+
+### Continuous Integration
+
+* validate Ferry MSIX packages before Store upload ([#115](https://github.com/ThienNg65/ferry/issues/115)) ([e3adfd5](https://github.com/ThienNg65/ferry/commit/e3adfd50557d39218d4d150a8da78a5c5b5a5dcd))
+
+## [1.2.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.0...ferry-v1.2.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **ui:** fix footer wrapping, connect preload race, middle-click, and glass menu blur ([239e5ce](https://github.com/ThienNg65/ferry/commit/239e5ce7389763598b2e90ec51b7cb7e07737714))
+* **ui:** fix footer wrapping, connect preload race, middle-click, and glass menu blur ([641fea0](https://github.com/ThienNg65/ferry/commit/641fea01c1438f461918ccf578bdd33c61dee1f1))
+
+## [1.2.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.1.0...ferry-v1.2.0) (2026-11-19)
+
+
+### Features
+
+* **branding:** refresh the Ferry app icon ([1188929](https://github.com/ThienNg65/ferry/commit/1188929bfe155bbc04d5ea378208383f496b6c4b))
+* **branding:** refresh the Ferry app icon ([8c6eee8](https://github.com/ThienNg65/ferry/commit/8c6eee847204de249b8196aaed06808f8143b2f4))
+* **branding:** render the Ferry icon in frosted glass ([f0026c7](https://github.com/ThienNg65/ferry/commit/f0026c72ee1f4b612d207ac54b7ebdeafc02a672))
+
+
+### Code Refactoring
+
+* **branding:** slim the Ferry mast crossbar ([bb43dfb](https://github.com/ThienNg65/ferry/commit/bb43dfbf9baf583b505a75fb9fceffc649616c2e))
+
+## [1.1.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.0.1...ferry-v1.1.0) (2026-11-19)
+
+
+### Features
+
+* add Arc UI motion system, responsive container polish, and glass skeleton shimmer ([cf3a778](https://github.com/ThienNg65/ferry/commit/cf3a7788a098f6aa6229c1eeb07fb674c51cfb18))
+* add Arc UI motion system, responsive container polish, and glass skeleton shimmer ([97d1952](https://github.com/ThienNg65/ferry/commit/97d19527066d666e18e06b04d646c06888bc4a9b))
+
+
+### Bug Fixes
+
+* address security, reliability, and UI edge cases from repo audit ([94393e6](https://github.com/ThienNg65/ferry/commit/94393e6a91f297758fc3174059a0199845928a95))
+* address security, reliability, and UI edge cases from repo audit ([9ba4cfb](https://github.com/ThienNg65/ferry/commit/9ba4cfb5ed6d2ab24269ed6b9d05289690038247))
+* protect file workflow targets and recover waiting states ([69e2936](https://github.com/ThienNg65/ferry/commit/69e29369bf0332eb635fdcd7f6ab895a539fbaae))
+* protect file workflow targets and recover waiting states ([4328b00](https://github.com/ThienNg65/ferry/commit/4328b0062cc2bba617816736a6dc1abc62548372))
+* revalidate resume stamps and preserve strict file permissions ([47c9d9d](https://github.com/ThienNg65/ferry/commit/47c9d9d26592e7a9b0d4c729fca3d379e1e2c3b4))
+* review symlink deletions in mirror sync ([05f49cb](https://github.com/ThienNg65/ferry/commit/05f49cb2243c473ded69ab245f78fe03cd2b4678))
+* show confirmed paths after interrupted sync ([eac6bbf](https://github.com/ThienNg65/ferry/commit/eac6bbf99cfcffe2014a47b072276e87f792ea4e))
+* **ui:** preserve horizontal trackpad scrolling in tab strips ([c29105b](https://github.com/ThienNg65/ferry/commit/c29105bb25b65537d9cc6fb94bdf850e2ff17cb4))
+
 ## [1.0.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.0.0...ferry-v1.0.1) (2026-11-19)
 
 

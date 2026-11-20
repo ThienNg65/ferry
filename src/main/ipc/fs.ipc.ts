@@ -37,8 +37,10 @@ export function registerFsHandlers(): void {
     RemoteFs.touchRemote(sessionId as string, filePath as string)
   )
   handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
-  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath) =>
-    LocalFs.rename(fromPath as string, toPath as string)
+  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath, replace) =>
+    typeof replace === 'boolean'
+      ? LocalFs.rename(fromPath as string, toPath as string, replace)
+      : LocalFs.rename(fromPath as string, toPath as string)
   )
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
     LocalFs.remove(targetPath as string, Boolean(isDir))
@@ -73,8 +75,10 @@ export function registerFsHandlers(): void {
   handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) =>
     RemoteFs.mkdirRemote(sessionId as string, dirPath as string)
   )
-  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath) =>
-    RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string)
+  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath, replace) =>
+    typeof replace === 'boolean'
+      ? RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string, replace)
+      : RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string)
   )
   // Deletes are deliberately NOT cancellable: aborting the channel mid-`rm -rf`
   // doesn't stop the remote rm and would mislead the user about what survived.

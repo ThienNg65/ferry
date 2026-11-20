@@ -115,7 +115,12 @@ function onEdit(): void {
         <p class="text-sm text-muted">Preview not available for this file type.</p>
         <UButton v-if="canDownload" icon="i-lucide-download" :disabled="Boolean(entry?.symlinkBroken)" @click="onDownload">Download instead</UButton>
       </div>
-      <div v-else-if="loading" role="status" aria-label="Loading file preview" class="flex flex-col gap-2 py-2">
+      <div
+        v-else-if="loading"
+        role="status"
+        aria-label="Loading file preview"
+        class="flex flex-col gap-2.5 rounded-md border border-default/40 bg-muted/40 p-3"
+      >
         <USkeleton v-for="i in 6" :key="i" class="h-3.5" :style="{ width: `${60 + ((i * 19) % 35)}%` }" />
       </div>
       <UAlert v-else-if="error" color="error" variant="soft" :title="error" />

@@ -538,6 +538,8 @@ try {
   const mkdirRes = await rpcInvoke('fs:remote:mkdir', sessionId, '/home/tester/uploads')
   if (!mkdirRes?.ok) throw new Error(`fs:remote:mkdir failed: ${JSON.stringify(mkdirRes)}`)
 
+  const uploadPart = '/home/tester/uploads/staged.txt.part'
+  remoteFiles.set(uploadPart, Buffer.from('existing remote file'))
   const uploadRes = await rpcInvoke('transfer:enqueue', {
     sessionId,
     kind: 'upload',
@@ -552,11 +554,16 @@ try {
   if (!uploadDone || remoteFiles.get('/home/tester/uploads/staged.txt')?.toString('utf8') !== 'staged-ok') {
     throw new Error('Packaged SFTP upload content mismatch')
   }
+  if (remoteFiles.get(uploadPart)?.toString('utf8') !== 'existing remote file' ||
+      [...remoteFiles.keys()].some((p) => pathPosix.basename(p).startsWith('.ferry-transfer-'))) {
+    throw new Error('Packaged SFTP upload did not preserve the existing .part or clean up staging')
+  }
   if (existsSync(stagedFile)) {
     throw new Error(`Staged temp drop file was not cleaned up after upload: ${stagedFile}`)
   }
 
   const downloadTarget = join(tempAppData, 'downloaded-welcome.txt')
+  writeFileSync(`${downloadTarget}.part`, 'existing local file')
   const downloadRes = await rpcInvoke('transfer:enqueue', {
     sessionId,
     kind: 'download',
@@ -567,6 +574,9 @@ try {
   await waitForEvent('transfer:event', (e) => e?.transferId === downloadRes.data.transferId && e?.state === 'done')
   if (readFileSync(downloadTarget, 'utf8') !== 'hello from remote sftp\n') {
     throw new Error('Packaged SFTP download content mismatch')
+  }
+  if (readFileSync(`${downloadTarget}.part`, 'utf8') !== 'existing local file') {
+    throw new Error('Packaged SFTP download did not preserve the existing .part')
   }
 
   const tailRes = await rpcInvoke('tail:start', {
