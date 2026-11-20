@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, copyFileSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, copyFileSync, statSync, writeFileSync } from 'fs'
 import { execFileSync, spawnSync } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -138,6 +138,7 @@ const zipPath = join(distDir, `Ferry-Portable-${version}-win-x64.zip`)
 await buildPortableZip({
   sourceDir: protoDir,
   destination: zipPath,
+  maxBytes: MAX_COMPRESSED_BYTES,
   requiredEntries: [
     'ferry-win_x64.exe',
     'resources.neu',
