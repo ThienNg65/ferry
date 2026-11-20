@@ -16,8 +16,6 @@ interface TailEntry {
   remotePath: string
   /** PID of the remote `tail` process, captured from its first output line. */
   remotePid: number | null
-  /** Wall-clock ms of the last stdout activity; used by the idle reaper. */
-  lastActive: number
   /** Pending reconnect timer handle, cleared on stop/supersede. */
   reconnectTimer: ReturnType<typeof setTimeout> | null
   /** Last non-empty stderr line observed for this stream. */
@@ -28,8 +26,6 @@ interface TailEntry {
 
 /** Marker line the remote command prints first to report the tail's PID. */
 const PID_MARKER = 'FERRYPID:'
-/** Streams with no activity for this long are reaped. */
-const IDLE_TTL_MS = 30 * 60 * 1000
 /** Reconnect attempts before giving up and ending the stream. */
 const MAX_RECONNECT_ATTEMPTS = 5
 
@@ -61,13 +57,12 @@ export function sanitizeHistoryLines(value: unknown): number {
  * not reliably kill a backgrounded remote process without a PTY.
  *
  * Auto-reconnects on transient drops (unlike file-browsing sessions, where
- * silent reconnect would be unsafe) with capped exponential backoff, and
- * reaps streams that see no activity for {@link IDLE_TTL_MS}.
+ * silent reconnect would be unsafe) with capped exponential backoff.
+ * A tail stays active until its tab, SSH session or the sidecar closes.
  */
 export class TailManager {
   private static instance: TailManager | null = null
   private readonly tails = new Map<string, TailEntry>()
-  private reaper: ReturnType<typeof setInterval> | null = null
 
   static getInstance(): TailManager {
     if (TailManager.instance === null) {
@@ -111,26 +106,6 @@ export class TailManager {
     this.broadcastEnd(tailId, error)
   }
 
-  private ensureReaper(): void {
-    if (this.reaper) {
-      return
-    }
-    this.reaper = setInterval(() => {
-      const now = Date.now()
-      for (const [id, entry] of [...this.tails.entries()]) {
-        if (now - entry.lastActive > IDLE_TTL_MS) {
-          this.broadcastNotice(id, 'Stream closed after 30 minutes of inactivity')
-          this.stop(id)
-        }
-      }
-      if (this.tails.size === 0 && this.reaper) {
-        clearInterval(this.reaper)
-        this.reaper = null
-      }
-    }, 60_000)
-    this.reaper.unref?.()
-  }
-
   /** Starts following a remote file. `tailId` is caller-chosen (used to route lines and to stop). */
   start(tailId: string, sessionId: string, remotePath: string, historyLines = 200): void {
     // Validate the session synchronously before registering or returning so an
@@ -144,12 +119,10 @@ export class TailManager {
       sessionId,
       remotePath,
       remotePid: null,
-      lastActive: Date.now(),
       reconnectTimer: null,
       lastStderr: null,
       ended: false
     })
-    this.ensureReaper()
     void this.follow(tailId, sanitizeHistoryLines(historyLines), 0)
   }
 
@@ -188,7 +161,7 @@ export class TailManager {
       const command = `printf '${PID_MARKER}%s\\n' $$; exec tail -n ${historyLines} -F -- ${shellEscape(entry.remotePath)}`
       const exitCode = await shell.execLines(command, {
         signal: entry.controller.signal,
-        timeoutMs: 6 * 60 * 60 * 1000, // effectively unbounded; the reaper handles idle streams
+        timeoutMs: null,
         onLine: (line) => {
           if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
             return
@@ -205,7 +178,6 @@ export class TailManager {
             }
           }
           sawLogLine = true
-          entry.lastActive = Date.now()
           markHealthy()
           this.broadcastLine(tailId, line)
         },
@@ -217,10 +189,10 @@ export class TailManager {
           flushStderr(false)
         }
       })
-      flushStderr(true)
       if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
         return
       }
+      flushStderr(true)
       if (exitCode !== null && exitCode !== 0) {
         this.finishEntry(tailId, entry, entry.lastStderr || `tail exited with code ${exitCode}`)
         return
@@ -229,17 +201,18 @@ export class TailManager {
       const nextAttempt = !sawLogLine && Date.now() - attemptStartMs < 5_000 ? attempt : currentAttempt
       await this.reconnect(tailId, historyLines, nextAttempt)
     } catch (e) {
-      flushStderr(true)
       if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
         return
       }
+      flushStderr(true)
       if (!isTransient(e)) {
         const msg = e instanceof Error ? e.message : String(e)
         this.finishEntry(tailId, entry, msg)
         return
       }
       entry.remotePid = null
-      await this.reconnect(tailId, historyLines, currentAttempt, e)
+      const nextAttempt = !sawLogLine && Date.now() - attemptStartMs < 5_000 ? attempt : currentAttempt
+      await this.reconnect(tailId, historyLines, nextAttempt, e)
     }
   }
 
@@ -311,14 +284,10 @@ export class TailManager {
     }
   }
 
-  /** Stops all active tail streams and clears the idle reaper (e.g. on sidecar shutdown). */
+  /** Stops all active tail streams (e.g. on sidecar shutdown). */
   stopAll(): void {
     for (const tailId of [...this.tails.keys()]) {
       this.stop(tailId)
-    }
-    if (this.reaper) {
-      clearInterval(this.reaper)
-      this.reaper = null
     }
   }
 
