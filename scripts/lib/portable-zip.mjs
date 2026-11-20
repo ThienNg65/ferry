@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createWriteStream, readFileSync, renameSync, rmSync } from 'node:fs'
+import { createWriteStream, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { finished } from 'node:stream/promises'
 import { inflateRawSync } from 'node:zlib'
 import { dirname, join, basename } from 'node:path'
@@ -64,17 +64,18 @@ export function verifyPortableZip(path, requiredEntries) {
 }
 
 /** Never touch the existing artifact until the replacement has been fully written and verified. */
-export async function buildPortableZip({ sourceDir, destination, requiredEntries, archiveFactory = () => new ZipArchive({ zlib: { level: 9 } }), outputFactory = createWriteStream, verify = verifyPortableZip }) {
+export async function buildPortableZip({ sourceDir, destination, requiredEntries, maxBytes = Infinity, archiveFactory = () => new ZipArchive({ zlib: { level: 9 } }), outputFactory = createWriteStream, verify = verifyPortableZip }) {
   const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
   const archive = archiveFactory()
   const output = outputFactory(temporary)
   try {
     const completed = finished(output)
-    const archiveError = new Promise((_, reject) => archive.once('error', reject))
+    const archiveError = new Promise((_, reject) => { archive.once('error', reject); archive.once('warning', reject) })
     archive.pipe(output)
     archive.directory(sourceDir, false)
     await Promise.race([Promise.all([completed, archive.finalize()]), archiveError])
     verify(temporary, requiredEntries)
+    if (statSync(temporary).size > maxBytes) throw new Error('Portable ZIP exceeds compressed size limit')
     renameSync(temporary, destination)
   } catch (error) {
     archive.abort?.()
