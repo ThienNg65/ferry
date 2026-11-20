@@ -1,0 +1,201 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to recover (e.g. ferry-v0.23.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-assets:
+    needs: release-please
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      PUBLIC_REPO: ThienNg65/ferry-release
+      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+    steps:
+      # Manual recovery publishes the existing tag; normal pushes use Release Please output.
+      - name: Resolve release target
+        id: target
+        shell: bash
+        env:
+          MANUAL_TAG: ${{ inputs.tag_name }}
+          AUTOMATIC_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          tag="${MANUAL_TAG:-$AUTOMATIC_TAG}"
+          if [[ ! "$tag" =~ ^ferry-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid Ferry release tag: $tag"
+            exit 1
+          fi
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#ferry-v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.tag_name }}
+
+      - name: Verify public publishing access
+        shell: bash
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Configure PUBLIC_RELEASE_TOKEN with Contents: Read and write on ${PUBLIC_REPO}."
+            exit 1
+          fi
+          visibility=$(gh api "repos/$PUBLIC_REPO" --jq '.visibility')
+          if [ "$visibility" != "public" ]; then
+            echo "::error::$PUBLIC_REPO must be public (got $visibility)."
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Install and verify NSIS compiler
+        shell: pwsh
+        run: |
+          choco install nsis.install --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $compiler)) {
+            $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe'
+          }
+          if (-not (Test-Path $compiler)) { throw 'makensis.exe not found after installing NSIS' }
+          & $compiler /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis.exe failed its version check' }
+          "FERRY_MAKENSIS=$compiler" >> $env:GITHUB_ENV
+          "FERRY_REQUIRE_NSIS=1" >> $env:GITHUB_ENV
+
+      # Build and package the canonical Neutralino desktop shell + Node sidecar.
+      - name: Build and Package Neutralino
+        shell: bash
+        run: npm run package
+
+      - name: Smoke test Neutralino package
+        shell: bash
+        run: npm run smoke:neutralino
+
+      # Dormant SignPath stage: active only when the organization ID is configured.
+      - name: Upload unsigned installer for signing
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/Ferry-Setup-*.exe
+
+      - name: Submit signing request to SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ferry
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+
+      - name: Regenerate update metadata for signed binary
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        run: node ./.github/scripts/regenerate-update-yml.js
+
+      - name: Verify complete installer and update metadata
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          shopt -s nullglob
+          installers=(dist/Ferry-Setup-*.exe)
+          zips=(dist/Ferry-Portable-*-win-x64.zip)
+          legacy_nl=(dist/Ferry-Neutralino-*)
+          if [ "${#installers[@]}" -ne 1 ] || [ "${#zips[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
+            echo "::error::Expected one Ferry-Setup-*.exe, one Ferry-Portable-*-win-x64.zip, and a nonempty dist/latest.yml."
+            exit 1
+          fi
+          if [ "${#legacy_nl[@]}" -ne 0 ] || [ -e dist/latest-neutralino.yml ]; then
+            echo "::error::Unexpected legacy Ferry-Neutralino-* or latest-neutralino.yml artifacts found."
+            exit 1
+          fi
+          if [ -e dist/ferry-neutralino-win_x64/resources/app.asar ] || [ -e dist/ferry-neutralino-win_x64/chrome_100_percent.pak ]; then
+            echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
+            exit 1
+          fi
+          node ./.github/scripts/regenerate-update-yml.js --verify --version "$EXPECTED_VERSION"
+
+      - name: Create verified public changelog commit
+        id: public-release
+        shell: bash
+        env:
+          SOURCE_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+        run: node .github/scripts/publish-public-release.mjs
+
+      - name: Publish signed-commit-backed public GitHub Release
+        shell: bash
+        env:
+          TAG: ${{ steps.target.outputs.tag_name }}
+          VERSION: ${{ steps.target.outputs.version }}
+          VERIFIED_SHA: ${{ steps.public-release.outputs.commit_sha }}
+          NOTES_FILE: ${{ steps.public-release.outputs.notes_file }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/Ferry-Setup-*.exe dist/Ferry-Portable-*-win-x64.zip dist/latest.yml)
+          # Never move an existing release tag: release tags must be stable.
+          if existing_sha=$(gh api "repos/$PUBLIC_REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null); then
+            : # Existing tag found.
+          else
+            existing_sha="" # A missing tag must not be mistaken for a commit SHA.
+          fi
+          if [ -n "$existing_sha" ] && [ "$existing_sha" != "$VERIFIED_SHA" ]; then
+            echo "::error::Public release tag $TAG already points at a different commit ($existing_sha)."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$NOTES_FILE"
+            gh release upload "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$NOTES_FILE" --target "$VERIFIED_SHA"
+          fi
+
+      # Keep this enabled during migration: existing installers currently poll
+      # ThienNg65/ferry, so they need one bridge release from the old feed.
+      # Set PUBLISH_LEGACY_FERRY=false only after the bridge is verified and
+      # users have been given time to update.
+      - name: Publish legacy bridge release
+        if: vars.PUBLISH_LEGACY_FERRY != 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.target.outputs.tag_name }}
+          LEGACY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/Ferry-Setup-*.exe dist/Ferry-Portable-*-win-x64.zip dist/latest.yml)
+          GH_TOKEN="$LEGACY_TOKEN" gh release upload "$TAG" "${assets[@]}" --repo "${{ github.repository }}" --clobber

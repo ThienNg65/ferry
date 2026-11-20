@@ -1,8 +1,9 @@
-import Store from 'electron-store'
+import Conf from 'conf'
 import { randomUUID } from 'crypto'
-import { safeStorage } from 'electron'
+import { host } from '../host/host'
+import { decrypt, encrypt } from '../host/secrets'
 import { SshError } from '../ssh/errors'
-import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteInput } from '../../shared/contract'
+import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteEnvironment, SiteInput } from '../../shared/contract'
 
 /** On-disk shape of a saved jump-host hop — secrets encrypted-at-rest like the top-level site. */
 interface StoredJumpHost {
@@ -46,6 +47,7 @@ interface StoredSite {
   proxyMode?: 'inherit' | 'none' | 'custom'
   proxy?: StoredProxy
   group?: string
+  environment?: SiteEnvironment
   createdAt: string
   updatedAt: string
 }
@@ -57,32 +59,6 @@ function storedJumpHosts(s: Pick<StoredSite, 'jumpHosts' | 'jumpHost'>): StoredJ
 
 interface StoreSchema {
   sites: StoredSite[]
-}
-
-function encrypt(plaintext: string | undefined): string | undefined {
-  if (!plaintext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine')
-  }
-  return safeStorage.encryptString(plaintext).toString('base64')
-}
-
-function decrypt(ciphertext: string | undefined): string | undefined {
-  if (!ciphertext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
-  }
-  try {
-    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
-  } catch (e) {
-    // Most likely this secret was encrypted under a different OS user/DPAPI key (e.g. the
-    // profile was copied to another machine/user) — a raw native error here is unreadable.
-    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
-  }
 }
 
 /**
@@ -127,15 +103,19 @@ function toStoredJumpHost(j: JumpHostConfig, existing?: StoredJumpHost): StoredJ
 
 /**
  * Maps an incoming jump-host chain to its stored form, matching each hop to
- * the existing hop at the same array index so an unchanged password/
- * passphrase is preserved rather than cleared (`pickSecret`'s usual
- * behavior). Reordering hops in the UI can momentarily attach the wrong
- * stored secret to the wrong hop for one save round-trip — an accepted,
- * documented risk, not a correctness bug: the user re-enters the secret if a
- * save happens to land oddly, same as any other stale-secret edge case here.
+ * its `sourceIndex` (when provided by the UI) or its current array index so
+ * unchanged passwords/passphrases are preserved even after reordering hops.
  */
 function toStoredJumpHosts(hops: JumpHostConfig[], existing: StoredJumpHost[]): StoredJumpHost[] {
-  return hops.map((hop, i) => toStoredJumpHost(hop, existing[i]))
+  return hops.map((hop, i) => {
+    const prev =
+      hop.sourceIndex === -1
+        ? undefined
+        : hop.sourceIndex !== undefined
+          ? existing[hop.sourceIndex]
+          : existing[i]
+    return toStoredJumpHost(hop, prev)
+  })
 }
 
 function toPublicProxy(p: StoredProxy): ProxyInfo {
@@ -178,6 +158,7 @@ function toPublicSite(s: StoredSite): Site {
     proxyMode: s.proxyMode,
     proxy: s.proxy ? toPublicProxy(s.proxy) : undefined,
     group: s.group,
+    environment: s.environment,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt
   }
@@ -191,11 +172,11 @@ function toPublicSite(s: StoredSite): Site {
  */
 export class SiteStore {
   private static instance: SiteStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'sites', defaults: { sites: [] } })
+      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'sites', defaults: { sites: [] } })
     }
     return this._store
   }
@@ -209,6 +190,15 @@ export class SiteStore {
 
   list(): Site[] {
     return this.store.get('sites').map(toPublicSite)
+  }
+
+  exportSites(): string {
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      sites: this.list()
+    }
+    return JSON.stringify(payload, null, 2)
   }
 
   create(input: SiteInput): Site {
@@ -230,6 +220,7 @@ export class SiteStore {
       proxyMode: input.proxyMode,
       proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy) : undefined,
       group: input.group || undefined,
+      environment: input.environment,
       createdAt: now,
       updatedAt: now
     }
@@ -267,6 +258,7 @@ export class SiteStore {
       proxyMode: input.proxyMode,
       proxy: input.proxyMode === 'custom' && input.proxy ? toStoredProxy(input.proxy, existing.proxy) : undefined,
       group: input.group || undefined,
+      environment: input.environment,
       updatedAt: new Date().toISOString()
     }
     sites[idx] = updated
@@ -297,6 +289,11 @@ export class SiteStore {
     sites.push(copy)
     this.store.set('sites', sites)
     return toPublicSite(copy)
+  }
+
+  /** Removes all saved sites and their encrypted credentials. */
+  clear(): void {
+    this.store.set('sites', [])
   }
 
   /** Raw stored record (still has ciphertext, not decrypted) — main-process only. */

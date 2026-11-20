@@ -14,17 +14,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  */
 const disks = new Map<string, Record<string, unknown>>()
 
-vi.mock('electron-store', () => {
-  class FakeStore {
+vi.mock('conf', () => {
+  class FakeConf {
     private readonly name: string
-    constructor(opts: { name: string; defaults: Record<string, unknown> }) {
-      this.name = opts.name
+    constructor(opts: { configName: string; defaults: Record<string, unknown> }) {
+      this.name = opts.configName
       if (!disks.has(this.name)) {
         disks.set(this.name, { ...opts.defaults })
       }
     }
     get(key: string): unknown {
-      // Deep-clone on read/write, mirroring real electron-store/conf's
+      // Deep-clone on read/write, mirroring real conf's
       // read-from-disk semantics — matters because BookmarkStore.create()/
       // delete()/deleteForSite() all read the array, mutate/rebuild it, then
       // `.set()` it back; a shared reference here would mask bugs a real
@@ -35,7 +35,7 @@ vi.mock('electron-store', () => {
       disks.get(this.name)![key] = JSON.parse(JSON.stringify(value))
     }
   }
-  return { default: FakeStore }
+  return { default: FakeConf }
 })
 
 const { BookmarkStore } = await import('./BookmarkStore')

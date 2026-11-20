@@ -9,16 +9,10 @@ on:
       - main
 
 permissions:
-  contents: write
-  # Needed by actions/upload-artifact + SignPath's signing-request action (Part 2
-  # of the dormant signing stage below) — harmless while SIGNPATH_ORGANIZATION_ID
-  # is unset, since those steps are skipped entirely.
-  actions: read
+  contents: read
 
 jobs:
   verify:
-    # Prevent infinite recursion from commits made by this workflow
-    if: github.actor != 'github-actions[bot]'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,159 +25,50 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
+      - name: Test repository automation scripts
+        shell: bash
+        run: node --test .github/scripts/*.test.mjs
+
+      - name: Build Neutralino & Sidecar
         run: npm run build
 
-  auto-release:
-    needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install and verify NSIS compiler
+        shell: pwsh
+        run: |
+          choco install nsis.install --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          if (-not (Test-Path $compiler)) {
+            $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe'
+          }
+          if (-not (Test-Path $compiler)) { throw 'makensis.exe not found after installing NSIS' }
+          & $compiler /VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'makensis.exe failed its version check' }
+          "FERRY_MAKENSIS=$compiler" >> $env:GITHUB_ENV
+          "FERRY_REQUIRE_NSIS=1" >> $env:GITHUB_ENV
 
-      - uses: ./.github/actions/setup-node-deps
+      - name: Package Neutralino
+        run: npm run package
 
-      - name: Read version
-        id: version
+      - name: Verify canonical Neutralino-only distribution
         shell: bash
         run: |
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Finalize changelog
-        run: node ./.github/scripts/prepare-release.js
-
-      - name: Commit release changelog
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add CHANGELOG.md
-
-          if git diff --cached --quiet; then
-            echo "No changelog changes."
-          else
-            git commit -m "docs: finalize v${{ steps.version.outputs.version }} changelog"
+          shopt -s nullglob
+          installers=(dist/Ferry-Setup-*.exe)
+          zips=(dist/Ferry-Portable-*-win-x64.zip)
+          legacy_nl=(dist/Ferry-Neutralino-*)
+          if [ "${#installers[@]}" -ne 1 ] || [ "${#zips[@]}" -ne 1 ] || [ ! -s dist/latest.yml ]; then
+            echo "::error::Expected one Ferry-Setup-*.exe, one Ferry-Portable-*-win-x64.zip, and nonempty dist/latest.yml."
+            exit 1
           fi
-
-      - name: Create tag
-        shell: bash
-        # Create tag locally. We will push it at the end with --follow-tags
-        run: git tag "v${{ steps.version.outputs.version }}"
-
-      - name: Build and Package with Electron Builder
-        run: |
-          npm run build
-          npx electron-builder --publish never
-
-      - name: Generate release notes
-        run: node ./.github/scripts/extract-release-notes.js
-
-      - name: Bump next version
-        run: npm version patch --no-git-tag-version
-
-      - name: Update VERSION
-        shell: bash
-        run: |
-          node -e "const fs=require('fs');const p=require('./package.json');fs.writeFileSync('VERSION',p.version)"
-
-      - name: Prepare next changelog
-        run: node ./.github/scripts/prepare-next-version.js
-
-      - name: Commit next development cycle and push
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git add package.json package-lock.json VERSION CHANGELOG.md
-
-          if git diff --cached --quiet; then
-            echo "Nothing to commit for next cycle."
-          else
-            git commit -m "chore: start next development cycle"
+          if [ "${#legacy_nl[@]}" -ne 0 ]; then
+            echo "::error::Unexpected legacy Ferry-Neutralino-* artifacts found: ${legacy_nl[*]}"
+            exit 1
           fi
-          
-          # Try to push everything. If it fails due to a race condition (non-fast-forward),
-          # fail the workflow. Since we haven't touched GitHub Releases yet, no rollback is needed!
-          if ! git push origin HEAD:main "v${{ steps.version.outputs.version }}"; then
-            echo "::error::Push failed! Another commit was merged to main during the build."
+          if [ -e dist/ferry-neutralino-win_x64/resources/app.asar ] || [ -e dist/ferry-neutralino-win_x64/chrome_100_percent.pak ]; then
+            echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
             exit 1
           fi
 
-          # KNOWN GAP: everything from this point on (SignPath signing, then `gh release
-          # create` below) can still fail *after* this push has already succeeded. If that
-          # happens, main is left already bumped to the *next* patch version and tagged for
-          # the version that just failed to release — but that version has no tag pushed
-          # failure-side and no GitHub Release. A naive rerun of this workflow would then
-          # build/tag/release the WRONG (next) version, silently skipping the one that
-          # actually failed.
-          #
-          # There is currently no automatic rollback for this window (deliberately — see the
-          # SignPath-stage comment below for why release-affecting steps are pushed as late as
-          # possible instead). If a run fails after this step:
-          #   1. Check whether the tag "v${{ steps.version.outputs.version }}" exists on the
-          #      remote and whether a matching GitHub Release was created.
-          #   2. If the tag/release is missing, manually re-tag that commit (or re-run the
-          #      build/package/SignPath/release steps by hand) for the version that failed —
-          #      do NOT just re-run this workflow as-is, since main has already moved on.
-          #   3. Only after confirming the failed version is properly released should you
-          #      trust a subsequent normal push to main to release the next version.
-
-      # --- Dormant SignPath signing stage --------------------------------
-      # Every step below is gated on SIGNPATH_ORGANIZATION_ID being set, so
-      # this whole block is a true no-op until real SignPath credentials
-      # exist (see .claude/plan/ferry-smartscreen-signing-plan.md) — nothing
-      # to configure here beyond adding the repo variable/secrets once the
-      # SignPath OSS application is approved.
-      #
-      # Placed here (after the push above), not right after the build step,
-      # so a lost push race (see the comment on the previous step) never
-      # burns a real SignPath signing request on a run that's about to fail
-      # anyway — mirrors why commit b6efbcc deferred all GitHub-Release API
-      # calls until after push.
-      - name: Upload unsigned installer for signing
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
-        id: unsigned-artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: unsigned-installer
-          path: dist/Ferry-Setup-*.exe
-
-      - name: Submit signing request to SignPath
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ferry
-          signing-policy-slug: release-signing
-          github-artifact-id: ${{ steps.unsigned-artifact.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: dist
-
-      - name: Regenerate update metadata for signed binary
-        if: vars.SIGNPATH_ORGANIZATION_ID != ''
-        run: node ./.github/scripts/regenerate-update-yml.js
-      # --- End dormant SignPath signing stage ----------------------------
-
-      - name: Create GitHub Release and Upload Assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # nullglob so a signed release's deleted (stale) blockmap doesn't pass
-          # through as a literal, non-existent filename (see regenerate-update-yml.js).
-          shopt -s nullglob
-          assets=(dist/Ferry-Setup-*.exe dist/*.blockmap dist/latest.yml)
-
-          # Since the tag is now pushed to GitHub, we can safely create the release.
-          # latest.yml is required by electron-updater's checkForUpdates() to learn
-          # a newer version exists at all — omitting it (as this step used to)
-          # silently breaks auto-update for every installed client.
-          gh release create "v${{ steps.version.outputs.version }}" \
-            "${assets[@]}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --notes-file RELEASE_NOTES.md
+      - name: Smoke test Neutralino package
+        run: npm run smoke:neutralino

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { DownloadsPathResult, FileEntry, UnzipResult } from '@shared/contract'
-import { invoke } from '../../api'
+import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import { invoke, IpcError } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
@@ -10,26 +10,33 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
+import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
+import { useConfirm } from '../../composables/useConfirm'
+import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive } from '../../utils/fileTypes'
+import { formatBytes } from '../../utils/format'
+import {
+  composePaneEntries,
+  emptyVisibilityFilter,
+  type FileVisibilityFilter
+} from '../../utils/fileVisibilityFilter'
+import type { TransferIntent } from '../../composables/useTransferIntents'
+import { useTransferIntents } from '../../composables/useTransferIntents'
+import { usePaneKeyboard } from '../../composables/usePaneKeyboard'
+import { useDebouncedRef } from '../../composables/useDebouncedRef'
 import FileToolbar from './FileToolbar.vue'
 import PathBreadcrumb from './PathBreadcrumb.vue'
 import FileList from './FileList.vue'
-import FilePreviewDialog from './FilePreviewDialog.vue'
-import EditorDialog from './EditorDialog.vue'
-import ChmodDialog from './ChmodDialog.vue'
-import SyncDialog from './SyncDialog.vue'
+import TransferConflictDialog from './TransferConflictDialog.vue'
 
-interface TransferIntent {
-  sessionId: string
-  direction: 'upload' | 'download'
-  localPath: string
-  remotePath: string
-  isDir: boolean
-  targetName: string
-}
+const FilePreviewDialog = defineAsyncComponent(() => import('./FilePreviewDialog.vue'))
+const EditorDialog = defineAsyncComponent(() => import('./EditorDialog.vue'))
+const ChmodDialog = defineAsyncComponent(() => import('./ChmodDialog.vue'))
+const SyncDialog = defineAsyncComponent(() => import('./SyncDialog.vue'))
+const CompareDialog = defineAsyncComponent(() => import('./CompareDialog.vue'))
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -40,38 +47,112 @@ const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
+const fileFilters = useFileFiltersStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
+const confirm = useConfirm()
+const {
+  transferConflict,
+  buildTransferIntent,
+  checkAndQueueTransfers,
+  enqueueIntents,
+  dismissTransferConflict,
+  resolveTransferConflict,
+  transferEntry
+} = useTransferIntents()
+
+const toast = useToast()
 
 const store = props.side === 'local' ? localFs : remoteFs
 
+const paneEl = ref<HTMLElement | null>(null)
+const toolbarRef = ref<InstanceType<typeof FileToolbar> | null>(null)
+const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
 const showNewFolder = ref(false)
+const newEntryKind = ref<'folder' | 'file'>('folder')
 const newFolderName = ref('')
 const isDropTarget = ref(false)
 const filterText = ref('')
-const filteredEntries = computed(() => {
-  const needle = filterText.value.trim().toLowerCase()
-  if (!needle) {
-    return store.entries
+const { debounced: debouncedFilter } = useDebouncedRef(filterText, 120)
+const connectionFilterKey = computed(() =>
+  props.side === 'remote' ? resolveConnectionFilterKey(sessions.activeTab) : null
+)
+const activeVisibilityFilter = computed<FileVisibilityFilter>(() =>
+  props.side === 'remote'
+    ? fileFilters.getFilter(connectionFilterKey.value, resolveLegacyConnectionFilterKey(sessions.activeTab))
+    : emptyVisibilityFilter()
+)
+const paneEntriesResult = computed(() =>
+  composePaneEntries(store.entries, {
+    showHidden: ui.showHidden,
+    visibilityFilter: props.side === 'remote' ? activeVisibilityFilter.value : undefined,
+    searchQuery: debouncedFilter.value
+  })
+)
+const isVisibilityFiltered = computed(() => paneEntriesResult.value.visibilityActive)
+const isSearchFiltered = computed(() => paneEntriesResult.value.searchActive)
+const isFiltered = computed(() => isVisibilityFiltered.value || isSearchFiltered.value)
+const filteredEntries = computed(() => paneEntriesResult.value.entries)
+
+function updateVisibilityFilter(next: FileVisibilityFilter): void {
+  if (props.side !== 'remote') return
+  fileFilters.setFilter(connectionFilterKey.value, next)
+}
+
+function clearVisibilityFilter(): void {
+  if (props.side !== 'remote') return
+  fileFilters.clearFilter(connectionFilterKey.value)
+}
+
+const paneSummary = computed(() => {
+  const { entries: list, totalFiles, visibleFiles, visibilityActive, searchActive } = paneEntriesResult.value
+  let folders = 0
+  for (const e of list) {
+    if (e.isDir) folders++
   }
-  return store.entries.filter((e) => e.name.toLowerCase().includes(needle))
+  const parts: string[] = []
+  if (folders > 0) parts.push(`${folders} ${folders === 1 ? 'folder' : 'folders'}`)
+  if (visibilityActive) {
+    parts.push(`${visibleFiles} of ${totalFiles} ${totalFiles === 1 ? 'file' : 'files'}`)
+  } else if (visibleFiles > 0) {
+    parts.push(`${visibleFiles} ${visibleFiles === 1 ? 'file' : 'files'}`)
+  }
+  const base = parts.length > 0 ? parts.join(', ') : '0 items'
+  if (visibilityActive && searchActive) return `${base} (search active)`
+  if (!visibilityActive && searchActive) return `${base} (filtered from ${store.entries.length})`
+  return base
 })
+
+const visibleSelectedEntries = computed(() =>
+  filteredEntries.value.filter((e) => store.selected.has(e.path))
+)
+
+const selectionSummary = computed(() => {
+  const selected = visibleSelectedEntries.value
+  const count = selected.length
+  if (count === 0) return ''
+  let bytes = 0
+  for (const e of selected) {
+    if (!e.isDir) {
+      bytes += e.size
+    }
+  }
+  return bytes > 0 ? `${count} selected (${formatBytes(bytes)})` : `${count} selected`
+})
+
 const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
 const renamingPath = ref<string | null>(null)
-const transferConflict = ref<{ intents: TransferIntent[]; conflicts: string[] } | null>(null)
+let renameInFlight = false
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
-const editConfirmTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
-const editorState = ref<{ editId: string, localTempPath: string, remotePath: string } | null>(null)
-const pendingDelete = ref<FileEntry[] | null>(null)
-const deleting = ref(false)
+const editorState = ref<{ editId: string; localTempPath: string; remotePath: string } | null>(null)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
-  () => store.currentPath,
+  () => [store.currentPath, props.side === 'remote' ? sessions.activeSessionId : null],
   () => {
     renamingPath.value = null
     filterText.value = ''
@@ -90,16 +171,58 @@ watch(filteredEntries, (entries) => {
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 
+const unregisterPaneActions = registerPaneActions(props.side, {
+  selectedCount: () => visibleSelectedEntries.value.length,
+  rename: () => {
+    if (visibleSelectedEntries.value.length === 1) {
+      const target = visibleSelectedEntries.value[0]
+      const idx = filteredEntries.value.findIndex((e) => e.path === target.path)
+      if (idx >= 0) {
+        fileListRef.value?.scrollToIndex(idx)
+        renamingPath.value = target.path
+      }
+    }
+  },
+  remove: () => void confirmDeleteEntries(visibleSelectedEntries.value),
+  transfer: () => void onTransferSelected(),
+  edit: () => {
+    const entry = visibleSelectedEntries.value.length === 1 ? visibleSelectedEntries.value[0] : undefined
+    if (entry && !entry.isDir) {
+      void onEdit(entry)
+    }
+  }
+})
+onBeforeUnmount(unregisterPaneActions)
+
+const onKeydown = usePaneKeyboard({
+  side: props.side,
+  store,
+  renamingPath,
+  filterText,
+  filteredEntries,
+  toolbarRef,
+  fileListRef,
+  onTransferSelected,
+  onOpen,
+  confirmDeleteEntries
+})
+
 void bookmarks.ensureLoaded()
 
-/** The current pane's saved-site id — null for local, and for a remote quick-connect tab with no site to attach a bookmark to. */
-const currentSiteId = computed(() => (props.side === 'remote' ? sessions.activeTab.siteId : null))
-const canBookmark = computed(() => props.side === 'local' || currentSiteId.value !== null)
+/** The current pane's bookmark scope key: saved siteId, Quick Connect hostLabel, or null for local. */
+const currentSiteId = computed(() =>
+  props.side === 'remote' ? (sessions.activeTab.siteId ?? sessions.activeTab.hostLabel ?? null) : null
+)
+const canBookmark = computed(
+  () => props.side === 'local' || (sessions.status === 'connected' && Boolean(currentSiteId.value))
+)
 const currentBookmarks = computed(() => {
   if (props.side === 'local') {
     return bookmarks.localBookmarks
   }
-  return currentSiteId.value ? bookmarks.forSite(currentSiteId.value) : []
+  return currentSiteId.value
+    ? bookmarks.forSite(currentSiteId.value, sessions.activeTab.hostLabel)
+    : []
 })
 
 /** Last path segment, for a bookmark's default label — falls back to the whole path for a root/drive path with no separator. */
@@ -129,12 +252,18 @@ async function onJumpBookmark(path: string): Promise<void> {
 }
 
 async function onRemoveBookmark(id: string): Promise<void> {
-  await bookmarks.remove(id)
+  try {
+    await bookmarks.remove(id)
+  } catch (e) {
+    notify.error('Could not remove bookmark', e instanceof Error ? e.message : String(e))
+  }
 }
 
 if (props.side === 'local') {
   onMounted(() => {
-    void store.load()
+    if (!store.currentPath && !store.loading && !store.error) {
+      void store.load()
+    }
   })
 } else {
   // One remote FilePane instance is shared by every open site tab — load lazily
@@ -142,11 +271,11 @@ if (props.side === 'local') {
   // caches each session's listing, so switching back to an already-loaded tab
   // is instant and re-fetches nothing).
   watch(
-    () => sessions.activeSessionId,
+    () => (sessions.status === 'connected' ? sessions.activeSessionId : null),
     (id) => {
       filterText.value = ''
       if (id && remoteFs.needsLoad(id)) {
-        void remoteFs.load()
+        void remoteFs.loadForSession(id)
       }
     },
     { immediate: true }
@@ -173,6 +302,7 @@ const transferIcon = computed(() => {
 
 const showTail = computed(() => props.side === 'remote' && sessions.status === 'connected')
 const syncDialogOpen = ref(false)
+const compareDialogOpen = ref(false)
 
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
@@ -183,79 +313,49 @@ function onOpen(entry: FileEntry): void {
   previewOpen.value = true
 }
 
+function onHoverDir(path: string): void {
+  if (props.side === 'remote') {
+    void remoteFs.prefetchDir(path)
+  }
+}
+
 /** Plain click selects only this row; Ctrl/Cmd toggles it; Shift extends from the last-clicked row. */
 function onSelect(path: string, event: MouseEvent): void {
   if (event.shiftKey) {
-    store.selectRange(path)
+    store.selectRange(path, filteredEntries.value)
   } else if (event.ctrlKey || event.metaKey) {
     store.toggleSelect(path)
   } else {
     store.selectOnly(path)
   }
+  paneEl.value?.focus({ preventScroll: true })
 }
 
 function onMkdirClick(): void {
+  newEntryKind.value = 'folder'
+  newFolderName.value = ''
+  showNewFolder.value = true
+}
+
+function onTouchClick(): void {
+  newEntryKind.value = 'file'
   newFolderName.value = ''
   showNewFolder.value = true
 }
 
 async function submitMkdir(): Promise<void> {
   const name = newFolderName.value.trim()
+  const kind = newEntryKind.value
   showNewFolder.value = false
-  if (name) {
-    await store.mkdir(name)
+  if (!name) return
+  try {
+    store.setError(null)
+    await (kind === 'file' ? store.touch(name) : store.mkdir(name))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    notify.error(kind === 'file' ? 'Could not create file' : 'Could not create folder', message)
+    store.setError(message)
   }
-}
-
-function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean }, sessionId: string): TransferIntent | null {
-  if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
-    notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
-    return null
-  }
-  if (sourceSide === 'local') {
-    const remoteTarget = `${remoteFs.currentPath.replace(/\/$/, '')}/${entry.name}`
-    return { sessionId, direction: 'upload', localPath: entry.path, remotePath: remoteTarget, isDir: entry.isDir, targetName: entry.name }
-  } else {
-    const localDir = localFs.currentPath.replace(/[/\\]$/, '')
-    const sep = localFs.currentPath.includes('\\') ? '\\' : '/'
-    const localTarget = `${localDir}${sep}${entry.name}`
-    return { sessionId, direction: 'download', localPath: localTarget, remotePath: entry.path, isDir: entry.isDir, targetName: entry.name }
-  }
-}
-
-async function checkAndQueueTransfers(intents: TransferIntent[], targetStore: typeof localFs | typeof remoteFs): Promise<void> {
-  const conflicts: string[] = []
-  for (const intent of intents) {
-    if (targetStore.entries.some((e) => e.name === intent.targetName)) {
-      conflicts.push(intent.targetName)
-    }
-  }
-  if (conflicts.length > 0) {
-    transferConflict.value = { intents, conflicts }
-    return
-  }
-  for (const intent of intents) {
-    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
-  }
-}
-
-async function resolveTransferConflict(): Promise<void> {
-  const conflict = transferConflict.value
-  if (!conflict) return
-  transferConflict.value = null
-  for (const intent of conflict.intents) {
-    await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir)
-  }
-}
-
-/** Uploads or downloads `entry`, which belongs to `sourceSide`, into the other pane's current directory. */
-async function transferEntry(sourceSide: 'local' | 'remote', entry: FileEntry): Promise<void> {
-  const sessionId = sessions.activeSessionId
-  if (!sessionId) return
-  const intent = buildTransferIntent(sourceSide, entry, sessionId)
-  if (!intent) return
-  const targetStore = sourceSide === 'local' ? remoteFs : localFs
-  await checkAndQueueTransfers([intent], targetStore)
 }
 
 async function onTransfer(entry: FileEntry): Promise<void> {
@@ -266,7 +366,7 @@ async function onTransfer(entry: FileEntry): Promise<void> {
 async function onTransferSelected(): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId) return
-  const targets = store.entries.filter((e) => store.selected.has(e.path))
+  const targets = visibleSelectedEntries.value
   const intents: TransferIntent[] = []
   for (const entry of targets) {
     const intent = buildTransferIntent(props.side, entry, sessionId)
@@ -284,20 +384,34 @@ async function onTail(entry: FileEntry): Promise<void> {
   }
   const dock = useDockState()
   dock.openDock('tail')
-  await tailStreams.open(sessionId, entry.path)
+  try {
+    await tailStreams.open(sessionId, entry.path)
+  } catch (e) {
+    notify.error('Could not open log tail', e instanceof Error ? e.message : String(e))
+  }
 }
 
 async function onEdit(entry: FileEntry): Promise<void> {
   const isLarge = entry.size > 5 * 1024 * 1024 // 5MB
   if (isArchive(entry.name) || isLarge) {
-    editConfirmTarget.value = entry
-    return
+    const archive = isArchive(entry.name)
+    const proceed = await confirm({
+      title: archive ? 'Edit an archive?' : 'Edit a large file?',
+      body: archive
+        ? `${entry.name} is an archive. Editing it in a text editor can corrupt it.`
+        : `${entry.name} is ${formatBytes(entry.size)}. Editing downloads the whole file first, which may take a while.`,
+      confirmLabel: 'Edit anyway',
+      secondaryLabel: 'Download instead',
+      secondaryAction: () => onTransfer(entry)
+    })
+    if (!proceed) {
+      return
+    }
   }
   await performEdit(entry)
 }
 
-async function performEdit(entry: FileEntry): Promise<void> {
-  editConfirmTarget.value = null
+async function performEdit(entry: FileEntry, viaSudo = false): Promise<void> {
   try {
     if (props.side === 'local') {
       await invoke<void>(INVOKE_CHANNELS.editOpenLocal, entry.path)
@@ -307,12 +421,16 @@ async function performEdit(entry: FileEntry): Promise<void> {
     if (!sessionId) {
       return
     }
-    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path, builtin: true })
+    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, { sessionId, path: entry.path, builtin: true, viaSudo })
     editorState.value = { editId: res.editId, localTempPath: res.localTempPath, remotePath: entry.path }
     editorOpen.value = true
   } catch (e) {
     notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
   }
+}
+
+async function onEditAsRoot(entry: FileEntry): Promise<void> {
+  await performEdit(entry, true)
 }
 
 /** First name not already present in the current remote listing — `report`, `report (1)`, `report (2)`, ... */
@@ -352,7 +470,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
       const sep = store.currentPath.includes('\\') ? '\\' : '/'
       await invoke<void>(INVOKE_CHANNELS.archiveCompressLocal, {
         sourcePath: entry.path,
-        destPath: `${store.currentPath}${sep}${zipName}`
+        destPath: `${store.currentPath.replace(/[/\\]+$/, '')}${sep}${zipName}`
       })
     } else {
       const sessionId = sessions.activeSessionId
@@ -365,7 +483,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
         destPath: `${remoteFs.currentPath.replace(/\/$/, '')}/${zipName}`
       })
     }
-    await store.load()
+    await store.load(store.currentPath, { forceRefresh: true })
     notify.success('Compressed', `${entry.name} → ${zipName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -384,7 +502,7 @@ async function performExtract(entry: FileEntry, folderName: string): Promise<voi
       archivePath: entry.path,
       targetDir: `${remoteFs.currentPath.replace(/\/$/, '')}/${folderName}`
     })
-    await remoteFs.load()
+    await remoteFs.load(remoteFs.currentPath, { forceRefresh: true })
     notify.success('Extracted', `${entry.name} → ${folderName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -437,22 +555,221 @@ function onDragLeave(): void {
   isDropTarget.value = false
 }
 
+const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
+const STAGE_STREAM_CONCURRENCY = 4
+const LARGE_DROP_TOAST_BYTES = 32 * 1024 * 1024
+
+interface MinimalFsEntry {
+  isFile: boolean
+  isDirectory: boolean
+  name: string
+  file?: (success: (f: File) => void, error?: (err: unknown) => void) => void
+  createReader?: () => { readEntries: (success: (entries: MinimalFsEntry[]) => void, error?: (err: unknown) => void) => void }
+}
+
+interface CollectedDropEntry {
+  relativePath: string
+  isDir: boolean
+  file?: File
+  modifiedAt?: string
+}
+
+async function collectDroppedEntry(
+  fsEntry: MinimalFsEntry,
+  relPath: string,
+  out: CollectedDropEntry[],
+  state: { totalBytes: number }
+): Promise<void> {
+  if (fsEntry.isFile && fsEntry.file) {
+    const file = await new Promise<File>((resolve, reject) => {
+      fsEntry.file!(resolve, reject)
+    })
+    state.totalBytes += file.size
+    out.push({
+      relativePath: relPath,
+      isDir: false,
+      file,
+      modifiedAt: new Date(file.lastModified).toISOString()
+    })
+    return
+  }
+  if (fsEntry.isDirectory && fsEntry.createReader) {
+    out.push({ relativePath: relPath, isDir: true })
+    const reader = fsEntry.createReader()
+    while (true) {
+      const batch = await new Promise<MinimalFsEntry[]>((resolve, reject) => {
+        reader.readEntries(resolve, reject)
+      })
+      if (batch.length === 0) break
+      for (const child of batch) {
+        await collectDroppedEntry(child, `${relPath}/${child.name}`, out, state)
+      }
+    }
+  }
+}
+
+function dedupRelativeName(rawName: string, seen: Set<string>): string {
+  const key = rawName.toLowerCase()
+  if (!seen.has(key)) {
+    seen.add(key)
+    return rawName
+  }
+  const dot = rawName.lastIndexOf('.')
+  const stem = dot > 0 ? rawName.slice(0, dot) : rawName
+  const ext = dot > 0 ? rawName.slice(dot) : ''
+  let n = 2
+  while (seen.has(`${stem} (${n})${ext}`.toLowerCase())) {
+    n += 1
+  }
+  const unique = `${stem} (${n})${ext}`
+  seen.add(unique.toLowerCase())
+  return unique
+}
+
+async function stageCollectedEntriesStreaming(
+  collected: CollectedDropEntry[],
+  totalBytes: number,
+  stageDroppedFile: NonNullable<Window['api']['stageDroppedFile']>
+): Promise<FileEntry[]> {
+  const dirs = collected.filter((e) => e.isDir).map((e) => e.relativePath)
+  const files = collected.filter((e): e is CollectedDropEntry & { file: File } => !e.isDir && Boolean(e.file))
+  const { stageId } = await invoke<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, { dirs })
+  const toastId =
+    totalBytes > LARGE_DROP_TOAST_BYTES
+      ? toast.add({
+          title: 'Preparing dropped files…',
+          description: `Staging ${formatBytes(totalBytes)} for upload`,
+          icon: 'i-lucide-loader-2',
+          duration: 0
+        }).id
+      : null
+
+  const controller = new AbortController()
+  let firstError: unknown = null
+  try {
+    let cursor = 0
+    const workerCount = Math.min(STAGE_STREAM_CONCURRENCY, files.length)
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (!controller.signal.aborted && cursor < files.length) {
+        const item = files[cursor++]
+        try {
+          await stageDroppedFile(stageId, item.relativePath, item.file, item.modifiedAt, controller.signal)
+        } catch (err) {
+          if (firstError === null) {
+            firstError = err
+            controller.abort()
+          }
+          throw err
+        }
+      }
+    })
+    await Promise.allSettled(workers)
+    if (firstError !== null) {
+      throw firstError
+    }
+    return await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, { stageId })
+  } catch (err) {
+    await invoke<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, { stageId }).catch(() => undefined)
+    throw err
+  } finally {
+    if (toastId !== null) {
+      toast.remove(toastId)
+    }
+  }
+}
+
+/**
+ * Resolves external OS drops to real local `FileEntry` items, streaming dropped
+ * files/folders over authenticated localhost HTTP when WebView2 hides host paths.
+ */
+async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<FileEntry[]> {
+  const direct: FileEntry[] = []
+  const unresolved: Array<{ file: File; fsEntry: MinimalFsEntry | null }> = []
+
+  // Snapshot DataTransferItemList synchronously before any await clears it.
+  for (const item of dataTransfer.items) {
+    if (item.kind !== 'file') continue
+    const file = item.getAsFile()
+    if (!file) continue
+    const fsEntry = (item.webkitGetAsEntry?.() as MinimalFsEntry | null) ?? null
+    const localPath = window.api.getPathForFile(file)
+    if (localPath) {
+      direct.push({
+        name: file.name,
+        path: localPath,
+        isDir: fsEntry?.isDirectory ?? false,
+        size: file.size,
+        modifiedAt: new Date(file.lastModified).toISOString(),
+        isSymlink: false
+      })
+    } else {
+      unresolved.push({ file, fsEntry })
+    }
+  }
+
+  if (unresolved.length === 0) {
+    return direct
+  }
+
+  const collected: CollectedDropEntry[] = []
+  const seenTopNames = new Set<string>()
+  const state = { totalBytes: 0 }
+  for (const { file, fsEntry } of unresolved) {
+    if (fsEntry) {
+      const topName = dedupRelativeName(fsEntry.name, seenTopNames)
+      await collectDroppedEntry(fsEntry, topName, collected, state)
+    } else {
+      state.totalBytes += file.size
+      collected.push({
+        relativePath: dedupRelativeName(file.name, seenTopNames),
+        isDir: false,
+        file,
+        modifiedAt: new Date(file.lastModified).toISOString()
+      })
+    }
+  }
+
+  if (collected.length === 0) {
+    return direct
+  }
+
+  const streamUpload = window.api.stageDroppedFile
+  if (streamUpload) {
+    const staged = await stageCollectedEntriesStreaming(collected, state.totalBytes, streamUpload)
+    return [...direct, ...staged]
+  }
+
+  if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
+    throw new Error('Dropped files exceed 16 MB WebView drop limit. Use the Local pane for larger transfers.')
+  }
+  const stageInputs: StageDropEntryInput[] = await Promise.all(
+    collected.map(async (item) => ({
+      relativePath: item.relativePath,
+      isDir: item.isDir,
+      ...(item.isDir || !item.file ? {} : { data: new Uint8Array(await item.file.arrayBuffer()) }),
+      modifiedAt: item.modifiedAt
+    }))
+  )
+  const staged = await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, { entries: stageInputs })
+  return [...direct, ...staged]
+}
+
 /** Uploads every file/folder dropped from the OS straight into the remote pane's current directory. */
 async function onOsDrop(event: DragEvent): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId || !event.dataTransfer) return
-  const intents: TransferIntent[] = []
-  for (const item of event.dataTransfer.items) {
-    if (item.kind !== 'file') continue
-    const file = item.getAsFile()
-    const localPath = file ? window.api.getPathForFile(file) : ''
-    if (!file || !localPath) continue
-    const isDir = item.webkitGetAsEntry()?.isDirectory ?? false
-    const intent = buildTransferIntent('local', { path: localPath, name: file.name, isDir }, sessionId)
-    if (intent) intents.push(intent)
-  }
-  if (intents.length > 0) {
-    await checkAndQueueTransfers(intents, remoteFs)
+  try {
+    const entries = await resolveOsDroppedEntries(event.dataTransfer)
+    const intents: TransferIntent[] = []
+    for (const entry of entries) {
+      const intent = buildTransferIntent('local', entry, sessionId)
+      if (intent) intents.push(intent)
+    }
+    if (intents.length > 0) {
+      await checkAndQueueTransfers(intents, remoteFs)
+    }
+  } catch (e) {
+    notify.error('External file drop failed', e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -471,69 +788,118 @@ async function onDrop(event: DragEvent): Promise<void> {
   await transferEntry(payload.side, payload.entry)
 }
 
-async function onKeydown(event: KeyboardEvent): Promise<void> {
-  // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
-  // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-    return
-  }
-  // While a row is mid-rename, its own input owns keyboard input (it stops keydown propagation) —
-  // this guard is a second line of defense so a stray bubble never triggers delete/refresh.
-  if (renamingPath.value !== null) {
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
-    event.preventDefault()
-    await store.load()
-    return
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
-    event.preventDefault()
-    store.selectAll(filteredEntries.value)
-    return
-  }
-  if (event.key === 'F2') {
-    event.preventDefault()
-    if (store.selected.size === 1) {
-      const [path] = store.selected
-      renamingPath.value = path
+async function moveInto(folder: FileEntry, fromPath: string, name: string): Promise<void> {
+  if (fromPath === folder.path || name === '' || name.includes('/') || name.includes('\\')) return
+  const sep = folder.path.includes('\\') ? '\\' : '/'
+  const toPath = `${folder.path.replace(/[/\\]$/, '')}${sep}${name}`
+  if (props.side === 'remote') {
+    await invoke<void>(INVOKE_CHANNELS.fsRemoteRename, sessions.activeSessionId, fromPath, toPath)
+  } else {
+    const listing = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, folder.path)
+    if (listing.entries.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`"${name}" already exists in ${folder.name}`)
     }
-    return
+    await invoke<void>(INVOKE_CHANNELS.fsLocalRename, fromPath, toPath)
   }
-  if (event.key === 'Escape' && filterText.value) {
-    event.preventDefault()
-    filterText.value = ''
-    return
-  }
-  if (event.key !== 'Delete' && event.key !== 'Backspace') {
-    return
-  }
-  if (store.selected.size === 0) {
-    return
-  }
-  event.preventDefault()
-  const targets = store.entries.filter((e) => store.selected.has(e.path))
-  // Folders always confirm before deleting — the keyboard shortcut only skips the
-  // dialog when every selected entry is a plain file.
-  if (targets.some((e) => e.isDir)) {
-    pendingDelete.value = targets
-    return
-  }
+}
+
+async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void> {
+  isDropTarget.value = false
+  const sessionId = sessions.activeSessionId
   try {
-    await store.removeMany(targets)
+    if (isOsFileDrag(event) && event.dataTransfer) {
+      const entries = await resolveOsDroppedEntries(event.dataTransfer)
+      const intents: TransferIntent[] = []
+      const unusedPaths: string[] = []
+      let moved = false
+      for (const entry of entries) {
+        if (props.side === 'local') {
+          await moveInto(folder, entry.path, entry.name)
+          moved = true
+        } else if (sessionId) {
+          const intent = buildTransferIntent('local', entry, sessionId, folder.path)
+          if (intent) {
+            intents.push(intent)
+          } else {
+            unusedPaths.push(entry.path)
+          }
+        } else {
+          unusedPaths.push(entry.path)
+        }
+      }
+      if (unusedPaths.length > 0) {
+        void invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedPaths }).catch(() => undefined)
+      }
+      if (intents.length > 0) await enqueueIntents(intents)
+      if (moved) await store.load(store.currentPath, { forceRefresh: true })
+      return
+    }
+    const payload = getDragPayload()
+    clearDrag()
+    if (!payload) return
+    if (payload.side === props.side) {
+      await moveInto(folder, payload.entry.path, payload.entry.name)
+      await store.load(store.currentPath, { forceRefresh: true })
+    } else if (sessionId) {
+      const intent = buildTransferIntent(payload.side, payload.entry, sessionId, folder.path)
+      if (intent) await enqueueIntents([intent])
+    }
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    notify.error('Delete failed', message)
+    notify.error('Move failed', e instanceof Error ? e.message : String(e))
   }
 }
 
 async function onRename(entry: FileEntry, newName: string): Promise<void> {
-  renamingPath.value = null
+  if (renameInFlight || renamingPath.value !== entry.path) return
+  const target = { ...entry }
+  const local = props.side === 'local'
+  const windows = local && (/^[A-Za-z]:/.test(entry.path) || entry.path.startsWith('\\\\'))
+  if (!newName.trim() || newName === '.' || newName === '..' || /[/\\]/.test(newName) || newName.includes('\0')) {
+    notify.error('Enter a single file or folder name', 'Use a name without path separators.')
+    return
+  }
+  if (windows && (/[<>:"|?*\x00-\x1f]|[. ]$/.test(newName) ||
+    /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]) *(?:\.|$)/i.test(newName))) {
+    notify.error('Invalid Windows filename', 'Choose a name without reserved characters, device names, or a trailing space or period.')
+    return
+  }
+
+  const sessionId = sessions.activeSessionId
+  const rename = (replace: boolean): Promise<void> => {
+    if (renamingPath.value !== target.path) throw new Error('Select the item and start the rename again.')
+    if (local) return localFs.rename(target, newName, replace)
+    if (!sessionId || sessions.activeSessionId !== sessionId || sessions.status !== 'connected') {
+      throw new Error('Return to the original server and start the rename again.')
+    }
+    return remoteFs.rename(target, newName, replace, sessionId)
+  }
+
+  renameInFlight = true
   try {
-    await store.rename(entry, newName)
+    try {
+      await rename(false)
+    } catch (e) {
+      if (!(e instanceof IpcError) || e.code !== 'ALREADY_EXISTS') throw e
+      const destination = target.path.slice(0, target.path.length - target.name.length) + newName
+      const replaced = await confirm({
+        title: 'Replace existing item?',
+        body: 'Renaming will replace the item at this path.',
+        items: [destination],
+        confirmLabel: 'Replace',
+        confirmColor: 'error',
+        destructive: true,
+        action: () => rename(true)
+      })
+      if (!replaced) return
+    }
+    if (renamingPath.value === target.path && (local || sessions.activeSessionId === sessionId)) {
+      renamingPath.value = null
+      paneEl.value?.focus()
+    }
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    notify.error('Rename failed', message)
+    notify.error('Rename failed', e instanceof Error ? e.message : String(e))
+  } finally {
+    renameInFlight = false
   }
 }
 
@@ -551,30 +917,43 @@ function onStartRename(entry: FileEntry): void {
  * selection (matching the keyboard Delete path); otherwise it removes just that one row. Unlike the
  * keyboard shortcut, this path always confirms first — it's a deliberate click, not a fast-path key. */
 function onRemoveEntry(entry: FileEntry): void {
-  if (store.selected.size > 1 && store.selected.has(entry.path)) {
-    pendingDelete.value = store.entries.filter((e) => store.selected.has(e.path))
+  if (visibleSelectedEntries.value.length > 1 && store.selected.has(entry.path)) {
+    void confirmDeleteEntries(visibleSelectedEntries.value)
     return
   }
-  pendingDelete.value = [entry]
+  void confirmDeleteEntries([entry])
 }
 
-async function confirmPendingDelete(): Promise<void> {
-  if (!pendingDelete.value) {
-    return
-  }
-  deleting.value = true
-  try {
-    if (pendingDelete.value.length > 1) {
-      await store.removeMany(pendingDelete.value)
-    } else {
-      await store.remove(pendingDelete.value[0])
+async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
+  if (entries.length === 0) return
+  const targets = entries.map((entry) => ({ ...entry }))
+  const single = targets.length === 1 ? targets[0] : null
+  const sessionId = props.side === 'remote' ? sessions.activeSessionId : null
+  if (props.side === 'remote' && !sessionId) return
+  const server = sessionId ? sessions.activeTab.hostLabel || sessions.activeTab.label : null
+  await confirm({
+    title: 'Delete',
+    body: single
+      ? `Delete this ${single.isDir ? 'folder and everything inside it' : 'item'}${server ? ` on ${server}` : ''}? This cannot be undone.`
+      : `Delete these ${targets.length} items${server ? ` on ${server}` : ''}? This cannot be undone.`,
+    items: targets.map((entry) => entry.path),
+    confirmLabel: 'Delete',
+    confirmColor: 'error',
+    destructive: true,
+    action: async () => {
+      if (sessionId) {
+        if (!sessions.tabs.some((tab) => tab.sessionId === sessionId && tab.status === 'connected')) {
+          throw new Error('The original server connection ended. Reconnect and select the items again.')
+        }
+        if (single) await remoteFs.remove(single, sessionId)
+        else await remoteFs.removeMany(targets, sessionId)
+      } else if (single) {
+        await localFs.remove(single)
+      } else {
+        await localFs.removeMany(targets)
+      }
     }
-    pendingDelete.value = null
-  } catch (e) {
-    notify.error('Delete failed', e instanceof Error ? e.message : String(e))
-  } finally {
-    deleting.value = false
-  }
+  })
 }
 
 function onOpenChmod(entry: FileEntry): void {
@@ -582,9 +961,13 @@ function onOpenChmod(entry: FileEntry): void {
   chmodOpen.value = true
 }
 
-async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
+async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive: boolean; owner: string; group: string }): Promise<void> {
   try {
-    await remoteFs.chmod(entry, mode)
+    if (extras.recursive || extras.owner || extras.group) {
+      await remoteFs.admin(entry, { mode, ...extras })
+    } else {
+      await remoteFs.chmod(entry, mode)
+    }
   } catch (e) {
     notify.error('Could not change permissions', e instanceof Error ? e.message : String(e))
   }
@@ -593,61 +976,141 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
 
 <template>
   <div
-    class="flex h-full flex-col overflow-hidden border-r border-muted outline-none transition-[width] duration-200 ease-in-out last:border-r-0"
+    ref="paneEl"
+    class="flex h-full flex-col overflow-hidden border-r outline-none transition-[width] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary duration-[var(--ferry-motion-panel)] ease-[var(--ferry-motion-ease-emphasized)] last:border-r-0"
     :class="[
-      collapsedRail ? 'w-10 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
+      collapsedRail ? 'w-9 shrink-0' : side === 'local' ? 'min-w-0' : 'min-w-0 flex-1',
+      ui.glassUiEnabled ? 'bg-transparent border-[var(--ferry-glass-chrome-border)]' : 'border-muted',
       isDropTarget ? 'bg-primary/5 ring-2 ring-primary ring-inset' : ''
     ]"
     tabindex="0"
+    :data-pane="side"
+    @focusin="ui.activePane = side"
+    @pointerdown="ui.activePane = side"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
     @keydown="onKeydown"
   >
-    <div class="flex h-8 shrink-0 items-center justify-between border-b border-muted bg-muted px-3">
-      <div v-if="showBody" class="flex items-center gap-1.5">
-        <UIcon :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'" class="size-3.5 text-highlighted" />
-        <span class="text-xs font-semibold uppercase tracking-wide text-highlighted">{{ side }}</span>
-      </div>
-    </div>
-    <template v-if="showBody">
-      <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
-      <FileToolbar
+    <button
+      v-if="collapsedRail"
+      type="button"
+      aria-label="Show Local pane"
+      title="Show Local pane"
+      class="flex h-full w-full flex-col items-center gap-3 py-2.5 text-muted transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+      :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted/40'"
+      @click="ui.toggleLocalPane()"
+    >
+      <UIcon name="i-lucide-panel-left-open" class="size-4 shrink-0" />
+      <span class="select-none text-3xs font-semibold uppercase tracking-widest [writing-mode:vertical-rl] rotate-180">
+        Local
+      </span>
+    </button>
+    <template v-else>
+      <div
+        class="@container flex min-h-9 min-w-0 shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-muted py-1 pr-2"
+        :class="[
+          ui.glassUiEnabled ? 'ferry-glass-chrome' : ui.activePane === side ? 'bg-elevated' : 'bg-default',
+          ui.activePane === side ? 'pl-2.5 shadow-[inset_3px_0_0_var(--ui-primary)]' : 'pl-2'
+        ]"
+      >
+        <div
+          class="flex h-7 min-w-[160px] flex-1 basis-full items-center gap-1.5 rounded-md pl-2 pr-1 transition-colors @[580px]:basis-0"
+          :class="
+            ui.glassUiEnabled
+              ? 'border border-[var(--ferry-glass-chrome-border)] bg-[var(--ferry-surface-subtle)] hover:bg-[var(--ui-bg)]/55 focus-within:border-[var(--ui-primary)]/50 focus-within:bg-[var(--ui-bg)]/90'
+              : 'bg-muted/35 ring-1 ring-inset ring-muted/60 hover:bg-muted/55 focus-within:bg-default focus-within:ring-primary/50'
+          "
+        >
+          <UIcon
+            :name="side === 'local' ? 'i-lucide-monitor' : 'i-lucide-server'"
+            class="size-3.5 shrink-0"
+            :class="ui.activePane === side ? 'text-primary' : 'text-muted'"
+            :title="side === 'local' ? 'Local' : 'Remote'"
+          />
+          <PathBreadcrumb :path="store.currentPath" @navigate="store.openDir" />
+        </div>
+        <FileToolbar
+        ref="toolbarRef"
         :side="side"
         :loading="store.loading"
-        :selected-count="store.selected.size"
+        :selected-count="visibleSelectedEntries.length"
         :transfer-icon="transferIcon"
         v-model:filter-text="filterText"
+        :visibility-filter="side === 'remote' ? activeVisibilityFilter : undefined"
         :bookmarks="currentBookmarks"
         :can-bookmark="canBookmark"
         :show-sync="showTail"
+        :can-go-back="store.canGoBack"
+        :can-go-forward="store.canGoForward"
+        @update:visibility-filter="updateVisibilityFilter"
+        @clear-visibility-filter="clearVisibilityFilter"
+        @back="store.goBack"
+        @forward="store.goForward"
         @up="store.goUp"
-        @refresh="store.load()"
+        @refresh="store.load(store.currentPath, { forceRefresh: true })"
         @mkdir="onMkdirClick"
+        @touch="onTouchClick"
+        :show-hidden="ui.showHidden"
+        @toggle-hidden="ui.toggleShowHidden()"
         @toggle-permissions="ui.togglePermissionsDisplay()"
         @transfer-selected="onTransferSelected"
         @bookmark="onBookmarkFolder"
         @jump-bookmark="onJumpBookmark"
         @remove-bookmark="onRemoveBookmark"
         @sync-folder="syncDialogOpen = true"
-      />
-      <div v-if="showNewFolder" class="flex items-center gap-2 border-b border-muted px-3 py-1.5">
-        <UInput
-          v-model="newFolderName"
-          size="xs"
-          placeholder="New folder name"
-          class="flex-1"
-          autofocus
-          @keyup.enter="submitMkdir"
-          @keyup.esc="showNewFolder = false"
+        @compare-folder="compareDialogOpen = true"
         />
-        <UButton size="xs" @click="submitMkdir">Create</UButton>
       </div>
-      <UAlert v-if="store.error" color="error" variant="soft" :title="store.error" class="mx-3 my-1" />
+      <Transition name="slide-down">
+        <div
+          v-if="showNewFolder"
+          class="flex items-center gap-2 border-b border-muted px-3 py-1.5"
+          :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+        >
+          <UInput
+            v-model="newFolderName"
+            size="xs"
+            :placeholder="newEntryKind === 'file' ? 'New file name' : 'New folder name'"
+            class="flex-1"
+            autofocus
+            @keyup.enter="submitMkdir"
+            @keyup.esc="showNewFolder = false"
+          />
+          <UButton size="xs" @click="submitMkdir">Create</UButton>
+        </div>
+      </Transition>
+      <Transition name="slide-down">
+        <div
+          v-if="store.error"
+          role="alert"
+          class="flex shrink-0 items-center gap-2 px-3 py-1 text-xs text-error"
+          :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
+        >
+          <span class="min-w-0 flex-1 break-all">
+            <template v-if="store.failedPath !== null">Could not open {{ store.failedPath || 'the starting folder' }}. </template>
+            {{ store.error }}
+          </span>
+          <button
+            type="button"
+            class="shrink-0 font-medium hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+            @click="store.retryDirectory()"
+          >
+            {{ store.failedPath !== null ? 'Retry folder' : 'Retry' }}
+          </button>
+        </div>
+      </Transition>
       <FileList
+        ref="fileListRef"
         :entries="filteredEntries"
+        :directory-path="store.currentPath"
         :selected="store.selected"
         :side="side"
+        :active="ui.activePane === side"
+        :loading="store.loading"
+        :filtered="isFiltered"
+        :visibility-filtered="isVisibilityFiltered"
+        :search-filtered="isSearchFiltered"
         :transfer-icon="transferIcon"
         :show-tail="showTail"
         :allow-extract="showTail"
@@ -655,6 +1118,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :sort-column="store.sortColumn"
         :sort-direction="store.sortDirection"
         @select="onSelect"
+        @select-many="(paths: string[]) => store.selectPaths(paths)"
         @open="onOpen"
         @remove="onRemoveEntry"
         @transfer="onTransfer"
@@ -667,7 +1131,54 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         @compress="onCompress"
         @chmod="onOpenChmod"
         @edit="onEdit"
+        @hover-dir="onHoverDir"
+        @drop-on="onDropOnFolder"
+        @edit-root="onEditAsRoot"
+        @clear-filter="filterText = ''"
+        @clear-visibility-filter="clearVisibilityFilter"
       />
+      <div
+        class="flex h-6 shrink-0 select-none items-center justify-between gap-2 border-t border-muted px-3 text-2xs text-muted"
+        :class="ui.glassUiEnabled ? 'ferry-glass-chrome' : 'bg-muted/30'"
+      >
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="truncate tabular-nums">{{ paneSummary }}</span>
+          <button
+            v-if="isVisibilityFiltered"
+            type="button"
+            class="shrink-0 rounded-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="clearVisibilityFilter"
+          >
+            Clear filters
+          </button>
+          <button
+            v-if="filterText"
+            type="button"
+            class="shrink-0 rounded-xs text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="filterText = ''"
+          >
+            Clear search
+          </button>
+          <button
+            v-if="!ui.showHidden"
+            type="button"
+            class="shrink-0 rounded-xs text-muted hover:text-default hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+            @click="ui.toggleShowHidden()"
+          >
+            Hidden off
+          </button>
+        </div>
+        <div v-if="selectionSummary" class="flex shrink-0 items-center gap-1.5">
+          <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
+          <button
+            type="button"
+            class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+            @click="store.selectAll([])"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
       <FilePreviewDialog
         v-model:open="previewOpen"
         :entry="previewEntry"
@@ -684,6 +1195,13 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
         :remote-path="editorState?.remotePath ?? null"
       />
       <ChmodDialog v-model:open="chmodOpen" :entry="chmodTarget" @submit="onSubmitChmod" />
+      <CompareDialog
+        v-if="side === 'remote'"
+        v-model:open="compareDialogOpen"
+        :session-id="sessions.activeSessionId"
+        :initial-local-path="localFs.currentPath"
+        :initial-remote-path="remoteFs.currentPath"
+      />
       <SyncDialog
         v-if="side === 'remote'"
         v-model:open="syncDialogOpen"
@@ -712,66 +1230,11 @@ async function onSubmitChmod(entry: FileEntry, mode: string): Promise<void> {
           <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
         </template>
       </UModal>
-      <UModal
-        :open="Boolean(transferConflict)"
-        title="File Conflict"
-        :ui="{ footer: 'justify-end' }"
-        @update:open="(v: boolean) => { if (!v) transferConflict = null }"
-      >
-        <template #body>
-          <p class="text-sm text-default mb-2">
-            The following items already exist in the target directory and will be overwritten:
-          </p>
-          <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2 text-xs text-default">
-            <li v-for="name in transferConflict?.conflicts" :key="name" class="truncate">{{ name }}</li>
-          </ul>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="transferConflict = null">Cancel</UButton>
-          <UButton color="primary" @click="resolveTransferConflict">Overwrite</UButton>
-        </template>
-      </UModal>
-      <UModal
-        :open="Boolean(pendingDelete)"
-        title="Delete"
-        :ui="{ footer: 'justify-end' }"
-        @update:open="(v: boolean) => { if (!v) pendingDelete = null }"
-      >
-        <template #body>
-          <p v-if="pendingDelete && pendingDelete.length === 1" class="text-sm text-default">
-            Delete <span class="font-medium">{{ pendingDelete[0].name }}</span
-            >{{ pendingDelete[0].isDir ? ' and everything inside it' : '' }}? This cannot be undone.
-          </p>
-          <div v-else-if="pendingDelete" class="flex flex-col gap-3">
-            <p class="text-sm text-default">Delete these {{ pendingDelete.length }} items? This cannot be undone.</p>
-            <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
-              <li v-for="e in pendingDelete" :key="e.path" class="truncate text-xs text-default">{{ e.name }}</li>
-            </ul>
-          </div>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="pendingDelete = null">Cancel</UButton>
-          <UButton color="error" :loading="deleting" @click="confirmPendingDelete">Delete</UButton>
-        </template>
-      </UModal>
-      <UModal
-        :open="Boolean(editConfirmTarget)"
-        title="Warning: Large or Binary File"
-        :ui="{ footer: 'justify-end' }"
-        @update:open="(v: boolean) => { if (!v) editConfirmTarget = null }"
-      >
-        <template #body>
-          <p class="text-sm text-default">
-            The file <span class="font-medium">{{ editConfirmTarget?.name }}</span> is an archive or very large. 
-            Editing it will download the entire file in the background, which may take a long time, and editing binary files in a text editor could corrupt them.
-            Are you sure you want to edit it?
-          </p>
-        </template>
-        <template #footer>
-          <UButton color="neutral" variant="outline" @click="editConfirmTarget = null">Cancel</UButton>
-          <UButton color="primary" @click="editConfirmTarget && performEdit(editConfirmTarget)">Proceed</UButton>
-        </template>
-      </UModal>
+      <TransferConflictDialog
+        :conflicts="transferConflict?.conflicts ?? []"
+        @dismiss="dismissTransferConflict"
+        @resolve="resolveTransferConflict"
+      />
     </template>
   </div>
 </template>

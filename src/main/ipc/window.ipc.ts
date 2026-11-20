@@ -1,30 +1,24 @@
-import type { BrowserWindow } from 'electron'
+import { INVOKE_CHANNELS } from '../../shared/contract'
+import { getNativeDisplays, isValidColorRef, syncWindowsWindowTheme } from '../host/windowsWindow'
 import { handle } from './envelope'
-import { INVOKE_CHANNELS, type WindowIsMaximizedResult } from '../../shared/contract'
 
-/** Registers custom-titlebar window-control handlers (minimize/maximize/close). */
-export function registerWindowHandlers(getMainWindow: () => BrowserWindow | null): void {
-  handle<void>(INVOKE_CHANNELS.windowMinimize, () => {
-    getMainWindow()?.minimize()
-  })
-
-  handle<void>(INVOKE_CHANNELS.windowMaximizeToggle, () => {
-    const win = getMainWindow()
-    if (!win) {
-      return
+/** Registers sidecar-backed Windows native window integration channels. */
+export function registerWindowHandlers(): void {
+  handle(INVOKE_CHANNELS.windowSyncTheme, (payload: unknown) => {
+    const raw =
+      typeof payload === 'string'
+        ? { theme: payload, captionColor: undefined }
+        : payload && typeof payload === 'object'
+          ? (payload as { theme?: unknown; captionColor?: unknown })
+          : null
+    if (!raw || (raw.theme !== 'light' && raw.theme !== 'dark')) {
+      throw new Error(`Invalid window theme: ${String(payload)}`)
     }
-    if (win.isMaximized()) {
-      win.unmaximize()
-    } else {
-      win.maximize()
+    if (raw.captionColor !== undefined && !isValidColorRef(raw.captionColor)) {
+      throw new Error(`Invalid window captionColor: ${String(raw.captionColor)}`)
     }
+    return syncWindowsWindowTheme(raw.theme, undefined, undefined, raw.captionColor)
   })
 
-  handle<void>(INVOKE_CHANNELS.windowClose, () => {
-    getMainWindow()?.close()
-  })
-
-  handle<WindowIsMaximizedResult>(INVOKE_CHANNELS.windowIsMaximized, () => ({
-    isMaximized: getMainWindow()?.isMaximized() ?? false
-  }))
+  handle(INVOKE_CHANNELS.windowGetDisplays, () => getNativeDisplays())
 }

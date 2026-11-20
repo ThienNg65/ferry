@@ -1,16 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 vi.mock('../ssh/KeyGenerator', () => ({
   generateEd25519KeyPair: vi.fn()
@@ -40,7 +32,7 @@ describe('keys.ipc', () => {
       publicKey: 'ssh-ed25519 AAAA...',
       method: 'builtin'
     })
-    const req = { path: 'id_ed25519', passphrase: undefined }
+    const req = { keyPath: 'id_ed25519' }
     const result = await invoke('keys:generate', req)
     expect(generateEd25519KeyPair).toHaveBeenCalledWith(req)
     expect(result).toEqual({
@@ -56,7 +48,7 @@ describe('keys.ipc', () => {
 
   it('wraps an underlying keygen failure into an error envelope', async () => {
     vi.mocked(generateEd25519KeyPair).mockRejectedValueOnce(new Error('ssh-keygen not found'))
-    const result = await invoke('keys:generate', { path: 'id_ed25519' })
+    const result = await invoke('keys:generate', { keyPath: 'id_ed25519' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'ssh-keygen not found' })
   })
 })

@@ -22,6 +22,7 @@
 export type IpcErrorCode =
   | 'UNKNOWN'
   | 'NOT_FOUND'
+  | 'ALREADY_EXISTS'
   | 'VALIDATION'
   | 'SSH_CONNECT'
   | 'SSH_TIMEOUT'
@@ -107,6 +108,8 @@ export interface JumpHostConfig {
   privateKeyPath?: string
   password?: string
   passphrase?: string
+  /** Original 0-based index from the loaded Site.jumpHosts array so reordering preserves saved encrypted secrets. */
+  sourceIndex?: number
 }
 
 /** {@link JumpHostConfig} as returned to the renderer — booleans instead of decrypted secrets, mirroring {@link Site}. */
@@ -119,6 +122,8 @@ export interface JumpHostInfo {
   hasPassword: boolean
   hasPassphrase: boolean
 }
+
+export type SiteEnvironment = 'prod' | 'staging' | 'dev'
 
 /**
  * A saved connection profile. Never carries decrypted secrets — only booleans
@@ -148,6 +153,7 @@ export interface Site {
   proxy?: ProxyInfo
   /** Free-text group/folder name for organizing the site list — undefined means ungrouped. */
   group?: string
+  environment?: SiteEnvironment
   createdAt: string
   updatedAt: string
 }
@@ -170,6 +176,7 @@ export interface SiteInput {
   proxyMode?: 'inherit' | 'none' | 'custom'
   proxy?: ProxyConfig
   group?: string
+  environment?: SiteEnvironment
 }
 
 /** An ad-hoc (not saved) connection profile used for quick-connect. */
@@ -205,13 +212,14 @@ export interface KeyGenerateResult {
  * after import, same as any other password field.
  */
 export interface ImportedSessionCandidate {
-  source: 'winscp' | 'putty'
+  source: 'winscp' | 'putty' | 'sshconfig'
   name: string
   host: string
   port: number
   username: string
   privateKeyPath?: string
   remoteInitialPath?: string
+  jumpHosts?: JumpHostConfig[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,6 +262,8 @@ export type SessionStatus = 'connecting' | 'connected' | 'error' | 'disconnected
 export interface SessionOpenResult {
   sessionId: string
   status: SessionStatus
+  /** Configured local start directory for this site/session, if any. */
+  localInitialPath?: string
 }
 
 /** Request payload for `session:open` — connect from a saved site, or ad hoc. */
@@ -289,6 +299,21 @@ export interface KeyboardInteractiveRequestEvent {
   name: string
   instructions: string
   prompts: KeyboardInteractivePrompt[]
+}
+
+/** Push-event payload for `session:host-key-prompt` — first connect to a host:port with no stored fingerprint. */
+export interface HostKeyPromptEvent {
+  requestId: string
+  sessionId: string
+  host: string
+  port: number
+  fingerprint: string
+}
+
+/** Request payload for `session:host-key-respond`. */
+export interface HostKeyRespondRequest {
+  requestId: string
+  accept: boolean
 }
 
 /** Request payload for `session:keyboard-interactive-respond`. */
@@ -340,12 +365,45 @@ export interface FileReadResult {
   size: number
 }
 
+/** One external OS file/folder dropped onto the webview when host filesystem paths aren't exposed directly. */
+export interface StageDropEntryInput {
+  relativePath: string
+  isDir: boolean
+  data?: Uint8Array
+  modifiedAt?: string
+}
+
+/** Request payload for `fs:local:stage-drop`. */
+export interface StageDropRequest {
+  entries: StageDropEntryInput[]
+}
+
+/** Request payload for `fs:local:stage-drop-begin`. */
+export interface StageDropBeginRequest {
+  dirs?: string[]
+}
+
+/** Response payload for `fs:local:stage-drop-begin`. */
+export interface StageDropBeginResult {
+  stageId: string
+}
+
+/** Request payload for `fs:local:stage-drop-finish` and `fs:local:stage-drop-abort`. */
+export interface StageDropSessionRequest {
+  stageId: string
+}
+
+/** Request payload for `fs:local:cleanup-staged-drop`. */
+export interface CleanupStagedDropRequest {
+  paths: string[]
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — transfers
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TransferKind = 'upload' | 'download'
-export type TransferState = 'queued' | 'started' | 'progress' | 'done' | 'error' | 'cancelled'
+export type TransferState = 'queued' | 'started' | 'progress' | 'paused' | 'done' | 'error' | 'cancelled'
 
 /** Request payload for `transfer:enqueue`. */
 export interface TransferEnqueueRequest {
@@ -355,6 +413,7 @@ export interface TransferEnqueueRequest {
   remotePath: string
   /** True to recursively transfer a whole directory tree instead of a single file. */
   isDir?: boolean
+  createParents?: boolean
 }
 
 /** Result of enqueueing a transfer. */
@@ -367,10 +426,16 @@ export interface TransferEvent {
   transferId: string
   kind: TransferKind
   state: TransferState
+  sessionId?: string
+  localPath?: string
+  remotePath?: string
+  isDir?: boolean
   bytesTransferred?: number
   totalBytes?: number
   bytesPerSec?: number
   etaMs?: number
+  filesDone?: number
+  filesTotal?: number
   error?: string
 }
 
@@ -378,12 +443,23 @@ export interface TransferEvent {
 // Domain models — long-running operations (Activity dock tab)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Request payload for `fs:remote:admin` - recursive chmod and/or chown via exec. */
+export interface RemoteAdminRequest {
+  sessionId: string
+  path: string
+  mode?: string
+  owner?: string
+  group?: string
+  recursive?: boolean
+}
+
 export type OperationKind =
   | 'extract-remote'
   | 'compress-remote'
   | 'compress-local'
   | 'delete-remote'
   | 'delete-remote-batch'
+  | 'chmod-remote'
   | 'edit-download'
   | 'edit-reupload'
   | 'sync'
@@ -411,6 +487,8 @@ export interface OperationEvent {
   progressTotal?: number
   progressUnit?: 'bytes' | 'items'
   error?: string
+  requestId?: string
+  summary?: string
 }
 
 /** Request payload for `fs:remote:deleteMany`. */
@@ -486,6 +564,29 @@ export interface SyncPlan {
   totalBytes: number
 }
 
+export type CompareStatus = 'same' | 'localOnly' | 'remoteOnly' | 'localNewer' | 'remoteNewer' | 'sizeDiff'
+
+export interface CompareRequest {
+  sessionId: string
+  localPath: string
+  remotePath: string
+}
+
+export interface CompareRow {
+  relPath: string
+  status: CompareStatus
+  localSize?: number
+  remoteSize?: number
+  localMtimeMs?: number
+  remoteMtimeMs?: number
+}
+
+export interface SyncRunRequest {
+  requestId: string
+  options: SyncOptions
+  approvedPlan: SyncPlan
+}
+
 export interface SyncRunResult {
   queuedTransferIds: string[]
   deletedCount: number
@@ -500,6 +601,16 @@ export interface TailStartRequest {
   sessionId: string
   remotePath: string
   historyLines?: number
+}
+
+/** Result of starting a tail — the caller uses `tailId` to route events and to stop. */
+export interface TailStartResult {
+  tailId: string
+}
+
+/** Payload for the `tail:ready` channel — emitted once the remote tail command starts producing output/PID marker. */
+export interface TailReadyEvent {
+  tailId: string
 }
 
 /** Payload for the `tail:line` channel. */
@@ -529,6 +640,7 @@ export interface EditOpenRemoteRequest {
   sessionId: string
   path: string
   builtin?: boolean
+  viaSudo?: boolean
 }
 
 export interface EditOpenExternalRequest {
@@ -565,7 +677,7 @@ export interface EditEvent {
   sessionId?: string
   remotePath?: string
   localTempPath: string
-  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'session-closed' | 'closed'
+  state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'remote-changed' | 'session-closed' | 'closed'
   error?: string
 }
 
@@ -585,10 +697,10 @@ export interface TerminalOpenResult {
   terminalId: string
 }
 
-/** Payload for the `terminal:data` channel — raw output bytes from the remote shell. */
+/** Payload for the `terminal:data` channel — UTF-8 decoded terminal output (or raw bytes). */
 export interface TerminalDataEvent {
   terminalId: string
-  data: Uint8Array
+  data: string | Uint8Array
 }
 
 /** Payload for the `terminal:exit` channel. */
@@ -727,6 +839,38 @@ export interface ClipboardTextResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Payload for the `update:available` channel — a newer version is being downloaded in the background. */
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'not-available'
+  | 'error'
+  | 'disabled'
+
+export interface UpdateProgress {
+  percent: number
+  bytesPerSecond: number
+  transferred: number
+  total: number
+}
+
+export interface UpdateState {
+  status: UpdateStatus
+  currentVersion: string
+  availableVersion?: string
+  progress?: UpdateProgress
+  error?: string
+  lastCheckedAt?: string
+}
+
+export interface CheckUpdateResult {
+  status: UpdateStatus
+  version?: string
+  error?: string
+}
+
 export interface UpdateAvailableEvent {
   version: string
 }
@@ -740,6 +884,26 @@ export interface UpdateDownloadedEvent {
 // Domain models — persisted app settings
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Current version of Ferry's Privacy Policy and Terms of Service. */
+export const LEGAL_POLICY_VERSION = '1.0'
+
+/** Recorded local acceptance of Ferry's Privacy Policy and Terms of Service. */
+export interface TermsAcceptance {
+  version: string
+  acceptedAt: string
+}
+
+/** Trusted SSH host-key fingerprint stored in `known_hosts.json`. */
+export interface KnownHostEntry {
+  hostPort: string
+  fingerprint: string
+}
+
+export interface UiPrefUpdate {
+  key: string
+  value: string | null
+}
+
 /**
  * App-wide settings persisted across restarts (not per-session/domain state) —
  * mirrors `ui.store.ts`'s `localStorage` prefs, but for state only the main
@@ -752,6 +916,14 @@ export interface AppSettings {
   bandwidthLimitKBps: number | null
   /** App-wide default proxy, used by any site whose own `proxyMode` is `'inherit'` (or absent) — null/absent means no default. */
   defaultProxy?: ProxyInfo
+  /** Whether Ferry automatically checks for updates on startup and periodically in the background. */
+  autoCheckUpdates?: boolean
+  /** Maximum age (in days) for transfer/operation history entries, or null for unlimited. */
+  historyRetentionDays?: number | null
+  /** Local acceptance record for Privacy Policy and Terms of Service. */
+  termsAcceptance?: TermsAcceptance | null
+  /** Persisted `ferry:ui:*` renderer preferences (survives Neutralino ephemeral localhost ports). */
+  uiPrefs?: Record<string, string>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -761,11 +933,43 @@ export interface AppSettings {
 /** Payload for the `window:state-change` channel. */
 export interface WindowStateEvent {
   isMaximized: boolean
+  isMinimized?: boolean
+  isFullScreen?: boolean
 }
 
 /** Result of querying the current window's maximized state. */
 export interface WindowIsMaximizedResult {
   isMaximized: boolean
+}
+
+/** Result of querying the full window state. */
+export interface WindowStateResult {
+  isMaximized: boolean
+  isMinimized: boolean
+  isFullScreen: boolean
+}
+
+/** Theme sync payload sent to the Windows native host window (`window:syncTheme`). */
+export interface WindowThemeSyncInput {
+  theme: 'light' | 'dark'
+  /** Win32 COLORREF (`0x00BBGGRR`) for Windows 11 `DWMWA_CAPTION_COLOR`. */
+  captionColor?: number
+}
+
+/** Pixel rectangle in virtual desktop coordinates. */
+export interface DisplayBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Native monitor geometry returned by the Windows host helper. */
+export interface NativeDisplayInfo {
+  bounds: DisplayBounds
+  workArea: DisplayBounds
+  isPrimary: boolean
+  scaleFactor: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -784,33 +988,56 @@ export const INVOKE_CHANNELS = {
   sitesDelete: 'sites:delete',
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
+  sitesExport: 'sites:export',
+  sitesImportJson: 'sites:import-json',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',
   settingsSetBandwidthLimit: 'settings:setBandwidthLimit',
   settingsSetDefaultProxy: 'settings:setDefaultProxy',
+  settingsSetAutoCheckUpdates: 'settings:setAutoCheckUpdates',
+  settingsSetHistoryRetention: 'settings:setHistoryRetention',
+  settingsAcceptTerms: 'settings:acceptTerms',
+  settingsSetUiPref: 'settings:setUiPref',
+  // privacy & known hosts
+  knownHostsList: 'knownHosts:list',
+  knownHostsForget: 'knownHosts:forget',
+  knownHostsClear: 'knownHosts:clear',
+  privacyExportData: 'privacy:exportData',
+  privacyDeleteAllData: 'privacy:deleteAllData',
   // sessions
   sessionOpen: 'session:open',
   sessionClose: 'session:close',
   sessionKeyboardInteractiveRespond: 'session:keyboard-interactive-respond',
+  sessionHostKeyRespond: 'session:host-key-respond',
   // local filesystem
   fsLocalList: 'fs:local:list',
   fsLocalMkdir: 'fs:local:mkdir',
   fsLocalRename: 'fs:local:rename',
   fsLocalDelete: 'fs:local:delete',
+  fsLocalStageDrop: 'fs:local:stage-drop',
+  fsLocalStageDropBegin: 'fs:local:stage-drop-begin',
+  fsLocalStageDropFinish: 'fs:local:stage-drop-finish',
+  fsLocalStageDropAbort: 'fs:local:stage-drop-abort',
+  fsLocalCleanupStagedDrop: 'fs:local:cleanup-staged-drop',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
   fsRemoteMkdir: 'fs:remote:mkdir',
+  fsLocalTouch: 'fs:local:touch',
+  fsRemoteTouch: 'fs:remote:touch',
   fsRemoteRename: 'fs:remote:rename',
   fsRemoteDelete: 'fs:remote:delete',
   fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',
+  fsRemoteAdmin: 'fs:remote:admin',
   fsLocalReadFile: 'fs:local:readFile',
   fsLocalWriteFile: 'fs:local:writeFile',
   fsRemoteReadFile: 'fs:remote:readFile',
   // transfers
   transferEnqueue: 'transfer:enqueue',
   transferCancel: 'transfer:cancel',
+  transferRetry: 'transfer:retry',
+  transferPause: 'transfer:pause',
   // remote log tail
   tailStart: 'tail:start',
   tailStop: 'tail:stop',
@@ -819,11 +1046,10 @@ export const INVOKE_CHANNELS = {
   editOpenRemote: 'edit:openRemote',
   editOpenExternal: 'edit:openExternal',
   editClose: 'edit:close',
+  editForceReupload: 'edit:forceReupload',
   editList: 'edit:list',
   // terminal
   terminalOpen: 'terminal:open',
-  terminalWrite: 'terminal:write',
-  terminalResize: 'terminal:resize',
   terminalClose: 'terminal:close',
   // remote unzip
   unzipRun: 'unzip:run',
@@ -845,6 +1071,7 @@ export const INVOKE_CHANNELS = {
   // one-way directory sync (mirror)
   syncPreview: 'sync:preview',
   syncRun: 'sync:run',
+  syncCompare: 'sync:compare',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',
@@ -859,9 +1086,17 @@ export const INVOKE_CHANNELS = {
   // window chrome
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',
+  windowFullScreenToggle: 'window:fullScreenToggle',
   windowClose: 'window:close',
+  windowShow: 'window:show',
+  windowSetTitle: 'window:setTitle',
   windowIsMaximized: 'window:isMaximized',
+  windowGetState: 'window:getState',
+  windowSyncTheme: 'window:syncTheme',
+  windowGetDisplays: 'window:getDisplays',
   // auto-update
+  updateCheck: 'update:check',
+  updateGetStatus: 'update:getStatus',
   updateInstallNow: 'update:installNow',
   // profiling
   profileReport: 'profile:report'
@@ -869,6 +1104,26 @@ export const INVOKE_CHANNELS = {
 
 /** Union of every valid invoke channel string. */
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNELS]
+
+/** Channels owned by the desktop shell host rather than the SSH/SFTP sidecar. */
+export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
+  INVOKE_CHANNELS.dialogPickFile,
+  INVOKE_CHANNELS.dialogPickFolder,
+  INVOKE_CHANNELS.dialogPickSaveFile,
+  INVOKE_CHANNELS.systemGetDownloadsPath,
+  INVOKE_CHANNELS.systemGetAppVersion,
+  INVOKE_CHANNELS.systemStartDrag,
+  INVOKE_CHANNELS.systemClipboardReadText,
+  INVOKE_CHANNELS.windowMinimize,
+  INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowFullScreenToggle,
+  INVOKE_CHANNELS.windowClose,
+  INVOKE_CHANNELS.windowShow,
+  INVOKE_CHANNELS.windowSetTitle,
+  INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.windowGetState,
+  INVOKE_CHANNELS.profileReport
+]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Channels — push events (main → renderer)
@@ -879,10 +1134,12 @@ export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   sessionProgress: 'session:progress',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
+  hostKeyPrompt: 'session:host-key-prompt',
   transferEvent: 'transfer:event',
   operationEvent: 'operation:event',
   monitorSample: 'monitor:sample',
   monitorStatus: 'monitor:status',
+  tailReady: 'tail:ready',
   tailLine: 'tail:line',
   tailNotice: 'tail:notice',
   tailEnd: 'tail:end',
@@ -891,8 +1148,34 @@ export const EVENT_CHANNELS = {
   terminalExit: 'terminal:exit',
   windowStateChange: 'window:state-change',
   updateAvailable: 'update:available',
-  updateDownloaded: 'update:downloaded'
+  updateDownloaded: 'update:downloaded',
+  updateStatus: 'update:status'
 } as const
+
+export const SEND_CHANNELS = {
+  terminalAck: 'terminal:ack',
+  terminalInput: 'terminal:input',
+  terminalResize: 'terminal:resize'
+} as const
+
+/** Union of every valid fire-and-forget send channel string. */
+export type SendChannel = (typeof SEND_CHANNELS)[keyof typeof SEND_CHANNELS]
+
+export interface TerminalAckEvent {
+  terminalId: string
+  bytes: number
+}
+
+export interface TerminalInputEvent {
+  terminalId: string
+  data: string
+}
+
+export interface TerminalResizeEvent {
+  terminalId: string
+  cols: number
+  rows: number
+}
 
 /** Union of every valid event channel string. */
 export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS]

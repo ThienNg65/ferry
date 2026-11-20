@@ -1,6 +1,9 @@
 import { execFile } from 'child_process'
+import { readFile } from 'fs/promises'
+import * as os from 'os'
+import * as path from 'path'
 import { promisify } from 'util'
-import type { ImportedSessionCandidate } from '../../shared/contract'
+import type { ImportedSessionCandidate, JumpHostConfig } from '../../shared/contract'
 import { decodeSessionName, listRegSubkeyPaths, parseDword, parseRegValues } from './regQuery'
 
 const execFileAsync = promisify(execFile)
@@ -141,11 +144,124 @@ export async function scanWinScpSessions(
   return candidates
 }
 
+interface SshConfigHost {
+  alias: string
+  hostName?: string
+  user?: string
+  port?: number
+  identityFile?: string
+  proxyJump?: string
+}
+
+function expandHome(p: string, home: string): string {
+  return p === '~' || p.startsWith('~/') || p.startsWith('~\\') ? path.join(home, p.slice(1)) : p
+}
+
+export function parseSshConfig(
+  text: string,
+  home: string = os.homedir(),
+  defaultUser: string = os.userInfo().username
+): ImportedSessionCandidate[] {
+  const hosts: SshConfigHost[] = []
+  let current: SshConfigHost[] = []
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) {
+      continue
+    }
+    const match = /^(\S+?)(?:\s*=\s*|\s+)(.+)$/.exec(line)
+    if (!match) {
+      continue
+    }
+    const key = match[1].toLowerCase()
+    const value = match[2].trim().replace(/^"(.*)"$/, '$1')
+    if (key === 'host') {
+      current = value
+        .split(/\s+/)
+        .filter((pattern) => !/[*?!]/.test(pattern))
+        .map((alias) => ({ alias }))
+      hosts.push(...current)
+    } else if (key === 'match') {
+      current = []
+    } else {
+      for (const host of current) {
+        if (key === 'hostname' && host.hostName === undefined) host.hostName = value
+        else if (key === 'user' && host.user === undefined) host.user = value
+        else if (key === 'port' && host.port === undefined) {
+          const parsedPort = parseInt(value, 10)
+          host.port = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : 22
+        }
+        else if (key === 'identityfile' && host.identityFile === undefined) host.identityFile = expandHome(value, home)
+        else if (key === 'proxyjump' && host.proxyJump === undefined) host.proxyJump = value
+      }
+    }
+  }
+
+  const byAlias = new Map(hosts.map((h) => [h.alias, h]))
+const parseValidPort = (raw: string | undefined): number => {
+  const n = raw ? Number.parseInt(raw, 10) : 22
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 22
+}
+
+const toHop = (spec: string): JumpHostConfig => {
+    const known = byAlias.get(spec)
+    if (known) {
+      return {
+        host: known.hostName ?? known.alias,
+        port: known.port ?? 22,
+        username: known.user ?? defaultUser,
+        authMethod: known.identityFile ? 'privateKey' : 'password',
+        privateKeyPath: known.identityFile
+      }
+    }
+    const at = spec.indexOf('@')
+    const username = at >= 0 ? spec.slice(0, at) : defaultUser
+    const hostPort = spec.slice(at + 1)
+    let host = hostPort
+    let portStr: string | undefined
+    if (hostPort.startsWith('[')) {
+      const closeIdx = hostPort.indexOf(']')
+      if (closeIdx !== -1) {
+        host = hostPort.slice(1, closeIdx)
+        if (hostPort[closeIdx + 1] === ':') {
+          portStr = hostPort.slice(closeIdx + 2)
+        }
+      }
+    } else {
+      const firstColon = hostPort.indexOf(':')
+      const lastColon = hostPort.lastIndexOf(':')
+      if (firstColon !== -1 && firstColon === lastColon) {
+        host = hostPort.slice(0, firstColon)
+        portStr = hostPort.slice(firstColon + 1)
+      }
+    }
+    return { host, port: parseValidPort(portStr), username, authMethod: 'password' }
+  }
+
+  return hosts.map((h) => ({
+    source: 'sshconfig' as const,
+    name: h.alias,
+    host: h.hostName ?? h.alias,
+    port: h.port ?? 22,
+    username: h.user ?? defaultUser,
+    privateKeyPath: h.identityFile,
+    jumpHosts:
+      h.proxyJump && h.proxyJump.toLowerCase() !== 'none'
+        ? h.proxyJump.split(',').map((spec) => toHop(spec.trim()))
+        : undefined
+  }))
+}
+
+export async function scanSshConfig(): Promise<ImportedSessionCandidate[]> {
+  return parseSshConfig(await readFile(path.join(os.homedir(), '.ssh', 'config'), 'utf-8'))
+}
+
 /** Scans every supported source. One source failing (e.g. a locked-down registry) doesn't hide results from the other. */
 export async function scanImportCandidates(): Promise<ImportedSessionCandidate[]> {
-  const [putty, winscp] = await Promise.all([
+  const [putty, winscp, sshConfig] = await Promise.all([
     scanPuttySessions().catch(() => []),
-    scanWinScpSessions().catch(() => [])
+    scanWinScpSessions().catch(() => []),
+    scanSshConfig().catch(() => [])
   ])
-  return [...winscp, ...putty]
+  return [...winscp, ...putty, ...sshConfig]
 }

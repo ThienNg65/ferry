@@ -1,16 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
+import { SshError } from '../ssh/errors'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 vi.mock('crypto', () => ({
   randomUUID: vi.fn(() => 'fixed-uuid')
@@ -62,12 +55,34 @@ describe('tail.ipc', () => {
       expect(tailManagerMock.start).toHaveBeenCalledWith('fixed-uuid', 's1', '/var/log/app.log', 999999)
     })
 
-    it('wraps a thrown error from TailManager.start into an error envelope', async () => {
-      tailManagerMock.start.mockImplementationOnce(() => {
-        throw new Error('no such file')
+    it('rejects non-object payloads and missing/empty required fields with VALIDATION', async () => {
+      expect(await invoke('tail:start', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('tail:start', [])).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('tail:start', { sessionId: '  ', remotePath: '/var/log/app.log' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
       })
-      const result = await invoke('tail:start', { sessionId: 's1', remotePath: '/missing' })
-      expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'no such file' })
+      expect(await invoke('tail:start', { sessionId: 's1', remotePath: '' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('tail:start', { sessionId: 's1', remotePath: '/var/log/app.log', historyLines: '100' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('tail:start', { sessionId: 's1', remotePath: '/var/log/app.log', historyLines: null })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(tailManagerMock.start).not.toHaveBeenCalled()
+    })
+
+    it('preserves SshError codes thrown synchronously by TailManager.start (e.g. disconnected session)', async () => {
+      tailManagerMock.start.mockImplementationOnce(() => {
+        throw new SshError('NOT_FOUND', 'Session s1 is not connected')
+      })
+      const result = await invoke('tail:start', { sessionId: 's1', remotePath: '/var/log/app.log' })
+      expect(result).toEqual({ ok: false, code: 'NOT_FOUND', message: 'Session s1 is not connected', hostKey: undefined })
     })
   })
 
@@ -76,6 +91,13 @@ describe('tail.ipc', () => {
       const result = await invoke('tail:stop', 'tail-1')
       expect(tailManagerMock.stop).toHaveBeenCalledWith('tail-1')
       expect(result).toEqual({ ok: true, data: undefined })
+    })
+
+    it('rejects empty or non-string tailId with VALIDATION', async () => {
+      expect(await invoke('tail:stop', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('tail:stop', '   ')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('tail:stop', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(tailManagerMock.stop).not.toHaveBeenCalled()
     })
   })
 })

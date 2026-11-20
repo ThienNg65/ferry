@@ -1,12 +1,27 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor' | 'edits'
 
-// Module-scoped singletons (the useSettingsDialog.ts pattern) — deliberately
-// NOT ui.store.ts, which persists to localStorage; which dock tab is open is
-// ephemeral per-launch layout state, not a preference.
-const collapsed = ref(false)
+const COLLAPSED_KEY = 'ferry:dock:collapsed'
+
+function loadCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+const collapsed = ref(loadCollapsed())
+watch(collapsed, (value) => {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, String(value))
+  } catch {
+    return
+  }
+})
 const tab = ref<DockTab>('transfers')
+const isMaximized = ref(false)
 /**
  * Once true, TerminalView stays mounted forever (it renders in a v-show
  * sibling in BottomDock.vue) so its xterm instances and scrollback never get
@@ -28,5 +43,12 @@ export function useDockState() {
     }
   }
 
-  return { collapsed, tab, terminalEverShown, openDock }
+  function toggleMaximize(): void {
+    if (collapsed.value) {
+      collapsed.value = false
+    }
+    isMaximized.value = !isMaximized.value
+  }
+
+  return { collapsed, tab, terminalEverShown, isMaximized, openDock, toggleMaximize }
 }

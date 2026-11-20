@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { generateKeyPairSync, randomBytes } from 'crypto'
 import { promises as fs } from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { promisify } from 'util'
 import { SshError } from './errors'
@@ -128,16 +129,22 @@ export async function generateBuiltin(req: KeyGenerateRequest): Promise<KeyGener
   // OpenSSH's on-disk ed25519 "private key" field is the libsodium secret-key
   // convention: the 32-byte seed followed by the 32-byte public key, 64 bytes total.
   const privKey64 = Buffer.concat([seedBytes, pubKeyBytes])
-  const comment = req.comment ?? ''
+  const comment = (req.comment ?? '').replace(/[\r\n]/g, ' ')
 
   const pem = buildOpenSshPrivateKeyPem(pubKeyBytes, privKey64, comment)
   const publicLine = `${`ssh-ed25519 ${edPublicKeyBlob(pubKeyBytes).toString('base64')}${comment ? ` ${comment}` : ''}`}\n`
 
-  await fs.writeFile(req.keyPath, pem, { mode: 0o600 })
-  if (process.platform === 'win32') {
-    await execFileAsync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:F`], { windowsHide: true })
+  await fs.writeFile(req.keyPath, pem, { mode: 0o600, flag: 'wx' })
+  try {
+    if (process.platform === 'win32') {
+      const user = process.env.USERNAME || os.userInfo().username
+      await execFileAsync('icacls', [req.keyPath, '/inheritance:r', '/grant:r', `${user}:F`], { windowsHide: true })
+    }
+    await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644, flag: 'wx' })
+  } catch (e) {
+    await fs.unlink(req.keyPath).catch(() => undefined)
+    throw e
   }
-  await fs.writeFile(`${req.keyPath}.pub`, publicLine, { mode: 0o644 })
 
   return {
     privateKeyPath: req.keyPath,
@@ -169,30 +176,33 @@ export async function generateEd25519KeyPair(
   /** Overridable only for unit tests, to force the "not found" fallback path deterministically. */
   sshKeygenCommand = 'ssh-keygen'
 ): Promise<KeyGenerateResult> {
+  const trimmed = req.keyPath.trim()
+  const resolvedKeyPath = path.isAbsolute(trimmed) ? trimmed : path.join(os.homedir(), '.ssh', trimmed)
+  const resolvedReq: KeyGenerateRequest = { ...req, keyPath: resolvedKeyPath }
   const exists = await fs
-    .access(req.keyPath)
+    .access(resolvedReq.keyPath)
     .then(() => true)
-    .catch(() => false)
+    .catch(() => fs.access(`${resolvedReq.keyPath}.pub`).then(() => true, () => false))
   if (exists) {
-    throw new SshError('VALIDATION', `"${req.keyPath}" already exists — choose a different path.`)
+    throw new SshError('VALIDATION', `"${resolvedReq.keyPath}" already exists — choose a different path.`)
   }
-  await fs.mkdir(path.dirname(req.keyPath), { recursive: true })
+  await fs.mkdir(path.dirname(resolvedReq.keyPath), { recursive: true })
 
   try {
-    await runSshKeygen(req, sshKeygenCommand)
-    const publicKey = (await fs.readFile(`${req.keyPath}.pub`, 'utf-8')).trim()
-    return { privateKeyPath: req.keyPath, publicKeyPath: `${req.keyPath}.pub`, publicKey, method: 'ssh-keygen' }
+    await runSshKeygen(resolvedReq, sshKeygenCommand)
+    const publicKey = (await fs.readFile(`${resolvedReq.keyPath}.pub`, 'utf-8')).trim()
+    return { privateKeyPath: resolvedReq.keyPath, publicKeyPath: `${resolvedReq.keyPath}.pub`, publicKey, method: 'ssh-keygen' }
   } catch (e) {
     if (!isCommandNotFound(e)) {
       throw new SshError('UNKNOWN', `ssh-keygen failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
-  if (req.passphrase) {
+  if (resolvedReq.passphrase) {
     throw new SshError(
       'VALIDATION',
       'Passphrase protection requires a system ssh-keygen, which was not found on this machine. Generate without a passphrase, or install OpenSSH.'
     )
   }
-  return generateBuiltin(req)
+  return generateBuiltin(resolvedReq)
 }

@@ -6,14 +6,12 @@
  * Electron process) — everything else is real. See RemoteShell.integration.test.ts
  * for the docker command that starts the required test server.
  */
-import { randomUUID } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'ssh2'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
 
 const HOST = '127.0.0.1'
 const PORT = 2299
@@ -64,6 +62,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('../ssh/SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ TransferQueue } = await import('./TransferQueue'))
     const result = await SessionManager.getInstance().openQuickConnect({
       name: 'ferry-test',
@@ -218,5 +217,89 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     await expect(SessionManager.getInstance().shell(sessionId).stat(`${remoteDir}/file3.bin`)).rejects.toMatchObject({
       code: 'NOT_FOUND'
     })
+  })
+  it('an upload never exposes a half-written final file and cancel removes only its staging file', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'slow.bin')
+    await fs.writeFile(localFile, Buffer.alloc(1_000_000, 'x'))
+    const remoteFile = `${remoteDir}/slow.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(200)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      const stagingFiles = async () => (await shell.readdir(remoteDir))
+        .filter((entry) => entry.filename.startsWith('.ferry-transfer-'))
+      await waitFor(async () => (await stagingFiles()).length === 1)
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.cancel(id)
+      await waitFor(async () => (await stagingFiles()).length === 0)
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+  })
+
+  it('a finished upload preserves a user-owned .part file and cleans up its staging file', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const localFile = path.join(localDir, 'ok.txt')
+    await fs.writeFile(localFile, 'done')
+    const remoteFile = `${remoteDir}/ok.txt`
+    const shell = SessionManager.getInstance().shell(sessionId)
+
+    await shell.exec(`printf user-owned > ${remoteFile}.part`)
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, remoteFile)
+
+    await waitFor(() => shell.stat(remoteFile).then(() => true, () => false))
+    expect((await shell.readFile(`${remoteFile}.part`, 1024)).content).toBe('user-owned')
+    expect((await shell.readdir(remoteDir)).some((entry) => entry.filename.startsWith('.ferry-transfer-'))).toBe(false)
+  })
+  it('overwriting a remote file keeps its mode and writes through a symlink', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const realFile = `${remoteDir}/real.sh`
+    const link = `${remoteDir}/link.sh`
+    await shell.exec(`printf old > ${realFile} && chmod 755 ${realFile} && ln -s ${realFile} ${link}`)
+    const localFile = path.join(localDir, 'link.sh')
+    await fs.writeFile(localFile, 'new content')
+
+    TransferQueue.getInstance().enqueue(sessionId, 'upload', localFile, link)
+
+    await waitFor(async () => (await shell.readFile(realFile, 1024)).content === 'new content')
+    expect((await shell.stat(realFile)).mode & 0o777).toBe(0o755)
+    expect((await shell.exec(`test -L ${link} && echo link`)).stdout.trim()).toBe('link')
+  })
+
+  it('pause keeps job-owned staging and resume finishes with identical bytes', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const data = randomBytes(1_000_000)
+    const localFile = path.join(localDir, 'pause.bin')
+    await fs.writeFile(localFile, data)
+    const remoteFile = `${remoteDir}/pause.bin`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    const queue = TransferQueue.getInstance()
+
+    queue.setBandwidthLimitKBps(300)
+    try {
+      const id = queue.enqueue(sessionId, 'upload', localFile, remoteFile)
+      const findStaging = async () => (await shell.readdir(remoteDir))
+        .find((entry) => entry.filename.startsWith('.ferry-transfer-'))
+      await waitFor(async () => Boolean((await findStaging())?.size))
+      queue.pause(id)
+      await new Promise((r) => setTimeout(r, 500))
+      const pausedSize = (await findStaging())!.size
+      expect(pausedSize).toBeLessThan(data.length)
+      expect(await shell.stat(remoteFile).then(() => true, () => false)).toBe(false)
+      queue.setBandwidthLimitKBps(null)
+      queue.retry(id)
+      await waitFor(() => shell.stat(remoteFile).then((st) => st.size === data.length, () => false))
+    } finally {
+      queue.setBandwidthLimitKBps(null)
+    }
+    const sftp = await shell.sftp()
+    const tmp = path.join(localDir, 'back.bin')
+    await new Promise<void>((resolve, reject) => sftp.fastGet(remoteFile, tmp, (e) => (e ? reject(e) : resolve())))
+    expect((await fs.readFile(tmp)).equals(data)).toBe(true)
   })
 })

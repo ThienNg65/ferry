@@ -1,16 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const editSessionManagerMock = {
   openLocal: vi.fn(),
@@ -61,7 +53,7 @@ describe('edit.ipc', () => {
   it('edit:openRemote forwards sessionId, path and builtin', async () => {
     editSessionManagerMock.openRemote.mockResolvedValueOnce({ editId: 'e1', localPath: '/tmp/e1' })
     const result = await invoke('edit:openRemote', { sessionId: 'sess-1', path: '/remote/a.txt', builtin: true })
-    expect(editSessionManagerMock.openRemote).toHaveBeenCalledWith('sess-1', '/remote/a.txt', true)
+    expect(editSessionManagerMock.openRemote).toHaveBeenCalledWith('sess-1', '/remote/a.txt', true, false)
     expect(result).toEqual({ ok: true, data: { editId: 'e1', localPath: '/tmp/e1' } })
   })
 

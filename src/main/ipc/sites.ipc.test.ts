@@ -1,16 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const siteStoreMock = {
   list: vi.fn(),
@@ -61,7 +53,7 @@ describe('sites.ipc', () => {
 
   it('sites:create forwards the input and returns the created site', async () => {
     siteStoreMock.create.mockReturnValueOnce({ id: '2', name: 'b' })
-    const input = { name: 'b', host: 'h', port: 22, username: 'u' }
+    const input = { name: 'b', host: 'h', port: 22, username: 'u', authMethod: 'password' }
     const result = await invoke('sites:create', input)
     expect(siteStoreMock.create).toHaveBeenCalledWith(input)
     expect(result).toEqual({ ok: true, data: { id: '2', name: 'b' } })
@@ -69,7 +61,7 @@ describe('sites.ipc', () => {
 
   it('sites:update forwards id and input', async () => {
     siteStoreMock.update.mockReturnValueOnce({ id: '2', name: 'c' })
-    const input = { name: 'c', host: 'h', port: 22, username: 'u' }
+    const input = { name: 'c', host: 'h', port: 22, username: 'u', authMethod: 'password' }
     const result = await invoke('sites:update', '2', input)
     expect(siteStoreMock.update).toHaveBeenCalledWith('2', input)
     expect(result).toEqual({ ok: true, data: { id: '2', name: 'c' } })
@@ -99,7 +91,29 @@ describe('sites.ipc', () => {
     siteStoreMock.create.mockImplementationOnce(() => {
       throw new Error('name already exists')
     })
-    const result = await invoke('sites:create', { name: 'dup', host: 'h', port: 22, username: 'u' })
+    const result = await invoke('sites:create', { name: 'dup', host: 'h', port: 22, username: 'u', authMethod: 'password' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'name already exists' })
+  })
+
+  it('sites:update preserves empty string secrets so cleared proxy/jump passwords clear saved ciphertext', async () => {
+    siteStoreMock.update.mockReturnValueOnce({ id: '2', name: 'c' })
+    const input = {
+      name: 'c',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      authMethod: 'password',
+      proxyMode: 'custom',
+      proxy: { type: 'socks5', host: 'p', port: 1080, password: '' },
+      jumpHosts: [{ host: 'j', port: 22, username: 'ju', authMethod: 'password', password: '' }]
+    }
+    await invoke('sites:update', '2', input)
+    expect(siteStoreMock.update).toHaveBeenCalledWith(
+      '2',
+      expect.objectContaining({
+        proxy: expect.objectContaining({ password: '' }),
+        jumpHosts: [expect.objectContaining({ password: '' })]
+      })
+    )
   })
 })

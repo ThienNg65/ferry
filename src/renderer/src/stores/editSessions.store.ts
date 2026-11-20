@@ -45,12 +45,26 @@ export const useEditSessionsStore = defineStore('editSessions', {
       const notify = useNotify()
       this.unsubscribe = onEvent<EditEvent>(EVENT_CHANNELS.editEvent, (evt) => {
         const name = evt.localTempPath.split(/[/\\]/).pop() ?? evt.localTempPath
+        this.applyEvent(evt)
         switch (evt.state) {
           case 'reuploaded':
             notify.success('Re-uploaded', name)
             break
-          case 'upload-error':
-            notify.error('Re-upload failed', `${name}: ${evt.error ?? 'unknown error'}`)
+          case 'upload-error': {
+            const sessionClosed = this.edits.find((edit) => edit.editId === evt.editId)?.sessionClosed
+            const recovery = sessionClosed
+              ? 'Your changes are still in the local copy.'
+              : 'Your changes are still local. Save the file again to retry.'
+            notify.error('Re-upload failed', `${name}: ${evt.error ?? 'unknown error'}. ${recovery}`)
+            break
+          }
+          case 'remote-changed':
+            notify.prompt('File changed on the server', `${name} was modified remotely since you opened it.`, [
+              { label: 'Overwrite', onClick: () =>
+                  void invoke<void>(INVOKE_CHANNELS.editForceReupload, evt.editId).catch((e: Error) => notify.error('Overwrite failed', e.message))
+              },
+              { label: 'Discard my edit', onClick: () => void this.close(evt.editId).catch(() => {}) }
+            ])
             break
           case 'session-closed':
             notify.error('Session closed', `${name} — further changes won't be uploaded`)
@@ -58,11 +72,12 @@ export const useEditSessionsStore = defineStore('editSessions', {
           default:
             break
         }
-        this.applyEvent(evt)
       })
       if (!this.hydrated) {
         this.hydrated = true
-        void this.hydrate()
+        void this.hydrate().catch(() => {
+          this.hydrated = false
+        })
       }
     },
 
@@ -93,7 +108,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
       if (!existing) {
         return
       }
-      if (evt.state === 'reuploading') {
+      if (evt.state === 'reuploading' || evt.state === 'upload-error') {
         existing.dirty = true
       } else if (evt.state === 'reuploaded') {
         existing.dirty = false

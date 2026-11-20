@@ -1,16 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const bookmarkStoreMock = {
   list: vi.fn(),
@@ -42,12 +34,27 @@ describe('bookmarks.ipc', () => {
     expect(result).toEqual({ ok: true, data: [{ id: '1', path: '/tmp', sessionId: 's1' }] })
   })
 
-  it('bookmarks:create forwards the input and returns the created bookmark', async () => {
-    bookmarkStoreMock.create.mockReturnValueOnce({ id: '2', path: '/root', label: 'Root' })
-    const input = { path: '/root', label: 'Root' }
+  it('bookmarks:create forwards contract-standard scope input and returns the created bookmark', async () => {
+    const created = { id: '2', scope: 'remote', siteId: 'ferrytest@127.0.0.1', path: '/config', label: 'Config' }
+    bookmarkStoreMock.create.mockReturnValueOnce(created)
+    const input = { scope: 'remote', siteId: 'ferrytest@127.0.0.1', path: '/config', label: 'Config' }
     const result = await invoke('bookmarks:create', input)
     expect(bookmarkStoreMock.create).toHaveBeenCalledWith(input)
-    expect(result).toEqual({ ok: true, data: { id: '2', path: '/root', label: 'Root' } })
+    expect(result).toEqual({ ok: true, data: created })
+  })
+
+  it('bookmarks:create normalizes legacy side payloads to scope and rejects missing/invalid scope', async () => {
+    bookmarkStoreMock.create.mockReturnValueOnce({ id: '3', scope: 'remote', path: '/root', label: 'Root' })
+    const legacy = await invoke('bookmarks:create', { side: 'remote', path: '/root', label: 'Root' })
+    expect(bookmarkStoreMock.create).toHaveBeenCalledWith({ scope: 'remote', path: '/root', label: 'Root' })
+    expect(legacy).toEqual({ ok: true, data: { id: '3', scope: 'remote', path: '/root', label: 'Root' } })
+
+    const missing = await invoke('bookmarks:create', { path: '/root', label: 'Root' })
+    expect(missing).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const invalid = await invoke('bookmarks:create', { scope: 'other', path: '/root', label: 'Root' })
+    expect(invalid).toMatchObject({ ok: false, code: 'VALIDATION' })
+    expect(bookmarkStoreMock.create).toHaveBeenCalledTimes(1)
   })
 
   it('bookmarks:delete forwards the id', async () => {
@@ -60,7 +67,7 @@ describe('bookmarks.ipc', () => {
     bookmarkStoreMock.create.mockImplementationOnce(() => {
       throw new Error('duplicate bookmark')
     })
-    const result = await invoke('bookmarks:create', { path: '/root', label: 'Root' })
+    const result = await invoke('bookmarks:create', { side: 'remote', path: '/root', label: 'Root' })
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'duplicate bookmark' })
   })
 })

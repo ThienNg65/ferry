@@ -2,10 +2,17 @@ import * as path from 'path'
 import { handle } from './envelope'
 import {
   INVOKE_CHANNELS,
+  type CleanupStagedDropRequest,
   type DeleteManyRequest,
   type DeleteManyResult,
+  type FileEntry,
   type FileListResult,
-  type FileReadResult
+  type FileReadResult,
+  type RemoteAdminRequest,
+  type StageDropBeginRequest,
+  type StageDropBeginResult,
+  type StageDropRequest,
+  type StageDropSessionRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -25,27 +32,53 @@ export function registerFsHandlers(): void {
   // this isn't currently exploitable. Do not "fix" this into a restricted sandbox —
   // that would break normal file-browsing.
   handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) => LocalFs.list(dirPath as string | undefined))
+  handle<void>(INVOKE_CHANNELS.fsLocalTouch, (filePath) => LocalFs.touch(filePath as string))
+  handle<void>(INVOKE_CHANNELS.fsRemoteTouch, (sessionId, filePath) =>
+    RemoteFs.touchRemote(sessionId as string, filePath as string)
+  )
   handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
-  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath) =>
-    LocalFs.rename(fromPath as string, toPath as string)
+  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath, replace) =>
+    typeof replace === 'boolean'
+      ? LocalFs.rename(fromPath as string, toPath as string, replace)
+      : LocalFs.rename(fromPath as string, toPath as string)
   )
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
     LocalFs.remove(targetPath as string, Boolean(isDir))
   )
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) =>
+    LocalFs.stageDroppedEntries(req as StageDropRequest)
+  )
+  handle<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, (req) =>
+    LocalFs.beginStageDrop(req as StageDropBeginRequest | undefined)
+  )
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, (req) =>
+    LocalFs.finishStageDrop((req as StageDropSessionRequest).stageId)
+  )
+  handle<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, (req) =>
+    LocalFs.abortStageDrop((req as StageDropSessionRequest).stageId)
+  )
+  handle<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, (req) => {
+    const paths = Array.isArray((req as CleanupStagedDropRequest)?.paths)
+      ? (req as CleanupStagedDropRequest).paths.map(String)
+      : []
+    return LocalFs.cleanupStagedDropPaths(paths)
+  })
   handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
     const request = req as { path: string; content: string }
     return LocalFs.writeFileText(request.path, request.content)
   })
 
-  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath) =>
-    RemoteFs.listRemote(sessionId as string, dirPath as string | undefined)
+  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath, isPrefetch) =>
+    RemoteFs.listRemote(sessionId as string, dirPath as string | undefined, Boolean(isPrefetch))
   )
   handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) =>
     RemoteFs.mkdirRemote(sessionId as string, dirPath as string)
   )
-  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath) =>
-    RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string)
+  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath, replace) =>
+    typeof replace === 'boolean'
+      ? RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string, replace)
+      : RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string)
   )
   // Deletes are deliberately NOT cancellable: aborting the channel mid-`rm -rf`
   // doesn't stop the remote rm and would mislead the user about what survived.
@@ -93,6 +126,18 @@ export function registerFsHandlers(): void {
         }
         return result
       }
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsRemoteAdmin, (req) => {
+    const request = req as RemoteAdminRequest
+    return OperationRegistry.getInstance().run(
+      {
+        kind: 'chmod-remote',
+        label: `Changing permissions on ${path.posix.basename(request.path)}`,
+        sessionId: request.sessionId,
+        cancellable: false
+      },
+      () => RemoteFs.adminRemote(request)
     )
   })
   handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) =>

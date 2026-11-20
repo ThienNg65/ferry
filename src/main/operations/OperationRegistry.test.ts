@@ -1,19 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// The registry broadcasts via BrowserWindow.getAllWindows() — vitest runs
-// outside a real Electron process, so mock only that (standard pattern, see
-// PROJECT_MAP "Build / run / test").
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
 const sent: unknown[] = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (_channel: string, evt: unknown) => sent.push(evt) }
-      }
-    ]
-  }
-}))
+setHost({
+  ...testHost,
+  broadcast: (_channel, evt) => sent.push(evt)
+})
 
 import { OperationRegistry } from './OperationRegistry'
 import { SshError } from '../ssh/errors'

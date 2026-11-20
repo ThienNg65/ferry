@@ -16,12 +16,18 @@ export class IpcError extends Error {
 
 /** Channels excluded from the global busy tracker — high-frequency (per-keystroke/resize) or semantically unrelated to "SSH/SFTP work is happening". */
 const QUIET_CHANNELS = new Set<string>([
-  INVOKE_CHANNELS.terminalWrite,
-  INVOKE_CHANNELS.terminalResize,
   INVOKE_CHANNELS.windowMinimize,
   INVOKE_CHANNELS.windowMaximizeToggle,
+  INVOKE_CHANNELS.windowFullScreenToggle,
   INVOKE_CHANNELS.windowClose,
-  INVOKE_CHANNELS.windowIsMaximized
+  INVOKE_CHANNELS.windowShow,
+  INVOKE_CHANNELS.windowSetTitle,
+  INVOKE_CHANNELS.windowIsMaximized,
+  INVOKE_CHANNELS.windowGetState,
+  INVOKE_CHANNELS.windowSyncTheme,
+  INVOKE_CHANNELS.windowGetDisplays,
+  INVOKE_CHANNELS.updateGetStatus,
+  INVOKE_CHANNELS.settingsSetUiPref
 ])
 
 /**
@@ -38,7 +44,49 @@ function toCloneable(value: unknown): unknown {
   if (value === null || value === undefined || typeof value !== 'object') {
     return value
   }
-  return JSON.parse(JSON.stringify(value))
+  if (value instanceof Uint8Array) {
+    return new Uint8Array(value)
+  }
+  if (value instanceof ArrayBuffer) {
+    return value.slice(0)
+  }
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  if (Array.isArray(value)) {
+    return value.map(toCloneable)
+  }
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry !== undefined && typeof entry !== 'function' && typeof entry !== 'symbol') {
+      out[key] = toCloneable(entry)
+    }
+  }
+  return out
+}
+
+const MAX_PERF_SAMPLES = 100
+const SLOW_IPC_THRESHOLD_MS = 100
+
+export interface IpcPerfSample {
+  channel: string
+  durationMs: number
+  ok: boolean
+  timestamp: number
+}
+
+function recordIpcPerf(sample: IpcPerfSample): void {
+  if (typeof window === 'undefined') return
+  const w = window as unknown as {
+    __FERRY_PERF__?: { recent: IpcPerfSample[]; slow: IpcPerfSample[] }
+  }
+  const store = (w.__FERRY_PERF__ ??= { recent: [], slow: [] })
+  store.recent.push(sample)
+  if (store.recent.length > MAX_PERF_SAMPLES) store.recent.shift()
+  if (sample.durationMs >= SLOW_IPC_THRESHOLD_MS) {
+    store.slow.push(sample)
+    if (store.slow.length > MAX_PERF_SAMPLES) store.slow.shift()
+  }
 }
 
 /**
@@ -54,13 +102,22 @@ export async function invoke<T>(channel: string, ...args: unknown[]): Promise<T>
   const tracked = !QUIET_CHANNELS.has(channel)
   const activity = tracked ? useIpcActivityStore() : null
   activity?.increment()
+  const start = performance.now()
+  let ok = false
   try {
     const res = (await window.api.invoke(channel, ...args.map(toCloneable))) as IpcResult<T>
     if (!res.ok) {
       throw new IpcError(res.code, res.message, res.hostKey)
     }
+    ok = true
     return res.data
   } finally {
+    recordIpcPerf({
+      channel,
+      durationMs: Math.round((performance.now() - start) * 100) / 100,
+      ok,
+      timestamp: Date.now()
+    })
     activity?.decrement()
   }
 }

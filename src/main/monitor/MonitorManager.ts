@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import {
   capProcesses,
@@ -185,6 +185,9 @@ export class MonitorManager {
       entry.consecutiveFailures = 0
       this.broadcastSample(sample)
     } catch (e) {
+      if (entry.stopped || this.entries.get(entry.sessionId) !== entry) {
+        return
+      }
       entry.consecutiveFailures += 1
       if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         this.broadcastStatus(entry.sessionId, 'error', e instanceof Error ? e.message : String(e))
@@ -199,19 +202,11 @@ export class MonitorManager {
   }
 
   private broadcastSample(sample: MonitorSample): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.monitorSample, sample)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.monitorSample, sample)
   }
 
   private broadcastStatus(sessionId: string, state: MonitorStatusEvent['state'], message?: string): void {
     const payload: MonitorStatusEvent = { sessionId, state, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.monitorStatus, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.monitorStatus, payload)
   }
 }

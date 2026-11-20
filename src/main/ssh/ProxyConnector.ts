@@ -29,6 +29,7 @@ async function connectSocks5(
       },
       timeout: timeoutMs
     })
+    socket.setNoDelay(true)
     return socket
   } catch (e) {
     throw new SshError(
@@ -45,9 +46,23 @@ async function connectSocks5(
  * a plain-text request line + headers, then a status line + headers response,
  * after which the socket is a raw byte pipe to the target.
  */
+function assertNoHeaderControlChars(value: string, field: string): void {
+  if (/[\r\n\0]/.test(value)) {
+    throw new SshError('VALIDATION', `Invalid control characters in ${field}`)
+  }
+}
+
 function connectHttp(proxy: ProxyConfig, targetHost: string, targetPort: number, timeoutMs: number): Promise<Duplex> {
+  assertNoHeaderControlChars(targetHost, 'target host')
+  if (proxy.username !== undefined) {
+    assertNoHeaderControlChars(proxy.username, 'proxy username')
+  }
+  if (proxy.password !== undefined) {
+    assertNoHeaderControlChars(proxy.password, 'proxy password')
+  }
   return new Promise((resolve, reject) => {
     const socket: Socket = netConnect({ host: proxy.host, port: proxy.port })
+    socket.setNoDelay(true)
     let settled = false
 
     const timer = setTimeout(() => {
@@ -65,17 +80,26 @@ function connectHttp(proxy: ProxyConfig, targetHost: string, targetPort: number,
     }
 
     socket.on('error', (e) => fail(`HTTP proxy ${proxy.host}:${proxy.port} connection failed: ${e.message}`))
+    socket.once('close', () => fail(`HTTP proxy ${proxy.host}:${proxy.port} closed connection prematurely`))
 
     socket.once('connect', () => {
       const authHeader = proxy.username
         ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ''}`).toString('base64')}\r\n`
         : ''
+      const formattedTargetHost = targetHost.includes(':') && !targetHost.startsWith('[') ? `[${targetHost}]` : targetHost
+      const targetAuthority = `${formattedTargetHost}:${targetPort}`
       socket.write(
-        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${authHeader}\r\n`
+        `CONNECT ${targetAuthority} HTTP/1.1\r\nHost: ${targetAuthority}\r\n${authHeader}\r\n`
       )
 
+      const MAX_HTTP_HEADER_BYTES = 64 * 1024
       let buffered = Buffer.alloc(0)
       const onData = (chunk: Buffer): void => {
+        if (buffered.length + chunk.length > MAX_HTTP_HEADER_BYTES) {
+          socket.removeListener('data', onData)
+          fail(`HTTP proxy ${proxy.host}:${proxy.port} response headers exceeded ${MAX_HTTP_HEADER_BYTES} bytes`)
+          return
+        }
         buffered = Buffer.concat([buffered, chunk])
         const headerEnd = buffered.indexOf('\r\n\r\n')
         if (headerEnd === -1) {

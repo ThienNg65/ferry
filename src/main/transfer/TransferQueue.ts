@@ -1,15 +1,15 @@
 import { randomUUID } from 'crypto'
-import { createReadStream, createWriteStream } from 'fs'
-import { stat } from 'fs/promises'
-import { Transform } from 'stream'
+import { rename, stat, unlink } from 'fs/promises'
 import * as path from 'path'
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
-import { listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
+import { commitRemoteFile } from '../fs/RemoteFsService'
+import { cleanupStagedDropPath, listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
 import { runConcurrent } from '../util/concurrency'
-import { EVENT_CHANNELS, type TransferEvent, type TransferKind } from '../../shared/contract'
+import { transferPipelined } from './sftpPipeline'
+import { EVENT_CHANNELS, type TransferEvent, type TransferKind, type TransferState } from '../../shared/contract'
 
 /** Exported so a terminal-event listener (see `onTerminalEvent`) gets full job context, not just the wire-format `TransferEvent`. */
 export interface TransferJob {
@@ -21,8 +21,17 @@ export interface TransferJob {
   controller: AbortController
   /** True when this job moves a whole directory tree rather than a single file. */
   isTree: boolean
+  createParents?: boolean
   /** Epoch ms when queued — close enough to "started" for History's purposes; queueing delay is usually negligible. */
   queuedAt: number
+  resume?: boolean
+  sourceStamp?: string
+  /** Exclusively created temporary files and their contiguous verified byte offsets. */
+  staging?: Map<string, { path: string; offset: number }>
+  /** Completed relative paths for resumable directory-tree transfers. */
+  completedFiles?: Set<string>
+  /** Per-file source stamps (`size:mtime`) for validating `.part` resume in tree transfers. */
+  sourceStamps?: Map<string, string>
 }
 
 /**
@@ -54,69 +63,112 @@ const MAX_CONCURRENT = 3
 const TREE_ITEM_CONCURRENCY = 4
 /** Minimum gap between progress broadcasts for a single transfer. */
 const PROGRESS_THROTTLE_MS = 200
+const MAX_RETRYABLE = 200
+const PAUSE_REASON = 'pause'
+/** Maximum virtual bandwidth credit to absorb timer scheduling jitter without unbounded catch-up bursts. */
+const MAX_BANDWIDTH_CATCH_UP_MS = 20
 
 /**
- * Global rate limiter shared by every concurrent transfer, so a configured
- * cap is an app-wide ceiling (matching WinSCP's single "limit bandwidth"
- * setting) rather than a per-file allowance that multiplies with concurrency.
- *
- * Implemented as a virtual schedule rather than a capped token bucket: each
- * `acquire()` reserves the next available time slot proportional to its byte
- * count (synchronously, before awaiting anything, so concurrent callers never
- * race on the reservation) and resolves once that slot arrives. A request for
- * more bytes than one second's worth of budget (e.g. a stream chunk bigger
- * than a very low configured limit) just takes proportionally longer instead
- * of deadlocking against a hard bucket-capacity cap.
+ * Global FIFO bandwidth scheduler. Only granted work consumes virtual bandwidth.
+ * Pending reservations can be cancelled without leaving holes in the schedule.
  */
 export class RateLimiter {
   private limitBytesPerSec: number | null = null
   private nextAvailableAt = 0
+  private pending: Array<{
+    bytes: number
+    signal?: AbortSignal
+    resolve: () => void
+    reject: (error: SshError) => void
+    onAbort: () => void
+  }> = []
+  private timer: ReturnType<typeof setTimeout> | null = null
+
+  get isLimited(): boolean {
+    return this.limitBytesPerSec !== null
+  }
 
   setLimitKBps(limitKBps: number | null): void {
     this.limitBytesPerSec = limitKBps && limitKBps > 0 ? limitKBps * 1024 : null
     this.nextAvailableAt = Date.now()
+    this.schedule()
   }
 
-  /** Resolves once `bytes` worth of budget is available. Resolves immediately when unlimited. */
-  async acquire(bytes: number): Promise<void> {
-    const limit = this.limitBytesPerSec
-    if (!limit) {
-      return
+  /** Only granted requests reserve time; cancellation removes queued work immediately. */
+  acquire(bytes: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      return Promise.reject(new SshError('CANCELLED', 'Transfer cancelled'))
     }
-    const now = Date.now()
-    const slotStart = Math.max(now, this.nextAvailableAt)
-    this.nextAvailableAt = slotStart + (bytes / limit) * 1000
-    const waitMs = slotStart - now
-    if (waitMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    if (!this.limitBytesPerSec) {
+      return Promise.resolve()
+    }
+    // Start a new burst at wall time after an actual idle period; do not bank unlimited bandwidth.
+    if (this.pending.length === 0 && this.nextAvailableAt < Date.now() - MAX_BANDWIDTH_CATCH_UP_MS) {
+      this.nextAvailableAt = Date.now()
+    }
+    return new Promise<void>((resolve, reject) => {
+      const entry = {
+        bytes,
+        signal,
+        resolve,
+        reject,
+        onAbort: (): void => {
+          const index = this.pending.indexOf(entry)
+          if (index === -1) return
+          this.pending.splice(index, 1)
+          signal?.removeEventListener('abort', entry.onAbort)
+          reject(new SshError('CANCELLED', 'Transfer cancelled'))
+          this.schedule()
+        }
+      }
+      this.pending.push(entry)
+      signal?.addEventListener('abort', entry.onAbort, { once: true })
+      this.schedule()
+    })
+  }
+
+  private schedule(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    // Clamp once per scheduling pass, not once per grant. Preserving fractional
+    // deadlines within the loop avoids losing sub-ms credit after late timers.
+    this.nextAvailableAt = Math.max(this.nextAvailableAt, Date.now() - MAX_BANDWIDTH_CATCH_UP_MS)
+    while (this.pending.length > 0) {
+      const limit = this.limitBytesPerSec
+      const now = Date.now()
+      const waitMs = limit ? Math.max(0, this.nextAvailableAt - now) : 0
+      if (waitMs > 0) {
+        this.timer = setTimeout(() => {
+          this.timer = null
+          this.schedule()
+        }, waitMs)
+        return
+      }
+      const entry = this.pending.shift()!
+      entry.signal?.removeEventListener('abort', entry.onAbort)
+      if (limit) {
+        this.nextAvailableAt += (entry.bytes / limit) * 1000
+      }
+      entry.resolve()
     }
   }
-}
-
-/** A pass-through `Transform` that delays each chunk until `limiter` grants it enough budget — the actual throttling hook in the pipe chain. */
-function createThrottleTransform(limiter: RateLimiter): Transform {
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      limiter
-        .acquire(chunk.length)
-        .then(() => callback(null, chunk))
-        .catch((e: Error) => callback(e))
-    }
-  })
 }
 
 /**
  * TransferQueue — bounded-concurrency upload/download queue.
  *
- * Uses SFTP read/write streams (not fastGet/fastPut) so cancellation is a
- * clean `stream.destroy()` and progress is derived from actual bytes moved,
- * not a coarse step callback. Progress events are throttled here — the
- * renderer must never see a flood of one-event-per-chunk updates.
+ * Uses pipelined SFTP open/read/write/close (`transferPipelined`) rather than
+ * `sftp.createWriteStream`/`fastPut` so throughput saturates WAN bandwidth while
+ * preserving cancellation, contiguous-offset resume, rate limiting, and real byte progress.
  */
 export class TransferQueue {
   private static instance: TransferQueue | null = null
   private readonly pending: TransferJob[] = []
   private readonly active = new Map<string, TransferJob>()
+  private readonly retryable = new Map<string, TransferJob>()
+  private readonly paused = new Set<string>()
   private readonly rateLimiter = new RateLimiter()
   /** Additive side-channel for terminal (done/error/cancelled) events — currently just HistoryRecorder. Never allowed to affect a transfer's own outcome (see `notifyTerminal`). */
   private readonly terminalListeners: Array<(job: TransferJob, evt: TransferEvent) => void> = []
@@ -150,8 +202,8 @@ export class TransferQueue {
   }
 
   /** Queues a single-file transfer and returns its id immediately; work happens in the background. */
-  enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string): string {
-    return this.push(sessionId, kind, localPath, remotePath, false)
+  enqueue(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, createParents?: boolean): string {
+    return this.push(sessionId, kind, localPath, remotePath, false, createParents)
   }
 
   /**
@@ -163,7 +215,7 @@ export class TransferQueue {
     return this.push(sessionId, kind, localPath, remotePath, true)
   }
 
-  private push(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, isTree: boolean): string {
+  private push(sessionId: string, kind: TransferKind, localPath: string, remotePath: string, isTree: boolean, createParents?: boolean): string {
     const transferId = randomUUID()
     const job: TransferJob = {
       transferId,
@@ -173,16 +225,94 @@ export class TransferQueue {
       remotePath,
       controller: new AbortController(),
       isTree,
-      queuedAt: Date.now()
+      createParents,
+      queuedAt: Date.now(),
+      resume: false
     }
     this.pending.push(job)
-    this.broadcast({ transferId, kind, state: 'queued' })
+    this.broadcast(this.jobEvent(job, 'queued'))
     this.pump()
     return transferId
   }
 
+  retry(transferId: string): void {
+    const old = this.retryable.get(transferId)
+    if (!old) {
+      throw new SshError('NOT_FOUND', 'Transfer cannot be retried')
+    }
+    this.retryable.delete(transferId)
+    this.paused.delete(transferId)
+    const job: TransferJob = { ...old, controller: new AbortController(), queuedAt: Date.now(), resume: true }
+    this.pending.push(job)
+    this.broadcast(this.jobEvent(job, 'queued'))
+    this.pump()
+  }
+
+  private rememberRetryable(job: TransferJob): void {
+    this.retryable.delete(job.transferId)
+    this.retryable.set(job.transferId, job)
+    if (this.retryable.size > MAX_RETRYABLE) {
+      const oldestId = this.retryable.keys().next().value as string
+      const oldestJob = this.retryable.get(oldestId)!
+      this.retryable.delete(oldestId)
+      this.paused.delete(oldestId)
+      this.cleanupJobArtifacts(oldestJob)
+    }
+  }
+
+  pause(transferId: string): void {
+    const activeJob = this.active.get(transferId)
+    if (activeJob) {
+      activeJob.controller.abort(PAUSE_REASON)
+      return
+    }
+    const idx = this.pending.findIndex((j) => j.transferId === transferId)
+    if (idx !== -1) {
+      const [job] = this.pending.splice(idx, 1)
+      this.rememberRetryable(job)
+      this.paused.add(transferId)
+      this.broadcast(this.jobEvent(job, 'paused'))
+    }
+  }
+
+  private cleanupJobArtifacts(job: TransferJob): void {
+    if (job.kind === 'upload') {
+      void cleanupStagedDropPath(job.localPath).catch(() => undefined)
+    }
+    this.cleanupStaging(job)
+  }
+
+  private cleanupStaging(job: TransferJob): void {
+    for (const part of job.staging?.values() ?? []) {
+      try {
+        const op = job.kind === 'upload'
+          ? SessionManager.getInstance().shell(job.sessionId).unlink(part.path)
+          : unlink(part.path)
+        void op.catch(() => undefined)
+      } catch {
+        // The session may already be closed.
+      }
+    }
+    job.staging?.clear()
+  }
+
   /** Cancels a transfer, whether still queued or actively streaming. */
   cancel(transferId: string): void {
+    const pausedJob = this.retryable.get(transferId)
+    if (pausedJob && !this.paused.has(transferId)) {
+      this.retryable.delete(transferId)
+      this.cleanupJobArtifacts(pausedJob)
+      return
+    }
+    if (pausedJob) {
+      this.retryable.delete(transferId)
+      this.paused.delete(transferId)
+      const evt = this.jobEvent(pausedJob, 'cancelled')
+      this.broadcast(evt)
+      this.notifyTerminal(pausedJob, evt)
+      this.cleanupJobArtifacts(pausedJob)
+      return
+    }
     const activeJob = this.active.get(transferId)
     if (activeJob) {
       activeJob.controller.abort()
@@ -191,9 +321,10 @@ export class TransferQueue {
     const idx = this.pending.findIndex((j) => j.transferId === transferId)
     if (idx !== -1) {
       const [job] = this.pending.splice(idx, 1)
-      const evt: TransferEvent = { transferId: job.transferId, kind: job.kind, state: 'cancelled' }
+      const evt = this.jobEvent(job, 'cancelled')
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
+      this.cleanupJobArtifacts(job)
     }
   }
 
@@ -218,43 +349,68 @@ export class TransferQueue {
     }
 
     const { transferId, kind } = job
-    this.broadcast({ transferId, kind, state: 'started' })
+    this.broadcast(this.jobEvent(job, 'started'))
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
-      const totalBytes =
-        kind === 'upload' ? (await stat(job.localPath)).size : (await shell.stat(job.remotePath)).size
+      const source = kind === 'upload' ? await stat(job.localPath) : await shell.stat(job.remotePath)
+      const totalBytes = source.size ?? 0
+      const stamp = `${totalBytes}:${kind === 'upload' ? (source as { mtimeMs: number }).mtimeMs : source.mtime}`
+      const resume = job.resume === true && (job.sourceStamp === undefined || job.sourceStamp === stamp)
+      job.sourceStamp = stamp
 
       const startedAt = Date.now()
       let lastEmit = 0
-      const emitProgress = (bytesTransferred: number): void => {
+      const emitProgress = (bytesTransferred: number, offset: number): void => {
         const now = Date.now()
         if (now - lastEmit < PROGRESS_THROTTLE_MS && bytesTransferred < totalBytes) {
           return
         }
         lastEmit = now
         const elapsedSec = (now - startedAt) / 1000
-        const bytesPerSec = elapsedSec > 0 ? Math.round(bytesTransferred / elapsedSec) : 0
+        const bytesPerSec = elapsedSec > 0 ? Math.round((bytesTransferred - offset) / elapsedSec) : 0
         const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
-        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
+        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone: 0, filesTotal: 1 })
       }
 
+      if (job.createParents) {
+        if (job.controller.signal.aborted) throw new SshError('CANCELLED', 'Transfer cancelled')
+        if (kind === 'upload') await shell.mkdirRecursive(path.posix.dirname(job.remotePath))
+        else await mkdirLocalRecursive(path.dirname(job.localPath))
+      }
+      job.staging ??= new Map()
       await this.runFile({
         shell,
         kind,
         localPath: job.localPath,
         remotePath: job.remotePath,
         signal: job.controller.signal,
+        size: totalBytes,
+        resume,
+        staging: job.staging,
         onProgress: emitProgress
       })
 
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      if (kind === 'upload') {
+        await cleanupStagedDropPath(job.localPath).catch(() => undefined)
+      }
+      const doneEvt = this.jobEvent(job, 'done', { bytesTransferred: totalBytes, totalBytes, filesDone: 1, filesTotal: 1 })
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
-      const cancelled = e instanceof SshError && e.code === 'CANCELLED'
+      const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
+      if (!cancelled || pausedNow) {
+        this.rememberRetryable(job)
+      }
+      if (pausedNow) {
+        this.paused.add(transferId)
+        this.broadcast(this.jobEvent(job, 'paused'))
+        return
+      }
+      if (cancelled) this.cleanupJobArtifacts(job)
+      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }
@@ -271,71 +427,54 @@ export class TransferQueue {
     localPath: string
     remotePath: string
     signal: AbortSignal
-    onProgress: (bytesTransferred: number) => void
+    size: number
+    resume: boolean
+    staging: NonNullable<TransferJob['staging']>
+    onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
-    await new Promise<void>((resolve, reject) => {
-      const readStream =
-        opts.kind === 'upload' ? createReadStream(opts.localPath) : sftp.createReadStream(opts.remotePath)
-      const writeStream =
-        opts.kind === 'upload' ? sftp.createWriteStream(opts.remotePath) : createWriteStream(opts.localPath)
-
-      const throttle = createThrottleTransform(this.rateLimiter)
-
-      let settled = false
-      const finish = (err?: Error): void => {
-        if (settled) {
-          return
-        }
-        settled = true
-        opts.signal.removeEventListener('abort', onAbort)
-        if (err) {
-          reject(err)
-        } else {
-          resolve()
-        }
-      }
-      const destroyAll = (): void => {
-        if (!readStream.destroyed) {
-          readStream.destroy()
-        }
-        if (!throttle.destroyed) {
-          throttle.destroy()
-        }
-        if (!writeStream.destroyed) {
-          writeStream.destroy()
-        }
-      }
-      const onAbort = (): void => {
-        destroyAll()
-        finish(new SshError('CANCELLED', 'Transfer cancelled'))
-      }
-      if (opts.signal.aborted) {
-        onAbort()
-        return
-      }
-      opts.signal.addEventListener('abort', onAbort, { once: true })
-
-      let bytesMoved = 0
-      readStream.on('data', (chunk: Buffer | string) => {
-        bytesMoved += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
-        opts.onProgress(bytesMoved)
-      })
-      readStream.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      throttle.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      writeStream.on('error', (e: Error) => {
-        destroyAll()
-        finish(e)
-      })
-      writeStream.on('close', () => finish())
-      readStream.pipe(throttle).pipe(writeStream)
+    const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
+    let part = opts.staging.get(destPath)
+    const partSize = part && opts.resume
+      ? await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path)).then((s) => s.size, () => 0)
+      : 0
+    const offset = part && partSize <= opts.size ? Math.min(partSize, part.offset) : 0
+    if (!offset && part) {
+      await this.removePart(opts, part.path)
+      opts.staging.delete(destPath)
+      part = undefined
+    }
+    const paths = opts.kind === 'upload' ? path.posix : path
+    const fresh = !part
+    const staging = part ?? { path: paths.join(paths.dirname(destPath), `.ferry-transfer-${randomUUID()}.part`), offset: 0 }
+    await transferPipelined({
+      sftp,
+      kind: opts.kind,
+      localPath: opts.kind === 'upload' ? opts.localPath : staging.path,
+      remotePath: opts.kind === 'upload' ? staging.path : opts.remotePath,
+      size: opts.size,
+      offset,
+      signal: opts.signal,
+      rateLimiter: this.rateLimiter,
+      onProgress: opts.onProgress,
+      onContigOffset: (contig) => { staging.offset = contig },
+      onDestinationCreated: fresh ? () => { opts.staging.set(destPath, staging) } : undefined
     })
+    if (opts.signal.aborted) throw new SshError('CANCELLED', 'Transfer cancelled')
+    if (opts.kind === 'upload') {
+      await commitRemoteFile(opts.shell, staging.path, destPath)
+    } else {
+      await rename(staging.path, destPath)
+    }
+    opts.staging.delete(destPath)
+  }
+
+  private async removePart(opts: { shell: RemoteShell; kind: TransferKind }, partPath: string): Promise<void> {
+    if (opts.kind === 'upload') {
+      await opts.shell.unlink(partPath).catch(() => undefined)
+    } else {
+      await unlink(partPath).catch(() => undefined)
+    }
   }
 
   /**
@@ -348,7 +487,7 @@ export class TransferQueue {
    */
   private async runTree(job: TransferJob): Promise<void> {
     const { transferId, kind } = job
-    this.broadcast({ transferId, kind, state: 'started' })
+    this.broadcast(this.jobEvent(job, 'started'))
 
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
@@ -374,8 +513,29 @@ export class TransferQueue {
         }
       })
 
+      job.staging ??= new Map()
+      job.completedFiles ??= new Set()
+      job.sourceStamps ??= new Map()
+
+      const completedSet = job.completedFiles
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
+      let filesDone = 0
+      const pendingFiles: Array<{ file: (typeof files)[number]; index: number }> = []
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        const stamp = `${f.size}:${f.mtimeMs ?? ''}`
+        const prevStamp = job.sourceStamps.get(f.relPath)
+        if (job.resume && completedSet.has(f.relPath) && prevStamp === stamp) {
+          doneBytes += f.size
+          filesDone += 1
+        } else {
+          if (prevStamp !== undefined && prevStamp !== stamp) {
+            completedSet.delete(f.relPath)
+          }
+          pendingFiles.push({ file: f, index: i })
+        }
+      }
       // Multiple files stream concurrently now, so "bytes so far" is doneBytes
       // (fully-finished files) plus whatever each still-in-flight file has moved.
       const inFlightBytes = new Map<number, number>()
@@ -396,16 +556,20 @@ export class TransferQueue {
         const elapsedSec = (now - startedAt) / 1000
         const bytesPerSec = elapsedSec > 0 ? Math.round(bytesTransferred / elapsedSec) : 0
         const etaMs = bytesPerSec > 0 ? Math.round(((totalBytes - bytesTransferred) / bytesPerSec) * 1000) : 0
-        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs })
+        this.broadcast({ transferId, kind, state: 'progress', bytesTransferred, totalBytes, bytesPerSec, etaMs, filesDone, filesTotal: files.length })
       }
 
       await runConcurrent(
-        files.map((file, index) => ({ file, index })),
+        pendingFiles,
         TREE_ITEM_CONCURRENCY,
         async ({ file, index }) => {
           if (job.controller.signal.aborted) {
             throw new SshError('CANCELLED', 'Transfer cancelled')
           }
+          const stamp = `${file.size}:${file.mtimeMs ?? ''}`
+          const prevStamp = job.sourceStamps!.get(file.relPath)
+          const resumeFile = job.resume === true && (prevStamp === undefined || prevStamp === stamp)
+          job.sourceStamps!.set(file.relPath, stamp)
           inFlightBytes.set(index, 0)
           await this.runFile({
             shell,
@@ -413,34 +577,67 @@ export class TransferQueue {
             localPath: joinLocal(job.localPath, file.relPath),
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
+            size: file.size,
+            resume: resumeFile,
+            staging: job.staging!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
               emitProgress()
             }
           })
+          completedSet.add(file.relPath)
           inFlightBytes.delete(index)
           doneBytes += file.size
+          filesDone += 1
+          lastEmit = 0
           emitProgress()
         }
       )
 
-      const doneEvt: TransferEvent = { transferId, kind, state: 'done', bytesTransferred: totalBytes, totalBytes }
+      if (kind === 'upload') {
+        await cleanupStagedDropPath(job.localPath).catch(() => undefined)
+      }
+      this.cleanupStaging(job)
+      const doneEvt = this.jobEvent(job, 'done', { bytesTransferred: totalBytes, totalBytes, filesDone: files.length, filesTotal: files.length })
       this.broadcast(doneEvt)
       this.notifyTerminal(job, doneEvt)
     } catch (e) {
       const cancelled = (e instanceof SshError && e.code === 'CANCELLED') || job.controller.signal.aborted
       const message = e instanceof Error ? e.message : String(e)
-      const evt: TransferEvent = { transferId, kind, state: cancelled ? 'cancelled' : 'error', error: cancelled ? undefined : message }
+      const pausedNow = cancelled && job.controller.signal.reason === PAUSE_REASON
+      if (!cancelled || pausedNow) {
+        this.rememberRetryable(job)
+      }
+      if (pausedNow) {
+        this.paused.add(transferId)
+        this.broadcast(this.jobEvent(job, 'paused'))
+        return
+      }
+      if (cancelled) this.cleanupJobArtifacts(job)
+      const evt = this.jobEvent(job, cancelled ? 'cancelled' : 'error', { error: cancelled ? undefined : message })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
     }
   }
 
-  private broadcast(evt: TransferEvent): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.transferEvent, evt)
-      }
+  private jobEvent(
+    job: TransferJob,
+    state: TransferState,
+    extra?: Partial<Omit<TransferEvent, 'transferId' | 'kind' | 'state'>>
+  ): TransferEvent {
+    return {
+      transferId: job.transferId,
+      kind: job.kind,
+      state,
+      sessionId: job.sessionId,
+      localPath: job.localPath,
+      remotePath: job.remotePath,
+      isDir: job.isTree,
+      ...extra
     }
+  }
+
+  private broadcast(evt: TransferEvent): void {
+    host().broadcast(EVENT_CHANNELS.transferEvent, evt)
   }
 }

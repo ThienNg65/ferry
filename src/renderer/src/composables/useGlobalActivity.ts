@@ -29,7 +29,9 @@ export function useGlobalActivity() {
   const activeTransferCount = computed(
     () => transfers.list.filter((t) => BUSY_TRANSFER_STATES.has(t.state)).length
   )
-  const isBusy = computed(() => ipcActivity.isBusy || isConnecting.value || activeTransferCount.value > 0)
+  const isBusy = computed(
+    () => ipcActivity.isBusy || isConnecting.value || activeTransferCount.value > 0 || operations.runningCount > 0
+  )
   const label = computed(() => {
     if (!isBusy.value) {
       return ''

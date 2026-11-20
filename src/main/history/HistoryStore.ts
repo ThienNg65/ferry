@@ -1,5 +1,6 @@
-import Store from 'electron-store'
+import Conf from 'conf'
 import { randomUUID } from 'crypto'
+import { host } from '../host/host'
 import type { HistoryEntry, HistoryQuery } from '../../shared/contract'
 
 /** Ring-buffer cap — oldest entries are dropped once exceeded, so this file never grows unbounded for a heavy user. */
@@ -30,21 +31,26 @@ interface StoreSchema {
  */
 export class HistoryStore {
   private static instance: HistoryStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
   /** In-memory mirror — record()/list()/clear() all read/write this directly so they never observe a stale pre-flush disk state; only the disk write itself is debounced. */
   private _entries: HistoryEntry[] | null = null
   private flushTimer: ReturnType<typeof setTimeout> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'history', defaults: { entries: [] } })
+      this._store = new Conf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'history',
+        defaults: { entries: [] }
+      })
     }
     return this._store
   }
 
   private get entries(): HistoryEntry[] {
     if (!this._entries) {
-      this._entries = this.store.get('entries')
+      const stored = this.store.get('entries')
+      this._entries = Array.isArray(stored) ? stored : []
     }
     return this._entries
   }
@@ -60,8 +66,11 @@ export class HistoryStore {
     return HistoryStore.instance
   }
 
-  record(entry: Omit<HistoryEntry, 'id'>): void {
+  record(entry: Omit<HistoryEntry, 'id'>, retentionDays?: number | null): void {
     this.entries.push({ ...entry, id: randomUUID() })
+    if (retentionDays !== undefined) {
+      this.pruneExpired(retentionDays)
+    }
     // Drop oldest first — entries are appended in chronological order.
     if (this.entries.length > MAX_HISTORY_ENTRIES) {
       this.entries.splice(0, this.entries.length - MAX_HISTORY_ENTRIES)
@@ -89,6 +98,22 @@ export class HistoryStore {
     this.entries = []
     // Immediate, not debounced — a deliberate, rare user action, not a burst.
     this.flush()
+  }
+
+  /** Drops history entries older than `retentionDays` (no-op when `retentionDays` is null or <= 0). */
+  pruneExpired(retentionDays: number | null, nowMs = Date.now()): number {
+    if (retentionDays === null || retentionDays <= 0) {
+      return 0
+    }
+    const cutoff = nowMs - retentionDays * 86_400_000
+    const before = this.entries.length
+    const kept = this.entries.filter((e) => e.finishedAt >= cutoff)
+    const removed = before - kept.length
+    if (removed > 0) {
+      this.entries = kept
+      this.flush()
+    }
+    return removed
   }
 
   private scheduleFlush(): void {

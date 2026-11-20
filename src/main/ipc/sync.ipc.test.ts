@@ -1,20 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { handlers } from './envelope'
 import type { IpcResult } from '../../shared/contract'
 
-const registered = new Map<string, (...args: unknown[]) => Promise<unknown>>()
-
-vi.mock('electron', () => ({
-  ipcMain: {
-    removeHandler: vi.fn(),
-    handle: vi.fn((channel: string, cb: (...args: unknown[]) => Promise<unknown>) => {
-      registered.set(channel, cb)
-    })
-  }
-}))
+const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const syncServiceMock = {
   previewSync: vi.fn(),
-  runSync: vi.fn()
+  runSync: vi.fn(),
+  summarizeSync: vi.fn()
 }
 
 vi.mock('../sync/SyncService', () => syncServiceMock)
@@ -76,6 +69,15 @@ describe('sync.ipc', () => {
   })
 
   describe('sync:run', () => {
+    const approvedPlan = { toTransfer: [], toDelete: [], totalBytes: 0 }
+    const requestId = 'sync-request'
+
+    it('rejects requests without approval before registering work', async () => {
+      const result = await invoke('sync:run', { sessionId: 's1', deleteExtras: true })
+      expect(result).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(operationRegistryMock.run).not.toHaveBeenCalled()
+    })
+
     it('runs runSync through the OperationRegistry with a direction-aware label', async () => {
       const runResult = { queuedTransferIds: ['t1'], deletedCount: 0 }
       syncServiceMock.runSync.mockResolvedValueOnce(runResult)
@@ -86,38 +88,34 @@ describe('sync.ipc', () => {
         direction: 'push',
         deleteExtras: true
       }
-      const result = await invoke('sync:run', options)
+      const result = await invoke('sync:run', { options, approvedPlan, requestId })
       expect(operationRegistryMock.run).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'sync', sessionId: 's1', cancellable: true, label: expect.stringContaining('local → remote') }),
-        expect.any(Function)
+        expect.objectContaining({ kind: 'sync', sessionId: 's1', cancellable: true, requestId, label: expect.stringContaining('local → remote') }),
+        expect.any(Function),
+        syncServiceMock.summarizeSync
       )
-      expect(syncServiceMock.runSync).toHaveBeenCalledWith(options, expect.anything())
+      expect(syncServiceMock.runSync).toHaveBeenCalledWith(options, approvedPlan, expect.anything())
       expect(result).toEqual({ ok: true, data: runResult })
     })
 
     it('labels a pull direction distinctly from push', async () => {
       syncServiceMock.runSync.mockResolvedValueOnce({ queuedTransferIds: [], deletedCount: 0 })
       await invoke('sync:run', {
-        sessionId: 's1',
-        localPath: 'a',
-        remotePath: 'b',
-        direction: 'pull',
-        deleteExtras: false
+        requestId, approvedPlan,
+        options: { sessionId: 's1', localPath: 'a', remotePath: 'b', direction: 'pull', deleteExtras: false }
       })
       expect(operationRegistryMock.run).toHaveBeenCalledWith(
         expect.objectContaining({ label: expect.stringContaining('remote → local') }),
-        expect.any(Function)
+        expect.any(Function),
+        syncServiceMock.summarizeSync
       )
     })
 
     it('wraps a rejected runSync into an error envelope', async () => {
       syncServiceMock.runSync.mockRejectedValueOnce(new Error('transfer failed'))
       const result = await invoke('sync:run', {
-        sessionId: 's1',
-        localPath: 'a',
-        remotePath: 'b',
-        direction: 'push',
-        deleteExtras: false
+        requestId, approvedPlan,
+        options: { sessionId: 's1', localPath: 'a', remotePath: 'b', direction: 'push', deleteExtras: false }
       })
       expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'transfer failed' })
     })

@@ -1,8 +1,14 @@
-import { BrowserWindow } from 'electron'
+import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import { isTransient } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
-import { EVENT_CHANNELS, type TailEndEvent, type TailLineEvent, type TailNoticeEvent } from '../../shared/contract'
+import {
+  EVENT_CHANNELS,
+  type TailEndEvent,
+  type TailLineEvent,
+  type TailNoticeEvent,
+  type TailReadyEvent
+} from '../../shared/contract'
 
 interface TailEntry {
   controller: AbortController
@@ -10,8 +16,14 @@ interface TailEntry {
   remotePath: string
   /** PID of the remote `tail` process, captured from its first output line. */
   remotePid: number | null
-  /** Wall-clock ms of the last activity; used by the idle reaper. */
+  /** Wall-clock ms of the last stdout activity; used by the idle reaper. */
   lastActive: number
+  /** Pending reconnect timer handle, cleared on stop/supersede. */
+  reconnectTimer: ReturnType<typeof setTimeout> | null
+  /** Last non-empty stderr line observed for this stream. */
+  lastStderr: string | null
+  /** Ensures `tail:end` is emitted at most once per entry. */
+  ended: boolean
 }
 
 /** Marker line the remote command prints first to report the tail's PID. */
@@ -28,8 +40,11 @@ const MAX_RECONNECT_ATTEMPTS = 5
  * its TypeScript type without runtime validation — so a compromised or buggy
  * renderer could otherwise smuggle arbitrary shell syntax through this field.
  */
-export function sanitizeHistoryLines(value: number): number {
-  const n = Math.trunc(Number(value))
+export function sanitizeHistoryLines(value: unknown): number {
+  if (typeof value !== 'number') {
+    return 200
+  }
+  const n = Math.trunc(value)
   if (!Number.isFinite(n) || n < 0) {
     return 200
   }
@@ -61,31 +76,39 @@ export class TailManager {
     return TailManager.instance
   }
 
+  private broadcastReady(tailId: string): void {
+    const payload: TailReadyEvent = { tailId }
+    host().broadcast(EVENT_CHANNELS.tailReady, payload)
+  }
+
   private broadcastLine(tailId: string, line: string): void {
     const payload: TailLineEvent = { tailId, line }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailLine, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.tailLine, payload)
   }
 
   private broadcastNotice(tailId: string, message: string): void {
     const payload: TailNoticeEvent = { tailId, message }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailNotice, payload)
-      }
-    }
+    host().broadcast(EVENT_CHANNELS.tailNotice, payload)
   }
 
   private broadcastEnd(tailId: string, error?: string): void {
     const payload: TailEndEvent = { tailId, error }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(EVENT_CHANNELS.tailEnd, payload)
-      }
+    host().broadcast(EVENT_CHANNELS.tailEnd, payload)
+  }
+
+  private finishEntry(tailId: string, entry: TailEntry, error?: string): void {
+    if (entry.ended) {
+      return
     }
+    entry.ended = true
+    if (entry.reconnectTimer) {
+      clearTimeout(entry.reconnectTimer)
+      entry.reconnectTimer = null
+    }
+    if (this.tails.get(tailId) === entry) {
+      this.tails.delete(tailId)
+    }
+    this.broadcastEnd(tailId, error)
   }
 
   private ensureReaper(): void {
@@ -94,8 +117,9 @@ export class TailManager {
     }
     this.reaper = setInterval(() => {
       const now = Date.now()
-      for (const [id, entry] of this.tails) {
+      for (const [id, entry] of [...this.tails.entries()]) {
         if (now - entry.lastActive > IDLE_TTL_MS) {
+          this.broadcastNotice(id, 'Stream closed after 30 minutes of inactivity')
           this.stop(id)
         }
       }
@@ -104,13 +128,27 @@ export class TailManager {
         this.reaper = null
       }
     }, 60_000)
+    this.reaper.unref?.()
   }
 
   /** Starts following a remote file. `tailId` is caller-chosen (used to route lines and to stop). */
   start(tailId: string, sessionId: string, remotePath: string, historyLines = 200): void {
+    // Validate the session synchronously before registering or returning so an
+    // invalid/disconnected session rejects `tail:start` instead of emitting
+    // `tail:end` before the IPC reply arrives.
+    SessionManager.getInstance().shell(sessionId)
     this.stop(tailId)
     const controller = new AbortController()
-    this.tails.set(tailId, { controller, sessionId, remotePath, remotePid: null, lastActive: Date.now() })
+    this.tails.set(tailId, {
+      controller,
+      sessionId,
+      remotePath,
+      remotePid: null,
+      lastActive: Date.now(),
+      reconnectTimer: null,
+      lastStderr: null,
+      ended: false
+    })
     this.ensureReaper()
     void this.follow(tailId, sanitizeHistoryLines(historyLines), 0)
   }
@@ -118,49 +156,90 @@ export class TailManager {
   /** Runs one `tail -F` attempt and reconnects on transient end. */
   private async follow(tailId: string, historyLines: number, attempt: number): Promise<void> {
     const entry = this.tails.get(tailId)
-    if (!entry || entry.controller.signal.aborted) {
+    if (!entry || entry.ended || entry.controller.signal.aborted) {
       return
+    }
+    let currentAttempt = attempt
+    let readyEmitted = false
+    let pidConsumed = false
+    let sawLogLine = false
+    const attemptStartMs = Date.now()
+    let stderrBuf = ''
+    const flushStderr = (final: boolean): void => {
+      const parts = stderrBuf.split('\n')
+      stderrBuf = final ? '' : (parts.pop() ?? '')
+      for (const raw of parts) {
+        const line = raw.replace(/\r$/, '').trim()
+        if (line.length > 0) {
+          entry.lastStderr = line
+          this.broadcastNotice(tailId, line)
+        }
+      }
+    }
+    const markHealthy = (): void => {
+      currentAttempt = 0
+      if (!readyEmitted) {
+        readyEmitted = true
+        this.broadcastReady(tailId)
+      }
     }
     try {
       const shell = SessionManager.getInstance().shell(entry.sessionId)
-      const command = `printf '${PID_MARKER}%s\\n' $$; exec tail -n ${historyLines} -F ${shellEscape(entry.remotePath)}`
-      await shell.execLines(command, {
+      const command = `printf '${PID_MARKER}%s\\n' $$; exec tail -n ${historyLines} -F -- ${shellEscape(entry.remotePath)}`
+      const exitCode = await shell.execLines(command, {
         signal: entry.controller.signal,
         timeoutMs: 6 * 60 * 60 * 1000, // effectively unbounded; the reaper handles idle streams
         onLine: (line) => {
-          entry.lastActive = Date.now()
-          if (line.startsWith(PID_MARKER)) {
-            const pid = parseInt(line.slice(PID_MARKER.length).trim(), 10)
-            if (!Number.isNaN(pid)) {
-              entry.remotePid = pid
-            }
+          if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
             return
           }
+          if (!pidConsumed) {
+            pidConsumed = true
+            if (line.startsWith(PID_MARKER)) {
+              const pid = parseInt(line.slice(PID_MARKER.length).trim(), 10)
+              if (!Number.isNaN(pid) && pid > 0) {
+                entry.remotePid = pid
+              }
+              markHealthy()
+              return
+            }
+          }
+          sawLogLine = true
+          entry.lastActive = Date.now()
+          markHealthy()
           this.broadcastLine(tailId, line)
         },
         onStderr: (chunk) => {
-          entry.lastActive = Date.now()
-          const trimmed = chunk.trim()
-          if (trimmed) {
-            this.broadcastNotice(tailId, trimmed)
+          if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
+            return
           }
+          stderrBuf += chunk
+          flushStderr(false)
         }
       })
-      if (!entry.controller.signal.aborted) {
-        await this.reconnect(tailId, historyLines, attempt)
+      flushStderr(true)
+      if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
+        return
       }
+      if (exitCode !== null && exitCode !== 0) {
+        this.finishEntry(tailId, entry, entry.lastStderr || `tail exited with code ${exitCode}`)
+        return
+      }
+      entry.remotePid = null
+      const nextAttempt = !sawLogLine && Date.now() - attemptStartMs < 5_000 ? attempt : currentAttempt
+      await this.reconnect(tailId, historyLines, nextAttempt)
     } catch (e) {
-      if (entry.controller.signal.aborted) {
-        this.broadcastEnd(tailId)
+      flushStderr(true)
+      if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
         return
       }
       if (!isTransient(e)) {
         const msg = e instanceof Error ? e.message : String(e)
-        this.broadcastEnd(tailId, msg)
-        this.tails.delete(tailId)
+        this.finishEntry(tailId, entry, msg)
         return
       }
-      await this.reconnect(tailId, historyLines, attempt, e)
+      entry.remotePid = null
+      await this.reconnect(tailId, historyLines, currentAttempt, e)
     }
   }
 
@@ -171,13 +250,17 @@ export class TailManager {
     lastError?: unknown
   ): Promise<void> {
     const entry = this.tails.get(tailId)
-    if (!entry || entry.controller.signal.aborted) {
+    if (!entry || entry.ended || entry.controller.signal.aborted) {
       return
     }
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
-      const msg = lastError instanceof Error ? lastError.message : lastError ? String(lastError) : 'stream ended'
-      this.broadcastEnd(tailId, msg)
-      this.tails.delete(tailId)
+      const msg =
+        lastError instanceof Error
+          ? lastError.message
+          : lastError
+            ? String(lastError)
+            : entry.lastStderr || 'stream ended'
+      this.finishEntry(tailId, entry, msg)
       return
     }
     const backoff = Math.min(2000 * Math.pow(2, attempt), 15_000)
@@ -188,8 +271,9 @@ export class TailManager {
     // brand-new entry under the same key — without this check, `follow()` would re-fetch
     // the NEW entry (whose controller isn't aborted), pass the abort-check guard, and start
     // a second concurrent remote tail that `stop()` never learns about.
-    setTimeout(() => {
-      if (this.tails.get(tailId) !== entry) {
+    entry.reconnectTimer = setTimeout(() => {
+      entry.reconnectTimer = null
+      if (this.tails.get(tailId) !== entry || entry.ended || entry.controller.signal.aborted) {
         return
       }
       // Re-tail with 0 history lines so we don't replay the whole buffer.
@@ -214,17 +298,27 @@ export class TailManager {
       return
     }
     entry.controller.abort()
-    this.tails.delete(tailId)
+    this.finishEntry(tailId, entry)
     this.killRemoteTail(entry)
-    this.broadcastEnd(tailId)
   }
 
   /** Stops every tail bound to a session — called when that session closes. */
   stopAllForSession(sessionId: string): void {
-    for (const [tailId, entry] of this.tails) {
+    for (const [tailId, entry] of [...this.tails.entries()]) {
       if (entry.sessionId === sessionId) {
         this.stop(tailId)
       }
+    }
+  }
+
+  /** Stops all active tail streams and clears the idle reaper (e.g. on sidecar shutdown). */
+  stopAll(): void {
+    for (const tailId of [...this.tails.keys()]) {
+      this.stop(tailId)
+    }
+    if (this.reaper) {
+      clearInterval(this.reaper)
+      this.reaper = null
     }
   }
 

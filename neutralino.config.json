@@ -1,0 +1,80 @@
+{
+  "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
+  "applicationId": "js.ferry.app",
+  "version": "1.2.2",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/out/renderer/",
+  "url": "/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "tokenSecurity": "one-time",
+  "logging": {
+    "enabled": false,
+    "writeToLogFile": false
+  },
+  "nativeAllowList": [
+    "app.broadcast",
+    "app.exit",
+    "window.minimize",
+    "window.isMinimized",
+    "window.maximize",
+    "window.unmaximize",
+    "window.isMaximized",
+    "window.setFullScreen",
+    "window.exitFullScreen",
+    "window.isFullScreen",
+    "window.show",
+    "window.focus",
+    "window.setTitle",
+    "window.move",
+    "window.setSize",
+    "window.getSize",
+    "window.getPosition",
+    "os.showOpenDialog",
+    "os.showFolderDialog",
+    "os.showSaveDialog",
+    "os.getPath",
+    "os.open",
+    "clipboard.readText",
+    "extensions.dispatch",
+    "extensions.getStats",
+    "debug.log"
+  ],
+  "modes": {
+    "window": {
+      "title": "Ferry",
+      "width": 1280,
+      "height": 800,
+      "minWidth": 900,
+      "minHeight": 600,
+      "fullScreen": false,
+      "alwaysOnTop": false,
+      "icon": "/out/renderer/favicon.ico",
+      "enableInspector": false,
+      "borderless": false,
+      "maximize": false,
+      "hidden": true,
+      "useSavedState": false,
+      "resizable": true,
+      "exitProcessOnClose": false,
+      "injectGlobals": true
+    }
+  },
+  "enableExtensions": true,
+  "exportAuthInfo": false,
+  "extensions": [
+    {
+      "id": "js.ferry.sidecar",
+      "command": "${NL_PATH}/extensions/js.ferry.sidecar/node ${NL_PATH}/extensions/js.ferry.sidecar/index.cjs --nl-mode",
+      "commandWindows": "\"${NL_PATH}\\extensions\\js.ferry.sidecar\\node.exe\" \"${NL_PATH}\\extensions\\js.ferry.sidecar\\index.cjs\" --nl-mode"
+    }
+  ],
+  "cli": {
+    "binaryName": "ferry",
+    "resourcesPath": "/out/renderer/",
+    "extensionsPath": "/extensions/",
+    "binaryVersion": "6.10.0",
+    "clientVersion": "6.10.0"
+  }
+}

@@ -2,6 +2,7 @@ import { TransferQueue, type TransferJob } from '../transfer/TransferQueue'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { SessionManager } from '../ssh/SessionManager'
 import { SiteStore } from '../sites/SiteStore'
+import { AppSettingsStore } from '../app/AppSettingsStore'
 import { HistoryStore } from './HistoryStore'
 import type { HistoryEntry, OperationEvent, TransferEvent } from '../../shared/contract'
 
@@ -25,6 +26,11 @@ function labelForTransfer(job: TransferJob): string {
 
 let initialized = false
 
+function currentRetentionDays(): number | null {
+  const days = AppSettingsStore.getInstance().get().historyRetentionDays
+  return days === undefined ? 90 : days
+}
+
 /**
  * Wires TransferQueue's and OperationRegistry's terminal (done/error/
  * cancelled) events into HistoryStore — call once at app bootstrap. Both
@@ -40,31 +46,38 @@ export function initHistoryRecorder(): void {
 
   TransferQueue.getInstance().onTerminalEvent((job: TransferJob, evt: TransferEvent) => {
     const finishedAt = Date.now()
-    HistoryStore.getInstance().record({
-      kind: 'transfer',
-      label: labelForTransfer(job),
-      direction: job.kind,
-      sessionId: job.sessionId,
-      siteName: siteNameFor(job.sessionId),
-      bytes: evt.bytesTransferred,
-      startedAt: job.queuedAt,
-      finishedAt,
-      status: evt.state as HistoryEntry['status'],
-      error: evt.error
-    })
+    HistoryStore.getInstance().record(
+      {
+        kind: 'transfer',
+        label: labelForTransfer(job),
+        direction: job.kind,
+        sessionId: job.sessionId,
+        siteName: siteNameFor(job.sessionId),
+        bytes: evt.bytesTransferred,
+        startedAt: job.queuedAt,
+        finishedAt,
+        status: evt.state as HistoryEntry['status'],
+        error: evt.error
+      },
+      currentRetentionDays()
+    )
   })
 
-  OperationRegistry.getInstance().onTerminalEvent((evt: OperationEvent) => {
-    HistoryStore.getInstance().record({
-      kind: 'operation',
-      label: evt.label,
-      operationKind: evt.kind,
-      sessionId: evt.sessionId,
-      siteName: siteNameFor(evt.sessionId),
-      startedAt: evt.startedAt,
-      finishedAt: Date.now(),
-      status: evt.state as HistoryEntry['status'],
-      error: evt.error
-    })
+  OperationRegistry.getInstance().setSiteNameResolver?.(siteNameFor)
+  OperationRegistry.getInstance().onTerminalEvent((evt: OperationEvent, capturedSiteName?: string) => {
+    HistoryStore.getInstance().record(
+      {
+        kind: 'operation',
+        label: evt.label,
+        operationKind: evt.kind,
+        sessionId: evt.sessionId,
+        siteName: capturedSiteName ?? siteNameFor(evt.sessionId),
+        startedAt: evt.startedAt,
+        finishedAt: Date.now(),
+        status: evt.state as HistoryEntry['status'],
+        error: evt.error
+      },
+      currentRetentionDays()
+    )
   })
 }

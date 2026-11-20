@@ -2,20 +2,14 @@ import { EventEmitter } from 'events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EVENT_CHANNELS } from '../../shared/contract'
 
-// TerminalManager broadcasts via BrowserWindow.getAllWindows() — vitest runs
-// outside a real Electron process, so mock only that (same pattern as
-// TailManager.test.ts).
+import { testHost } from '../host/testHost.setup'
+import { setHost } from '../host/host'
+
 const sent: Array<{ channel: string; evt: unknown }> = []
-vi.mock('electron', () => ({
-  BrowserWindow: {
-    getAllWindows: () => [
-      {
-        isDestroyed: () => false,
-        webContents: { send: (channel: string, evt: unknown) => sent.push({ channel, evt }) }
-      }
-    ]
-  }
-}))
+setHost({
+  ...testHost,
+  broadcast: (channel, evt) => sent.push({ channel, evt })
+})
 
 /** Minimal stand-in for ssh2's ClientChannel — just the surface TerminalManager touches. */
 class FakeStream extends EventEmitter {
@@ -25,13 +19,15 @@ class FakeStream extends EventEmitter {
 }
 
 let openShellImpl: (opts: { cols: number; rows: number }) => Promise<FakeStream> = async () => new FakeStream()
+let openShellAtImpl: (cwd: string, opts: { cols: number; rows: number }) => Promise<FakeStream> = async () => new FakeStream()
 let cwdImpl: (sessionId: string) => string = () => '.'
 
 vi.mock('../ssh/SessionManager', () => ({
   SessionManager: {
     getInstance: () => ({
       shell: (_sessionId: string) => ({
-        openShell: (opts: { cols: number; rows: number }) => openShellImpl(opts)
+        openShell: (opts: { cols: number; rows: number }) => openShellImpl(opts),
+        openShellAt: (cwd: string, opts: { cols: number; rows: number }) => openShellAtImpl(cwd, opts)
       }),
       cwd: (sessionId: string) => cwdImpl(sessionId)
     })
@@ -52,6 +48,7 @@ describe('TerminalManager', () => {
     vi.resetModules()
     sent.length = 0
     openShellImpl = async () => new FakeStream()
+    openShellAtImpl = async () => new FakeStream()
     cwdImpl = () => '.'
     ;({ TerminalManager } = await import('./TerminalManager'))
   })
@@ -60,9 +57,11 @@ describe('TerminalManager', () => {
     vi.restoreAllMocks()
   })
 
-  it('opens a shell, cds into the configured remote start path, and streams data', async () => {
+  it('opens the shell directly in the configured start path without writing a cd, and streams data', async () => {
     let stream: FakeStream | undefined
-    openShellImpl = async () => {
+    let openedAt: string | undefined
+    openShellAtImpl = async (cwd) => {
+      openedAt = cwd
       stream = new FakeStream()
       return stream
     }
@@ -71,11 +70,60 @@ describe('TerminalManager', () => {
 
     await manager.open('term-1', 'session-1', 80, 24)
 
-    expect(stream).toBeDefined()
-    expect(stream!.write).toHaveBeenCalledWith("cd '/home/user/project'\n")
+    expect(openedAt).toBe('/home/user/project')
+    expect(stream!.write).not.toHaveBeenCalled()
 
     stream!.emit('data', Buffer.from('hello'))
-    expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: new Uint8Array(Buffer.from('hello')) }])
+    await vi.waitFor(() =>
+      expect(dataEvents()).toEqual([{ terminalId: 'term-1', data: 'hello' }])
+    )
+  })
+
+  it('decodes multi-byte UTF-8 sequences split across chunks cleanly', async () => {
+    let stream: FakeStream | undefined
+    openShellImpl = async () => {
+      stream = new FakeStream()
+      return stream
+    }
+    const manager = TerminalManager.getInstance()
+    await manager.open('term-utf8', 'session-1', 80, 24)
+
+    const rocket = Buffer.from('🚀', 'utf8')
+    stream!.emit('data', rocket.subarray(0, 2))
+    stream!.emit('data', rocket.subarray(2))
+    await vi.waitFor(() =>
+      expect(dataEvents()).toEqual([{ terminalId: 'term-utf8', data: '🚀' }])
+    )
+  })
+
+  it('falls back to a plain shell and a space-prefixed cd when the exec channel is refused', async () => {
+    let stream: FakeStream | undefined
+    openShellAtImpl = async () => {
+      throw new Error('refused')
+    }
+    openShellImpl = async () => {
+      stream = new FakeStream()
+      return stream
+    }
+    cwdImpl = () => '/home/user/project'
+
+    await TerminalManager.getInstance().open('term-1', 'session-1', 80, 24)
+
+    expect(stream!.write).toHaveBeenCalledWith(" cd '/home/user/project'\n")
+  })
+
+  it('falls back to a plain shell when the exec shell closes straight away without output', async () => {
+    const first = new FakeStream()
+    const second = new FakeStream()
+    openShellAtImpl = async () => first
+    openShellImpl = async () => second
+    cwdImpl = () => '/srv'
+
+    await TerminalManager.getInstance().open('term-1', 'session-1', 80, 24)
+    first.emit('close')
+
+    await vi.waitFor(() => expect(second.write).toHaveBeenCalledWith(" cd '/srv'\n"))
+    expect(exitEvents()).toEqual([])
   })
 
   it('skips the cd when cwd is "." (no configured start path)', async () => {

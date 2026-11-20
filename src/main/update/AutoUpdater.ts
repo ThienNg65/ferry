@@ -1,65 +1,255 @@
-import { app, BrowserWindow } from 'electron'
 import {
   EVENT_CHANNELS,
+  type CheckUpdateResult,
   type UpdateAvailableEvent,
-  type UpdateDownloadedEvent
+  type UpdateDownloadedEvent,
+  type UpdateState
 } from '../../shared/contract'
+import { AppSettingsStore } from '../app/AppSettingsStore'
+import { host } from '../host/host'
+import {
+  compareSemver,
+  FALLBACK_APP_VERSION,
+  getSidecarUpdater,
+  resetSidecarUpdaterForTests,
+  type SidecarUpdater
+} from './SidecarUpdater'
 
-function broadcast(channel: string, payload: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, payload)
+let initialized = false
+let periodicTimer: NodeJS.Timeout | null = null
+let cachedAutoUpdater: SidecarUpdater | null = null
+let currentState: UpdateState | null = null
+let installInFlight = false
+
+function getIsPackaged(): boolean {
+  return Boolean(host().isPackaged)
+}
+
+function isStoreManaged(): boolean {
+  return (
+    process.env['FERRY_STORE_BUILD'] === '1' ||
+    (process.platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(process.execPath))
+  )
+}
+
+function isAutoUpdateEnabled(): boolean {
+  return getIsPackaged() && !isStoreManaged()
+}
+
+function getAppVersion(): string {
+  return host().appVersion ?? FALLBACK_APP_VERSION
+}
+
+function ensureState(): UpdateState {
+  if (!currentState) {
+    currentState = {
+      status: isAutoUpdateEnabled() ? 'idle' : 'disabled',
+      currentVersion: getAppVersion()
+    }
+  }
+  return currentState
+}
+
+function updateState(patch: Partial<UpdateState>): void {
+  currentState = { ...ensureState(), currentVersion: getAppVersion(), ...patch }
+  host().broadcast(EVENT_CHANNELS.updateStatus, currentState)
+}
+
+/** Resolves the Neutralino sidecar updater instance. */
+function getAutoUpdater(): SidecarUpdater {
+  if (!cachedAutoUpdater) {
+    cachedAutoUpdater = getSidecarUpdater()
+  }
+  return cachedAutoUpdater
+}
+
+/** Returns the current snapshot of auto-update state. */
+export function getUpdateState(): UpdateState {
+  return { ...ensureState() }
+}
+
+/** Resets singleton state for unit tests. */
+export function resetAutoUpdaterForTests(): void {
+  initialized = false
+  installInFlight = false
+  if (periodicTimer) {
+    clearInterval(periodicTimer)
+    periodicTimer = null
+  }
+  cachedAutoUpdater = null
+  currentState = null
+  resetSidecarUpdaterForTests()
+}
+
+/**
+ * Wires GitHub-Releases-based update checks via {@link SidecarUpdater}.
+ *
+ * In unpackaged development mode (`host().isPackaged === false`), status is marked `'disabled'`.
+ */
+export async function initAutoUpdater(checkImmediately = true): Promise<void> {
+  if (initialized) {
+    return
+  }
+  initialized = true
+
+  if (!isAutoUpdateEnabled()) {
+    updateState({ status: 'disabled' })
+    return
+  }
+
+  const autoUpdater = getAutoUpdater()
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = false
+
+  autoUpdater.on('checking-for-update', () => {
+    if (ensureState().status !== 'checking') {
+      updateState({ status: 'checking', availableVersion: undefined, progress: undefined, error: undefined })
+    }
+  })
+
+  autoUpdater.on('update-available', (info: { version: string }) => {
+    updateState({
+      status: autoUpdater.autoDownload ? 'downloading' : 'available',
+      availableVersion: info.version,
+      progress: undefined,
+      error: undefined
+    })
+    host().broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
+  })
+
+  autoUpdater.on('download-progress', (progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => {
+    updateState({
+      status: 'downloading',
+      progress: {
+        percent: Math.round(progress.percent),
+        bytesPerSecond: Math.round(progress.bytesPerSecond),
+        transferred: progress.transferred,
+        total: progress.total
+      },
+      error: undefined
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info: { version: string }) => {
+    updateState({
+      status: 'downloaded',
+      availableVersion: info.version,
+      progress: undefined,
+      error: undefined
+    })
+    host().broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    updateState({
+      status: 'not-available',
+      availableVersion: undefined,
+      progress: undefined,
+      error: undefined
+    })
+  })
+
+  autoUpdater.on('error', (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[AutoUpdater]', err)
+    updateState({
+      status: 'error',
+      availableVersion: undefined,
+      progress: undefined,
+      error: message
+    })
+  })
+
+  // Periodic check timer (every 6 hours)
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000
+  if (periodicTimer) {
+    clearInterval(periodicTimer)
+  }
+  periodicTimer = setInterval(() => {
+    const settings = AppSettingsStore.getInstance().get()
+    if (settings.autoCheckUpdates !== false && ensureState().status !== 'downloaded') {
+      void checkForUpdates(false)
+    }
+  }, SIX_HOURS_MS)
+  periodicTimer.unref?.()
+
+  if (checkImmediately) {
+    const settings = AppSettingsStore.getInstance().get()
+    if (settings.autoCheckUpdates !== false) {
+      void checkForUpdates(false)
     }
   }
 }
 
-/**
- * Wires electron-updater's GitHub-Releases-based update check.
- *
- * `electron-builder.yml`'s `publish.owner`/`publish.repo` point at the real
- * repo, and `.github/workflows/ci.yml`'s `auto-release` job publishes a real
- * GitHub Release (including `latest.yml`) on every push to `main` — so the
- * feed itself is real and live. Two things remain genuinely unproven: the
- * installer isn't code-signed yet (see `electron-builder.yml`'s own comment
- * on `CSC_LINK`/`CSC_KEY_PASSWORD`, and `.claude/plan/ferry-smartscreen-signing-plan.md`
- * for the SignPath-based plan to fix that), and this has not yet been
- * exercised end-to-end against a real install (an older packaged build
- * actually detecting/downloading/installing a newer release) — flag both if
- * either is ever reported broken.
- * A no-op in dev (`app.isPackaged` is false, matching electron-updater's own
- * recommendation not to run update checks against a local/unpackaged build).
- */
-export async function initAutoUpdater(): Promise<void> {
-  if (!app.isPackaged) {
-    return
+/** Checks for updates immediately. If isManual is true, returns status or error directly to caller. */
+export async function checkForUpdates(isManual = false): Promise<CheckUpdateResult> {
+  if (!isAutoUpdateEnabled()) {
+    updateState({ status: 'disabled', availableVersion: undefined, progress: undefined, error: undefined })
+    return {
+      status: 'disabled',
+      error: isStoreManaged()
+        ? 'Updates are managed by the Microsoft Store'
+        : 'Updates are disabled in development mode'
+    }
   }
 
-  const { autoUpdater } = await import('electron-updater')
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  await initAutoUpdater(false)
 
-  autoUpdater.on('update-available', (info) => {
-    broadcast(EVENT_CHANNELS.updateAvailable, { version: info.version } satisfies UpdateAvailableEvent)
-  })
-  autoUpdater.on('update-downloaded', (info) => {
-    broadcast(EVENT_CHANNELS.updateDownloaded, { version: info.version } satisfies UpdateDownloadedEvent)
-  })
-  // Never surfaced as a user-facing error toast (there's nothing actionable a
-  // user can do about a feed/network hiccup), but logged rather than fully
-  // swallowed — a silent blanket swallow here previously hid a real, ongoing
-  // failure (the feed's latest.yml was never being published) for an unknown
-  // number of releases with nothing in any log to point at it.
-  autoUpdater.on('error', (err) => {
-    console.error('[AutoUpdater]', err)
+  const state = ensureState()
+  if (state.status === 'checking' || state.status === 'downloading') {
+    return { status: state.status, version: state.availableVersion }
+  }
+
+  const autoUpdater = getAutoUpdater()
+
+  updateState({
+    status: 'checking',
+    lastCheckedAt: new Date().toISOString(),
+    availableVersion: undefined,
+    progress: undefined,
+    error: undefined
   })
 
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[AutoUpdater] checkForUpdates failed', err)
-  })
+  try {
+    const checkResult = await autoUpdater.checkForUpdates()
+    const currentVer = getAppVersion()
+    if (!checkResult || compareSemver(checkResult.updateInfo.version, currentVer) <= 0) {
+      if (ensureState().status !== 'not-available') {
+        updateState({ status: 'not-available', availableVersion: undefined, progress: undefined, error: undefined })
+      }
+      return { status: 'not-available', version: currentVer }
+    }
+    return { status: 'available', version: checkResult.updateInfo.version }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (isManual) {
+      console.error('[AutoUpdater] manual checkForUpdates failed', err)
+    } else {
+      console.error('[AutoUpdater] background checkForUpdates failed', err)
+    }
+    updateState({ status: 'error', availableVersion: undefined, progress: undefined, error: message })
+    return { status: 'error', error: message }
+  }
 }
 
-/** Quits and installs the already-downloaded update immediately, instead of waiting for the next natural app quit. */
+/** Re-verifies, launches the downloaded installer, and schedules clean sidecar shutdown after IPC reply. */
 export async function installUpdateNow(): Promise<void> {
-  const { autoUpdater } = await import('electron-updater')
-  autoUpdater.quitAndInstall()
+  if (isStoreManaged() || installInFlight) {
+    return
+  }
+  installInFlight = true
+  try {
+    await initAutoUpdater(false)
+    const autoUpdater = getAutoUpdater()
+    await autoUpdater.quitAndInstall(true, true)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const downloaded = getAutoUpdater().getDownloadedInfo?.()
+    if (!downloaded?.installerPath) {
+      updateState({ status: 'error', availableVersion: undefined, progress: undefined, error: message })
+    }
+    throw err
+  } finally {
+    installInFlight = false
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateShadeRamp } from './colorRamp'
+import { contrastRatio, generateShadeRamp } from './colorRamp'
 
 describe('generateShadeRamp', () => {
   it('produces all 11 shade keys as valid hex colors', () => {
@@ -39,5 +39,13 @@ describe('generateShadeRamp', () => {
   it('handles a grayscale input without throwing', () => {
     const ramp = generateShadeRamp('#808080')
     expect(ramp[500]).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('meets WCAG AA 4.5:1 contrast for primary 600 on white and 400 on dark surface across bright hues', () => {
+    for (const hex of ['#0a84ff', '#22c55e', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6']) {
+      const ramp = generateShadeRamp(hex)
+      expect(contrastRatio(ramp[600], '#ffffff')).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(ramp[400], '#18181b')).toBeGreaterThanOrEqual(4.5)
+    }
   })
 })

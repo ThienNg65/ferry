@@ -44,9 +44,7 @@
  *      all of them" message from `rewriteAgentAuthError`.
  */
 import { Client, createAgent } from 'ssh2'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-
-vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const HOST = '127.0.0.1'
 const PORT = 2299
@@ -133,6 +131,7 @@ describe.skipIf(!canRun)('SessionManager agent authentication against a real SSH
 
   beforeAll(async () => {
     ;({ SessionManager } = await import('./SessionManager'))
+    SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ KnownHostsStore } = await import('./KnownHostsStore'))
     setupClient = await connectWithPassword()
     await exec(setupClient, `mkdir -p ~/.ssh && echo '${agentPublicKeyLine}' >> ${AUTHORIZED_KEYS_PATH}`)

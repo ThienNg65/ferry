@@ -13,6 +13,7 @@ import { createPinia } from 'pinia'
 import { addCollection, setCustomIconLoader } from '@iconify/vue'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
+import { installNeutralinoApi } from './bridge/neutralinoApi'
 import { startupIcons } from './startupIcons'
 
 // Pre-register essential startup icons to prevent setCustomIconLoader from
@@ -54,6 +55,19 @@ setCustomIconLoader(async () => {
   await ensureLucideLoaded()
   return null
 }, 'lucide')
+
+// In Neutralinojs, Electron's preload script is absent; install the WS/sidecar
+// bridge synchronously before Vue stores initialize.
+installNeutralinoApi()
+
+// Benign Chromium ResizeObserver notification raised by virtualized tables
+// during rapid splitter drags — never reflects an actual error.
+window.addEventListener('error', (event) => {
+  if (event.message?.includes('ResizeObserver loop')) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+})
 
 createApp(App).use(createPinia()).use(ui).mount('#app')
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TransferKind, TransferState } from '@shared/contract'
-import { formatBytes } from '../../utils/format'
+import { formatBytes, formatSpeed } from '../../utils/format'
 
 const props = defineProps<{
   kind: TransferKind
@@ -10,17 +10,30 @@ const props = defineProps<{
   remotePath: string
   bytesTransferred: number
   totalBytes: number
+  bytesPerSec?: number
   etaMs: number
   error?: string
 }>()
 
-const emit = defineEmits<{ cancel: []; retry: [] }>()
+const emit = defineEmits<{ cancel: []; retry: []; pause: [] }>()
 
 const percent = computed(() =>
   props.totalBytes > 0 ? Math.min(100, Math.round((props.bytesTransferred / props.totalBytes) * 100)) : 0
 )
 
-const label = computed(() => (props.kind === 'upload' ? props.remotePath : props.localPath))
+const targetPath = computed(() => (props.kind === 'upload' ? props.remotePath : props.localPath))
+
+const fileName = computed(() => {
+  const p = targetPath.value.replace(/[/\\]+$/, '')
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return idx >= 0 ? p.slice(idx + 1) : p
+})
+
+const dirPath = computed(() => {
+  const p = targetPath.value.replace(/[/\\]+$/, '')
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  return idx > 0 ? p.slice(0, idx) : idx === 0 ? '/' : ''
+})
 
 const statusColor = computed(() => {
   switch (props.state) {
@@ -36,9 +49,10 @@ const statusColor = computed(() => {
 })
 
 const cancellable = computed(
-  () => props.state === 'queued' || props.state === 'started' || props.state === 'progress'
+  () => props.state === 'queued' || props.state === 'started' || props.state === 'progress' || props.state === 'paused'
 )
-const retryable = computed(() => props.state === 'error' || props.state === 'cancelled')
+const pausable = computed(() => props.state === 'queued' || props.state === 'started' || props.state === 'progress')
+const retryable = computed(() => props.state === 'error' || props.state === 'cancelled' || props.state === 'paused')
 
 function formatEta(ms: number): string {
   if (!ms || ms <= 0) {
@@ -47,30 +61,54 @@ function formatEta(ms: number): string {
   const s = Math.round(ms / 1000)
   return s < 60 ? `${s}s left` : `${Math.round(s / 60)}m left`
 }
+
+const progressRightLabel = computed(() => {
+  if (props.state !== 'progress') {
+    return props.state
+  }
+  const parts: string[] = []
+  if (props.bytesPerSec && props.bytesPerSec > 0) {
+    parts.push(formatSpeed(props.bytesPerSec))
+  }
+  const eta = formatEta(props.etaMs)
+  if (eta) {
+    parts.push(eta)
+  }
+  return parts.length > 0 ? parts.join(' · ') : 'progress'
+})
 </script>
 
 <template>
   <div class="flex flex-col gap-1 border-b border-muted px-3 py-2 text-xs">
     <div class="flex items-center justify-between gap-2">
-      <span class="flex min-w-0 items-center gap-1.5">
+      <span
+        class="flex min-w-0 items-center gap-1.5"
+        :title="kind === 'upload' ? `${localPath} → ${remotePath}` : `${remotePath} → ${localPath}`"
+      >
         <UIcon
           :name="kind === 'upload' ? 'i-lucide-upload' : 'i-lucide-download'"
           class="size-3.5 shrink-0 text-muted"
         />
-        <span class="truncate">{{ label }}</span>
+        <span class="shrink-0 font-medium text-highlighted">{{ fileName }}</span>
+        <span v-if="dirPath" class="truncate text-muted">in {{ dirPath }}</span>
       </span>
-      <UTooltip v-if="cancellable" text="Cancel transfer">
-        <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
-      </UTooltip>
-      <UTooltip v-if="retryable" text="Retry transfer">
-        <UButton icon="i-lucide-rotate-cw" color="neutral" variant="ghost" size="xs" @click="emit('retry')" />
-      </UTooltip>
+      <div class="flex shrink-0 items-center gap-1">
+        <UTooltip v-if="pausable" text="Pause transfer">
+          <UButton icon="i-lucide-pause" color="neutral" variant="ghost" size="xs" aria-label="Pause transfer" @click="emit('pause')" />
+        </UTooltip>
+        <UTooltip v-if="cancellable" text="Cancel transfer">
+          <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" aria-label="Cancel transfer" @click="emit('cancel')" />
+        </UTooltip>
+        <UTooltip v-if="retryable" :text="state === 'paused' ? 'Resume transfer' : 'Retry transfer'">
+          <UButton :icon="state === 'paused' ? 'i-lucide-play' : 'i-lucide-rotate-cw'" color="neutral" variant="ghost" size="xs" :aria-label="state === 'paused' ? 'Resume transfer' : 'Retry transfer'" @click="emit('retry')" />
+        </UTooltip>
+      </div>
     </div>
     <UProgress :model-value="percent" :color="statusColor" size="xs" />
-    <div class="flex items-center justify-between text-[11px] text-muted">
+    <div class="flex items-center justify-between text-2xs text-muted">
       <span v-if="error" class="text-error truncate">{{ error }}</span>
-      <span v-else>{{ formatBytes(bytesTransferred) }} / {{ formatBytes(totalBytes) }}</span>
-      <span>{{ state === 'progress' ? formatEta(etaMs) : state }}</span>
+      <span v-else class="tabular-nums">{{ formatBytes(bytesTransferred) }} / {{ formatBytes(totalBytes) }} ({{ percent }}%)</span>
+      <span class="font-mono tabular-nums">{{ progressRightLabel }}</span>
     </div>
   </div>
 </template>

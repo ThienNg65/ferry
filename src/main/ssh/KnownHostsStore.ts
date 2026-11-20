@@ -1,5 +1,7 @@
-import Store from 'electron-store'
+import Conf from 'conf'
 import { createHash } from 'crypto'
+import { host } from '../host/host'
+import type { KnownHostEntry } from '../../shared/contract'
 
 interface StoreSchema {
   /** `"host:port"` -> the OpenSSH-style `SHA256:...` fingerprint last trusted for it. */
@@ -46,11 +48,11 @@ export function evaluateHostKey(
  */
 export class KnownHostsStore {
   private static instance: KnownHostsStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({ name: 'known_hosts', defaults: { hosts: {} } })
+      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'known_hosts', defaults: { hosts: {} } })
     }
     return this._store
   }
@@ -63,23 +65,51 @@ export class KnownHostsStore {
   }
 
   private key(host: string, port: number): string {
-    return `${host}:${port}`
+    return `${host.trim().toLowerCase()}:${port}`
   }
 
   get(host: string, port: number): string | undefined {
-    return this.store.get('hosts')[this.key(host, port)]
+    const hosts = this.store.get('hosts')
+    const normalized = this.key(host, port)
+    if (hosts[normalized] !== undefined) {
+      return hosts[normalized]
+    }
+    const legacy = Object.entries(hosts).find(([k]) => k.toLowerCase() === normalized)
+    return legacy?.[1]
   }
 
   trust(host: string, port: number, fingerprint: string): void {
     const hosts = this.store.get('hosts')
-    hosts[this.key(host, port)] = fingerprint
+    const normalized = this.key(host, port)
+    for (const k of Object.keys(hosts)) {
+      if (k !== normalized && k.toLowerCase() === normalized) {
+        delete hosts[k]
+      }
+    }
+    hosts[normalized] = fingerprint
     this.store.set('hosts', hosts)
   }
 
-  /** Removes a stored fingerprint — mainly for tests; the app itself never needs to forget a host. */
-  forget(host: string, port: number): void {
+  /** Lists all stored host-key fingerprints sorted by `host:port`. */
+  list(): KnownHostEntry[] {
     const hosts = this.store.get('hosts')
-    delete hosts[this.key(host, port)]
+    return Object.entries(hosts)
+      .map(([hostPort, fingerprint]) => ({ hostPort, fingerprint }))
+      .sort((a, b) => a.hostPort.localeCompare(b.hostPort))
+  }
+
+  /** Removes a stored fingerprint by `host:port`. */
+  forget(host: string, port: number): void {
+    this.forgetKey(this.key(host, port))
+  }
+
+  forgetKey(hostPort: string): void {
+    const hosts = this.store.get('hosts')
+    delete hosts[hostPort]
     this.store.set('hosts', hosts)
+  }
+
+  clear(): void {
+    this.store.set('hosts', {})
   }
 }

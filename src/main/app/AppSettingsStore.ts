@@ -1,7 +1,7 @@
-import Store from 'electron-store'
-import { safeStorage } from 'electron'
-import { SshError } from '../ssh/errors'
-import type { AppSettings, ProxyConfig } from '../../shared/contract'
+import Conf from 'conf'
+import { host } from '../host/host'
+import { decrypt, encrypt } from '../host/secrets'
+import type { AppSettings, ProxyConfig, TermsAcceptance } from '../../shared/contract'
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
 interface StoredProxy {
@@ -16,30 +16,21 @@ interface StoreSchema {
   openTabSiteIds: string[]
   bandwidthLimitKBps: number | null
   defaultProxy: StoredProxy | null
+  autoCheckUpdates: boolean
+  historyRetentionDays: number | null
+  termsAcceptance: TermsAcceptance | null
+  uiPrefs: Record<string, string>
 }
 
-function encrypt(plaintext: string | undefined): string | undefined {
-  if (!plaintext) {
-    return undefined
+function sanitizeUiPrefs(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const clean: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.startsWith('ferry:ui:') && typeof value === 'string') {
+      clean[key] = value
+    }
   }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine')
-  }
-  return safeStorage.encryptString(plaintext).toString('base64')
-}
-
-function decrypt(ciphertext: string | undefined): string | undefined {
-  if (!ciphertext) {
-    return undefined
-  }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new SshError('AUTH', 'OS credential encryption is unavailable on this machine — saved secrets cannot be decrypted')
-  }
-  try {
-    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'))
-  } catch (e) {
-    throw new SshError('AUTH', `Could not decrypt a saved secret: ${e instanceof Error ? e.message : String(e)}`)
-  }
+  return clean
 }
 
 /**
@@ -51,13 +42,22 @@ function decrypt(ciphertext: string | undefined): string | undefined {
  */
 export class AppSettingsStore {
   private static instance: AppSettingsStore | null = null
-  private _store: Store<StoreSchema> | null = null
+  private _store: Conf<StoreSchema> | null = null
 
-  private get store(): Store<StoreSchema> {
+  private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Store<StoreSchema>({
-        name: 'app-settings',
-        defaults: { openTabSiteIds: [], bandwidthLimitKBps: null, defaultProxy: null }
+      this._store = new Conf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'app-settings',
+        defaults: {
+          openTabSiteIds: [],
+          bandwidthLimitKBps: null,
+          defaultProxy: null,
+          autoCheckUpdates: true,
+          historyRetentionDays: 90,
+          termsAcceptance: null,
+          uiPrefs: {}
+        }
       })
     }
     return this._store
@@ -72,17 +72,56 @@ export class AppSettingsStore {
 
   get(): AppSettings {
     const proxy = this.store.get('defaultProxy')
+    const rawRetention = this.store.get('historyRetentionDays')
     return {
       openTabSiteIds: this.store.get('openTabSiteIds'),
       bandwidthLimitKBps: this.store.get('bandwidthLimitKBps'),
       defaultProxy: proxy
         ? { type: proxy.type, host: proxy.host, port: proxy.port, username: proxy.username, hasPassword: Boolean(proxy.secretPassword) }
-        : undefined
+        : undefined,
+      autoCheckUpdates: this.store.get('autoCheckUpdates') ?? true,
+      historyRetentionDays: rawRetention === undefined ? 90 : rawRetention,
+      termsAcceptance: this.store.get('termsAcceptance') ?? null,
+      uiPrefs: sanitizeUiPrefs(this.store.get('uiPrefs'))
     }
   }
 
   setOpenTabSiteIds(siteIds: string[]): void {
     this.store.set('openTabSiteIds', siteIds)
+  }
+
+  setAutoCheckUpdates(enabled: boolean): void {
+    this.store.set('autoCheckUpdates', enabled)
+  }
+
+  setHistoryRetentionDays(days: number | null): void {
+    this.store.set('historyRetentionDays', days)
+  }
+
+  acceptTerms(version: string): TermsAcceptance {
+    const record: TermsAcceptance = { version, acceptedAt: new Date().toISOString() }
+    this.store.set('termsAcceptance', record)
+    return record
+  }
+
+  setUiPref(key: string, value: string | null): void {
+    const next = sanitizeUiPrefs(this.store.get('uiPrefs'))
+    if (value === null) {
+      delete next[key]
+    } else {
+      next[key] = value
+    }
+    this.store.set('uiPrefs', next)
+  }
+
+  reset(): void {
+    this.store.set('openTabSiteIds', [])
+    this.store.set('bandwidthLimitKBps', null)
+    this.store.set('defaultProxy', null)
+    this.store.set('autoCheckUpdates', true)
+    this.store.set('historyRetentionDays', 90)
+    this.store.set('termsAcceptance', null)
+    this.store.set('uiPrefs', {})
   }
 
   setBandwidthLimitKBps(limit: number | null): void {
