@@ -155,7 +155,7 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
     'trap \'exit 130\' INT',
     'trap \'exit 143\' TERM',
     // Prefix ./ to prevent source names beginning with '-' being treated as options.
-    'zip -rq "$staging/archive.zip" "./$source_name" || exit $?',
+    'zip -rq "$staging/archive.zip" -- "./$source_name" || exit $?',
     'zip -T "$staging/archive.zip" >/dev/null || exit $?',
     'mv -f -- "$staging/archive.zip" "$destination" || exit $?'
   ].join('\n')
