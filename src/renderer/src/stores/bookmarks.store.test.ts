@@ -55,19 +55,18 @@ describe('bookmarks.store', () => {
       { id: 'b', scope: 'remote', siteId: port2222, path: '/srv/b', label: 'b' },
       { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old' }
     ]
-    expect(store.forSite(port22, 'user@example.test').map((b) => b.id)).toEqual(['a', 'legacy'])
-    expect(store.forSite(port2222, null).map((b) => b.id)).toEqual(['b'])
+    expect(store.forSite(port22).map((b) => b.id)).toEqual(['a'])
+    expect(store.forSite(port2222).map((b) => b.id)).toEqual(['b'])
     store.bookmarks = store.bookmarks.filter((b) => b.id !== 'b')
-    expect(store.forSite(port2222, null)).toEqual([])
+    expect(store.forSite(port2222)).toEqual([])
   })
 
-  it('retains saved-site bookmark identity', () => {
-    expect(resolveConnectionFilterKey({
-      siteId: 'saved-site',
-      hostLabel: 'user@example.test',
-      sessionId: 'session',
-      quickConnectInput: { username: 'user', host: 'example.test', port: 2222 }
-    })).toBe('site:saved-site')
+  it('retains exact saved-site bookmark IDs', () => {
+    const store = useBookmarksStore()
+    store.bookmarks = [
+      { id: 'saved', scope: 'remote', siteId: 'saved-site', path: '/srv/site', label: 'site' },
+      { id: 'legacy', scope: 'remote', siteId: 'user@example.test', path: '/old', label: 'old' }
+    ]
+    expect(store.forSite('saved-site').map((b) => b.id)).toEqual(['saved'])
   })
-
 })

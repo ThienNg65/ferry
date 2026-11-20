@@ -222,18 +222,8 @@ const currentBookmarks = computed(() => {
   if (props.side === 'local') {
     return bookmarks.localBookmarks
   }
-  return currentSiteId.value
-    ? bookmarks.forSite(
-        currentSiteId.value,
-        // Legacy hostLabel bookmarks can only be read on the default SSH port.
-        // Never expose them to a different service on the same hostname.
-        sessions.activeTab.siteId
-          ? sessions.activeTab.hostLabel
-          : sessions.activeTab.quickConnectInput?.port === 22
-            ? sessions.activeTab.hostLabel
-            : null
-      )
-    : []
+  // The old username@host key cannot identify which SSH port owned a bookmark.
+  return currentSiteId.value ? bookmarks.forSite(currentSiteId.value) : []
 })
 
 /** Last path segment, for a bookmark's default label — falls back to the whole path for a root/drive path with no separator. */
