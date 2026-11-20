@@ -1,6 +1,8 @@
 import { createWriteStream } from 'fs'
 import { stat, unlink } from 'fs/promises'
 import * as path from 'path'
+import { randomUUID } from 'crypto'
+import { renameRemote } from '../fs/RemoteFsService'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
@@ -128,16 +130,15 @@ export async function compressLocal(
  * double-quoted string, so a path containing one would execute before ever
  * reaching the inner shell, regardless of its own nested single-quoting.
  */
-export function buildCompressCommand(sourcePath: string, destZipPath: string): string {
+export function buildCompressCommand(sourcePath: string, destZipPath: string, stagingName: string): string {
   const { dir, base } = splitRemotePath(sourcePath)
   const cwd = shellEscape(dir)
   const source = shellEscape(base)
   const destination = splitRemotePath(destZipPath)
   const destDir = shellEscape(destination.dir)
   const destName = shellEscape(destination.base)
-  // Stage in the destination directory so the final rename stays on the same
-  // filesystem. The old archive is never touched until zip and its integrity
-  // check both succeed. A trap removes only the private staging directory.
+  // The remote shell only prepares an archive. Losing the SSH channel
+  // cannot allow a detached process to replace the user's destination.
   const inner = [
     `command -v zip >/dev/null 2>&1 || { echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }`,
     `cd -P -- ${cwd} || exit 1`,
@@ -155,14 +156,18 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
     '  source_dir=${source_dir%.}',
     '  case "$destination" in "${source_dir%/}/"*) echo "Destination cannot be inside the source directory" >&2; exit 1;; esac',
     'fi',
-    'staging=$(mktemp -d "$destination_dir/.ferry-zip-XXXXXXXX") || exit 1',
-    'trap \'rm -rf -- "$staging"\' EXIT',
+    `stage_name=${shellEscape(stagingName)}`,
+    'staging="${destination_dir%/}/$stage_name"',
+    'umask 077',
+    'mkdir -- "$staging" || exit 1',
+    'prepared=0',
+    'trap \'[ "$prepared" = 1 ] || rm -rf -- "$staging"\' EXIT',
     'trap \'exit 130\' INT',
     'trap \'exit 143\' TERM',
     // Prefix ./ to prevent source names beginning with '-' being treated as options.
-    'zip -rq "$staging/archive.zip" -- "./$source_name" || exit $?',
+    'zip -rq -MM "$staging/archive.zip" -- "./$source_name" || exit $?',
     'zip -T "$staging/archive.zip" >/dev/null || exit $?',
-    'mv -f -- "$staging/archive.zip" "$destination" || exit $?'
+    'prepared=1'
   ].join('\n')
 
   return `sh -c ${shellEscape(inner)}`
@@ -180,20 +185,36 @@ export async function compressRemote(
   destZipPath: string,
   signal?: AbortSignal
 ): Promise<UnzipResult> {
+  const ensureActive = (): void => {
+    if (signal?.aborted) throw new SshError('CANCELLED', 'Compression cancelled')
+  }
+  ensureActive()
   const shell = SessionManager.getInstance().shell(sessionId)
-  const command = buildCompressCommand(sourcePath, destZipPath)
+  const source = splitRemotePath(sourcePath)
+  const sourceDir = await shell.realpath(source.dir)
+  const sourceFile = path.posix.join(sourceDir, source.base)
+  const destination = path.posix.resolve(sourceDir, destZipPath)
+  const stagingName = `.ferry-zip-${randomUUID()}`
+  const stagingDir = path.posix.join(path.posix.dirname(destination), stagingName)
+  const command = buildCompressCommand(sourceFile, destination, stagingName)
 
-  const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000, signal })
-
-  if (result.code === 127 && result.stderr.includes(COMPRESS_TOOL_MISSING_SENTINEL)) {
-    throw new SshError(
-      'ARCHIVE_TOOL_NOT_FOUND',
-      'zip is not installed on this server — ask your admin to install it (e.g. apt/yum install zip).'
-    )
+  ensureActive()
+  try {
+    const result = await shell.exec(command, { timeoutMs: 5 * 60 * 1000, signal })
+    if (result.code === 127 && result.stderr.includes(COMPRESS_TOOL_MISSING_SENTINEL)) {
+      throw new SshError(
+        'ARCHIVE_TOOL_NOT_FOUND',
+        'zip is not installed on this server. Ask your administrator to install it.'
+      )
+    }
+    if (result.code !== 0) {
+      throw new SshError('SSH_EXEC', result.stderr.trim() || result.stdout.trim() || `compress exited with code ${result.code}`)
+    }
+    ensureActive()
+    // Replacement starts only after validation and the final cancellation check.
+    await renameRemote(sessionId, path.posix.join(stagingDir, 'archive.zip'), destination, true)
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.code }
+  } finally {
+    await shell.deleteRecursive(stagingDir).catch(() => undefined)
   }
-  if (result.code !== 0) {
-    throw new SshError('SSH_EXEC', result.stderr.trim() || result.stdout.trim() || `compress exited with code ${result.code}`)
-  }
-
-  return { stdout: result.stdout, stderr: result.stderr, exitCode: result.code }
 }
