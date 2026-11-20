@@ -329,7 +329,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     const { remoteDir, localDir } = await freshDirs()
     const localFile = path.join(localDir, 'restart.bin')
     const remoteFile = `${remoteDir}/restart.bin`
-    const original = Buffer.alloc(700_000, 'x')
+    const original = Buffer.alloc(1_800_000, 'x')
     await fs.writeFile(localFile, original)
     const shell = SessionManager.getInstance().shell(sessionId)
     const queue = TransferQueue.getInstance()
@@ -341,7 +341,11 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
         .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
         .map(([, event]) => event as TransferEvent)
         .filter((event) => event.transferId === id).at(-1)
-      await waitFor(async () => (last()?.bytesTransferred ?? 0) > 0)
+      await waitFor(async () => {
+        const event = last()
+        const bytes = event?.bytesTransferred ?? 0
+        return event?.state === 'progress' && bytes > 0 && bytes < original.length
+      })
       queue.pause(id)
       await waitFor(async () => last()?.state === 'paused')
       const replacement = problem === 'source changed' ? Buffer.from('updated') : original
@@ -364,7 +368,7 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
       queue.setBandwidthLimitKBps(null)
       broadcast.mockRestore()
     }
-  }, 20_000)
+  }, 25_000)
 
   it('a finished upload preserves a user-owned .part file and cleans up its staging file', async () => {
     const { remoteDir, localDir } = await freshDirs()
