@@ -220,3 +220,54 @@ describe('buildCompressCommand', () => {
     expect(command).toMatch(/zip -rq \S+ -- \S+/)
   })
 })
+
+
+describe('remote ZIP safe replacement (real POSIX shell)', () => {
+  const supported = hasShell() && spawnSync('sh', ['-c', 'command -v zip && command -v unzip']).status === 0
+
+  async function fixture(): Promise<{ source: string; dest: string }> {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-remote-compress-'))
+    const source = path.join(tmpDir, 'new.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    await fs.writeFile(source, 'new contents')
+    await fs.writeFile(path.join(tmpDir, 'old.txt'), 'old contents')
+    expect(spawnSync('zip', ['-q', dest, 'old.txt'], { cwd: tmpDir }).status).toBe(0)
+    return { source, dest }
+  }
+
+  function run(source: string, dest: string): ReturnType<typeof spawnSync> {
+    return spawnSync('sh', ['-c', buildCompressCommand(source, dest)], { encoding: 'utf8' })
+  }
+
+  it.runIf(supported)('keeps the previous ZIP byte-for-byte when the source is missing', async () => {
+    const { dest } = await fixture()
+    const before = await fs.readFile(dest)
+    expect(run(path.join(tmpDir!, 'missing.txt'), dest).status).not.toBe(0)
+    expect(await fs.readFile(dest)).toEqual(before)
+    expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+  })
+
+  it.runIf(supported)('replaces the old ZIP only after successful validation', async () => {
+    const { source, dest } = await fixture()
+    expect(run(source, dest).status).toBe(0)
+    const entries = spawnSync('unzip', ['-Z', '-1', dest], { encoding: 'utf8' }).stdout
+    expect(entries).toContain('new.txt')
+    expect(entries).not.toContain('old.txt')
+    expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+  })
+
+  it.runIf(supported)('rejects an archive inside its source tree without changing it', async () => {
+    const { dest } = await fixture()
+    const before = await fs.readFile(dest)
+    expect(run(tmpDir!, dest).status).not.toBe(0)
+    expect(await fs.readFile(dest)).toEqual(before)
+  })
+
+  it.runIf(supported)('handles shell-special characters without command execution', async () => {
+    const { dest } = await fixture()
+    const source = path.join(tmpDir!, 'hello $(touch injected).txt')
+    await fs.writeFile(source, 'safe')
+    expect(run(source, dest).status).toBe(0)
+    expect(await fs.readdir(tmpDir!)).not.toContain('injected')
+  })
+})
