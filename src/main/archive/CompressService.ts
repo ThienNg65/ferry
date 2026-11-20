@@ -1,6 +1,5 @@
 import { createWriteStream } from 'fs'
-import { randomUUID } from 'crypto'
-import { rename, stat, unlink } from 'fs/promises'
+import { mkdtemp, realpath, rename, rm, stat } from 'fs/promises'
 import * as path from 'path'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
@@ -45,9 +44,18 @@ export async function compressLocal(
   if (opts.signal?.aborted) {
     throw new SshError('CANCELLED', 'Compression cancelled')
   }
-  // A sibling staging file prevents failures from truncating an existing archive.
-  const stagingPath = path.join(path.dirname(destZipPath), `.${path.basename(destZipPath)}.ferry-${randomUUID()}.tmp`)
+  const source = await realpath(sourcePath)
+  const destinationDir = await realpath(path.dirname(destZipPath))
+  const destination = path.join(destinationDir, path.basename(destZipPath))
+  const relative = path.relative(source, destination)
+  if (!relative || (info.isDirectory() && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
+    throw new SshError('VALIDATION', 'Choose a ZIP destination outside the source')
+  }
+  // A private directory on the destination filesystem owns the staged ZIP.
+  const stagingDir = await mkdtemp(path.join(destinationDir, '.ferry-zip-'))
+  const stagingPath = path.join(stagingDir, 'archive.zip')
   try {
+    if (opts.signal?.aborted) throw new SshError('CANCELLED', 'Compression cancelled')
     await new Promise<void>((resolve, reject) => {
       const output = createWriteStream(stagingPath, { flags: 'wx' })
       const archive = new ZipArchive({ zlib: { level: 9 } })
@@ -87,15 +95,19 @@ export async function compressLocal(
       })
       output.on('error', (err) => {
         pendingErr ??= err
+        archive.abort()
         // Wait for close before rejecting so Windows can unlink the partial file.
         output.destroy()
         if (output.closed) finish(pendingErr)
       })
-      archive.on('error', (err) => {
+      const onArchiveFailure = (err: Error): void => {
         pendingErr ??= err
+        archive.abort()
         output.destroy()
         if (output.closed) finish(pendingErr)
-      })
+      }
+      archive.on('error', onArchiveFailure)
+      archive.on('warning', onArchiveFailure)
       if (opts.onProgress) {
         // archiver's totalBytes grows as it scans the tree — callers just
         // render whatever ratio has been discovered so far.
@@ -116,10 +128,10 @@ export async function compressLocal(
     if (opts.signal?.aborted) throw new SshError('CANCELLED', 'Compression cancelled')
     // Same-directory rename is atomic on filesystems supporting replacement.
     // Do not remove the old destination first: a failed rename must leave it intact.
-    await rename(stagingPath, destZipPath)
+    await rename(stagingPath, destination)
   } finally {
     // Never remove the destination on failure; only our unique staging file.
-    await unlink(stagingPath).catch(() => undefined)
+    await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

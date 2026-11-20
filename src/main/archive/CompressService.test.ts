@@ -48,6 +48,18 @@ describe('splitRemotePath', () => {
 })
 
 describe('compressLocal', () => {
+  it('refuses to replace a source file or archive a destination inside the source', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-nested-'))
+    const source = path.join(tmpDir, 'input')
+    await fs.mkdir(source)
+    const dest = path.join(source, 'out.zip')
+    await fs.writeFile(dest, 'existing bytes')
+
+    await expect(compressLocal(source, dest)).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(compressLocal(dest, dest)).rejects.toMatchObject({ code: 'VALIDATION' })
+    expect(await fs.readFile(dest, 'utf8')).toBe('existing bytes')
+    expect(await fs.readdir(source)).toEqual(['out.zip'])
+  })
 
   it('replaces an existing archive only after successful compression', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-replace-'))
