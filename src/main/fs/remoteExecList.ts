@@ -38,7 +38,8 @@ try:
           'symlinkBroken': broken
         })
       except OSError:
-        continue
+        # Never return a partial listing as successful: let the caller retry via SFTP.
+        sys.exit(3)
   print(json.dumps({'path': p, 'entries': entries}))
 except Exception:
   sys.exit(2)

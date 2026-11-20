@@ -1,7 +1,41 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 
 describe('remoteExecList', () => {
+  it.runIf(process.platform !== 'win32' && spawnSync('python3', ['--version']).status === 0)(
+    'exits without a partial listing when an entry cannot be inspected',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'ferry-list-'))
+      try {
+        // Replace scandir in this Python subprocess only. One successful row
+        // precedes the error to catch accidental publication of partial JSON.
+        writeFileSync(join(dir, 'sitecustomize.py'), [
+          'import os',
+          'from contextlib import nullcontext',
+          'class Entry:',
+          '  def __init__(self, name): self.name = name',
+          '  def is_symlink(self): return False',
+          '  def is_dir(self): return False',
+          '  def stat(self, **kwargs):',
+          '    if self.name == "unavailable": raise PermissionError("metadata denied")',
+          '    return os.stat(__file__)',
+          'os.scandir = lambda p: nullcontext([Entry("visible"), Entry("unavailable")])'
+        ].join('\n'))
+        const result = spawnSync('sh', ['-c', buildRemoteListCommand(dir)], {
+          env: { ...process.env, PYTHONPATH: dir }, encoding: 'utf8'
+        })
+        expect(result.status).toBe(3)
+        expect(result.stdout).toBe('')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('generates a command targeting the requested path', () => {
     const cmd = buildRemoteListCommand('/var/log')
     expect(cmd).toContain("'/var/log'")
