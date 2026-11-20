@@ -1,4 +1,6 @@
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { execFileSync } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -9,6 +11,45 @@ const distDir = join(rootDir, 'dist')
 const protoDir = join(distDir, 'ferry-neutralino-win_x64')
 const msixStageDir = join(distDir, 'ferry-msix-win_x64')
 const msixTemplateDir = join(rootDir, 'build', 'msix')
+
+const psfVersion = '1.0.240212.1'
+const psfHash = '1d8e26ce29657b042cea1c134fe0cda5f3ee4a1575c4776091aeae3f683e5fba'
+const psfFiles = ['PsfLauncher64.exe', 'PsfRuntime64.dll', 'PsfRunDll64.exe']
+
+async function stagePackageSupportFramework() {
+  const tempDir = mkdtempSync(join(tmpdir(), 'ferry-msix-psf-'))
+  try {
+    const cachedArchive = process.env.FERRY_PSF_ARCHIVE
+    let bytes
+    if (cachedArchive) {
+      bytes = readFileSync(cachedArchive)
+    } else {
+      const packageName = 'microsoft.packagesupportframework'
+      const url = `https://api.nuget.org/v3-flatcontainer/${packageName}/${psfVersion}/${packageName}.${psfVersion}.nupkg`
+      const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+      if (!response.ok) throw new Error(`Cannot download Microsoft Package Support Framework: HTTP ${response.status}`)
+      bytes = Buffer.from(await response.arrayBuffer())
+    }
+    if (createHash('sha256').update(bytes).digest('hex') !== psfHash) {
+      throw new Error(`Microsoft Package Support Framework ${psfVersion} archive failed SHA-256 verification`)
+    }
+
+    const archive = join(tempDir, 'psf.zip')
+    writeFileSync(archive, bytes)
+    const entries = psfFiles.map((file) => `bin/${file}`)
+    if (process.platform === 'win32') {
+      const windowsTar = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+      execFileSync(windowsTar, ['-xf', archive, '-C', tempDir, ...entries], { stdio: 'inherit' })
+    } else {
+      execFileSync('unzip', ['-q', archive, ...entries, '-d', tempDir], { stdio: 'inherit' })
+    }
+    for (const file of psfFiles) {
+      cpSync(join(tempDir, 'bin', file), join(msixStageDir, file))
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+}
 
 const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
 const rawVersion = String(pkg.version || '0.0.0').split('-')[0]
@@ -38,9 +79,17 @@ if (!existsSync(exePath)) {
   throw new Error(`Missing packaged Neutralino build at ${protoDir}. Run "npm run package" first.`)
 }
 
+const outMsix = join(distDir, `FerryFileClient-${msixVersion}-x64.msix`)
+rmSync(outMsix, { force: true })
 rmSync(msixStageDir, { recursive: true, force: true })
 cpSync(protoDir, msixStageDir, { recursive: true })
 cpSync(join(msixTemplateDir, 'assets'), join(msixStageDir, 'assets'), { recursive: true })
+for (const file of ['config.json', 'PACKAGE_SUPPORT_FRAMEWORK_LICENSE.txt']) {
+  cpSync(join(msixTemplateDir, file), join(msixStageDir, file))
+}
+
+// Neutralino starts the Node extension through cmd.exe. Keep that shell in the package context.
+await stagePackageSupportFramework()
 
 const manifest = readFileSync(join(msixTemplateDir, 'AppxManifest.xml'), 'utf8').replaceAll(
   '{{VERSION}}',
@@ -66,9 +115,6 @@ function findMakeAppx() {
   }
   return null
 }
-
-const outMsix = join(distDir, `FerryFileClient-${msixVersion}-x64.msix`)
-rmSync(outMsix, { force: true })
 
 const makeAppx = findMakeAppx()
 if (!makeAppx) {
