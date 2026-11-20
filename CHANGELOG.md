@@ -28,6 +28,13 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.2.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.1...ferry-v1.2.2) (2026-11-20)
+
+
+### Continuous Integration
+
+* validate Ferry MSIX packages before Store upload ([#115](https://github.com/ThienNg65/ferry/issues/115)) ([e3adfd5](https://github.com/ThienNg65/ferry/commit/e3adfd50557d39218d4d150a8da78a5c5b5a5dcd))
+
 ## [1.2.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.0...ferry-v1.2.1) (2026-11-19)
 
 
