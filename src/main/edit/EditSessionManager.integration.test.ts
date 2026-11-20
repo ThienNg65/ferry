@@ -116,7 +116,8 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
     expect(await readRemote(remotePath)).toBe('my edit')
 
     const listing = await remote.listRemote(sessionId, REMOTE_BASE)
-    expect(listing.entries.some((e) => e.name.includes('.ferry-tmp-'))).toBe(false)
+    const tempPrefix = `${path.posix.basename(remotePath)}.ferry-tmp-`
+    expect(listing.entries.some((e) => e.name.startsWith(tempPrefix))).toBe(false)
     await manager.closeEdit(editId)
     await SessionManager.getInstance().shell(sessionId).unlink(remotePath)
   }, 30_000)
