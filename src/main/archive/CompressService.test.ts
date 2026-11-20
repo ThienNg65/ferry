@@ -48,6 +48,67 @@ describe('splitRemotePath', () => {
 })
 
 describe('compressLocal', () => {
+
+  it('replaces an existing archive only after successful compression', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-replace-'))
+    const source = path.join(tmpDir, 'source.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    await fs.writeFile(source, 'replacement content')
+    await fs.writeFile(dest, 'old archive bytes')
+
+    await compressLocal(source, dest)
+
+    const data = await fs.readFile(dest)
+    expect(data.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+    expect((await fs.readdir(tmpDir)).sort()).toEqual(['out.zip', 'source.txt'])
+  })
+
+  it('preserves existing archive bytes on write failure', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-preserve-'))
+    const source = path.join(tmpDir, 'source.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    const original = Buffer.from('valuable existing archive')
+    await fs.writeFile(source, 'replacement')
+    await fs.writeFile(dest, original)
+
+    vi.mocked(createWriteStream).mockImplementationOnce((filePath) => {
+      const output = new Writable({
+        write(chunk, _encoding, callback) {
+          writeFileSync(filePath, Buffer.from(chunk).subarray(0, 8))
+          callback(Object.assign(new Error('disk full'), { code: 'ENOSPC' }))
+        }
+      })
+      return output as unknown as ReturnType<typeof createWriteStream>
+    })
+
+    await expect(compressLocal(source, dest)).rejects.toMatchObject({ code: 'ENOSPC' })
+    expect(await fs.readFile(dest)).toEqual(original)
+    expect((await fs.readdir(tmpDir)).sort()).toEqual(['out.zip', 'source.txt'])
+  })
+
+  it('preserves existing archive bytes on cancellation', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-cancel-preserve-'))
+    const source = path.join(tmpDir, 'source.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    const original = Buffer.from('valuable existing archive')
+    const controller = new AbortController()
+    await fs.writeFile(source, 'replacement')
+    await fs.writeFile(dest, original)
+
+    vi.mocked(createWriteStream).mockImplementationOnce((filePath) => {
+      const output = new Writable({
+        write(chunk) {
+          writeFileSync(filePath, Buffer.from(chunk).subarray(0, 8))
+          queueMicrotask(() => controller.abort())
+        }
+      })
+      return output as unknown as ReturnType<typeof createWriteStream>
+    })
+
+    await expect(compressLocal(source, dest, { signal: controller.signal })).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(await fs.readFile(dest)).toEqual(original)
+    expect((await fs.readdir(tmpDir)).sort()).toEqual(['out.zip', 'source.txt'])
+  })
   it('zips a single file into a real, valid-looking .zip on disk', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `ferry-compress-${randomUUID()}-`))
     const sourceFile = path.join(tmpDir, 'report.csv')
