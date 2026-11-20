@@ -1,10 +1,17 @@
 import { randomUUID } from 'crypto'
-import { promises as fs } from 'fs'
+import { createWriteStream, promises as fs, writeFileSync } from 'fs'
+import { Writable } from 'stream'
 import { spawnSync } from 'child_process'
 import * as os from 'os'
 import * as path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildCompressCommand, compressLocal, splitRemotePath } from './CompressService'
+
+// Fault-inject the actual writable boundary; keep the original writer for real ZIP tests.
+vi.mock('fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('fs')>()
+  return { ...real, createWriteStream: vi.fn(real.createWriteStream) }
+})
 
 /** Whether a POSIX shell is available to actually execute a built command against, for the injection tests below. */
 function hasShell(): boolean {
@@ -14,6 +21,7 @@ function hasShell(): boolean {
 let tmpDir: string | undefined
 
 afterEach(async () => {
+  vi.mocked(createWriteStream).mockReset()
   if (tmpDir) {
     await fs.rm(tmpDir, { recursive: true, force: true })
     tmpDir = undefined
@@ -91,6 +99,79 @@ describe('compressLocal', () => {
     const sorted = [...processed].sort((a, b) => a - b)
     expect(processed).toEqual(sorted)
     expect(processed.at(-1)).toBeGreaterThan(0)
+  })
+
+  it('rejects a silent close before finish and removes the partial ZIP', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-early-close-'))
+    const source = path.join(tmpDir, 'report.txt')
+    const dest = path.join(tmpDir, 'report.zip')
+    await fs.writeFile(source, 'important source content')
+    let wrotePartial = false
+
+    vi.mocked(createWriteStream).mockImplementationOnce((filePath) => {
+      const output = new Writable({
+        write(chunk) {
+          writeFileSync(filePath, Buffer.from(chunk).subarray(0, 8))
+          wrotePartial = true
+          // No error event or finish: the backing destination disappears mid-write.
+          queueMicrotask(() => output.destroy())
+        }
+      })
+      return output as unknown as ReturnType<typeof createWriteStream>
+    })
+
+    await expect(compressLocal(source, dest)).rejects.toThrow('closed before finishing')
+    expect(wrotePartial).toBe(true)
+    await expect(fs.stat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves the disk-write error and removes the incomplete ZIP', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-write-error-'))
+    const source = path.join(tmpDir, 'report.txt')
+    const dest = path.join(tmpDir, 'report.zip')
+    await fs.writeFile(source, 'important source content')
+    let wrotePartial = false
+
+    vi.mocked(createWriteStream).mockImplementationOnce((filePath) => {
+      const output = new Writable({
+        write(chunk, _encoding, callback) {
+          writeFileSync(filePath, Buffer.from(chunk).subarray(0, 8))
+          wrotePartial = true
+          callback(Object.assign(new Error('disk full'), { code: 'ENOSPC' }))
+        }
+      })
+      return output as unknown as ReturnType<typeof createWriteStream>
+    })
+
+    await expect(compressLocal(source, dest)).rejects.toMatchObject({ code: 'ENOSPC' })
+    expect(wrotePartial).toBe(true)
+    await expect(fs.stat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps CANCELLED classification and deletes a partially written ZIP', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-compress-abort-'))
+    const source = path.join(tmpDir, 'report.txt')
+    const dest = path.join(tmpDir, 'report.zip')
+    await fs.writeFile(source, 'important source content')
+    const controller = new AbortController()
+    let wrotePartial = false
+
+    vi.mocked(createWriteStream).mockImplementationOnce((filePath) => {
+      const output = new Writable({
+        write(chunk) {
+          writeFileSync(filePath, Buffer.from(chunk).subarray(0, 8))
+          wrotePartial = true
+          queueMicrotask(() => controller.abort())
+        }
+      })
+      return output as unknown as ReturnType<typeof createWriteStream>
+    })
+
+    await expect(compressLocal(source, dest, { signal: controller.signal })).rejects.toMatchObject({
+      code: 'CANCELLED'
+    })
+    expect(wrotePartial).toBe(true)
+    await expect(fs.stat(dest)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects with CANCELLED on a pre-aborted signal and leaves no partial zip', async () => {
