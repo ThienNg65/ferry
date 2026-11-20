@@ -118,11 +118,8 @@ export async function compressLocal(
     // Do not remove the old destination first: a failed rename must leave it intact.
     await rename(stagingPath, destZipPath)
   } finally {
-    await unlink(stagingPath).catch((err: NodeJS.ErrnoException) => {
-      if (err.code !== 'ENOENT') {
-        // Cleanup failure must not erase the original compression error.
-      }
-    })
+    // Never remove the destination on failure; only our unique staging file.
+    await unlink(stagingPath).catch(() => undefined)
   }
 }
 
