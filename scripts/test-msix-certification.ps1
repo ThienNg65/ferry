@@ -31,7 +31,7 @@ public static class FerryMsixActivation
         try
         {
             uint processId;
-            Marshal.ThrowExceptionForHR(manager.ActivateApplication(appId, null, 0, out processId));
+            Marshal.ThrowExceptionForHR(manager.ActivateApplication(appId, "--ferry-msix-smoke", 0, out processId));
             return processId;
         }
         finally
@@ -43,41 +43,32 @@ public static class FerryMsixActivation
 '@
 
     $hostPath = Join-Path $installed.InstallLocation 'ferry-win_x64.exe'
-    $sidecarPath = Join-Path $installed.InstallLocation 'extensions\js.ferry.sidecar\node.exe'
     $launcherPid = [FerryMsixActivation]::Start("$($installed.PackageFamilyName)!$applicationId")
     Write-Host "Activated $($installed.PackageFullName) (launcher PID $launcherPid)."
 
     $foundHost = $false
-    $foundSidecar = $false
+    $foundWindow = $false
     $timer = [Diagnostics.Stopwatch]::StartNew()
     while ($timer.Elapsed.TotalSeconds -lt 40) {
         $hostProcess = Get-CimInstance Win32_Process -Filter "Name = 'ferry-win_x64.exe' AND ParentProcessId = $launcherPid" |
             Where-Object ExecutablePath -EQ $hostPath | Select-Object -First 1
         if ($hostProcess) {
             $foundHost = $true
-            $sidecar = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-                Where-Object ExecutablePath -EQ $sidecarPath | Select-Object -First 1
-            if ($sidecar) {
-                $foundSidecar = $true
-                $hostPorts = @(Get-NetTCPConnection -OwningProcess $hostProcess.ProcessId -State Listen -ErrorAction SilentlyContinue |
-                    Select-Object -ExpandProperty LocalPort)
-                $sidecarSockets = @(Get-NetTCPConnection -OwningProcess $sidecar.ProcessId -ErrorAction SilentlyContinue)
-                $hostConnection = $sidecarSockets | Where-Object {
-                    $_.State -eq 'Established' -and $_.RemotePort -in $hostPorts -and
-                        $_.RemoteAddress -in @('127.0.0.1', '::1', '::ffff:127.0.0.1')
-                }
-                $rpcListener = $sidecarSockets | Where-Object {
-                    $_.State -eq 'Listen' -and $_.LocalAddress -eq '127.0.0.1'
-                }
-                if ($hostConnection -and $rpcListener) {
-                    Write-Host "Packaged Node sidecar connected to Ferry and opened its loopback RPC listener."
-                    return
+            $hostWindow = Get-Process -Id $hostProcess.ProcessId -ErrorAction SilentlyContinue
+            if ($hostWindow -and $hostWindow.MainWindowHandle -ne [IntPtr]::Zero) {
+                $foundWindow = $true
+                switch -CaseSensitive ($hostWindow.MainWindowTitle) {
+                    'Ferry MSIX smoke: sites ready' {
+                        Write-Host 'The installed Ferry renderer completed the sites:list request.'
+                        return
+                    }
+                    'Ferry MSIX smoke: sites failed' { throw 'The installed Ferry renderer could not complete sites:list.' }
                 }
             }
         }
         Start-Sleep -Milliseconds 500
     }
-    throw "Ferry MSIX startup timed out (host observed: $foundHost, sidecar observed: $foundSidecar)."
+    throw "Ferry MSIX startup did not complete sites:list (host observed: $foundHost, window observed: $foundWindow)."
 }
 
 function Remove-FerryTestPackage([string]$packageName) {

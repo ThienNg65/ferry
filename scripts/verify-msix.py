@@ -94,7 +94,7 @@ def verify_package(package, version):
                 "executable": "ferry-win_x64.exe",
                 "workingDirectory": ".",
                 "inPackageContext": True,
-            }]},
+            }]} and config["applications"][0]["inPackageContext"] is True,
             "PSF must launch the Ferry host and keep its child processes in the package context",
         )
         required_files = {

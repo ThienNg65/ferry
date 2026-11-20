@@ -71,6 +71,14 @@ window.addEventListener('error', (event) => {
 
 createApp(App).use(createPinia()).use(ui).mount('#app')
 
+// The installed MSIX smoke test requests a renderer-to-sidecar round trip at launch.
+const neutralinoArgs = (window as Window & { NL_ARGS?: string[] }).NL_ARGS
+if (neutralinoArgs?.includes('--ferry-msix-smoke')) {
+  void import('./msixStartupSmoke')
+    .then(({ reportMsixStartup }) => reportMsixStartup())
+    .catch((error) => console.error('Could not report MSIX startup result', error))
+}
+
 function scheduleIdle(cb: () => void): void {
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(() => cb())
