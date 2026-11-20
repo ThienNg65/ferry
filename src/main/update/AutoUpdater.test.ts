@@ -721,6 +721,14 @@ describe('SidecarUpdater', () => {
     expect(compareSemver('1.0.0-rc-2', '1.0.0-rc-1')).toBeGreaterThan(0)
   })
 
+  it('orders large numeric prerelease identifiers precisely and ignores build metadata', () => {
+    expect(compareSemver('1.0.0-rc.9007199254740993', '1.0.0-rc.9007199254740992')).toBeGreaterThan(0)
+    expect(compareSemver('1.0.0-rc.9007199254740992', '1.0.0-rc.9007199254740993')).toBeLessThan(0)
+    expect(compareSemver('1.0.0-rc.9999999999', '1.0.0-rc.alpha')).toBeLessThan(0)
+    expect(compareSemver('1.0.0-rc.2+build.2', '1.0.0-rc.2+build.10')).toBe(0)
+    expect(compareSemver('9007199254740993.0.0', '9007199254740992.0.0')).toBeGreaterThan(0)
+  })
+
   it('aborts manifest fetch when the feed stalls past manifestTimeoutMs', async () => {
     const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
