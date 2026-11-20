@@ -297,7 +297,9 @@ describe('sftpPipeline.transferPipelined', () => {
     const secondData = Buffer.alloc(512 * 1024, '2')
     fake.files.set('/remote/first', firstData)
     fake.files.set('/remote/second', secondData)
-    vi.spyOn(SessionManager.getInstance(), 'shell').mockReturnValue({
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    vi.spyOn(sessions, 'shell').mockReturnValue({
       sftp: async () => fake.sftp,
       stat: async (target: string) => ({ size: fake.files.get(target)!.length, mtime: 1 })
     } as unknown as RemoteShell)
