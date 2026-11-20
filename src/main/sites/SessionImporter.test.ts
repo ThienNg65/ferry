@@ -148,6 +148,21 @@ describe('parseSshConfig', () => {
 
 
 describe('parseSshConfig wildcard inheritance', () => {
+  it('matches OpenSSH global defaults, inline comments, quoted paths and case-sensitive Host patterns', () => {
+    const out = parseSshConfig([
+      'User global # first value wins',
+      'Host prod* # not an alias',
+      '  Port 2222 # team port',
+      '  IdentityFile "~/.ssh/test # space" # team key',
+      'Host Prod-East "prod-west"',
+      '  HostName example.org'
+    ].join('\n'), '/home/me', 'local')
+    expect(out.map(({ name, username, port }) => ({ name, username, port }))).toEqual([
+      { name: 'Prod-East', username: 'global', port: 22 },
+      { name: 'prod-west', username: 'global', port: 2222 }
+    ])
+    expect(out[1].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/test # space')
+  })
   it('inherits global defaults including jump host and identity file', () => {
     const out = parseSshConfig([
       'Host *',
