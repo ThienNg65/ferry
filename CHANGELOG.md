@@ -28,6 +28,52 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.2.3](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.2...ferry-v1.2.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* close SFTP editor uploads after finish ([baa34b8](https://github.com/ThienNg65/ferry/commit/baa34b876258d55539f6c26fc994fa478f2b3123))
+* compare numeric updater versions without rounding ([f8a3041](https://github.com/ThienNg65/ferry/commit/f8a3041d511008f728f4924edbbbae6258ffeb20), [c5fa882](https://github.com/ThienNg65/ferry/commit/c5fa882d5951a22cedf59855f51a7ff1599543a7))
+* fall back to SFTP on remote listing metadata errors ([5016a6a](https://github.com/ThienNg65/ferry/commit/5016a6a3d7f5d724cb38d8a7212a4bf4f0595aa5))
+* fall back to SFTP when remote entry metadata fails ([457af6d](https://github.com/ThienNg65/ferry/commit/457af6d48a000c1a2df15e58f14e1984001bf10e))
+* isolate local ZIP staging from its input tree ([48c067a](https://github.com/ThienNg65/ferry/commit/48c067aeb63e064ccb74385929b946855ba9fa83))
+* keep quiet live log tails connected ([21a1d6e](https://github.com/ThienNg65/ferry/commit/21a1d6e9f717cd1a8fb77e30677e3569b362d091), [6259499](https://github.com/ThienNg65/ferry/commit/6259499afc1f76020be048357e1e2680d3d4c232))
+* preserve an existing MSIX when packing fails ([95b14b9](https://github.com/ThienNg65/ferry/commit/95b14b99396dd74b793db65969816fc014af7578))
+* preserve editor changes during asynchronous saves ([f0f028b](https://github.com/ThienNg65/ferry/commit/f0f028b7b009f12a77a9fcfcde16a6fc8a09afed))
+* preserve edits during delayed discard and editor handoff ([a392d43](https://github.com/ThienNg65/ferry/commit/a392d430c5339241e5bc33fdc1284eb6bda4d524))
+* preserve existing local ZIP on compression failure ([f35e6c6](https://github.com/ThienNg65/ferry/commit/f35e6c6be5a682a1039a9c23cce3f91eb4f8e5cd))
+* preserve MSIX package context during sidecar startup ([fdb2e15](https://github.com/ThienNg65/ferry/commit/fdb2e15edea7fcfed3774f180c14b04177f67d1d), [9f0fd7b](https://github.com/ThienNg65/ferry/commit/9f0fd7ba2acf2201d88671a2f698fb1b29fb78c7))
+* preserve the original when remote editor staging is denied ([c1cd473](https://github.com/ThienNg65/ferry/commit/c1cd47373d4604d7a90e64985dca1ca3c894202c), [2fa2c26](https://github.com/ThienNg65/ferry/commit/2fa2c263140f6efb545912de46aa9b6a3df601d0))
+* preserve unsynced editor copies across timestamp changes ([45d393d](https://github.com/ThienNg65/ferry/commit/45d393d600b4cb58c4c2fa23f346de67674618f7))
+* reject premature local ZIP stream closure ([5b6b046](https://github.com/ThienNg65/ferry/commit/5b6b0461384c558b6ad5e893730e0b3c2c2d2c51), [65f88d4](https://github.com/ThienNg65/ferry/commit/65f88d411be895701839d8237522735225e40035))
+* reject premature SFTP editor upload closure ([a730ef2](https://github.com/ThienNg65/ferry/commit/a730ef287a6454e90494a08f8c51898b70b0df11))
+* resume paused SFTP transfers after reconnecting ([95bcad0](https://github.com/ThienNg65/ferry/commit/95bcad070bba80fdc1e516717ecdf6cc24b9f8d2), [fcb3088](https://github.com/ThienNg65/ferry/commit/fcb3088aa563cf44c78f3c5dff609671a2ee2eb8))
+* stage local ZIP before replacing destination ([1a6aedb](https://github.com/ThienNg65/ferry/commit/1a6aedbaca1eebb70f4dbf94cc062a069222c54e))
+* verify renderer IPC in the MSIX startup smoke test ([40568eb](https://github.com/ThienNg65/ferry/commit/40568eb21ef182820fba890ce3e67e25cf792150))
+
+
+### Documentation
+
+* align Ferry architecture guidance with Neutralino ([b3cc2da](https://github.com/ThienNg65/ferry/commit/b3cc2daef6c14eee0c209d5eb42903af6781921f), [fba1ed7](https://github.com/ThienNg65/ferry/commit/fba1ed7177bd9c1099840cbc27b5a8a0a10d14be))
+
+
+### Code Refactoring
+
+* simplify staging cleanup ([818ff4d](https://github.com/ThienNg65/ferry/commit/818ff4d2c43a18f4688ce5a1c24a29a73118a085))
+
+
+### Tests
+
+* cover existing ZIP preservation and atomic replacement ([8c492c0](https://github.com/ThienNg65/ferry/commit/8c492c0721596a9788b0cbdad725122c0828efec))
+* exercise remote directory metadata failure in Python ([be029c7](https://github.com/ThienNg65/ferry/commit/be029c7dd15d449531c9e230c4a72e14dc492144))
+* fault-inject local ZIP early close, disk errors and abort ([7f763f1](https://github.com/ThienNg65/ferry/commit/7f763f133c2e74afa440bc1631b024b9c70e2017))
+* guard against partial fast remote listings ([442df8f](https://github.com/ThienNg65/ferry/commit/442df8f1b3696f5a8b02785cc669b96d5828faa0))
+* pause reconnect fixtures before completion ([7f431e6](https://github.com/ThienNg65/ferry/commit/7f431e6fba5de8c4e5fa075817c2cfa4f8a4eb4b))
+* preserve real ZIP writer between fault-injection cases ([ddb4c9b](https://github.com/ThienNg65/ferry/commit/ddb4c9bc083f0153ad0ce39a3cc34e348023d31d))
+* stop terminal fixture timers between tests ([55d7037](https://github.com/ThienNg65/ferry/commit/55d7037069b9f495ac1af2763a3f79f6530c3f9b), [554b9da](https://github.com/ThienNg65/ferry/commit/554b9dae38f67279450ab17804cb0a5e39bffbde))
+* supply connected session state to transfer fixture ([cb2e063](https://github.com/ThienNg65/ferry/commit/cb2e0635c6375ed47611f5a493f48386056c7767))
+
 ## [1.2.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.1...ferry-v1.2.2) (2026-11-20)
 
 
