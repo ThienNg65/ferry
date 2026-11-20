@@ -133,12 +133,33 @@ export function buildCompressCommand(sourcePath: string, destZipPath: string): s
   const cwd = shellEscape(dir)
   const source = shellEscape(base)
   const dest = shellEscape(destZipPath)
-  const inner =
-    `command -v zip >/dev/null 2>&1 || ` +
-    // `--` stops `zip` from parsing `source` as an option even if the shellEscape'd basename
-    // starts with `-` (e.g. a file literally named "-T") — shellEscape only guards the shell,
-    // not zip's own argv parsing.
-    `{ echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }; cd ${cwd} && rm -f -- ${dest} && zip -rq ${dest} -- ${source}`
+  // Stage in the destination directory so the final rename stays on the same
+  // filesystem. The old archive is never touched until zip and its integrity
+  // check both succeed. A trap removes only the private staging directory.
+  const inner = [
+    `command -v zip >/dev/null 2>&1 || { echo ${shellEscape(COMPRESS_TOOL_MISSING_SENTINEL)} >&2; exit 127; }`,
+    `cd ${cwd} || exit 1`,
+    `source_name=${source}`,
+    `destination=${dest}`,
+    'destination_dir=$(dirname -- "$destination") || exit 1',
+    'destination_dir=$(cd "$destination_dir" && pwd -P) || exit 1',
+    'destination="$destination_dir/$(basename -- "$destination")"',
+    // Refuse an output inside its input tree rather than silently embedding
+    // an old archive (or the temporary archive) in the new ZIP.
+    'if [ -d "$source_name" ]; then',
+    '  source_dir=$(cd "$source_name" && pwd -P) || exit 1',
+    '  case "$destination/" in "$source_dir/"*) echo "Destination cannot be inside the source directory" >&2; exit 1;; esac',
+    'fi',
+    'staging=$(mktemp -d "$destination_dir/.ferry-zip-XXXXXXXX") || exit 1',
+    'trap \'rm -rf -- "$staging"\' EXIT',
+    'trap \'exit 130\' INT',
+    'trap \'exit 143\' TERM',
+    // Prefix ./ to prevent source names beginning with '-' being treated as options.
+    'zip -rq "$staging/archive.zip" "./$source_name" || exit $?',
+    'zip -T "$staging/archive.zip" >/dev/null || exit $?',
+    'mv -f -- "$staging/archive.zip" "$destination" || exit $?'
+  ].join('; ')
+
   return `sh -c ${shellEscape(inner)}`
 }
 
