@@ -205,6 +205,27 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
     }
   })
 
+  it('does not open the original for writing when staging is denied', async () => {
+    const { dir, localFile } = await fixture()
+    const stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(new Error('Permission denied'))
+      }
+    })
+    const { sftp } = setup(stream)
+    try {
+      await expect(uploadForEdit('sess-1', localFile, '/srv/edit.txt')).rejects.toThrow('Permission denied')
+      expect(sftp.createWriteStream).toHaveBeenCalledTimes(1)
+      expect(sftp.createWriteStream).toHaveBeenCalledWith(
+        expect.stringContaining('/srv/edit.txt.ferry-tmp-'),
+        { autoClose: false }
+      )
+      expect(sftp.ext_openssh_rename).not.toHaveBeenCalled()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('rejects stream errors and does not commit', async () => {
     const { dir, localFile } = await fixture()
     const stream = new Writable({

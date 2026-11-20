@@ -418,15 +418,7 @@ export async function uploadForEdit(sessionId: string, localPath: string, remote
   const existing = await statRemoteForEdit(sessionId, target)
   const tempPath = `${target}.ferry-tmp-${randomBytes(4).toString('hex')}`
   try {
-    try {
-      await writeRemoteFile(sftp, localPath, tempPath)
-    } catch (e) {
-      if (existing && /permission denied/i.test(e instanceof Error ? e.message : '')) {
-        await writeRemoteFile(sftp, localPath, target)
-        return
-      }
-      throw e
-    }
+    await writeRemoteFile(sftp, localPath, tempPath)
     if (existing && existing.mode !== null) {
       await shell.chmod(tempPath, existing.mode.toString(8).padStart(4, '0')).catch(() => undefined)
     }
