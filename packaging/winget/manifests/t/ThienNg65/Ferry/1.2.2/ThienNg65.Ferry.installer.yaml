@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
+PackageIdentifier: ThienNg65.Ferry
+PackageVersion: 1.2.2
+InstallerType: nullsoft
+Scope: user
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/ThienNg65/ferry-release/releases/download/ferry-v1.2.2/Ferry-Setup-1.2.2.exe
+    InstallerSha256: 4C19AB4760FF71D0CB2EF44B9E6C5AABE52B1E5C9E3DAF24E54F0583229F3590
+    ProductCode: Ferry
+ManifestType: installer
+ManifestVersion: 1.28.0
