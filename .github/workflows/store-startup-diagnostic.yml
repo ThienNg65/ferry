@@ -1,0 +1,108 @@
+name: Diagnose Ferry Store 1.2.2.0 startup
+on:
+  push:
+    branches: [diagnostics/store-msix-1.2.2-startup]
+permissions:
+  actions: read
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ferry-msix-win-x64
+          run-id: 44676401351
+          github-token: ${{ github.token }}
+          path: package
+      - name: Install and activate the submitted payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = (Resolve-Path 'package/FerryFileClient-1.2.2.0-x64.msix').Path
+          $hash = (Get-FileHash -LiteralPath $source).Hash
+          if ($hash -ne '1058ada8a7bb28f7a139f84179238430f8d11f9263603d4c58c4539935a7a0bd') {
+            throw "Unexpected input SHA-256: $hash"
+          }
+          if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
+            throw 'Activation requires an interactive Windows session.'
+          }
+          $sdk = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $signTool = Get-ChildItem "$sdk\*\x64\signtool.exe" |
+            Sort-Object { [version]$_.Directory.Parent.Name } -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw 'Windows SDK SignTool is unavailable.' }
+          $testPackage = Join-Path $env:RUNNER_TEMP 'FerryFileClient-1.2.2.0-x64.msix'
+          Copy-Item -LiteralPath $source -Destination $testPackage
+          $packageName = 'ThienNg65.FerryFileClient'
+          if (Get-AppxPackage -Name $packageName) { throw 'Expected a clean Windows test environment.' }
+          $cert = $null
+          $installed = $null
+          try {
+            $cert = New-SelfSignedCertificate -Subject 'CN=7526EFCF-38D0-48DA-84C1-1C01E8EE1282' -Type CodeSigningCert -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(1)
+            $certFile = Join-Path $env:RUNNER_TEMP 'ferry-test.cer'
+            Export-Certificate -Cert $cert -FilePath $certFile | Out-Null
+            Import-Certificate -FilePath $certFile -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
+            & $signTool.FullName sign /fd SHA256 /sha1 $cert.Thumbprint $testPackage
+            if ($LASTEXITCODE) { throw "Signing failed: $LASTEXITCODE" }
+            Add-AppxPackage -Path $testPackage
+            $installed = Get-AppxPackage -Name $packageName
+            Write-Host "Installed $($installed.PackageFullName) at $($installed.InstallLocation)"
+            if ($installed.Version -ne [version]'1.2.2.0') { throw 'Unexpected installed package version.' }
+
+            Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+          public interface IAppActivation {
+              [PreserveSig]
+              int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string app, [MarshalAs(UnmanagedType.LPWStr)] string args, uint options, out uint pid);
+          }
+          public static class FerryActivation {
+              public static uint Start(string app) {
+                  var manager = (IAppActivation)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")));
+                  uint pid;
+                  Marshal.ThrowExceptionForHR(manager.ActivateApplication(app, null, 0, out pid));
+                  return pid;
+              }
+          }
+          '@
+            Register-CimIndicationEvent -Query "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = 'cmd.exe' OR ProcessName = 'node.exe' OR ProcessName = 'powershell.exe'" -SourceIdentifier FerryProcessStart | Out-Null
+            $hostPid = [FerryActivation]::Start("$($installed.PackageFamilyName)!Ferry")
+            Write-Host "Activated Ferry with PID $hostPid"
+            $connected = $false
+            for ($i = 0; $i -lt 25; $i++) {
+              $children = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+                Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($installed.InstallLocation + '\', [StringComparison]::OrdinalIgnoreCase) })
+              if ($children.Count) {
+                $ports = @(Get-NetTCPConnection -OwningProcess $hostPid -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort)
+                foreach ($child in $children) {
+                  $connections = @(Get-NetTCPConnection -OwningProcess $child.ProcessId -State Established -ErrorAction SilentlyContinue)
+                  if (@($connections | Where-Object { $_.RemoteAddress -eq '127.0.0.1' -and $_.RemotePort -in $ports }).Count) {
+                    Write-Host "Packaged sidecar PID $($child.ProcessId) connected to the packaged Ferry host."
+                    $connected = $true
+                  }
+                }
+              }
+              if ($connected) { break }
+              Start-Sleep -Seconds 1
+            }
+
+            $family = @($hostPid)
+            foreach ($record in @(Get-Event -SourceIdentifier FerryProcessStart -ErrorAction SilentlyContinue)) {
+              $eventInfo = $record.SourceEventArgs.NewEvent
+              if ($eventInfo.ParentProcessID -in $family) {
+                $family += $eventInfo.ProcessID
+                Write-Host "$($eventInfo.ProcessName) PID $($eventInfo.ProcessID) parent $($eventInfo.ParentProcessID)"
+              }
+            }
+            if (-not $connected) { throw 'No packaged Node sidecar connection to the Ferry host was observed.' }
+          } finally {
+            Unregister-Event -SourceIdentifier FerryProcessStart -ErrorAction SilentlyContinue
+            if ($installed) { Remove-AppxPackage -Package $installed.PackageFullName -ErrorAction Continue }
+            if ($cert) {
+              foreach ($store in @('Cert:\LocalMachine\TrustedPeople', 'Cert:\CurrentUser\My')) {
+                Remove-Item -LiteralPath (Join-Path $store $cert.Thumbprint) -ErrorAction SilentlyContinue
+              }
+            }
+          }
