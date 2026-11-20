@@ -326,7 +326,10 @@ describe('terminalStreams.store', () => {
     setActivePinia(createPinia())
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { useTerminalStreamsStore } = await import('../terminalStreams.store')
+    const store = useTerminalStreamsStore()
+    await Promise.all([...store.knownSessionIds].map((id) => store.disposeForSession(id)))
     vi.restoreAllMocks()
     vi.useRealTimers()
     vi.unstubAllGlobals()
