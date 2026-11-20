@@ -39,15 +39,8 @@ container isn't running. `vitest.config.ts` sets `fileParallelism: false` — th
 
 - **Neutralinojs + Node.js sidecar host**: `src/main` logic runs in the bundled Node.js v22 sidecar (`src/sidecar/wsExtension.ts` + `createNodeHost` + DPAPI `src/main/host/dpapiKey.ts`), with `src/renderer` running inside Neutralino's WebView2 shell and communicating via `src/renderer/src/bridge/neutralinoApi.ts` (`window.api`). `system:startDrag` (native OS drag-out) is an accepted platform no-op, while external OS drag-in stages up to 16 MB via `fs:local:stage-drop` with automatic post-upload cleanup.
 - **Sidecar + Shell split**: `src/sidecar` + `src/main` (Node context — SSH/SFTP, filesystem, transfer queue, tail, terminal, archive, sites, auto-updater via `SidecarUpdater`, IPC handlers), `src/renderer` (Vue 3 + Pinia UI, using `neutralinoApi.ts` for Neutralino native dialogs/window controls and sidecar WebSocket RPC for backend channels).
-- **`src/shared/contract.ts` is the single source of truth for IPC**: every channel name and
-  payload type. Change it FIRST when adding a feature that crosses the process boundary — preload
-  and main both import from it and won't compile otherwise.
-- **IPC flow**: renderer calls `window.api.invoke(channel, ...)` -> preload validates against the
-  contract whitelist -> `ipcMain.handle` (registered via `ipc/envelope.ts`'s `handle()`) -> always
-  resolves `{ok:true,data}` or `{ok:false,code,message}`. Main -> renderer is
-  `webContents.send(EVENT_CHANNELS.x, ...)`, subscribed via `window.api.on(channel, cb)`.
-  One `*.ipc.ts` file per domain in `src/main/ipc/`, each exposing `registerXHandlers()`, wired
-  into `registerAllHandlers()` in `src/main/index.ts`.
+- **IPC contract.** Define channel names and payloads in `src/shared/contract.ts`. The renderer bridge forwards typed requests to the sidecar's authenticated loopback WebSocket.
+- **IPC handlers.** Register them through `src/main/ipc/registerSidecar.ts`. The `handle()` wrapper in `ipc/envelope.ts` returns `{ok:true,data}` or `{ok:false,code,message}`. The sidecar broadcasts events through the host adapter. The renderer subscribes with `window.api.on(channel, cb)`.
 - **One `RemoteShell` (wraps one `ssh2.Client`) per connection**, owned by the `SessionManager`
   singleton and keyed by a renderer-issued `sessionId` (not a saved site id — the same site can
   have multiple concurrent sessions/tabs). `TailManager`, `TerminalManager`, and `TransferQueue`
@@ -63,8 +56,7 @@ container isn't running. `vitest.config.ts` sets `fileParallelism: false` — th
   `Map`), `ui` (localStorage-persisted display prefs), `settings` (thin wrapper over main-process
   `AppSettingsStore`), `ipcActivity` (drives the global busy indicator).
 - **Secrets never cross the IPC boundary decrypted.** `SiteStore` only ever returns
-  `hasPassword`/`hasPassphrase` booleans to the renderer; decryption (via Electron's `safeStorage`)
-  happens main-process-side, in-memory, at connect time only.
+  `hasPassword`/`hasPassphrase` booleans to the renderer; the Windows sidecar decrypts saved secrets in memory with its DPAPI-backed key when a connection needs them.
 - No `vue-router` — single window, view/tab switching is plain reactive state.
 
 See PROJECT_MAP.md's "Conventions" and "Where to go for X" sections before making any nontrivial
