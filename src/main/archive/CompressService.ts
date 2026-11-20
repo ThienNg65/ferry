@@ -1,5 +1,6 @@
 import { createWriteStream } from 'fs'
-import { stat, unlink } from 'fs/promises'
+import { randomUUID } from 'crypto'
+import { rename, stat, unlink } from 'fs/promises'
 import * as path from 'path'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
@@ -44,9 +45,11 @@ export async function compressLocal(
   if (opts.signal?.aborted) {
     throw new SshError('CANCELLED', 'Compression cancelled')
   }
+  // A sibling staging file prevents failures from truncating an existing archive.
+  const stagingPath = path.join(path.dirname(destZipPath), `.${path.basename(destZipPath)}.ferry-${randomUUID()}.tmp`)
   try {
     await new Promise<void>((resolve, reject) => {
-      const output = createWriteStream(destZipPath)
+      const output = createWriteStream(stagingPath, { flags: 'wx' })
       const archive = new ZipArchive({ zlib: { level: 9 } })
       let settled = false
       let outputFinished = false
@@ -110,12 +113,16 @@ export async function compressLocal(
         if (output.closed) finish(pendingErr)
       })
     })
-  } catch (e) {
-    // Best-effort removal of the partial/corrupt zip any failed run leaves
-    // behind — a cancellation, a disk-full error, or a permission error from
-    // archiver/fs can all leave a dangling partial file at destZipPath.
-    await unlink(destZipPath).catch(() => undefined)
-    throw e
+    if (opts.signal?.aborted) throw new SshError('CANCELLED', 'Compression cancelled')
+    // Same-directory rename is atomic on filesystems supporting replacement.
+    // Do not remove the old destination first: a failed rename must leave it intact.
+    await rename(stagingPath, destZipPath)
+  } finally {
+    await unlink(stagingPath).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'ENOENT') {
+        // Cleanup failure must not erase the original compression error.
+      }
+    })
   }
 }
 
