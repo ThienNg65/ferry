@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'child_process'
@@ -80,7 +80,6 @@ if (!existsSync(exePath)) {
 }
 
 const outMsix = join(distDir, `FerryFileClient-${msixVersion}-x64.msix`)
-rmSync(outMsix, { force: true })
 rmSync(msixStageDir, { recursive: true, force: true })
 cpSync(protoDir, msixStageDir, { recursive: true })
 cpSync(join(msixTemplateDir, 'assets'), join(msixStageDir, 'assets'), { recursive: true })
@@ -121,8 +120,17 @@ if (!makeAppx) {
   console.log(`Staged MSIX folder ready at: ${msixStageDir}`)
   console.log('makeappx.exe not found (install Windows 10/11 SDK or run on GitHub Actions windows-latest).')
   console.log(`Once available, pack with:\n  makeappx.exe pack /o /d "${msixStageDir}" /p "${outMsix}"`)
-  process.exit(0)
+  process.exit(process.platform === 'win32' ? 1 : 0)
 }
 
-execFileSync(makeAppx, ['pack', '/o', '/d', msixStageDir, '/p', outMsix], { stdio: 'inherit' })
+// Keep a previous valid package if preparation, MakeAppx, or replacement fails.
+const outputDir = mkdtempSync(join(distDir, '.ferry-msix-pack-'))
+try {
+  const stagedMsix = join(outputDir, `FerryFileClient-${msixVersion}-x64.msix`)
+  execFileSync(makeAppx, ['pack', '/o', '/d', msixStageDir, '/p', stagedMsix], { stdio: 'inherit' })
+  if (statSync(stagedMsix).size === 0) throw new Error('MakeAppx produced an empty MSIX package')
+  renameSync(stagedMsix, outMsix)
+} finally {
+  rmSync(outputDir, { recursive: true, force: true })
+}
 console.log(`MSIX package created: ${outMsix} (${(statSync(outMsix).size / (1024 * 1024)).toFixed(2)} MB)`)
