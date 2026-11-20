@@ -24,8 +24,11 @@ export function registerTransferHandlers(): void {
     TransferQueue.getInstance().cancel(requireNonEmptyString(transferId, 'transferId', INVOKE_CHANNELS.transferCancel))
   })
 
-  handle<void>(INVOKE_CHANNELS.transferRetry, (transferId) => {
-    TransferQueue.getInstance().retry(requireNonEmptyString(transferId, 'transferId', INVOKE_CHANNELS.transferRetry))
+  handle<void>(INVOKE_CHANNELS.transferRetry, (transferId, restart) => {
+    TransferQueue.getInstance().retry(
+      requireNonEmptyString(transferId, 'transferId', INVOKE_CHANNELS.transferRetry),
+      restart === true
+    )
   })
 
   handle<void>(INVOKE_CHANNELS.transferPause, (transferId) => {

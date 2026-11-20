@@ -56,6 +56,8 @@ export interface TransferItemState {
   filesDone: number
   filesTotal: number
   error?: string
+  reconnectRequired?: boolean
+  restartRequired?: boolean
 }
 
 interface TransferQueueState {
@@ -118,7 +120,9 @@ export const useTransferQueueStore = defineStore('transferQueue', {
           etaMs: evt.etaMs ?? 0,
           filesDone: evt.filesDone ?? existing?.filesDone ?? 0,
           filesTotal: evt.filesTotal ?? existing?.filesTotal ?? 0,
-          error: evt.error
+          error: evt.error,
+          reconnectRequired: evt.reconnectRequired,
+          restartRequired: evt.restartRequired
         }
         this.items.set(evt.transferId, item)
         const name = basename(item.remotePath || item.localPath || '')
@@ -139,7 +143,7 @@ export const useTransferQueueStore = defineStore('transferQueue', {
               scheduleDestinationRefresh(`local:${targetDir}`, () => localFs.refreshIfViewing(targetDir))
             }
           }
-        } else if (evt.state === 'error') {
+        } else if (evt.state === 'error' && existing?.state !== 'error') {
           notify.error(evt.kind === 'download' ? 'Download failed' : 'Upload failed', evt.error ?? name)
         }
       })
@@ -202,8 +206,13 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       await invoke<void>(INVOKE_CHANNELS.transferPause, transferId)
     },
 
-    async retry(transferId: string): Promise<void> {
-      await invoke<void>(INVOKE_CHANNELS.transferRetry, transferId)
+    async retry(transferId: string, restart = false): Promise<void> {
+      try {
+        await invoke<void>(INVOKE_CHANNELS.transferRetry, transferId, restart)
+      } catch (error) {
+        const item = this.items.get(transferId)
+        if (item) item.error = error instanceof Error ? error.message : String(error)
+      }
     },
 
     /** Removes completed, failed, and cancelled transfers from the in-memory queue view. */

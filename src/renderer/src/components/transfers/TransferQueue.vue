@@ -76,8 +76,10 @@ const hasFinished = computed(() =>
             :bytes-per-sec="store.list[row.index].bytesPerSec"
             :eta-ms="store.list[row.index].etaMs"
             :error="store.list[row.index].error"
+            :reconnect-required="store.list[row.index].reconnectRequired"
+            :restart-required="store.list[row.index].restartRequired"
             @cancel="store.cancel(store.list[row.index].transferId)"
-            @retry="store.retry(store.list[row.index].transferId)"
+            @retry="store.retry(store.list[row.index].transferId, store.list[row.index].restartRequired)"
             @pause="store.pause(store.list[row.index].transferId)"
           />
         </div>

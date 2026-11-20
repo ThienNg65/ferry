@@ -1,3 +1,4 @@
+import { TransferQueue } from '../transfer/TransferQueue'
 import type { Client, ClientChannel, ConnectConfig, HostVerifier } from 'ssh2'
 import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
@@ -42,6 +43,7 @@ interface SessionEntry {
   shell: RemoteShell
   status: SessionStatus
   cwdRemote: string
+  transferIdentity?: string
   abort: () => void
 }
 
@@ -167,6 +169,21 @@ export class SessionManager {
   /** Best-effort saved-site id for a session (null for quick-connect, or an already-closed/unknown session) — for denormalizing history entries, not a connect-time API, so it never throws. */
   siteIdForSession(sessionId: string): string | null {
     return this.sessions.get(sessionId)?.siteId ?? null
+  }
+
+  /** The connection identity includes the verified target and each bastion. */
+  transferIdentity(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.transferIdentity
+  }
+
+  connectedTransferSession(sessionId: string, identity?: string): string | null {
+    const original = this.sessions.get(sessionId)
+    if (original?.status === 'connected' && original.transferIdentity === identity) return sessionId
+    if (identity === undefined) return null
+    for (const entry of this.sessions.values()) {
+      if (entry.status === 'connected' && entry.transferIdentity === identity) return entry.sessionId
+    }
+    return null
   }
 
   private get(sessionId: string): SessionEntry {
@@ -324,7 +341,8 @@ export class SessionManager {
     username: string,
     auth: HopAuth,
     trustedHostKey: TrustedHostKey | undefined,
-    isActive: () => boolean
+    isActive: () => boolean,
+    onVerified: (fingerprint: string) => void
   ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder; agentIdentityCount?: number }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
@@ -346,6 +364,7 @@ export class SessionManager {
         void this.promptHostKey(sessionId, host, port, presented).then((accept) => {
           if (accept && isActive()) {
             KnownHostsStore.getInstance().trust(host, port, presented)
+            onVerified(presented)
           } else if (!accept) {
             hostKeyMismatch.rejected = true
           }
@@ -354,6 +373,7 @@ export class SessionManager {
         return
       }
       if (decision === 'match') {
+        onVerified(presented)
         verify(true)
         return
       }
@@ -563,6 +583,7 @@ export class SessionManager {
     cancelled.catch(() => {})
     const guard = <T>(p: Promise<T>): Promise<T> => Promise.race([p, cancelled])
 
+    const verifiedFingerprints = new Map<number, string>()
     const entry: SessionEntry = {
       sessionId,
       siteId,
@@ -655,7 +676,8 @@ export class SessionManager {
           hop.username,
           { authMethod: hop.authMethod, privateKeyPath: hop.privateKeyPath, password: hop.password, passphrase: hop.passphrase },
           trustedHostKey,
-          () => !aborted && this.sessions.get(sessionId) === entry
+          () => !aborted && this.sessions.get(sessionId) === entry,
+          (fingerprint) => verifiedFingerprints.set(i, fingerprint)
         )
         if (sock) {
           hopConfig.sock = sock
@@ -695,7 +717,8 @@ export class SessionManager {
         input.username,
         { authMethod: input.authMethod, privateKeyPath: input.privateKeyPath, agentPath: input.agentPath, password: input.password, passphrase: input.passphrase },
         trustedHostKey,
-        () => !aborted && this.sessions.get(sessionId) === entry
+        () => !aborted && this.sessions.get(sessionId) === entry,
+        (fingerprint) => verifiedFingerprints.set(hops.length, fingerprint)
       )
       if (sock) {
         targetConfig.sock = sock
@@ -774,6 +797,11 @@ export class SessionManager {
       throw new SshError('SSH_CONNECT', 'Session was closed before the connection completed')
     }
 
+    if (verifiedFingerprints.size === hops.length + 1) {
+      entry.transferIdentity = JSON.stringify([...hops, input].map((endpoint, index) => [
+        endpoint.host.trim().toLowerCase(), endpoint.port, endpoint.username, verifiedFingerprints.get(index)
+      ]))
+    }
     entry.status = 'connected'
     client.on('close', () => {
       const current = this.sessions.get(sessionId)
@@ -827,6 +855,7 @@ export class SessionManager {
   private broadcastStatus(sessionId: string, status: SessionStatus, message?: string): void {
     const payload: SessionStatusEvent = { sessionId, status, message }
     getHost().broadcast(EVENT_CHANNELS.sessionStatus, payload)
+    if (status !== 'connecting') TransferQueue.refreshRetryConnections()
   }
 
   private broadcastProgress(sessionId: string, message: string): void {
