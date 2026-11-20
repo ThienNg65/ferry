@@ -22,6 +22,8 @@ winget validate --manifest 'dist/winget/manifests/t/ThienNg65/Ferry/1.2.2'
 
 The generated three files must match the staged three files. Do not use the mutable `releases/latest` URL, or hash a pre-signing artifact. Once signing is enabled, regenerate against the *final signed* EXE as released and published, and use a new version rather than changing a published asset. Avoid publishing manifests for tags whose assets may still be replaced.
 
+Run the generator's offline regression tests at any time with `node --test .github/scripts/generate-winget-manifest.test.mjs`; they verify the checked-in manifest matches Ferry's published asset digest and reject changed installer hashes.
+
 ## Required Windows behavior verification
 
 Run only in an isolated Windows machine where Ferry is not needed for daily use. The NSIS source specifies `RequestExecutionLevel user`, `InstallDir $LOCALAPPDATA\Programs\Ferry`, and installer type `nullsoft`. Its Apps & Features registry entry should report `Ferry`, publisher `ThienNg65`, version `1.2.2`, and an uninstall command. No window should require user input during `/S` install, and the application must **not** auto-launch.
