@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdtemp, readdir, readFile, writeFile, rm } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { generateWingetManifests, renderWingetManifests } from '../../scripts/generate-winget-manifest.mjs'
@@ -38,6 +38,18 @@ test('generates from final on-disk installer and preserves identical manifest ru
 test('refuses mismatched asset hashes', async (t) => {
   const { directory, installer } = await fixture(t)
   await assert.rejects(generateWingetManifests({ version: '1.2.2', installer, expectedSha256: '0'.repeat(64), outputRoot: directory }), /SHA-256 mismatch/)
+})
+
+test('publishes a complete manifest set across concurrent generation attempts', async (t) => {
+  const { directory, installer, digest } = await fixture(t)
+  const params = { version: '1.2.2', installer, expectedSha256: digest, outputRoot: directory }
+  const results = await Promise.all(Array.from({ length: 8 }, () => generateWingetManifests(params)))
+  const [{ outputDir }] = results
+  for (const result of results) assert.deepEqual(result, results[0])
+  assert.deepEqual(await readdir(dirname(outputDir)), ['1.2.2'])
+  for (const [name, content] of Object.entries(renderWingetManifests('1.2.2', digest))) {
+    assert.equal(await readFile(join(outputDir, name), 'utf8'), content)
+  }
 })
 
 test('rejects path traversal and mismatched installer names', async (t) => {

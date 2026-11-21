@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -34,8 +34,14 @@ export function renderWingetManifests(version, sha256) {
   }
 }
 
-async function readManifest(path) {
-  return (await readFile(path, 'utf8')).replaceAll('\r\n', '\n')
+async function verifyExistingManifests(outputDir, files) {
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(outputDir, name)
+    const existing = await readFile(path, 'utf8')
+    if (existing.replaceAll('\r\n', '\n') !== content) {
+      throw new Error(`Existing manifest differs: ${path}`)
+    }
+  }
 }
 
 export async function generateWingetManifests({ version, installer, expectedSha256, outputRoot = DEFAULT_OUTPUT }) {
@@ -53,27 +59,35 @@ export async function generateWingetManifests({ version, installer, expectedSha2
     throw new Error(`Installer SHA-256 mismatch: expected ${expectedSha256}, actual ${actualSha256}`)
   }
   const files = renderWingetManifests(version, actualSha256)
-  const outputDir = join(outputRoot, 'manifests', 't', 'ThienNg65', 'Ferry', version)
+  const packageDir = join(outputRoot, 'manifests', 't', 'ThienNg65', 'Ferry')
+  const outputDir = join(packageDir, version)
 
   // Never silently replace manifests for the same published version with changed bytes.
-  for (const [name, content] of Object.entries(files)) {
-    try {
-      if ((await readManifest(join(outputDir, name))) !== content) {
-        throw new Error(`Existing manifest differs: ${join(outputDir, name)}`)
-      }
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
+  try {
+    await verifyExistingManifests(outputDir, files)
+    return { outputDir, sha256: actualSha256 }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
   }
-  await mkdir(outputDir, { recursive: true })
-  for (const [name, content] of Object.entries(files)) {
-    const target = join(outputDir, name)
-    try {
-      await writeFile(target, content, { flag: 'wx' })
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-      if (await readManifest(target) !== content) throw new Error(`Existing manifest differs: ${target}`)
+  await mkdir(packageDir, { recursive: true })
+  const stagingDir = await mkdtemp(join(packageDir, '.winget-'))
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      await writeFile(join(stagingDir, name), content)
     }
+    try {
+      await rename(stagingDir, outputDir)
+    } catch (renameError) {
+      // Another process may have published the complete version directory first.
+      try {
+        await verifyExistingManifests(outputDir, files)
+      } catch (verifyError) {
+        if (verifyError.code === 'ENOENT') throw renameError
+        throw verifyError
+      }
+    }
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true })
   }
   return { outputDir, sha256: actualSha256 }
 }
