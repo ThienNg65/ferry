@@ -235,10 +235,14 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
     class="@container flex min-h-0 flex-1 flex-col overflow-hidden"
     :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
     :style="columnVars"
+    role="grid"
+    :aria-label="`${side} files`"
+    :aria-rowcount="entries.length + 1"
   >
     <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
       role="row"
+      aria-rowindex="1"
       class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
       :class="ui.glassUiEnabled ? 'bg-muted/60' : 'bg-muted/20'"
     >
@@ -306,10 +310,10 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         </UDropdownMenu>
       </span>
     </div>
-    <div class="h-0.5 shrink-0">
+    <div role="presentation" class="h-0.5 shrink-0">
       <UProgress v-if="loading && entries.length > 0" size="xs" />
     </div>
-    <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
+    <div ref="scrollEl" role="rowgroup" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
       <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
       <div v-if="loading && entries.length === 0" role="status" aria-label="Loading directory" class="flex flex-col gap-1 px-2 py-2">
         <div
@@ -360,6 +364,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           <FileRow
             v-memo="[
               entries[virtualRow.index],
+              virtualRow.index,
               selected.has(entries[virtualRow.index].path),
               active,
               renamingPath === entries[virtualRow.index].path,
@@ -368,6 +373,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
               allowExtract
             ]"
             :entry="entries[virtualRow.index]"
+            :row-index="virtualRow.index + 2"
             :selected="selected.has(entries[virtualRow.index].path)"
             :side="side"
             :active="active"
