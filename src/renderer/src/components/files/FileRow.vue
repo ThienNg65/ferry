@@ -255,63 +255,67 @@ function onMouseLeave(): void {
     @dragleave="dropHover = false"
     @drop="onRowDrop"
   >
-    <UTooltip v-if="entry.isSymlink" :text="symlinkTooltip">
-      <span class="relative inline-flex size-4 shrink-0">
-        <UIcon
-          :name="iconForFile(entry.name, entry.isDir)"
-          class="size-4"
-          :class="colorForFile(entry.name, entry.isDir)"
-        />
-        <UIcon
-          :name="entry.symlinkBroken ? 'i-lucide-link-2-off' : 'i-lucide-link-2'"
-          class="absolute -bottom-1 -right-1 size-2.5 rounded-full bg-default"
-          :class="entry.symlinkBroken ? 'text-error' : 'text-muted'"
-        />
-      </span>
-    </UTooltip>
-    <UIcon
-      v-else
-      :name="iconForFile(entry.name, entry.isDir)"
-      class="size-4 shrink-0"
-      :class="colorForFile(entry.name, entry.isDir)"
-    />
-    <UInput
-      v-if="renaming"
-      ref="renameInput"
-      v-model="draftName"
-      size="xs"
-      class="min-w-24 flex-1"
-      autofocus
-      :aria-label="`Rename ${entry.name}`"
-      @click.stop
-      @dblclick.stop
-      @keydown.stop
-      @keyup.enter="submitRename"
-      @keyup.esc="onRenameEscape"
-    />
-    <div v-else class="flex min-w-24 flex-1 items-center gap-1.5 overflow-hidden">
-      <span
-        class="truncate"
-        :class="[
-          entry.isDir ? 'font-medium' : '',
-          entry.isSymlink && entry.symlinkTarget ? 'shrink-0 max-w-[60%]' : ''
-        ]"
-        :title="entry.name"
-      >{{ entry.name }}</span>
-      <span
-        v-if="entry.isSymlink && entry.symlinkTarget"
-        class="min-w-0 flex-1 truncate text-xs font-normal text-muted"
-        :title="entry.symlinkTarget"
-      >
-        → {{ entry.symlinkTarget }}
-      </span>
-      <UBadge v-if="entry.symlinkBroken" color="error" variant="subtle" size="xs" class="shrink-0">
-        broken
-      </UBadge>
+    <span aria-hidden="true" class="contents">
+      <UTooltip v-if="entry.isSymlink" :text="symlinkTooltip">
+        <span class="relative inline-flex size-4 shrink-0">
+          <UIcon
+            :name="iconForFile(entry.name, entry.isDir)"
+            class="size-4"
+            :class="colorForFile(entry.name, entry.isDir)"
+          />
+          <UIcon
+            :name="entry.symlinkBroken ? 'i-lucide-link-2-off' : 'i-lucide-link-2'"
+            class="absolute -bottom-1 -right-1 size-2.5 rounded-full bg-default"
+            :class="entry.symlinkBroken ? 'text-error' : 'text-muted'"
+          />
+        </span>
+      </UTooltip>
+      <UIcon
+        v-else
+        :name="iconForFile(entry.name, entry.isDir)"
+        class="size-4 shrink-0"
+        :class="colorForFile(entry.name, entry.isDir)"
+      />
+    </span>
+    <div role="gridcell" class="min-w-24 flex-1">
+      <UInput
+        v-if="renaming"
+        ref="renameInput"
+        v-model="draftName"
+        size="xs"
+        class="w-full"
+        autofocus
+        :aria-label="`Rename ${entry.name}`"
+        @click.stop
+        @dblclick.stop
+        @keydown.stop
+        @keyup.enter="submitRename"
+        @keyup.esc="onRenameEscape"
+      />
+      <div v-else class="flex items-center gap-1.5 overflow-hidden">
+        <span
+          class="truncate"
+          :class="[
+            entry.isDir ? 'font-medium' : '',
+            entry.isSymlink && entry.symlinkTarget ? 'shrink-0 max-w-[60%]' : ''
+          ]"
+          :title="entry.name"
+        >{{ entry.name }}</span>
+        <span
+          v-if="entry.isSymlink && entry.symlinkTarget"
+          class="min-w-0 flex-1 truncate text-xs font-normal text-muted"
+          :title="entry.symlinkTarget"
+        >
+          → {{ entry.symlinkTarget }}
+        </span>
+        <UBadge v-if="entry.symlinkBroken" color="error" variant="subtle" size="xs" class="shrink-0">
+          broken
+        </UBadge>
+      </div>
     </div>
-    <span v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
-    <span v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
-    <div v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
+    <span role="gridcell" v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
+    <span role="gridcell" v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
+    <div role="gridcell" v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
       <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions}) — click to edit`">
         <button
           type="button"
@@ -323,8 +327,8 @@ function onMouseLeave(): void {
         </button>
       </UTooltip>
     </div>
-    <div v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
-    <div class="flex w-14 shrink-0 items-center justify-end gap-0.5">
+    <div role="gridcell" v-else-if="side === 'remote' && !ui.columns.hidden.includes('permissions')" class="w-[var(--col-permissions)] shrink-0" :class="COLUMN_HIDE.remote.permissions"></div>
+    <div role="gridcell" class="flex w-14 shrink-0 items-center justify-end gap-0.5">
       <UTooltip v-if="transferIcon" :text="transferTooltip">
         <UButton
           :icon="transferIcon"
