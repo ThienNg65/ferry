@@ -16,6 +16,7 @@ import { COLUMN_HIDE } from '../../utils/paneColumns'
 
 const props = defineProps<{
   entry: FileEntry
+  rowIndex: number
   selected: boolean
   /** True when this row's pane is the active one — selection is drawn loud there and grey elsewhere. */
   active: boolean
@@ -230,6 +231,7 @@ function onMouseLeave(): void {
   <ContextMenu :items="contextMenuItems" :content="{ onCloseAutoFocus: onMenuCloseAutoFocus }">
   <div
     role="row"
+    :aria-rowindex="rowIndex"
     :aria-selected="selected"
     class="group flex cursor-default select-none items-center gap-2 px-3 text-row"
     :data-row-path="entry.path"
