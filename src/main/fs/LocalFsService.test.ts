@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   abortStageDrop,
   beginStageDrop,
+  cleanupAllStagedDrops,
   cleanupStagedDropPath,
   cleanupStagedDropPaths,
   finishStageDrop,
@@ -69,6 +70,64 @@ describe('LocalFsService.stageDroppedEntries', () => {
     expect(existsSync(result[0].path)).toBe(true)
     await cleanupStagedDropPath(result[0].path)
     expect(existsSync(result[0].path)).toBe(false)
+    expect(existsSync(stageRoot)).toBe(false)
+  })
+
+
+  it('leaves ordinary files under matching-prefix directories untouched', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-drop-user-data-'))
+    const file = path.join(root, 'keep.txt')
+    stagedRoots.push(root)
+    writeFileSync(file, 'user data')
+
+    await cleanupStagedDropPath(file)
+
+    expect(existsSync(file)).toBe(true)
+    expect(readFileSync(file, 'utf8')).toBe('user data')
+  })
+
+  it('does not sweep matching-prefix directories with missing or malformed ownership markers', async () => {
+    const missingMarkerRoot = mkdtempSync(path.join(os.tmpdir(), 'ferry-drop-unowned-'))
+    const malformedMarkerRoot = mkdtempSync(path.join(os.tmpdir(), 'ferry-drop-malformed-'))
+    stagedRoots.push(missingMarkerRoot, malformedMarkerRoot)
+    const missingMarkerFile = path.join(missingMarkerRoot, 'keep.txt')
+    const malformedMarkerFile = path.join(malformedMarkerRoot, 'keep.txt')
+    writeFileSync(missingMarkerFile, 'user data')
+    writeFileSync(malformedMarkerFile, 'user data')
+    writeFileSync(path.join(malformedMarkerRoot, '.ferry-stage-owner'), 'not a Ferry marker')
+
+    await cleanupAllStagedDrops(0)
+
+    expect(existsSync(missingMarkerFile)).toBe(true)
+    expect(existsSync(malformedMarkerFile)).toBe(true)
+  })
+
+  it('cleans a marked staging root through the restart fallback during per-transfer cleanup', async () => {
+    const result = await stageDroppedEntries({
+      entries: [{ relativePath: 'restart-upload.txt', isDir: false, data: new TextEncoder().encode('upload-me') }]
+    })
+    const stageRoot = path.dirname(result[0].path)
+    stagedRoots.push(stageRoot)
+
+    vi.resetModules()
+    const restartedFs = await import('./LocalFsService')
+    await restartedFs.cleanupStagedDropPath(result[0].path)
+
+    expect(existsSync(result[0].path)).toBe(false)
+    expect(existsSync(stageRoot)).toBe(false)
+  })
+
+  it('sweeps marked stale staging roots left by a previous process', async () => {
+    const result = await stageDroppedEntries({
+      entries: [{ relativePath: 'restart-sweep.txt', isDir: false, data: new TextEncoder().encode('staged') }]
+    })
+    const stageRoot = path.dirname(result[0].path)
+    stagedRoots.push(stageRoot)
+
+    vi.resetModules()
+    const restartedFs = await import('./LocalFsService')
+    await restartedFs.cleanupAllStagedDrops(0)
+
     expect(existsSync(stageRoot)).toBe(false)
   })
 
