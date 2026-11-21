@@ -12,7 +12,7 @@ import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { SshError } from '../main/ssh/errors'
 import { createNodeHost } from './nodeHost'
-import { dispatchInvoke, dispatchSend, encodeLine } from './protocol'
+import { dispatchSend, encodeLine, replyToInvoke } from './protocol'
 import { initSidecarServices, registerShutdownHandler, shutdownSidecarServices } from './sidecar'
 
 export interface NeutralinoExtensionOptions {
@@ -244,8 +244,7 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
       dispatchSend(msg.data.channel, msg.data.payload)
     } else if (msg.event === 'rpc_invoke' && msg.data && typeof msg.data === 'object') {
       const { id, channel, args } = msg.data
-      const result = await dispatchInvoke(channel, args)
-      sendReply(id, result)
+      await replyToInvoke(id, channel, args, sendReply)
     } else if (msg.event === 'sidecar:hello') {
       sendReadyBroadcast()
     } else if (msg.event === 'windowClose') {
