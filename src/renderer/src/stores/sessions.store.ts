@@ -607,11 +607,23 @@ export const useSessionsStore = defineStore('sessions', {
       }
     },
 
-    /** Connects to a saved site — switches to an already-open/connecting tab for the same site instead of opening a duplicate connection. */
-    async connectToSite(site: Site, options?: { newTabIfBusy?: boolean }): Promise<void> {
-      const existing = this.tabs.find(
-        (t) => t.siteId === site.id && t.tabId !== this.activeTabId && (t.status === 'connected' || t.connecting)
-      )
+    /** Clears an initial-connect Quick Connect error so switching auth modes removes stale alerts. */
+    clearQuickConnectError(tabId: string): void {
+      const tab = this.tabs.find((t) => t.tabId === tabId)
+      if (!tab || tab.siteId !== null || tab.hadConnected || tab.status !== 'error') {
+        return
+      }
+      tab.status = null
+      tab.statusMessage = null
+    },
+
+    /** Connects to a saved site — switches to an already-open/connecting tab for the same site unless `forceNewTab` is set. */
+    async connectToSite(site: Site, options?: { newTabIfBusy?: boolean; forceNewTab?: boolean }): Promise<void> {
+      const existing = !options?.forceNewTab
+        ? this.tabs.find(
+            (t) => t.siteId === site.id && t.tabId !== this.activeTabId && (t.status === 'connected' || t.connecting)
+          )
+        : undefined
       if (existing) {
         const previousTab = this.activeTab
         const previousWasEmptyPicker =
@@ -625,7 +637,7 @@ export const useSessionsStore = defineStore('sessions', {
         }
         return
       }
-      if (options?.newTabIfBusy && (this.activeTab.connecting || this.activeTab.sessionId !== null)) {
+      if ((options?.newTabIfBusy || options?.forceNewTab) && (this.activeTab.connecting || this.activeTab.sessionId !== null || this.activeTab.siteId !== null)) {
         this.openNewTab()
       } else if (this.activeTab.connecting) {
         // A second request from the picker would redirect the in-flight picker tab to a different site.

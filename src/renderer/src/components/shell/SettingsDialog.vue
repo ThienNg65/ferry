@@ -21,6 +21,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
 import { formatBytes, formatDateTime, formatSpeed } from '../../utils/format'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import { onDialogTabKeydown } from '../../composables/useDialogFocusTrap'
 
 type TabId = 'appearance' | 'terminal' | 'network' | 'privacy' | 'updates'
 
@@ -309,12 +310,21 @@ function seedNetwork(): void {
   snapshot.value = draftKey.value
 }
 
+const verticalQuery = window.matchMedia('(min-width: 640px)')
+const verticalTabs = ref(verticalQuery.matches)
+function syncOrientation(): void {
+  verticalTabs.value = verticalQuery.matches
+}
+verticalQuery.addEventListener('change', syncOrientation)
+onBeforeUnmount(() => verticalQuery.removeEventListener('change', syncOrientation))
+
 watch(
   () => props.open,
   async (isOpen) => {
     if (!isOpen) {
       return
     }
+    syncOrientation()
     activeTab.value = 'appearance'
     legalDoc.value = null
     autoCheckUpdates.value = settings.autoCheckUpdates
@@ -335,14 +345,6 @@ watch(
   },
   { immediate: true }
 )
-
-const verticalQuery = window.matchMedia('(min-width: 640px)')
-const verticalTabs = ref(verticalQuery.matches)
-function syncOrientation(): void {
-  verticalTabs.value = verticalQuery.matches
-}
-verticalQuery.addEventListener('change', syncOrientation)
-onBeforeUnmount(() => verticalQuery.removeEventListener('change', syncOrientation))
 
 function formatTime(iso: string | null): string {
   return iso ? formatDateTime(iso) : 'Never'
@@ -528,6 +530,7 @@ async function saveNetwork(): Promise<void> {
   <UModal
     :open="open"
     title="Settings"
+    :content="{ onKeydown: (e: KeyboardEvent) => { if (e.key === 'Tab') onDialogTabKeydown(e) } }"
     :ui="{ content: 'max-w-3xl h-[35rem] max-h-[85vh]', body: 'min-h-0 p-0 sm:p-0 overflow-hidden' }"
     @update:open="(v: boolean) => { if (!v) close() }"
   >

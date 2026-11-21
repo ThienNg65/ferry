@@ -672,8 +672,15 @@ onMounted(() => {
     }
   })
   lastReceived = tailStreams.receivedCountMap[props.tailId] || 0
+  let initialSettled = lastReceived > 0
   rateTimer = setInterval(() => {
     const received = tailStreams.receivedCountMap[props.tailId] || 0
+    if (!initialSettled) {
+      initialSettled = true
+      lastReceived = received
+      linesPerSec.value = 0
+      return
+    }
     linesPerSec.value = Math.max(0, received - lastReceived)
     lastReceived = received
   }, 1000)
@@ -883,7 +890,7 @@ watchEffect(() => {
             <div
               class="flex-1 min-w-0 pl-2 pr-14"
               :class="[
-                wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre',
+                wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre',
                 getLogLevelStyles(filteredLines[virtualRow.index].level).textClass
               ]"
             >

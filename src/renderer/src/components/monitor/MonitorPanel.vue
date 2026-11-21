@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { MONITOR_INTERVAL_OPTIONS, useMonitorStore } from '../../stores/monitor.store'
 import { useSessionsStore } from '../../stores/sessions.store'
-import { useDockState } from '../../composables/useDockState'
 import { formatBytes, formatElapsed, formatUptime } from '../../utils/format'
 import {
   buildSparklineGeometry,
@@ -15,7 +14,6 @@ import ProcessTable from './ProcessTable.vue'
 
 const monitor = useMonitorStore()
 const sessions = useSessionsStore()
-const { isMaximized, toggleMaximize } = useDockState()
 const cpuGradId = useId()
 
 /** Caps the per-core bar strip in the summary card — beyond this a "+N" badge stands in for the rest. */
@@ -247,16 +245,6 @@ const sampleAgeLabel = computed(() => {
             @click="togglePause"
           />
         </UTooltip>
-        <UTooltip :text="isMaximized ? 'Restore dock size' : 'Maximize dock'">
-          <UButton
-            :icon="isMaximized ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            :aria-label="isMaximized ? 'Restore dock size' : 'Maximize dock'"
-            @click="toggleMaximize"
-          />
-        </UTooltip>
       </div>
     </div>
 
@@ -306,7 +294,7 @@ const sampleAgeLabel = computed(() => {
     </div>
 
     <!-- Main Monitor Dashboard -->
-    <div v-else class="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div v-else class="@container flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         v-if="monitor.status === 'error'"
         role="alert"
@@ -325,7 +313,7 @@ const sampleAgeLabel = computed(() => {
           @click="sessions.activeSessionId && monitor.start(sessions.activeSessionId)"
         />
       </div>
-      <div class="grid shrink-0 grid-cols-1 gap-2 px-2.5 py-1.5 md:grid-cols-3">
+      <div class="grid shrink-0 grid-cols-1 gap-2 px-2.5 py-1.5 @[720px]:grid-cols-3">
         <!-- CPU Card -->
         <div class="flex flex-col justify-between gap-1 rounded-md border border-muted bg-muted/20 px-2.5 py-1.5">
           <div class="flex items-center justify-between gap-2">

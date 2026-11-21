@@ -4,14 +4,15 @@ export function onTablistKeydown(
   vertical = false,
   selector = '[role="tab"]'
 ): void {
-  const prevKey = vertical ? 'ArrowUp' : 'ArrowLeft'
-  const nextKey = vertical ? 'ArrowDown' : 'ArrowRight'
+  const list = event.currentTarget as HTMLElement
+  const isVertical = vertical || list.getAttribute('aria-orientation') === 'vertical'
+  const prevKey = isVertical ? 'ArrowUp' : 'ArrowLeft'
+  const nextKey = isVertical ? 'ArrowDown' : 'ArrowRight'
   const isHome = event.key === 'Home'
   const isEnd = event.key === 'End'
   if (event.key !== prevKey && event.key !== nextKey && !isHome && !isEnd) {
     return
   }
-  const list = event.currentTarget as HTMLElement
   const tabs = [...list.querySelectorAll<HTMLElement>(selector)]
   if (tabs.length === 0) {
     return

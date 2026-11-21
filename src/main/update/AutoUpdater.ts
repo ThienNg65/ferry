@@ -33,7 +33,7 @@ function isStoreManaged(): boolean {
 }
 
 function isAutoUpdateEnabled(): boolean {
-  return getIsPackaged() && !isStoreManaged()
+  return getIsPackaged() && !isStoreManaged() && process.env['FERRY_DISABLE_AUTO_UPDATE'] !== '1'
 }
 
 function getAppVersion(): string {

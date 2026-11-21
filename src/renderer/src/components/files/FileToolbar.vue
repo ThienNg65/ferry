@@ -43,13 +43,23 @@ const emit = defineEmits<{
   'compare-folder': []
 }>()
 
+const moreOpen = ref(false)
+
+function emitAfterMenuClose(eventName: 'sync-folder' | 'compare-folder'): void {
+  moreOpen.value = false
+  void nextTick(() => {
+    if (eventName === 'sync-folder') emit('sync-folder')
+    else emit('compare-folder')
+  })
+}
+
 const moreItems = computed<DropdownMenuItem[]>(() => {
   const items: DropdownMenuItem[] = [
     { label: 'New file', icon: 'i-lucide-file-plus', onSelect: () => emit('touch') }
   ]
   if (props.showSync) {
-    items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emit('sync-folder') })
-    items.push({ label: 'Compare with local folder…', icon: 'i-lucide-columns-2', onSelect: () => emit('compare-folder') })
+    items.push({ label: 'Sync this folder…', icon: 'i-lucide-folder-sync', onSelect: () => emitAfterMenuClose('sync-folder') })
+    items.push({ label: 'Compare with local folder…', icon: 'i-lucide-columns-2', onSelect: () => emitAfterMenuClose('compare-folder') })
   }
   items.push({
     label: props.showHidden ? 'Hide hidden files (Ctrl+H)' : 'Show hidden files (Ctrl+H)',
@@ -66,31 +76,20 @@ const filterExpanded = ref(false)
 const showFilterInput = computed(() => filterExpanded.value || Boolean(props.filterText))
 type InputRef = { inputRef?: HTMLInputElement } | HTMLInputElement | null
 const filterInputRef = ref<InputRef>(null)
-const narrowFilterInputRef = ref<InputRef>(null)
-
-function pickVisibleInput(candidate: InputRef): HTMLInputElement | null {
-  const el =
-    candidate && 'inputRef' in candidate
-      ? (candidate.inputRef ?? null)
-      : (candidate as HTMLInputElement | null)
-  return el && el.offsetParent !== null ? el : null
-}
 
 function focusFilter(): void {
   filterExpanded.value = true
   void nextTick(() => {
-    const el = pickVisibleInput(filterInputRef.value) ?? pickVisibleInput(narrowFilterInputRef.value)
+    const candidate = filterInputRef.value
+    const el =
+      candidate && 'inputRef' in candidate
+        ? (candidate.inputRef ?? null)
+        : (candidate as HTMLInputElement | null)
     if (el) {
       el.focus()
       el.select()
     }
   })
-}
-
-function collapseEmptyFilter(): void {
-  if (!props.filterText) {
-    filterExpanded.value = false
-  }
 }
 
 function clearAndCollapseFilter(): void {
@@ -163,39 +162,13 @@ function onFilterInput(value: string | number): void {
           size="xs"
           aria-label="Search files"
           :aria-pressed="showFilterInput"
-          :class="['ferry-pressable', showFilterInput ? '@[480px]:hidden' : '']"
+          class="ferry-pressable"
           @mousedown.prevent
           @click="showFilterInput ? clearAndCollapseFilter() : focusFilter()"
         />
       </UTooltip>
-      <UInput
-        v-if="showFilterInput"
-        ref="filterInputRef"
-        :model-value="filterText ?? ''"
-        icon="i-lucide-search"
-        placeholder="Search…"
-        size="xs"
-        class="hidden @[480px]:inline-flex shrink-0 w-32 @[580px]:w-36 focus-within:w-40 transition-[width] duration-[var(--ferry-motion-standard)] ease-[var(--ferry-motion-ease-emphasized)]"
-        :ui="{ trailing: 'pointer-events-auto' }"
-        @update:model-value="onFilterInput"
-        @blur="collapseEmptyFilter"
-        @keydown.esc.stop="clearAndCollapseFilter"
-      >
-        <template v-if="filterText" #trailing>
-          <UButton
-            icon="i-lucide-x"
-            color="neutral"
-            variant="link"
-            size="xs"
-            aria-label="Clear search"
-            :padded="false"
-            @mousedown.prevent
-            @click="clearAndCollapseFilter"
-          />
-        </template>
-      </UInput>
       <FileVisibilityPopover
-        v-if="side === 'remote' && visibilityFilter"
+        v-if="visibilityFilter"
         :model-value="visibilityFilter"
         @update:model-value="emit('update:visibilityFilter', $event)"
         @clear="emit('clear-visibility-filter')"
@@ -254,21 +227,20 @@ function onFilterInput(value: string | number): void {
           </div>
         </template>
       </Popover>
-      <UDropdownMenu :items="moreItems">
+      <UDropdownMenu v-model:open="moreOpen" :items="moreItems">
         <UButton class="ferry-pressable" icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="xs" aria-label="More actions" />
       </UDropdownMenu>
     </div>
-    <div v-if="showFilterInput" class="basis-full pt-0.5 @[480px]:hidden">
+    <div v-if="showFilterInput" class="basis-full pt-0.5 @[580px]:basis-auto @[580px]:pt-0">
       <UInput
-        ref="narrowFilterInputRef"
+        ref="filterInputRef"
         :model-value="filterText ?? ''"
         icon="i-lucide-search"
         placeholder="Search…"
         size="xs"
-        class="w-full"
+        class="w-full @[580px]:w-36 focus-within:@[580px]:w-44 transition-[width] duration-[var(--ferry-motion-standard)] ease-[var(--ferry-motion-ease-emphasized)]"
         :ui="{ trailing: 'pointer-events-auto' }"
         @update:model-value="onFilterInput"
-        @blur="collapseEmptyFilter"
         @keydown.esc.stop="clearAndCollapseFilter"
       >
         <template v-if="filterText" #trailing>

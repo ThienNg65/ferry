@@ -53,6 +53,7 @@ declare module 'vue' {
     SyncDialog: typeof import('./src/components/files/SyncDialog.vue')['default']
     TerminalAppearanceSettings: typeof import('./src/components/shell/TerminalAppearanceSettings.vue')['default']
     TerminalView: typeof import('./src/components/terminal/TerminalView.vue')['default']
+    TransferConflictDialog: typeof import('./src/components/files/TransferConflictDialog.vue')['default']
     TransferItem: typeof import('./src/components/transfers/TransferItem.vue')['default']
     TransferQueue: typeof import('./src/components/transfers/TransferQueue.vue')['default']
     UAlert: typeof import('./../../node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']

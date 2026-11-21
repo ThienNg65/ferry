@@ -308,6 +308,9 @@ export interface HostKeyPromptEvent {
   host: string
   port: number
   fingerprint: string
+  algorithm?: string
+  role?: 'jump' | 'target'
+  hopIndex?: number
 }
 
 /** Request payload for `session:host-key-respond`. */
@@ -557,6 +560,7 @@ export interface SyncOptions {
 export interface SyncPlanEntry {
   relPath: string
   size: number
+  action?: 'new' | 'overwrite'
 }
 
 /** Preview of what a sync run would do — shown to the user before they confirm, since `deleteExtras` can remove real destination data with no undo. */

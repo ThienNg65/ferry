@@ -13,3 +13,6 @@ spikes
 .claude
 bin/
 extensions/
+
+test-env/
+docs/product-testing/

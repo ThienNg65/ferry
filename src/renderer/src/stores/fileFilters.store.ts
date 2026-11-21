@@ -9,7 +9,7 @@ import {
 const STORAGE_PREFIX = 'ferry:visibilityFilter:'
 
 function isPersistentKey(key: string): boolean {
-  return key.startsWith('site:') || key.startsWith('host:')
+  return key === 'local' || key.startsWith('site:') || key.startsWith('host:')
 }
 
 function normalizePatternArray(value: unknown): string[] {

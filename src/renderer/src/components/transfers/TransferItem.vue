@@ -54,7 +54,7 @@ const cancellable = computed(
   () => props.state === 'queued' || props.state === 'started' || props.state === 'progress' || props.state === 'paused'
 )
 const pausable = computed(() => props.state === 'queued' || props.state === 'started' || props.state === 'progress')
-const retryable = computed(() => props.state === 'error' || props.state === 'paused')
+const retryable = computed(() => props.state === 'error' || props.state === 'paused' || props.state === 'cancelled')
 const retryLabel = computed(() => {
   if (props.restartRequired) return 'Restart transfer'
   return props.state === 'paused' ? 'Resume transfer' : 'Retry transfer'

@@ -244,11 +244,28 @@ function close(): void {
 
         <div v-if="plan" class="rounded-md border border-default p-3 text-sm">
           <div>{{ plan.toTransfer.length }} file(s) to transfer ({{ formatBytes(plan.totalBytes) }})</div>
-          <div v-if="deleteExtras" :class="plan.toDelete.length > 0 ? 'text-error' : ''">
+          <ul v-if="plan.toTransfer.length" class="mt-2 max-h-40 space-y-1 overflow-y-auto rounded bg-muted p-2">
+            <li v-for="entry in plan.toTransfer.slice(0, 200)" :key="entry.relPath" class="flex items-center justify-between gap-2 text-xs">
+              <span class="min-w-0 truncate font-mono">{{ entry.relPath }}</span>
+              <span
+                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase"
+                :class="entry.action === 'overwrite' ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'"
+              >
+                {{ entry.action === 'overwrite' ? 'Overwrite' : 'New' }}
+              </span>
+            </li>
+            <li v-if="plan.toTransfer.length > 200" class="pt-1 text-xs text-muted">
+              …and {{ plan.toTransfer.length - 200 }} more file(s)
+            </li>
+          </ul>
+          <div v-if="deleteExtras" class="mt-2" :class="plan.toDelete.length > 0 ? 'text-error' : ''">
             {{ plan.toDelete.length }} item(s) will be deleted from destination-only top-level items
           </div>
           <ul v-if="plan.toDelete.length" class="mt-2 max-h-48 space-y-1 overflow-y-auto rounded bg-muted p-2">
-            <li v-for="item in plan.toDelete" :key="item" class="break-all">{{ deletionPath(item) }}</li>
+            <li v-for="item in plan.toDelete.slice(0, 200)" :key="item" class="break-all">{{ deletionPath(item) }}</li>
+            <li v-if="plan.toDelete.length > 200" class="pt-1 text-xs text-muted">
+              …and {{ plan.toDelete.length - 200 }} more item(s)
+            </li>
           </ul>
         </div>
       </div>

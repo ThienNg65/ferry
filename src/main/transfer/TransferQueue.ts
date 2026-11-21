@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { rename, stat, unlink } from 'fs/promises'
+import { rename, stat, unlink, utimes } from 'fs/promises'
 import * as path from 'path'
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
@@ -104,6 +104,10 @@ export class RateLimiter {
     this.schedule()
   }
 
+  reset(): void {
+    this.nextAvailableAt = Date.now()
+  }
+
   /** Only granted requests reserve time; cancellation removes queued work immediately. */
   acquire(bytes: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
@@ -113,7 +117,7 @@ export class RateLimiter {
       return Promise.resolve()
     }
     // Start a new burst at wall time after an actual idle period; do not bank unlimited bandwidth.
-    if (this.pending.length === 0 && this.nextAvailableAt < Date.now() - MAX_BANDWIDTH_CATCH_UP_MS) {
+    if (this.pending.length === 0 && this.nextAvailableAt < Date.now()) {
       this.nextAvailableAt = Date.now()
     }
     return new Promise<void>((resolve, reject) => {
@@ -273,6 +277,9 @@ export class TransferQueue {
     }
     this.retryable.delete(transferId)
     this.paused.delete(transferId)
+    if (this.active.size === 0) {
+      this.rateLimiter.reset()
+    }
     const job: TransferJob = {
       ...old,
       sessionId,
@@ -320,6 +327,9 @@ export class TransferQueue {
     const activeJob = this.active.get(transferId)
     if (activeJob) {
       activeJob.controller.abort(PAUSE_REASON)
+      if (this.active.size <= 1) {
+        this.rateLimiter.reset()
+      }
       return
     }
     const idx = this.pending.findIndex((j) => j.transferId === transferId)
@@ -327,6 +337,9 @@ export class TransferQueue {
       const [job] = this.pending.splice(idx, 1)
       this.rememberRetryable(job)
       this.paused.add(transferId)
+      if (this.active.size === 0) {
+        this.rateLimiter.reset()
+      }
       this.broadcast(this.retryEvent(job))
     }
   }
@@ -364,12 +377,14 @@ export class TransferQueue {
       return
     }
     if (pausedJob) {
-      this.retryable.delete(transferId)
       this.paused.delete(transferId)
-      const evt = this.jobEvent(pausedJob, 'cancelled')
+      pausedJob.restartRequired = true
+      pausedJob.retryError = undefined
+      this.rememberRetryable(pausedJob)
+      this.cleanupStaging(pausedJob)
+      const evt = this.jobEvent(pausedJob, 'cancelled', { restartRequired: true })
       this.broadcast(evt)
       this.notifyTerminal(pausedJob, evt)
-      this.cleanupJobArtifacts(pausedJob)
       return
     }
     const activeJob = this.active.get(transferId)
@@ -380,10 +395,13 @@ export class TransferQueue {
     const idx = this.pending.findIndex((j) => j.transferId === transferId)
     if (idx !== -1) {
       const [job] = this.pending.splice(idx, 1)
-      const evt = this.jobEvent(job, 'cancelled')
+      job.restartRequired = true
+      job.retryError = undefined
+      this.rememberRetryable(job)
+      this.cleanupStaging(job)
+      const evt = this.jobEvent(job, 'cancelled', { restartRequired: true })
       this.broadcast(evt)
       this.notifyTerminal(job, evt)
-      this.cleanupJobArtifacts(job)
     }
   }
 
@@ -421,7 +439,7 @@ export class TransferQueue {
       job.sourceStamp = stamp
 
       const startedAt = Date.now()
-      let lastEmit = 0
+      let lastEmit = startedAt
       const emitProgress = (bytesTransferred: number, offset: number): void => {
         const now = Date.now()
         if (now - lastEmit < PROGRESS_THROTTLE_MS && bytesTransferred < totalBytes) {
@@ -440,6 +458,10 @@ export class TransferQueue {
         else await mkdirLocalRecursive(path.dirname(job.localPath))
       }
       job.staging ??= new Map()
+      const remoteMtime =
+        kind === 'download' && 'mtime' in source && typeof source.mtime === 'number' && Number.isFinite(source.mtime) && source.mtime > 0
+          ? new Date(source.mtime * 1000)
+          : undefined
       await this.runFile({
         shell,
         kind,
@@ -448,6 +470,7 @@ export class TransferQueue {
         signal: job.controller.signal,
         size: totalBytes,
         resume: job.resume === true,
+        remoteMtime,
         staging: job.staging,
         onProgress: emitProgress
       })
@@ -476,6 +499,7 @@ export class TransferQueue {
     signal: AbortSignal
     size: number
     resume: boolean
+    remoteMtime?: Date
     staging: NonNullable<TransferJob['staging']>
     onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
@@ -523,6 +547,9 @@ export class TransferQueue {
       await commitRemoteFile(opts.shell, staging.path, destPath)
     } else {
       await rename(staging.path, destPath)
+      if (opts.remoteMtime) {
+        await utimes(destPath, opts.remoteMtime, opts.remoteMtime).catch(() => undefined)
+      }
     }
     opts.staging.delete(destPath)
   }
@@ -602,7 +629,7 @@ export class TransferQueue {
       // (fully-finished files) plus whatever each still-in-flight file has moved.
       const inFlightBytes = new Map<number, number>()
       const startedAt = Date.now()
-      let lastEmit = 0
+      let lastEmit = startedAt
       const emitProgress = (): void => {
         const now = Date.now()
         let inFlightTotal = 0
@@ -638,6 +665,10 @@ export class TransferQueue {
             signal: job.controller.signal,
             size: file.size,
             resume: job.resume === true,
+            remoteMtime:
+              kind === 'download' && typeof file.mtimeMs === 'number' && Number.isFinite(file.mtimeMs) && file.mtimeMs > 0
+                ? new Date(file.mtimeMs)
+                : undefined,
             staging: job.staging!,
             onProgress: (bytesTransferred) => {
               inFlightBytes.set(index, bytesTransferred)
@@ -670,10 +701,11 @@ export class TransferQueue {
     const paused = cancelled && job.controller.signal.reason === PAUSE_REASON
     if (paused) this.paused.add(job.transferId)
     job.retryError = cancelled ? undefined : error instanceof Error ? error.message : String(error)
-    job.restartRequired = error instanceof TransferRestartRequired
-    if (!cancelled || paused) this.rememberRetryable(job)
-    if (cancelled && !paused) this.cleanupJobArtifacts(job)
-    const event = paused || !cancelled ? this.retryEvent(job) : this.jobEvent(job, 'cancelled')
+    job.restartRequired = (cancelled && !paused) || error instanceof TransferRestartRequired
+    this.rememberRetryable(job)
+    if (cancelled && !paused) this.cleanupStaging(job)
+    const event =
+      paused || !cancelled ? this.retryEvent(job) : this.jobEvent(job, 'cancelled', { restartRequired: true })
     this.broadcast(event)
     if (!paused) this.notifyTerminal(job, event)
   }

@@ -76,7 +76,7 @@ const GLASS_UI_KEY = 'ferry:ui:glassUi'
 const GLASS_PROMO_DISMISSED_KEY = 'ferry:ui:glassUiPromoDismissed'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
 export const DEFAULT_ACCENT_COLOR = '#0a84ff'
-export const DEFAULT_LOCAL_PANE_WIDTH = 33.33
+export const DEFAULT_LOCAL_PANE_WIDTH = 50
 
 export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
