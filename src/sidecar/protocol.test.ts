@@ -44,6 +44,11 @@ describe('sidecar protocol', () => {
 
   it('contains rejected and throwing handlers on stdin, replies once, and keeps serving', async () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
     try {
       const secret = 'private-password-and-path'
       handlers.set('sites:list', (async () => { throw new Error(secret) }) as ChannelHandler)
@@ -62,7 +67,9 @@ describe('sidecar protocol', () => {
       expect(replies.get(12)).toEqual({ ok: true, data: 'still-responsive' })
       expect(JSON.stringify(out)).not.toContain(secret)
       expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+      expect(unhandled).toEqual([])
     } finally {
+      process.off('unhandledRejection', onUnhandled)
       diagnostic.mockRestore()
     }
   })
@@ -156,7 +163,7 @@ describe('sidecar protocol', () => {
     const { input, out } = harness()
     send(input, { id: 3, channel: 'window:close', args: [] })
     await settle()
-    expect(out).toEqual([{ id: 3, result: { ok: false, code: 'UNKNOWN', message: 'IPC channel not handled by sidecar: window:close' } }])
+    expect(out).toEqual([{ id: 3, result: { ok: false, code: 'UNKNOWN', message: 'IPC channel not handled by sidecar' } }])
   })
 
   it('rejects a non-string channel at the protocol boundary', async () => {
