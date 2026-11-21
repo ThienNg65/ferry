@@ -261,9 +261,7 @@ function normalizeStageSegments(relativePath: string): string[] {
     throw new SshError('VALIDATION', `Invalid dropped relative path "${relativePath}"`)
   }
   const segments = rawRel.split('/').filter(Boolean)
-  const reservedMarker = process.platform === 'win32'
-    ? segments[0]?.toLowerCase() === STAGE_DROP_MARKER.toLowerCase()
-    : segments[0] === STAGE_DROP_MARKER
+  const reservedMarker = segments[0]?.toLowerCase() === STAGE_DROP_MARKER.toLowerCase()
   if (reservedMarker) {
     logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
     throw new SshError('VALIDATION', 'The staging ownership marker path is reserved')
@@ -445,7 +443,10 @@ export async function cleanupStagedDropPath(localPath: string): Promise<void> {
   }
 
   const resolvedTarget = path.resolve(localPath)
-  if (resolvedTarget === path.join(stageRoot, STAGE_DROP_MARKER)) {
+  if (
+    path.dirname(resolvedTarget) === stageRoot &&
+    path.basename(resolvedTarget).toLowerCase() === STAGE_DROP_MARKER.toLowerCase()
+  ) {
     return
   }
   if (!(await hasSafeStagePathParents(stageRoot, resolvedTarget))) {

@@ -52,9 +52,15 @@ describe('LocalFsService.stageDroppedEntries', () => {
         entries: [{ relativePath: '.ferry-stage-owner', isDir: false, data: new Uint8Array([1]) }]
       })
     ).rejects.toThrow(/ownership marker path is reserved/)
+    await expect(
+      stageDroppedEntries({
+        entries: [{ relativePath: '.FERRY-STAGE-OWNER', isDir: false, data: new Uint8Array([1]) }]
+      })
+    ).rejects.toThrow(/ownership marker path is reserved/)
 
     const { stageId } = await beginStageDrop()
     await expect(openStageDropWriteStream(stageId, '.ferry-stage-owner')).rejects.toThrow(/ownership marker path is reserved/)
+    await expect(openStageDropWriteStream(stageId, '.FERRY-STAGE-OWNER')).rejects.toThrow(/ownership marker path is reserved/)
     await abortStageDrop(stageId)
   })
 
