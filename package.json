@@ -1,6 +1,6 @@
 {
   "name": "ferry",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/sidecar/index.cjs",
   "license": "MIT",
