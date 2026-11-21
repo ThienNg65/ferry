@@ -252,7 +252,7 @@ describe('remote ZIP safe replacement (real POSIX shell)', () => {
     const shell = {
       realpath: fs.realpath,
       exec: async (command: string) => {
-        const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' })
+        const result = spawnSync('sh', ['-c', `umask 022\n${command}`], { encoding: 'utf8' })
         abortAfterPreparation?.abort()
         return { code: result.status, stdout: result.stdout, stderr: result.stderr }
       },
@@ -274,6 +274,12 @@ describe('remote ZIP safe replacement (real POSIX shell)', () => {
       manager.mockRestore()
     }
   }
+
+  it.runIf(supported && process.platform !== 'win32')('preserves the login umask for the published archive', async () => {
+    const { source, dest } = await fixture()
+    await run(source, dest)
+    expect((await fs.stat(dest)).mode & 0o777).toBe(0o644)
+  })
 
   it.runIf(supported)('keeps the previous ZIP byte-for-byte when the source is missing', async () => {
     const { dest } = await fixture()
