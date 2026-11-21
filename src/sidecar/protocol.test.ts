@@ -2,7 +2,7 @@ import { PassThrough } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handle, handlers, onSend, sendHandlers, type ChannelHandler } from '../main/ipc/envelope'
 import { SshError } from '../main/ssh/errors'
-import { decodeB64Deep, dispatchInvoke, encodeLine, serve, type SidecarHooks } from './protocol'
+import { decodeB64Deep, dispatchInvoke, dispatchWebSocketMessage, encodeLine, serve, type SidecarHooks } from './protocol'
 
 function harness(): { input: PassThrough; out: unknown[]; hooks: SidecarHooks & { init: ReturnType<typeof vi.fn>; shutdown: ReturnType<typeof vi.fn> } } {
   const input = new PassThrough()
@@ -42,6 +42,130 @@ describe('sidecar protocol', () => {
     expect(out[1]).toEqual({ id: 1, result: { ok: true, data: 'slow' } })
   })
 
+  it('contains rejected and throwing handlers on stdin, replies once, and keeps serving', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const secret = 'private-password-and-path'
+      handlers.set('sites:list', (async () => { throw new Error(secret) }) as ChannelHandler)
+      handlers.set('bookmarks:list', (() => { throw new Error(secret) }) as ChannelHandler)
+      handle('session:close', () => 'still-responsive')
+      const { input, out } = harness()
+      send(input, { id: 10, channel: 'sites:list', args: [] })
+      send(input, { id: 11, channel: 'bookmarks:list', args: [] })
+      send(input, { id: 12, channel: 'session:close', args: [] })
+      await settle()
+      expect(out).toHaveLength(3)
+      const replies = new Map((out as Array<{ id: number; result: unknown }>).map(({ id, result }) => [id, result] as const))
+      expect([...replies.keys()].sort((a, b) => a - b)).toEqual([10, 11, 12])
+      expect(replies.get(10)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
+      expect(replies.get(11)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
+      expect(replies.get(12)).toEqual({ ok: true, data: 'still-responsive' })
+      expect(JSON.stringify(out)).not.toContain(secret)
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      diagnostic.mockRestore()
+    }
+  })
+
+  it('sanitizes unexpected errors returned by the registered IPC envelope', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const secret = 'password=private-value; path=C:\\Users\\private'
+      handle('sites:list', () => {
+        throw new Error(secret)
+      })
+
+      await expect(dispatchInvoke('sites:list', [])).resolves.toEqual({
+        ok: false,
+        code: 'UNKNOWN',
+        message: 'The operation failed unexpectedly'
+      })
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+    } finally {
+      diagnostic.mockRestore()
+    }
+  })
+
+  it('contains rejected handlers and replies once through the shared WebSocket dispatcher', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      handlers.set('sites:list', (async () => {
+        throw new Error('credential=secret')
+      }) as ChannelHandler)
+      const replies: unknown[] = []
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-1', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push(JSON.parse(encodeLine({ event: 'rpc_reply', data: { id, result } }))),
+        vi.fn(),
+        vi.fn()
+      )
+      expect(replies).toEqual([
+        {
+          event: 'rpc_reply',
+          data: { id: 'ws-1', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+        }
+      ])
+
+      handle('sites:list', () => new Uint8Array([0, 255]))
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-2', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push(JSON.parse(encodeLine({ event: 'rpc_reply', data: { id, result } }))),
+        vi.fn(),
+        vi.fn()
+      )
+      expect(replies[1]).toEqual({
+        event: 'rpc_reply',
+        data: { id: 'ws-2', result: { ok: true, data: { __b64: 'AP8=' } } }
+      })
+      await settle()
+      expect(unhandled).toEqual([])
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('credential=secret')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      diagnostic.mockRestore()
+    }
+  })
+
+  it('contains synchronous WebSocket handler throws and replies once', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const secret = 'private-sync-credential'
+      handlers.set('sites:list', (() => {
+        throw new Error(secret)
+      }) as ChannelHandler)
+      const replies: unknown[] = []
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-sync', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push({ event: 'rpc_reply', data: { id, result } }),
+        vi.fn(),
+        vi.fn()
+      )
+      expect(replies).toHaveLength(1)
+      expect(replies).toEqual([
+        {
+          event: 'rpc_reply',
+          data: { id: 'ws-sync', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+        }
+      ])
+      expect(JSON.stringify(replies)).not.toContain(secret)
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+    } finally {
+      diagnostic.mockRestore()
+    }
+  })
+
   it('routes fire-and-forget send messages to sendHandlers', async () => {
     const received: unknown[] = []
     onSend('terminal:input', (_e, payload) => received.push(payload))
@@ -67,7 +191,7 @@ describe('sidecar protocol', () => {
     const { input, out } = harness()
     send(input, { id: 3, channel: 'window:close', args: [] })
     await settle()
-    expect(out).toEqual([{ id: 3, result: { ok: false, code: 'UNKNOWN', message: 'IPC channel not handled by sidecar: window:close' } }])
+    expect(out).toEqual([{ id: 3, result: { ok: false, code: 'UNKNOWN', message: 'IPC channel not handled by sidecar' } }])
   })
 
   it('rejects a non-string channel at the protocol boundary', async () => {
@@ -82,7 +206,7 @@ describe('sidecar protocol', () => {
     await expect(dispatchInvoke('sites:list', [])).resolves.toEqual({
       ok: false,
       code: 'UNKNOWN',
-      message: 'IPC channel not handled by sidecar: sites:list'
+      message: 'IPC channel not handled by sidecar'
     })
   })
 

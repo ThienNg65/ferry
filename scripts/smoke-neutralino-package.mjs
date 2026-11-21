@@ -6,7 +6,7 @@ import * as os from 'os'
 import { dirname, join, posix as pathPosix, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import ssh2Pkg from 'ssh2'
-import { WebSocketServer } from 'ws'
+import WebSocket, { WebSocketServer } from 'ws'
 import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
 const require = createRequire(import.meta.url)
@@ -79,6 +79,7 @@ let ranNsisInstaller = false
 let child = null
 let wss = null
 let sshServer = null
+let directSocket = null
 
 /** Starts an in-process SSH + SFTP + PTY test server for packaged end-to-end verification. */
 async function startSmokeSshServer() {
@@ -337,6 +338,7 @@ try {
   let stdoutBytes = 0
   let stderrText = ''
   let sidecarSocket = null
+  let directEndpoint = null
   const pendingReplies = new Map()
   const eventWaiters = []
   const bufferedEvents = []
@@ -362,6 +364,18 @@ try {
       ws.on('message', (raw) => {
         const msg = JSON.parse(raw.toString())
         if (msg.method === 'app.broadcast' && msg.data?.event === 'sidecar:ready') {
+          const readyData = msg.data.data ?? {}
+          if (
+            !Number.isInteger(readyData.directPort) ||
+            readyData.directPort <= 0 ||
+            typeof readyData.directToken !== 'string' ||
+            !readyData.directToken
+          ) {
+            clearTimeout(timeout)
+            rejectReady(new Error('Sidecar did not expose an authenticated direct WebSocket endpoint'))
+            return
+          }
+          directEndpoint = { port: readyData.directPort, token: readyData.directToken }
           readyMs = performance.now() - startMs
           clearTimeout(timeout)
           resolveReady()
@@ -412,6 +426,63 @@ try {
 
   await readyPromise
 
+  directSocket = new WebSocket(
+    `ws://127.0.0.1:${directEndpoint.port}?token=${encodeURIComponent(directEndpoint.token)}`
+  )
+  await new Promise((resolveConnection, rejectConnection) => {
+    const timer = setTimeout(() => rejectConnection(new Error('Direct WebSocket connection timed out')), 10_000)
+    const onOpen = () => {
+      clearTimeout(timer)
+      directSocket.off('error', onError)
+      resolveConnection()
+    }
+    const onError = (error) => {
+      clearTimeout(timer)
+      directSocket.off('open', onOpen)
+      rejectConnection(error)
+    }
+    directSocket.once('open', onOpen)
+    directSocket.once('error', onError)
+  })
+
+  function directRpcInvoke(channel, ...args) {
+    const id = `direct-smoke-${nextReq++}`
+    return new Promise((resolveCall, rejectCall) => {
+      const cleanup = () => {
+        clearTimeout(timer)
+        directSocket.off('message', onMessage)
+        directSocket.off('error', onError)
+        directSocket.off('close', onClose)
+      }
+      const onMessage = (raw) => {
+        let msg
+        try {
+          msg = JSON.parse(raw.toString())
+        } catch {
+          return
+        }
+        if (msg.event !== 'rpc_reply' || msg.data?.id !== id) return
+        cleanup()
+        resolveCall(msg.data.result)
+      }
+      const onError = (error) => {
+        cleanup()
+        rejectCall(error)
+      }
+      const onClose = () => onError(new Error('Direct WebSocket closed before replying'))
+      const timer = setTimeout(() => {
+        cleanup()
+        rejectCall(new Error(`Timed out waiting for direct WebSocket ${channel}`))
+      }, 10_000)
+      directSocket.on('message', onMessage)
+      directSocket.on('error', onError)
+      directSocket.on('close', onClose)
+      directSocket.send(JSON.stringify({ event: 'rpc_invoke', data: { id, channel, args } }), (error) => {
+        if (error) onError(error)
+      })
+    })
+  }
+
   function rpcInvoke(channel, ...args) {
     const id = `smoke-${nextReq++}`
     return new Promise((resolveCall, rejectCall) => {
@@ -456,6 +527,25 @@ try {
       eventWaiters.push(entry)
     })
   }
+
+  const expectedUnknown = {
+    ok: false,
+    code: 'UNKNOWN',
+    message: 'IPC channel not handled by sidecar'
+  }
+  const neutralinoError = await rpcInvoke('smoke:unknown')
+  if (JSON.stringify(neutralinoError) !== JSON.stringify(expectedUnknown)) {
+    throw new Error(`Neutralino WebSocket error reply mismatch: ${JSON.stringify(neutralinoError)}`)
+  }
+  const directError = await directRpcInvoke('smoke:unknown')
+  if (JSON.stringify(directError) !== JSON.stringify(expectedUnknown)) {
+    throw new Error(`Direct WebSocket error reply mismatch: ${JSON.stringify(directError)}`)
+  }
+  const directSettingsRes = await directRpcInvoke('settings:get')
+  if (!directSettingsRes?.ok) {
+    throw new Error(`Direct WebSocket did not continue after an error reply: ${JSON.stringify(directSettingsRes)}`)
+  }
+  console.log('Packaged Neutralino and direct WebSocket error/success RPC paths verified.')
 
   const settingsRes = await rpcInvoke('settings:get')
   if (!settingsRes?.ok) throw new Error(`settings:get failed: ${JSON.stringify(settingsRes)}`)
@@ -614,6 +704,13 @@ try {
     `Packaged sidecar smoke passed in ${readyMs.toFixed(1)} ms (exit=${code ?? 'null'}, stderr=${stderrText.trim() || 'none'}).`
   )
 } finally {
+  if (directSocket && directSocket.readyState !== WebSocket.CLOSED) {
+    try {
+      directSocket.close()
+    } catch {
+      // ignore
+    }
+  }
   if (child && child.exitCode === null) {
     const exitWait = new Promise((resolveExit) => child.once('exit', resolveExit))
     child.kill()
