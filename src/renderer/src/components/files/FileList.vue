@@ -236,82 +236,157 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
     :class="ui.glassUiEnabled ? 'ferry-glass-well' : ''"
     :style="columnVars"
   >
-    <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
     <div
-      role="row"
-      class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
-      :class="ui.glassUiEnabled ? 'bg-muted/60' : 'bg-muted/20'"
+      role="grid"
+      class="flex min-h-0 flex-col"
+      :class="{ 'flex-1': entries.length > 0 }"
+      :aria-label="`${side} files`"
+      :aria-rowcount="entries.length + 1"
+      aria-multiselectable="true"
+      :aria-busy="loading"
     >
-      <span class="size-4 shrink-0" />
-      <button
-        type="button"
-        role="columnheader"
-        :aria-sort="ariaSort('name')"
-        class="min-w-24 flex-1 truncate text-left hover:text-highlighted"
-        :class="sortColumn === 'name' ? 'text-highlighted' : ''"
-        @click="emit('sort', 'name')"
+      <!-- Same stable gutter as the scroller below, so right-aligned columns line up with the rows whether or not a scrollbar shows. -->
+      <div
+        role="row"
+        aria-rowindex="1"
+        class="flex shrink-0 items-center gap-2 overflow-y-hidden border-b border-muted px-3 py-1 text-meta font-medium text-muted [scrollbar-gutter:stable]"
+        :class="ui.glassUiEnabled ? 'bg-muted/60' : 'bg-muted/20'"
+        @keydown.enter.stop
       >
-        Name
-        <UIcon
-          v-if="sortColumn === 'name'"
-          :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-          class="inline size-3 align-text-bottom"
-        />
-      </button>
-      <button
-        v-if="!ui.columns.hidden.includes('size')"
-        type="button"
-        role="columnheader"
-        :aria-sort="ariaSort('size')"
-        class="relative w-[var(--col-size)] shrink-0 text-right hover:text-highlighted"
-        :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
-        @click="emit('sort', 'size')"
-      >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @click.stop @pointerdown.stop.prevent="startResize('size', $event)" />
-        Size
-        <UIcon
-          v-if="sortColumn === 'size'"
-          :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-          class="inline size-3 align-text-bottom"
-        />
-      </button>
-      <button
-        v-if="!ui.columns.hidden.includes('modified')"
-        type="button"
-        role="columnheader"
-        :aria-sort="ariaSort('modified')"
-        class="relative w-[var(--col-modified)] shrink-0 text-right hover:text-highlighted"
-        :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
-        @click="emit('sort', 'modified')"
-      >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @click.stop @pointerdown.stop.prevent="startResize('modified', $event)" />
-        Modified
-        <UIcon
-          v-if="sortColumn === 'modified'"
-          :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-          class="inline size-3 align-text-bottom"
-        />
-      </button>
-      <span
-        v-if="side === 'remote' && !ui.columns.hidden.includes('permissions')"
-        class="relative w-[var(--col-permissions)] shrink-0 text-right"
-        :class="COLUMN_HIDE.remote.permissions"
-      >
-        <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @pointerdown.stop.prevent="startResize('permissions', $event)" />
-        Permissions
-      </span>
-      <span class="flex w-14 shrink-0 justify-end">
-        <UDropdownMenu :items="columnMenuItems">
-          <UButton icon="i-lucide-columns-3" color="neutral" variant="ghost" size="xs" aria-label="Choose columns" />
-        </UDropdownMenu>
-      </span>
+        <span aria-hidden="true" class="size-4 shrink-0" />
+        <div
+          role="columnheader"
+          :aria-sort="ariaSort('name')"
+          class="min-w-24 flex-1"
+          :class="sortColumn === 'name' ? 'text-highlighted' : ''"
+        >
+          <button
+            type="button"
+            class="block w-full truncate text-left hover:text-highlighted"
+            @click="emit('sort', 'name')"
+          >
+            Name
+            <UIcon
+              v-if="sortColumn === 'name'"
+              :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              class="inline size-3 align-text-bottom"
+            />
+          </button>
+        </div>
+        <div
+          v-if="!ui.columns.hidden.includes('size')"
+          role="columnheader"
+          :aria-sort="ariaSort('size')"
+          class="relative w-[var(--col-size)] shrink-0"
+          :class="[COLUMN_HIDE[side].size, sortColumn === 'size' ? 'text-highlighted' : '']"
+        >
+          <span class="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @pointerdown.stop.prevent="startResize('size', $event)" />
+          <button
+            type="button"
+            class="block w-full truncate text-right hover:text-highlighted"
+            @click="emit('sort', 'size')"
+          >
+            Size
+            <UIcon
+              v-if="sortColumn === 'size'"
+              :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              class="inline size-3 align-text-bottom"
+            />
+          </button>
+        </div>
+        <div
+          v-if="!ui.columns.hidden.includes('modified')"
+          role="columnheader"
+          :aria-sort="ariaSort('modified')"
+          class="relative w-[var(--col-modified)] shrink-0"
+          :class="[COLUMN_HIDE[side].modified, sortColumn === 'modified' ? 'text-highlighted' : '']"
+        >
+          <span class="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @pointerdown.stop.prevent="startResize('modified', $event)" />
+          <button
+            type="button"
+            class="block w-full truncate text-right hover:text-highlighted"
+            @click="emit('sort', 'modified')"
+          >
+            Modified
+            <UIcon
+              v-if="sortColumn === 'modified'"
+              :name="sortDirection === 'asc' ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              class="inline size-3 align-text-bottom"
+            />
+          </button>
+        </div>
+        <span
+          v-if="side === 'remote' && !ui.columns.hidden.includes('permissions')"
+          role="columnheader"
+          class="relative w-[var(--col-permissions)] shrink-0 text-right"
+          :class="COLUMN_HIDE.remote.permissions"
+        >
+          <span class="absolute inset-y-0 -left-1 w-2 cursor-col-resize rounded-full transition-colors hover:bg-primary/50" @pointerdown.stop.prevent="startResize('permissions', $event)" />
+          Permissions
+        </span>
+        <span role="columnheader" aria-label="Actions" class="flex w-14 shrink-0 justify-end">
+          <UDropdownMenu :items="columnMenuItems">
+            <UButton icon="i-lucide-columns-3" color="neutral" variant="ghost" size="xs" aria-label="Choose columns" />
+          </UDropdownMenu>
+        </span>
+      </div>
+      <div aria-hidden="true" class="h-0.5 shrink-0">
+        <UProgress v-if="loading && entries.length > 0" size="xs" />
+      </div>
+      <div ref="scrollEl" role="rowgroup" v-show="entries.length > 0" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
+        <div v-if="band" aria-hidden="true" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
+        <div v-if="entries.length" role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
+          <div
+            v-for="virtualRow in virtualRows"
+            :key="virtualRow.key as string | number"
+            :ref="measureRow"
+            role="presentation"
+            :data-index="virtualRow.index"
+            class="absolute left-0 top-0 w-full"
+            :style="{ transform: `translateY(${virtualRow.start}px)` }"
+          >
+            <FileRow
+              v-memo="[
+                entries[virtualRow.index],
+                virtualRow.index,
+                selected.has(entries[virtualRow.index].path),
+                active,
+                renamingPath === entries[virtualRow.index].path,
+                transferIcon,
+                showTail,
+                allowExtract
+              ]"
+              :entry="entries[virtualRow.index]"
+              :row-index="virtualRow.index + 2"
+              :selected="selected.has(entries[virtualRow.index].path)"
+              :side="side"
+              :active="active"
+              :transfer-icon="transferIcon"
+              :show-tail="showTail"
+              :allow-extract="allowExtract"
+              :renaming="renamingPath === entries[virtualRow.index].path"
+              @select="(path, event) => emit('select', path, event)"
+              @open="emit('open', $event)"
+              @remove="emit('remove', $event)"
+              @transfer="emit('transfer', $event)"
+              @tail="emit('tail', $event)"
+              @extract="emit('extract', $event)"
+              @compress="emit('compress', $event)"
+              @rename="(entry, newName) => emit('rename', entry, newName)"
+              @cancel-rename="emit('cancel-rename')"
+              @start-rename="emit('start-rename', $event)"
+              @chmod="emit('chmod', $event)"
+              @edit="emit('edit', $event)"
+              @edit-root="emit('edit-root', $event)"
+              @hover-dir="emit('hover-dir', $event)"
+              @drop-on="(entry, event) => emit('drop-on', entry, event)"
+            />
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="h-0.5 shrink-0">
-      <UProgress v-if="loading && entries.length > 0" size="xs" />
-    </div>
-    <div ref="scrollEl" role="grid" :aria-label="`${side} files`" :aria-rowcount="entries.length" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
-      <div v-if="band" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
-      <div v-if="loading && entries.length === 0" role="status" aria-label="Loading directory" class="flex flex-col gap-1 px-2 py-2">
+    <div v-if="!entries.length" class="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div v-if="loading" role="status" aria-label="Loading directory" class="flex flex-col gap-1 px-2 py-2">
         <div
           v-for="i in 10"
           :key="i"
@@ -324,7 +399,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           <USkeleton class="h-3 w-20 shrink-0 motion-reduce:animate-none" />
         </div>
       </div>
-      <div v-else-if="directoryPath && entries.length === 0 && (visibilityFiltered || searchFiltered || filtered)" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
+      <div v-else-if="directoryPath && (visibilityFiltered || searchFiltered || filtered)" class="flex flex-col items-center gap-2 px-3 py-8 text-center">
         <UIcon name="i-lucide-search-x" class="size-5 text-muted" />
         <p class="text-xs text-muted">
           <template v-if="visibilityFiltered && searchFiltered">No files match the active visibility filters and search</template>
@@ -343,55 +418,9 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
           </UButton>
         </div>
       </div>
-      <div v-else-if="directoryPath && entries.length === 0" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
+      <div v-else-if="directoryPath" class="flex flex-col items-center gap-1 px-3 py-6 text-center">
         <UIcon name="i-lucide-folder-open" class="size-5 text-muted" />
         <p class="text-xs text-muted">Empty folder</p>
-      </div>
-      <div v-else-if="entries.length" role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
-        <div
-          v-for="virtualRow in virtualRows"
-          :key="virtualRow.key as string | number"
-          :ref="measureRow"
-          role="presentation"
-          :data-index="virtualRow.index"
-          class="absolute left-0 top-0 w-full"
-          :style="{ transform: `translateY(${virtualRow.start}px)` }"
-        >
-          <FileRow
-            v-memo="[
-              entries[virtualRow.index],
-              selected.has(entries[virtualRow.index].path),
-              active,
-              renamingPath === entries[virtualRow.index].path,
-              transferIcon,
-              showTail,
-              allowExtract
-            ]"
-            :entry="entries[virtualRow.index]"
-            :selected="selected.has(entries[virtualRow.index].path)"
-            :side="side"
-            :active="active"
-            :transfer-icon="transferIcon"
-            :show-tail="showTail"
-            :allow-extract="allowExtract"
-            :renaming="renamingPath === entries[virtualRow.index].path"
-            @select="(path, event) => emit('select', path, event)"
-            @open="emit('open', $event)"
-            @remove="emit('remove', $event)"
-            @transfer="emit('transfer', $event)"
-            @tail="emit('tail', $event)"
-            @extract="emit('extract', $event)"
-            @compress="emit('compress', $event)"
-            @rename="(entry, newName) => emit('rename', entry, newName)"
-            @cancel-rename="emit('cancel-rename')"
-            @start-rename="emit('start-rename', $event)"
-            @chmod="emit('chmod', $event)"
-            @edit="emit('edit', $event)"
-            @edit-root="emit('edit-root', $event)"
-            @hover-dir="emit('hover-dir', $event)"
-            @drop-on="(entry, event) => emit('drop-on', entry, event)"
-          />
-        </div>
       </div>
     </div>
   </div>
