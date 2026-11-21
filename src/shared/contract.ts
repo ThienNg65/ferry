@@ -1065,6 +1065,7 @@ export const INVOKE_CHANNELS = {
   bookmarksList: 'bookmarks:list',
   bookmarksCreate: 'bookmarks:create',
   bookmarksDelete: 'bookmarks:delete',
+  bookmarksCopyToSite: 'bookmarks:copyToSite',
   // persisted transfer/operation history
   historyList: 'history:list',
   historyClear: 'history:clear',

@@ -53,6 +53,13 @@ export const useBookmarksStore = defineStore('bookmarks', {
       this.bookmarks.push(bookmark)
     },
 
+    async copyEndpointToSite(endpoint: string, siteId: string): Promise<void> {
+      await this.ensureLoaded()
+      const added = await invoke<Bookmark[]>(INVOKE_CHANNELS.bookmarksCopyToSite, endpoint, siteId)
+      const known = new Set(this.bookmarks.map((item) => item.id))
+      this.bookmarks.push(...added.filter((item) => !known.has(item.id)))
+    },
+
     async remove(id: string): Promise<void> {
       await invoke<void>(INVOKE_CHANNELS.bookmarksDelete, id)
       this.bookmarks = this.bookmarks.filter((b) => b.id !== id)

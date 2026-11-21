@@ -108,10 +108,14 @@ function tabMenuItems(tab: SessionTab): ContextMenuItem[] {
   return items
 }
 
-function onQuickSiteSaved(site: Site): void {
-  if (saveQuickTabId.value) {
-    sessions.promoteTabToSite(saveQuickTabId.value, site)
+async function onQuickSiteSaved(site: Site): Promise<void> {
+  const tabId = saveQuickTabId.value
+  if (!tabId) return
+  try {
+    await sessions.promoteTabToSite(tabId, site)
     notify.success('Site saved', site.name)
+  } catch (error) {
+    notify.error('Site saved, but bookmarks could not be copied', error instanceof Error ? error.message : String(error))
   }
 }
 

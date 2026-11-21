@@ -23,6 +23,13 @@ export function registerBookmarksHandlers(): void {
     return BookmarkStore.getInstance().create(normalized)
   })
 
+  handle<Bookmark[]>(INVOKE_CHANNELS.bookmarksCopyToSite, (endpoint, siteId) => {
+    const channel = INVOKE_CHANNELS.bookmarksCopyToSite
+    const source = requireNonEmptyString(endpoint, 'endpoint', channel)
+    if (!source.startsWith('host:v2:')) return []
+    return BookmarkStore.getInstance().copyEndpointToSite(source, requireNonEmptyString(siteId, 'siteId', channel))
+  })
+
   handle<void>(INVOKE_CHANNELS.bookmarksDelete, (id) => {
     BookmarkStore.getInstance().delete(requireNonEmptyString(id, 'id', INVOKE_CHANNELS.bookmarksDelete))
   })

@@ -1,3 +1,4 @@
+import { useBookmarksStore } from './bookmarks.store'
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, EVENT_CHANNELS } from '@shared/contract'
 import type {
@@ -537,7 +538,7 @@ export const useSessionsStore = defineStore('sessions', {
       saveRecentQuickConnects(this.recentQuickConnects)
     },
 
-    promoteTabToSite(tabId: string, site: Site): void {
+    async promoteTabToSite(tabId: string, site: Site): Promise<void> {
       const tab = this.tabs.find((t) => t.tabId === tabId)
       if (!tab) {
         return
@@ -547,6 +548,11 @@ export const useSessionsStore = defineStore('sessions', {
         const filters = useFileFiltersStore()
         filters.getFilter(fromKey, resolveLegacyConnectionFilterKey(tab))
         filters.migrateConnectionFilter(fromKey, `site:${site.id}`)
+      }
+      const destinationKey = resolveConnectionFilterKey({ ...tab, siteId: null, quickConnectInput: site })
+      if (!tab.siteId && tab.quickConnectInput && fromKey && fromKey === destinationKey) {
+        await useBookmarksStore().copyEndpointToSite(fromKey, site.id)
+        if (!this.tabs.includes(tab) || resolveConnectionFilterKey(tab) !== fromKey) return
       }
       tab.siteId = site.id
       tab.label = site.name

@@ -50,6 +50,19 @@ export class BookmarkStore {
     return bookmark
   }
 
+  copyEndpointToSite(endpoint: string, siteId: string): Bookmark[] {
+    const bookmarks = this.list()
+    const paths = new Set(bookmarks.filter((item) => item.scope === 'remote' && item.siteId === siteId).map((item) => item.path))
+    const added: Bookmark[] = []
+    for (const item of bookmarks) {
+      if (item.scope !== 'remote' || item.siteId !== endpoint || paths.has(item.path)) continue
+      added.push({ ...item, id: randomUUID(), siteId })
+      paths.add(item.path)
+    }
+    if (added.length > 0) this.store.set('bookmarks', [...bookmarks, ...added])
+    return added
+  }
+
   delete(id: string): void {
     const bookmarks = this.list().filter((b) => b.id !== id)
     this.store.set('bookmarks', bookmarks)
