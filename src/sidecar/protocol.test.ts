@@ -2,7 +2,7 @@ import { PassThrough } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handle, handlers, onSend, sendHandlers, type ChannelHandler } from '../main/ipc/envelope'
 import { SshError } from '../main/ssh/errors'
-import { decodeB64Deep, dispatchInvoke, encodeLine, serve, type SidecarHooks } from './protocol'
+import { decodeB64Deep, dispatchInvoke, encodeLine, replyToInvoke, serve, type SidecarHooks } from './protocol'
 
 function harness(): { input: PassThrough; out: unknown[]; hooks: SidecarHooks & { init: ReturnType<typeof vi.fn>; shutdown: ReturnType<typeof vi.fn> } } {
   const input = new PassThrough()
@@ -40,6 +40,49 @@ describe('sidecar protocol', () => {
     releaseSlow()
     await settle()
     expect(out[1]).toEqual({ id: 1, result: { ok: true, data: 'slow' } })
+  })
+
+  it('contains rejected and throwing handlers on stdin, replies once, and keeps serving', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const secret = 'private-password-and-path'
+      handlers.set('sites:list', (async () => { throw new Error(secret) }) as ChannelHandler)
+      handlers.set('bookmarks:list', (() => { throw new Error(secret) }) as ChannelHandler)
+      handle('session:close', () => 'still-responsive')
+      const { input, out } = harness()
+      send(input, { id: 10, channel: 'sites:list', args: [] })
+      send(input, { id: 11, channel: 'bookmarks:list', args: [] })
+      send(input, { id: 12, channel: 'session:close', args: [] })
+      await settle()
+      expect(out).toHaveLength(3)
+      expect(out).toEqual([
+        { id: 10, result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } },
+        { id: 11, result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } },
+        { id: 12, result: { ok: true, data: 'still-responsive' } }
+      ])
+      expect(JSON.stringify(out)).not.toContain(secret)
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+    } finally {
+      diagnostic.mockRestore()
+    }
+  })
+
+  it('returns exactly one sanitized reply through the shared WebSocket invoke path', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      handlers.set('sites:list', (async () => { throw new Error('credential=secret') }) as ChannelHandler)
+      const replies: unknown[] = []
+      await replyToInvoke('ws-1', 'sites:list', [], (id, result) => replies.push({ id, result }))
+      expect(replies).toEqual([
+        { id: 'ws-1', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+      ])
+      handle('sites:list', () => new Uint8Array([0, 255]))
+      await replyToInvoke('ws-2', 'sites:list', [], (id, result) => replies.push(JSON.parse(encodeLine({ id, result }))))
+      expect(replies[1]).toEqual({ id: 'ws-2', result: { ok: true, data: { __b64: 'AP8=' } } })
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('credential=secret')
+    } finally {
+      diagnostic.mockRestore()
+    }
   })
 
   it('routes fire-and-forget send messages to sendHandlers', async () => {
