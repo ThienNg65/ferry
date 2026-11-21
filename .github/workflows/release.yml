@@ -61,6 +61,21 @@ jobs:
         with:
           ref: ${{ steps.target.outputs.tag_name }}
 
+      # The release tag is immutable input for both automatic publication and manual recovery.
+      # Do not trust a separate main-branch CI run: it may cover a different commit.
+      - name: Verify checked-out release tag commit
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.target.outputs.tag_name }}
+        run: |
+          tag_sha=$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")
+          checkout_sha=$(git rev-parse HEAD)
+          if [ -z "$tag_sha" ] || [ "$tag_sha" != "$checkout_sha" ]; then
+            echo "::error::Release tag $RELEASE_TAG resolves to $tag_sha, but checkout is $checkout_sha."
+            exit 1
+          fi
+          echo "Verifying exact release commit $checkout_sha ($RELEASE_TAG)"
+
       - name: Verify public publishing access
         shell: bash
         run: |
@@ -75,6 +90,25 @@ jobs:
           fi
 
       - uses: ./.github/actions/setup-node-deps
+
+      - name: Verify package version matches release tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          node -e 'const version = require("./package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`Package version ${version} does not match release tag version ${process.env.RELEASE_VERSION}`)'
+
+      # Fail closed before any publishing side effects. This runs on the exact
+      # checked-out tag for both release-please and workflow_dispatch recovery.
+      - name: Typecheck release commit
+        run: npm run typecheck
+
+      - name: Run release regression tests
+        run: npm test
+
+      - name: Test release automation scripts
+        shell: bash
+        run: node --test .github/scripts/*.test.mjs
 
       - name: Install and verify NSIS compiler
         shell: pwsh
