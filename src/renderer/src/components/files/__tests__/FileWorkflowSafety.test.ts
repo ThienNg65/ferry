@@ -273,6 +273,8 @@ describe('remote deletion', () => {
     )
     confirm.mockResolvedValue(false)
     wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    // Shallow mounting still starts async child imports when Vue Test Utils creates their stubs.
+    await vi.dynamicImportSettled()
     wrapper.getComponent(FileList).vm.$emit('remove', entry)
 
     const options = confirm.mock.calls[0][0]
