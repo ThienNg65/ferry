@@ -170,7 +170,7 @@ describe('sftpPipeline.transferPipelined', () => {
       chunkSize: 128 * 1024
     })
 
-    expect(fake.files.get('/remote/upload.bin.part')).toEqual(data)
+    expect(fake.files.get('/remote/upload.bin.part')?.equals(data)).toBe(true)
     expect(fake.getStats().maxConcurrent).toBeGreaterThan(1)
     expect(fake.getStats().openHandlesLeft).toBe(0)
     expect(contigHistory.at(-1)).toBe(data.length)
@@ -197,7 +197,7 @@ describe('sftpPipeline.transferPipelined', () => {
       chunkSize: 128 * 1024
     })
 
-    expect(await fs.readFile(localPart)).toEqual(data)
+    expect((await fs.readFile(localPart)).equals(data)).toBe(true)
     expect(fake.getStats().maxConcurrent).toBeGreaterThan(1)
     expect(fake.getStats().openHandlesLeft).toBe(0)
   })
@@ -327,7 +327,7 @@ describe('sftpPipeline.transferPipelined', () => {
       queue.setBandwidthLimitKBps(null)
       queue.retry(second)
       await vi.waitFor(() => expect(state(second, 'done')).toBe(true))
-      expect(await fs.readFile(destination)).toEqual(secondData)
+      expect((await fs.readFile(destination)).equals(secondData)).toBe(true)
       expect(await fs.readFile(`${destination}.part`, 'utf8')).toBe('user-owned')
       expect(await stagingFiles()).toEqual([])
     } finally {
