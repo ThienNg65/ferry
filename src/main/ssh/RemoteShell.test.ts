@@ -6,9 +6,13 @@ import { RemoteShell } from './RemoteShell'
 class MockChannel extends EventEmitter {
   readonly stderr = new EventEmitter()
 
-  end(_input?: Buffer): void {}
+  end(_input?: Buffer): void {
+    this.emit('finish')
+  }
 
-  destroy(): void {}
+  destroy(): void {
+    this.emit('close')
+  }
 }
 
 function createHarness(): { shell: RemoteShell; channel: MockChannel } {
@@ -36,7 +40,7 @@ const utf8Cases = ['é', '€', '😀'].flatMap((value) => {
 })
 
 describe('RemoteShell UTF-8 output', () => {
-  it.each(utf8Cases)('exec preserves split UTF-8 in stdout and stderr', async ({ value, split }) => {
+  it.each(utf8Cases)('exec preserves split UTF-8 for $value at byte $split', async ({ value, split }) => {
     const { shell, channel } = createHarness()
     const execution = shell.exec('printf output')
     const [first, second] = splitBuffer(value, split)
@@ -50,7 +54,7 @@ describe('RemoteShell UTF-8 output', () => {
     await expect(execution).resolves.toEqual({ stdout: value, stderr: value, code: 0 })
   })
 
-  it.each(utf8Cases)('execWithStdin preserves split UTF-8 in stderr', async ({ value, split }) => {
+  it.each(utf8Cases)('execWithStdin preserves split UTF-8 for $value at byte $split', async ({ value, split }) => {
     const { shell, channel } = createHarness()
     const execution = shell.execWithStdin('cat', Buffer.from('input'))
     const [first, second] = splitBuffer(value, split)
@@ -66,7 +70,7 @@ describe('RemoteShell UTF-8 output', () => {
     })
   })
 
-  it.each(utf8Cases)('execLines preserves split UTF-8 in stdout and stderr', async ({ value, split }) => {
+  it.each(utf8Cases)('execLines preserves split UTF-8 for $value at byte $split', async ({ value, split }) => {
     const { shell, channel } = createHarness()
     const lines: string[] = []
     const stderr: string[] = []
