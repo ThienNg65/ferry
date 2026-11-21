@@ -138,6 +138,34 @@ describe('sidecar protocol', () => {
     }
   })
 
+  it('contains synchronous WebSocket handler throws and replies once', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const secret = 'private-sync-credential'
+      handlers.set('sites:list', (() => {
+        throw new Error(secret)
+      }) as ChannelHandler)
+      const replies: unknown[] = []
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-sync', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push({ event: 'rpc_reply', data: { id, result } }),
+        vi.fn(),
+        vi.fn()
+      )
+      expect(replies).toHaveLength(1)
+      expect(replies).toEqual([
+        {
+          event: 'rpc_reply',
+          data: { id: 'ws-sync', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+        }
+      ])
+      expect(JSON.stringify(replies)).not.toContain(secret)
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+    } finally {
+      diagnostic.mockRestore()
+    }
+  })
+
   it('routes fire-and-forget send messages to sendHandlers', async () => {
     const received: unknown[] = []
     onSend('terminal:input', (_e, payload) => received.push(payload))
