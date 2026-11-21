@@ -241,4 +241,15 @@ describe('runSync approval and recovery', () => {
     })).rejects.toThrow(/Could not confirm deletion.*1 destination item/)
     expect(await readFile(laterFile, 'utf8')).toBe('unreviewed')
   })
+
+  it('rejects stale approval when a new transfer becomes an overwrite after preview', async () => {
+    remoteTree.mockResolvedValue([file('a.txt', 100, 100_000)])
+    const approved = await previewSync(options)
+    expect(approved.toTransfer[0]?.action).toBe('new')
+    await writeFile(join(localPath, 'a.txt'), 'changed-on-dest')
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: () => undefined
+    })).rejects.toThrow(/folders changed/i)
+  })
 })

@@ -200,7 +200,8 @@ function editQuickConnectFromBanner(): void {
 
 watch(
   () => [sessions.activeTabId, sessions.status] as const,
-  ([, status]) => {
+  ([tabId, status], prev) => {
+    if (prev && prev[0] === tabId && status === 'error') return
     if ((status === null || (status === 'error' && !sessions.activeTab.hadConnected)) && activeTabQuickConnect.value) {
       prefillQuickConnect(activeTabQuickConnect.value)
     }

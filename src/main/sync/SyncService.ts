@@ -177,10 +177,10 @@ export async function previewSync(options: SyncOptions): Promise<SyncPlan> {
 }
 
 function matchesApproval(plan: SyncPlan, approved: SyncPlan): boolean {
-  const transfers = new Map(approved.toTransfer.map(({ relPath, size }) => [relPath, size]))
+  const transfers = new Map(approved.toTransfer.map(({ relPath, size, action }) => [relPath, `${size}:${action ?? ''}`]))
   const deletions = new Set(approved.toDelete)
   return transfers.size === plan.toTransfer.length && deletions.size === plan.toDelete.length
-    && plan.toTransfer.every(({ relPath, size }) => transfers.get(relPath) === size)
+    && plan.toTransfer.every(({ relPath, size, action }) => transfers.get(relPath) === `${size}:${action ?? ''}`)
     && plan.toDelete.every((relPath) => deletions.has(relPath))
 }
 
