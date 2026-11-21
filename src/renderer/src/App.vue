@@ -205,10 +205,14 @@ function onTabShortcut(event: KeyboardEvent): void {
     const step = event.shiftKey ? -1 : 1
     sessions.setActiveTab(tabs[(index + step + tabs.length) % tabs.length].tabId)
   } else if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
-    // Capture the shortcut before descendants can consume it and suppress any
-    // native WebView close action, even when a dialog or terminal has focus.
+    // Leave terminal editing shortcuts (Ctrl+W deletes a word) to xterm.
+    if (inTerminal) {
+      return
+    }
+    // Capture before descendants can consume the event; prevent a native
+    // WebView close even when a dialog is open or the key auto-repeats.
     event.preventDefault()
-    if (inTerminal || document.querySelector('[role="dialog"]') || event.repeat) {
+    if (document.querySelector('[role="dialog"]') || event.repeat) {
       return
     }
     void sessions.closeTab(sessions.activeTabId)
