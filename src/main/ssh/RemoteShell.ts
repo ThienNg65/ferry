@@ -1,3 +1,4 @@
+import { StringDecoder } from 'node:string_decoder'
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
 import type { IpcErrorCode } from '../../shared/contract'
 import { SshError } from './errors'
@@ -144,16 +145,16 @@ export class RemoteShell {
         }
         activeStream = stream
         const out: Buffer[] = []
-        let stderr = ''
+        const stderr: Buffer[] = []
         stream.on('data', (chunk: Buffer) => out.push(chunk))
         stream.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString()
+          stderr.push(chunk)
         })
         stream.on('close', (code: number | null) => {
           if (settled) return
           settled = true
           cleanup()
-          resolve({ stdout: Buffer.concat(out), stderr, code })
+          resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(stderr).toString('utf8'), code })
         })
         stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message)))
         stream.end(input)
@@ -211,13 +212,13 @@ export class RemoteShell {
         }
         activeStream = stream
 
-        let stdout = ''
-        let stderr = ''
+        const stdout: Buffer[] = []
+        const stderr: Buffer[] = []
         stream.on('data', (chunk: Buffer) => {
-          stdout += chunk.toString()
+          stdout.push(chunk)
         })
         stream.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString()
+          stderr.push(chunk)
         })
         stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message, true)))
         stream.on('close', (code: number | null) => {
@@ -226,7 +227,11 @@ export class RemoteShell {
           }
           settled = true
           cleanup()
-          resolve({ stdout, stderr, code })
+          resolve({
+            stdout: Buffer.concat(stdout).toString('utf8'),
+            stderr: Buffer.concat(stderr).toString('utf8'),
+            code
+          })
         })
       })
     })
@@ -304,6 +309,8 @@ export class RemoteShell {
         activeStream = stream
         arm(timeoutMs)
 
+        const stdoutDecoder = new StringDecoder('utf8')
+        const stderrDecoder = new StringDecoder('utf8')
         let buf = ''
         const flush = (final: boolean): void => {
           const parts = buf.split('\n')
@@ -318,12 +325,15 @@ export class RemoteShell {
 
         stream.on('data', (chunk: Buffer) => {
           arm(timeoutMs)
-          buf += chunk.toString()
+          buf += stdoutDecoder.write(chunk)
           flush(false)
         })
         stream.stderr.on('data', (chunk: Buffer) => {
           arm(timeoutMs)
-          opts.onStderr?.(chunk.toString())
+          const decoded = stderrDecoder.write(chunk)
+          if (decoded.length > 0) {
+            opts.onStderr?.(decoded)
+          }
         })
         stream.on('error', (e: Error) => fail(new SshError('SSH_EXEC', e.message, true)))
         stream.on('close', (code: number | null) => {
@@ -332,8 +342,13 @@ export class RemoteShell {
           }
           settled = true
           cleanup()
+          buf += stdoutDecoder.end()
           if (buf.length > 0) {
             opts.onLine(buf.replace(/\r$/, ''))
+          }
+          const stderrRemainder = stderrDecoder.end()
+          if (stderrRemainder.length > 0) {
+            opts.onStderr?.(stderrRemainder)
           }
           resolve(code)
         })
