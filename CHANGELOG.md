@@ -28,6 +28,35 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.3.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.3...ferry-v1.3.0) (2026-11-21)
+
+
+### Features
+
+* **distribution:** prepare WinGet community package for Ferry ([#134](https://github.com/ThienNg65/ferry/issues/134)) ([#135](https://github.com/ThienNg65/ferry/issues/135)) ([1759fa5](https://github.com/ThienNg65/ferry/commit/1759fa532c82859d25d2cbd5cdb8ec1fb595ce68))
+
+
+### Bug Fixes
+
+* **a11y:** restore file grid ownership and virtual row positions ([#141](https://github.com/ThienNg65/ferry/issues/141)) ([c22f429](https://github.com/ThienNg65/ferry/commit/c22f429f8254913f8caa81bc3080e15930339165))
+* **ci:** verify exact release commit before publishing ([#139](https://github.com/ThienNg65/ferry/issues/139)) ([d9478c7](https://github.com/ThienNg65/ferry/commit/d9478c7b08e246f775f1f48d5e9d13ec3db23ead)), closes [#136](https://github.com/ThienNg65/ferry/issues/136)
+* isolate Quick Connect bookmarks by SSH port ([#124](https://github.com/ThienNg65/ferry/issues/124)) ([7949c49](https://github.com/ThienNg65/ferry/commit/7949c4905ea93ef0f3f396520a5e1fd3e4150ba9)), closes [#108](https://github.com/ThienNg65/ferry/issues/108)
+* preserve OpenSSH wildcard defaults during session import ([#121](https://github.com/ThienNg65/ferry/issues/121)) ([8f29ea8](https://github.com/ThienNg65/ferry/commit/8f29ea82f5e52978f22068bddda7cb441dc9ebda)), closes [#120](https://github.com/ThienNg65/ferry/issues/120)
+* preserve remote ZIP archives on compression failure ([#123](https://github.com/ThienNg65/ferry/issues/123)) ([a657100](https://github.com/ThienNg65/ferry/commit/a65710091ff83f0688b9c1d938d4595d9b666965)), closes [#113](https://github.com/ThienNg65/ferry/issues/113)
+* **security:** harden sidecar RPC and patch vulnerable dependencies ([292be60](https://github.com/ThienNg65/ferry/commit/292be6078a071a44293b0f0b4a5f9af51d0116ec))
+* **security:** harden sidecar RPC and patch vulnerable dependencies ([949df97](https://github.com/ThienNg65/ferry/commit/949df97740d1b7bb48fc7b3146aca5f889a2e8dd))
+* validate portable ZIP before replacing release artifact ([#138](https://github.com/ThienNg65/ferry/issues/138)) ([8965c2b](https://github.com/ThienNg65/ferry/commit/8965c2be2c4228769d34c3529e3897e88181d1d4)), closes [#137](https://github.com/ThienNg65/ferry/issues/137)
+
+
+### Documentation
+
+* add Ferry security policy ([#143](https://github.com/ThienNg65/ferry/issues/143)) ([7368f88](https://github.com/ThienNg65/ferry/commit/7368f88df6981689c0b3c71dc0bfc6606646a193))
+
+
+### Build System
+
+* **deps-dev:** update Vite and Vitest together ([#5](https://github.com/ThienNg65/ferry/issues/5)) ([47dd034](https://github.com/ThienNg65/ferry/commit/47dd0349fe3952ed0359acfc6a1e6c7da515b4a5))
+
 ## [1.2.3](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.2...ferry-v1.2.3) (2026-11-20)
 
 
