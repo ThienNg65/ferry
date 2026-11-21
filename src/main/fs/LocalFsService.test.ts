@@ -231,8 +231,18 @@ describe('LocalFsService.stageDroppedEntries', () => {
   it('rejects traversal paths in streaming stage drop and cleans up on abort', async () => {
     await expect(beginStageDrop({ dirs: ['../escape'] })).rejects.toThrow(/Unsafe dropped relative path/)
     const { stageId } = await beginStageDrop({ dirs: ['ok-dir'] })
+    const { stream, targetPath } = await openStageDropWriteStream(stageId, 'ok-dir/file.txt')
+    const stageRoot = path.dirname(path.dirname(targetPath))
+    stagedRoots.push(stageRoot)
+    await new Promise<void>((resolve, reject) => {
+      stream.once('error', reject)
+      stream.once('close', resolve)
+      stream.end()
+    })
+
     await expect(openStageDropWriteStream(stageId, 'C:/Windows/win.ini')).rejects.toThrow(/Invalid dropped relative path/)
     await abortStageDrop(stageId)
+    expect(existsSync(stageRoot)).toBe(false)
     await expect(finishStageDrop(stageId)).rejects.toThrow(/not found/)
   })
 
