@@ -2,7 +2,7 @@
 import { nextTick, ref } from 'vue'
 import { KEYWORD_CLASSES } from '../../utils/keywordHighlight'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string
   matchCount: number
   currentMatch: number
@@ -13,7 +13,12 @@ const props = defineProps<{
   keywords?: string[]
   searchPending?: boolean
   placeholder?: string
-}>()
+  showLogControls?: boolean
+  showClose?: boolean
+}>(), {
+  showLogControls: true,
+  showClose: false
+})
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -100,7 +105,7 @@ function onKeydown(e: KeyboardEvent): void {
   } else if (e.altKey && e.key.toLowerCase() === 'r') {
     e.preventDefault()
     emit('update:isRegex', !props.isRegex)
-  } else if (e.altKey && e.key.toLowerCase() === 'f') {
+  } else if (props.showLogControls && e.altKey && e.key.toLowerCase() === 'f') {
     e.preventDefault()
     emit('update:filterOnly', !props.filterOnly)
   }
@@ -214,38 +219,51 @@ function onKeydown(e: KeyboardEvent): void {
       />
     </UTooltip>
 
-    <UTooltip text="Filter mode: only display matching lines (Alt+F)">
-      <UButton
-        aria-label="Filter mode: only display matching lines (Alt+F)"
-        :aria-pressed="Boolean(filterOnly)"
-        icon="i-lucide-filter"
-        size="xs"
-        :color="filterOnly ? 'primary' : 'neutral'"
-        :variant="filterOnly ? 'soft' : 'ghost'"
-        class="px-1.5"
-        @click="emit('update:filterOnly', !filterOnly)"
-      />
-    </UTooltip>
+    <template v-if="showLogControls">
+      <UTooltip text="Filter mode: only display matching lines (Alt+F)">
+        <UButton
+          aria-label="Filter mode: only display matching lines (Alt+F)"
+          :aria-pressed="Boolean(filterOnly)"
+          icon="i-lucide-filter"
+          size="xs"
+          :color="filterOnly ? 'primary' : 'neutral'"
+          :variant="filterOnly ? 'soft' : 'ghost'"
+          class="px-1.5"
+          @click="emit('update:filterOnly', !filterOnly)"
+        />
+      </UTooltip>
 
-    <UTooltip text="Highlight keywords">
-      <UButton
-        aria-label="Highlight keywords"
-        :aria-expanded="highlightOpen || (keywords?.length ?? 0) > 0"
-        :aria-pressed="highlightOpen || (keywords?.length ?? 0) > 0"
-        icon="i-lucide-highlighter"
-        size="xs"
-        :color="highlightOpen || (keywords?.length ?? 0) > 0 ? 'primary' : 'neutral'"
-        :variant="highlightOpen || (keywords?.length ?? 0) > 0 ? 'soft' : 'ghost'"
-        class="px-1.5"
-        @click="highlightOpen = !highlightOpen"
-      />
-    </UTooltip>
+      <UTooltip text="Highlight keywords">
+        <UButton
+          aria-label="Highlight keywords"
+          :aria-expanded="highlightOpen || (keywords?.length ?? 0) > 0"
+          :aria-pressed="highlightOpen || (keywords?.length ?? 0) > 0"
+          icon="i-lucide-highlighter"
+          size="xs"
+          :color="highlightOpen || (keywords?.length ?? 0) > 0 ? 'primary' : 'neutral'"
+          :variant="highlightOpen || (keywords?.length ?? 0) > 0 ? 'soft' : 'ghost'"
+          class="px-1.5"
+          @click="highlightOpen = !highlightOpen"
+        />
+      </UTooltip>
+    </template>
 
     <slot />
+
+    <UTooltip v-if="showClose" text="Close search (Esc)">
+      <UButton
+        aria-label="Close search"
+        icon="i-lucide-x"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        @click="emit('close')"
+      />
+    </UTooltip>
     </div>
 
     <!-- Keyword Highlight Chips Row -->
-    <div v-if="highlightOpen || (keywords?.length ?? 0) > 0" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
+    <div v-if="showLogControls && (highlightOpen || (keywords?.length ?? 0) > 0)" class="flex flex-wrap items-center gap-1.5 border-t border-muted/60 pt-1.5">
       <span class="inline-flex items-center gap-1 text-2xs font-medium text-muted select-none">
         <UIcon name="i-lucide-highlighter" class="size-3" />
         Highlight

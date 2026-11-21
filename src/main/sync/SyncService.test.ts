@@ -21,7 +21,7 @@ function dir(relPath: string): TreeItem {
 describe('computePlan', () => {
   it('transfers a file missing from the destination', () => {
     const plan = computePlan([file('a.txt', 10, 1000)], [], false)
-    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 10 }])
+    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 10, action: 'new' }])
     expect(plan.totalBytes).toBe(10)
   })
 
@@ -32,12 +32,12 @@ describe('computePlan', () => {
 
   it('transfers a file whose size differs, even with identical mtime', () => {
     const plan = computePlan([file('a.txt', 20, 1000)], [file('a.txt', 10, 1000)], false)
-    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 20 }])
+    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 20, action: 'overwrite' }])
   })
 
   it('transfers a file whose source mtime is newer than the destination beyond the tolerance window', () => {
     const plan = computePlan([file('a.txt', 10, 10_000)], [file('a.txt', 10, 1000)], false)
-    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 10 }])
+    expect(plan.toTransfer).toEqual([{ relPath: 'a.txt', size: 10, action: 'overwrite' }])
   })
 
   it('does NOT transfer when the source is only marginally newer (within the 2s tolerance — SFTP whole-second mtime vs. local ms-precision)', () => {
@@ -52,7 +52,7 @@ describe('computePlan', () => {
 
   it('ignores directory entries when diffing files', () => {
     const plan = computePlan([dir('sub'), file('sub/a.txt', 5, 1000)], [dir('sub')], false)
-    expect(plan.toTransfer).toEqual([{ relPath: 'sub/a.txt', size: 5 }])
+    expect(plan.toTransfer).toEqual([{ relPath: 'sub/a.txt', size: 5, action: 'new' }])
   })
 
   it('produces no deletions when deleteExtras is false, even if the destination has extras', () => {

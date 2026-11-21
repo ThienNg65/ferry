@@ -213,12 +213,25 @@ export class SessionManager {
     pending.resolve(accept)
   }
 
-  setHostKeyPrompter(prompter: (sessionId: string, host: string, port: number, fingerprint: string) => Promise<boolean>): void {
+  setHostKeyPrompter(
+    prompter: (
+      sessionId: string,
+      host: string,
+      port: number,
+      fingerprint: string,
+      meta?: { algorithm?: string; role?: 'jump' | 'target'; hopIndex?: number }
+    ) => Promise<boolean>
+  ): void {
     this.hostKeyPrompter = prompter
   }
 
-  private hostKeyPrompter = (sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> =>
-    this.askRendererHostKey(sessionId, host, port, fingerprint)
+  private hostKeyPrompter = (
+    sessionId: string,
+    host: string,
+    port: number,
+    fingerprint: string,
+    meta?: { algorithm?: string; role?: 'jump' | 'target'; hopIndex?: number }
+  ): Promise<boolean> => this.askRendererHostKey(sessionId, host, port, fingerprint, meta)
 
   private pauseConnectTimer(sessionId: string): void {
     this.connectTimers.get(sessionId)?.pause()
@@ -228,16 +241,37 @@ export class SessionManager {
     this.connectTimers.get(sessionId)?.resume()
   }
 
-  private promptHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
+  private promptHostKey(
+    sessionId: string,
+    host: string,
+    port: number,
+    fingerprint: string,
+    meta?: { algorithm?: string; role?: 'jump' | 'target'; hopIndex?: number }
+  ): Promise<boolean> {
     this.pauseConnectTimer(sessionId)
-    return this.hostKeyPrompter(sessionId, host, port, fingerprint).finally(() => this.resumeConnectTimer(sessionId))
+    return this.hostKeyPrompter(sessionId, host, port, fingerprint, meta).finally(() => this.resumeConnectTimer(sessionId))
   }
 
-  private askRendererHostKey(sessionId: string, host: string, port: number, fingerprint: string): Promise<boolean> {
+  private askRendererHostKey(
+    sessionId: string,
+    host: string,
+    port: number,
+    fingerprint: string,
+    meta?: { algorithm?: string; role?: 'jump' | 'target'; hopIndex?: number }
+  ): Promise<boolean> {
     return new Promise((resolve) => {
       const requestId = randomUUID()
       this.pendingHostKeys.set(requestId, { sessionId, resolve })
-      const payload: HostKeyPromptEvent = { requestId, sessionId, host, port, fingerprint }
+      const payload: HostKeyPromptEvent = {
+        requestId,
+        sessionId,
+        host,
+        port,
+        fingerprint,
+        algorithm: meta?.algorithm,
+        role: meta?.role,
+        hopIndex: meta?.hopIndex
+      }
       getHost().broadcast(EVENT_CHANNELS.hostKeyPrompt, payload)
     })
   }
@@ -342,7 +376,8 @@ export class SessionManager {
     auth: HopAuth,
     trustedHostKey: TrustedHostKey | undefined,
     isActive: () => boolean,
-    onVerified: (fingerprint: string) => void
+    onVerified: (fingerprint: string) => void,
+    hostMeta?: { role: 'jump' | 'target'; hopIndex?: number }
   ): Promise<{ config: ConnectConfig; hostKeyMismatch: HostKeyMismatchHolder; agentIdentityCount?: number }> {
     // A plain `let` reassigned only inside the hostVerifier closure below would
     // get incorrectly narrowed to `null` at the read site in the catch block
@@ -355,13 +390,18 @@ export class SessionManager {
       trustedHostKey?.host.trim().toLowerCase() === host.trim().toLowerCase() && trustedHostKey?.port === port
     const hostVerifier: HostVerifier = (key, verify) => {
       const presented = fingerprintHostKey(key)
+      const algorithm = extractHostKeyAlgorithm(key)
       const known = KnownHostsStore.getInstance().get(host, port)
       const decision = evaluateHostKey(known, presented, forceTrustThisHop)
       if (decision === 'trust-new') {
         if (known && forceTrustThisHop) {
           logSecurityEvent('ssh.host_key_force_trusted', { host, port, expected: known, presented })
         }
-        void this.promptHostKey(sessionId, host, port, presented).then((accept) => {
+        void this.promptHostKey(sessionId, host, port, presented, {
+          algorithm,
+          role: hostMeta?.role,
+          hopIndex: hostMeta?.hopIndex
+        }).then((accept) => {
           if (accept && isActive()) {
             KnownHostsStore.getInstance().trust(host, port, presented)
             onVerified(presented)
@@ -677,7 +717,8 @@ export class SessionManager {
           { authMethod: hop.authMethod, privateKeyPath: hop.privateKeyPath, password: hop.password, passphrase: hop.passphrase },
           trustedHostKey,
           () => !aborted && this.sessions.get(sessionId) === entry,
-          (fingerprint) => verifiedFingerprints.set(i, fingerprint)
+          (fingerprint) => verifiedFingerprints.set(i, fingerprint),
+          { role: 'jump', hopIndex: i }
         )
         if (sock) {
           hopConfig.sock = sock
@@ -718,7 +759,8 @@ export class SessionManager {
         { authMethod: input.authMethod, privateKeyPath: input.privateKeyPath, agentPath: input.agentPath, password: input.password, passphrase: input.passphrase },
         trustedHostKey,
         () => !aborted && this.sessions.get(sessionId) === entry,
-        (fingerprint) => verifiedFingerprints.set(hops.length, fingerprint)
+        (fingerprint) => verifiedFingerprints.set(hops.length, fingerprint),
+        { role: 'target' }
       )
       if (sock) {
         targetConfig.sock = sock
@@ -879,4 +921,11 @@ export class SessionManager {
     const payload = { sessionId, message }
     getHost().broadcast(EVENT_CHANNELS.sessionProgress, payload)
   }
+}
+
+function extractHostKeyAlgorithm(key: Buffer | string): string | undefined {
+  if (!Buffer.isBuffer(key) || key.length < 4) return undefined
+  const len = key.readUInt32BE(0)
+  if (len <= 0 || 4 + len > key.length) return undefined
+  return key.subarray(4, 4 + len).toString('ascii')
 }

@@ -32,6 +32,7 @@ const saving = ref(false)
 const fontSize = ref(14)
 let loadToken = 0
 
+const isLocal = computed(() => !props.editId)
 const isDirty = computed(() => !loading.value && content.value !== savedContent.value)
 const extensions = computed(() => (ui.theme === 'dark' ? [basicSetup, oneDark] : [basicSetup]))
 
@@ -95,7 +96,7 @@ async function onSave(): Promise<void> {
     await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, { path, content: submittedContent })
     if (token === loadToken) {
       savedContent.value = submittedContent
-      notify.success('Saved', 'Changes saved and uploading...')
+      notify.success('Saved', isLocal.value ? 'Changes saved to disk.' : 'Changes saved and uploading...')
     }
   } catch (e) {
     notify.error('Failed to save file', e instanceof Error ? e.message : String(e))
@@ -105,12 +106,18 @@ async function onSave(): Promise<void> {
 }
 
 async function openExternalNow(): Promise<void> {
-  const editId = props.editId
-  if (!editId) return
   const token = loadToken
   const previousContent = content.value
   try {
-    await invoke<void>(INVOKE_CHANNELS.editOpenExternal, { editId })
+    if (isLocal.value) {
+      if (!props.localTempPath) return
+      await invoke<void>(INVOKE_CHANNELS.editOpenLocal, props.localTempPath)
+      notify.success('Opened in external editor', props.localTempPath)
+    } else {
+      const editId = props.editId
+      if (!editId) return
+      await invoke<void>(INVOKE_CHANNELS.editOpenExternal, { editId })
+    }
     if (token === loadToken && props.open && content.value === previousContent && !saving.value) {
       emit('update:open', false)
     }
@@ -137,7 +144,7 @@ async function confirmDiscard(external: boolean): Promise<boolean> {
 }
 
 async function onOpenExternal(): Promise<void> {
-  if (!props.editId || loading.value || saving.value) return
+  if ((!props.editId && !props.localTempPath) || loading.value || saving.value) return
   if (isDirty.value && !(await confirmDiscard(true))) return
   await openExternalNow()
 }
@@ -154,7 +161,7 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
 <template>
   <UModal
     :open="open"
-    :title="`Editing: ${remotePath ?? 'file'}`"
+    :title="`Editing: ${remotePath ?? localTempPath ?? 'file'}`"
     @update:open="onUpdateOpen"
     :ui="{ content: 'sm:max-w-5xl h-[85vh] flex flex-col', body: 'p-0 sm:p-0 flex-1 overflow-hidden', header: 'py-3' }"
   >
@@ -184,7 +191,7 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
     <template #body>
       <div 
         class="flex h-full flex-col overflow-hidden"
-        :class="ui.theme === 'dark' ? 'bg-editor-surface' : 'bg-default'"
+        :class="ui.theme === 'dark' ? 'bg-editor-surface' : 'bg-white'"
         @keydown.ctrl.s.prevent="onSave" 
         @keydown.meta.s.prevent="onSave"
         @wheel="onWheel"

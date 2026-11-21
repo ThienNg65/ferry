@@ -10,7 +10,10 @@ const emit = defineEmits<{ navigate: [path: string] }>()
 const notify = useNotify()
 const ui = useUiStore()
 const editing = ref(false)
+const editFocusSettled = ref(false)
 const draft = ref(props.path)
+const rootEl = ref<HTMLElement | null>(null)
+const editInputRef = ref<{ inputRef?: HTMLInputElement } | null>(null)
 
 const segments = computed(() => (props.path.trim() ? parseBreadcrumbSegments(props.path) : []))
 const breadcrumbs = computed(() => collapseBreadcrumbSegments(segments.value))
@@ -52,11 +55,29 @@ onMounted(scrollToEnd)
 
 function startEdit(): void {
   draft.value = props.path
+  editFocusSettled.value = false
   editing.value = true
+  void nextTick(() => {
+    const el = editInputRef.value?.inputRef
+    if (el) {
+      el.focus()
+      el.select()
+    }
+    requestAnimationFrame(() => {
+      if (!editing.value) return
+      const cur = editInputRef.value?.inputRef
+      if (cur && document.activeElement !== cur) {
+        cur.focus()
+        cur.select()
+      }
+      editFocusSettled.value = true
+    })
+  })
 }
 
 function submit(): void {
   editing.value = false
+  editFocusSettled.value = false
   if (draft.value && draft.value !== props.path) {
     emit('navigate', draft.value)
   }
@@ -65,6 +86,15 @@ function submit(): void {
 function cancelEdit(): void {
   draft.value = props.path
   editing.value = false
+  editFocusSettled.value = false
+}
+
+function onEditBlur(event: FocusEvent): void {
+  if (!editFocusSettled.value) return
+  if (event.relatedTarget instanceof Node && rootEl.value?.contains(event.relatedTarget)) {
+    return
+  }
+  cancelEdit()
 }
 
 function onSegmentClick(segment: BreadcrumbSegment, isLast: boolean): void {
@@ -87,18 +117,19 @@ async function copyCurrentPath(): Promise<void> {
 </script>
 
 <template>
-  <div class="min-w-0 flex-1 px-0.5">
+  <div ref="rootEl" class="min-w-0 flex-1 px-0.5">
     <UInput
       v-if="editing"
+      ref="editInputRef"
       v-model="draft"
       size="xs"
       class="w-full font-mono"
       autofocus
       @keyup.enter="submit"
       @keyup.esc="cancelEdit"
-      @blur="cancelEdit"
+      @blur="onEditBlur"
     />
-    <div v-else class="relative group flex min-w-0 flex-1 items-center text-xs">
+    <div v-else class="group flex min-w-0 flex-1 items-center gap-0.5 text-xs">
       <div
         ref="strip"
         class="flex min-w-0 flex-1 items-center gap-0.5"
@@ -113,7 +144,7 @@ async function copyCurrentPath(): Promise<void> {
             :class="
               !breadcrumbs.current
                 ? 'font-medium text-highlighted'
-                : 'text-muted hover:text-default'
+                : 'text-default/80 hover:text-highlighted'
             "
             :title="!breadcrumbs.current ? 'Click to edit path' : `Go to ${breadcrumbs.root.fullPath}`"
             @click="onSegmentClick(breadcrumbs.root, !breadcrumbs.current)"
@@ -123,7 +154,7 @@ async function copyCurrentPath(): Promise<void> {
           <template v-if="breadcrumbs.collapsed.length > 0">
             <span
               v-if="breadcrumbs.root && breadcrumbs.root.label !== '/' && !breadcrumbs.root.label.endsWith('\\')"
-              class="shrink-0 select-none text-dimmed"
+              class="shrink-0 select-none text-muted"
             >
               /
             </span>
@@ -132,12 +163,12 @@ async function copyCurrentPath(): Promise<void> {
                 type="button"
                 aria-label="Parent directories"
                 title="Parent directories"
-                class="shrink-0 rounded px-1 py-0.5 text-muted transition-colors hover:bg-elevated hover:text-default focus-visible:outline-2 focus-visible:outline-primary"
+                class="shrink-0 rounded px-1 py-0.5 text-default/80 transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
               >
                 …
               </button>
             </UDropdownMenu>
-            <span class="shrink-0 select-none text-dimmed">{{ breadcrumbs.root?.label.endsWith('\\') ? '\\' : '/' }}</span>
+            <span class="shrink-0 select-none text-muted">{{ breadcrumbs.root?.label.endsWith('\\') ? '\\' : '/' }}</span>
           </template>
           <button
             v-if="breadcrumbs.current"
@@ -157,7 +188,7 @@ async function copyCurrentPath(): Promise<void> {
               :class="
                 idx === segments.length - 1
                   ? 'font-medium text-highlighted'
-                  : 'text-muted hover:text-default'
+                  : 'text-default/80 hover:text-highlighted'
               "
               :title="idx === segments.length - 1 ? 'Click to edit path' : `Go to ${seg.fullPath}`"
               @click="onSegmentClick(seg, idx === segments.length - 1)"
@@ -166,7 +197,7 @@ async function copyCurrentPath(): Promise<void> {
             </button>
             <span
               v-if="idx < segments.length - 1 && seg.label !== '/' && !seg.label.endsWith('\\')"
-              class="shrink-0 select-none text-dimmed"
+              class="shrink-0 select-none text-muted"
             >
               {{ segments[0]?.label.endsWith('\\') ? '\\' : '/' }}
             </span>
@@ -179,7 +210,7 @@ async function copyCurrentPath(): Promise<void> {
         />
       </div>
       <div
-        class="pointer-events-none absolute right-0 flex items-center gap-0.5 rounded bg-elevated/95 px-0.5 opacity-0 shadow-xs transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+        class="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
       >
         <UTooltip text="Edit path">
           <UButton

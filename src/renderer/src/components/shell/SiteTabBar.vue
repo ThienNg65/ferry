@@ -189,17 +189,18 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
     "
   >
     <FerryLogo v-if="!ui.glassUiEnabled || isFullScreen" :size="20" class="self-center ml-0.5 mr-0.5 shrink-0" decorative />
-    <nav
-      class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto"
-      :class="ui.glassUiEnabled ? 'items-center' : 'items-end pb-px'"
-      aria-label="Open connections"
-      @wheel="onTabStripWheel"
-    >
-      <TransitionGroup name="site-tab" tag="div" class="flex shrink-0 items-center gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
-        <div
-          v-for="tab in sessions.tabs"
-          :key="tab.tabId"
-          class="ferry-site-tab group relative max-w-64 shrink-0 text-xs transition-colors"
+    <div class="flex min-w-0 flex-1 items-center gap-1">
+      <nav
+        class="ferry-scroll-fade-x scrollbar-none flex min-w-0 flex-initial touch-pan-x gap-1 overflow-x-auto"
+        :class="ui.glassUiEnabled ? 'items-center' : 'items-end pb-px'"
+        aria-label="Open connections"
+        @wheel="onTabStripWheel"
+      >
+        <TransitionGroup name="site-tab" tag="div" class="flex shrink-0 items-center gap-1" role="tablist" aria-label="Open sites" @keydown="onTablistKeydown($event, true)">
+          <div
+            v-for="tab in sessions.tabs"
+            :key="tab.tabId"
+            class="ferry-site-tab group relative max-w-52 shrink-0 text-xs transition-colors"
           :class="[
             ui.glassUiEnabled
               ? [
@@ -293,6 +294,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           </ContextMenu>
         </div>
       </TransitionGroup>
+      </nav>
       <UTooltip text="New tab">
         <UButton
           icon="i-lucide-plus"
@@ -305,7 +307,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           @click="sessions.openNewTab()"
         />
       </UTooltip>
-    </nav>
+    </div>
 
     <div class="flex shrink-0 items-center gap-1" :class="ui.glassUiEnabled ? '' : 'pb-0.5'">
       <UTooltip v-if="isBusy" :text="activityLabel">

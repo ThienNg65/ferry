@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   connect: []
+  connectNewTab: []
   disconnect: []
   edit: []
   duplicate: []
@@ -160,6 +161,17 @@ const rows = computed(() => {
           @click="emit('connect')"
         >
           {{ connected ? 'Switch to tab' : 'Connect' }}
+        </UButton>
+        <UButton
+          v-if="connected"
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-plus-square"
+          class="shrink-0 whitespace-nowrap"
+          :disabled="busy"
+          @click="emit('connectNewTab')"
+        >
+          Open in new tab
         </UButton>
         <UButton
           v-if="connected"

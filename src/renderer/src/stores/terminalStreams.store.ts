@@ -474,7 +474,7 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             import('@xterm/addon-search'),
             import('@xterm/addon-webgl').catch(() => undefined)
           ])
-          const term = new Terminal({ cursorBlink: true, scrollback: useUiStore().terminalScrollback, ...useUiStore().terminalAppearance })
+          const term = new Terminal({ cursorBlink: true, allowProposedApi: true, scrollback: useUiStore().terminalScrollback, ...useUiStore().terminalAppearance })
           const fit = new FitAddon()
           term.loadAddon(fit)
           const search = new SearchAddon()

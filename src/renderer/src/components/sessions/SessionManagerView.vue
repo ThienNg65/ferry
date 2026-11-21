@@ -95,6 +95,8 @@ async function browseQuickKey(): Promise<void> {
   const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
   if (picked) {
     form.privateKeyPath = picked
+  } else if (!(window as { NL_ARGS?: unknown }).NL_ARGS) {
+    notify.error('Native picker unavailable', 'Type or paste the private key path in browser mode.')
   }
 }
 
@@ -199,11 +201,18 @@ function editQuickConnectFromBanner(): void {
 watch(
   () => [sessions.activeTabId, sessions.status] as const,
   ([, status]) => {
-    if (status === null && activeTabQuickConnect.value) {
+    if ((status === null || (status === 'error' && !sessions.activeTab.hadConnected)) && activeTabQuickConnect.value) {
       prefillQuickConnect(activeTabQuickConnect.value)
     }
   },
   { immediate: true }
+)
+
+watch(
+  () => form.authMethod,
+  () => {
+    sessions.clearQuickConnectError(sessions.activeTabId)
+  }
 )
 
 async function onReconnectQuickConnect(): Promise<void> {
@@ -230,7 +239,7 @@ async function onConnect(): Promise<void> {
   }
 }
 
-async function onConnectSite(site: Site, options?: { newTabIfBusy?: boolean }): Promise<void> {
+async function onConnectSite(site: Site, options?: { newTabIfBusy?: boolean; forceNewTab?: boolean }): Promise<void> {
   if (sessions.connecting) return
   try {
     await sessions.connectToSite(site, options)
@@ -360,6 +369,12 @@ function siteMenuItems(site: Site): ContextMenuItem[] {
     }
   ]
   if (connected || connecting) {
+    items.push({
+      label: 'Open in new tab',
+      icon: 'i-lucide-plus-square',
+      disabled: sessions.connecting,
+      onSelect: () => void onConnectSite(site, { forceNewTab: true })
+    })
     items.push({
       label: 'Disconnect',
       icon: 'i-lucide-unplug',
@@ -836,6 +851,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
               :busy="sessions.connecting"
               :duplicating="duplicatingId === selectedSite.id"
               @connect="onConnectSite(selectedSite)"
+              @connect-new-tab="onConnectSite(selectedSite, { forceNewTab: true })"
               @disconnect="void disconnectSite(selectedSite)"
               @edit="openEditDialog(selectedSite)"
               @duplicate="void onDuplicate(selectedSite)"

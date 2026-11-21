@@ -52,7 +52,7 @@ export function computePlan(sourceTree: TreeItem[], destTree: TreeItem[], delete
       dest.size !== src.size ||
       (src.mtimeMs !== undefined && dest.mtimeMs !== undefined && src.mtimeMs - dest.mtimeMs > MTIME_TOLERANCE_MS)
     if (changed) {
-      toTransfer.push({ relPath: src.relPath, size: src.size })
+      toTransfer.push({ relPath: src.relPath, size: src.size, action: dest ? 'overwrite' : 'new' })
       totalBytes += src.size
     }
   }

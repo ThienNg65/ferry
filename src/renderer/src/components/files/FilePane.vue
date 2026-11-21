@@ -16,11 +16,10 @@ import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
-import { archiveBaseName, isArchive } from '../../utils/fileTypes'
+import { archiveBaseName, isArchive, isTextPreviewable } from '../../utils/fileTypes'
 import { formatBytes } from '../../utils/format'
 import {
   composePaneEntries,
-  emptyVisibilityFilter,
   type FileVisibilityFilter
 } from '../../utils/fileVisibilityFilter'
 import type { TransferIntent } from '../../composables/useTransferIntents'
@@ -75,17 +74,17 @@ const isDropTarget = ref(false)
 const filterText = ref('')
 const { debounced: debouncedFilter } = useDebouncedRef(filterText, 120)
 const connectionFilterKey = computed(() =>
-  props.side === 'remote' ? resolveConnectionFilterKey(sessions.activeTab) : null
+  props.side === 'remote' ? resolveConnectionFilterKey(sessions.activeTab) : 'local'
 )
 const activeVisibilityFilter = computed<FileVisibilityFilter>(() =>
   props.side === 'remote'
     ? fileFilters.getFilter(connectionFilterKey.value, resolveLegacyConnectionFilterKey(sessions.activeTab))
-    : emptyVisibilityFilter()
+    : fileFilters.getFilter('local')
 )
 const paneEntriesResult = computed(() =>
   composePaneEntries(store.entries, {
     showHidden: ui.showHidden,
-    visibilityFilter: props.side === 'remote' ? activeVisibilityFilter.value : undefined,
+    visibilityFilter: activeVisibilityFilter.value,
     searchQuery: debouncedFilter.value
   })
 )
@@ -95,12 +94,10 @@ const isFiltered = computed(() => isVisibilityFiltered.value || isSearchFiltered
 const filteredEntries = computed(() => paneEntriesResult.value.entries)
 
 function updateVisibilityFilter(next: FileVisibilityFilter): void {
-  if (props.side !== 'remote') return
   fileFilters.setFilter(connectionFilterKey.value, next)
 }
 
 function clearVisibilityFilter(): void {
-  if (props.side !== 'remote') return
   fileFilters.clearFilter(connectionFilterKey.value)
 }
 
@@ -148,7 +145,7 @@ let renameInFlight = false
 const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
-const editorState = ref<{ editId: string; localTempPath: string; remotePath: string } | null>(null)
+const editorState = ref<{ editId: string | null; localTempPath: string; remotePath: string | null } | null>(null)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -206,6 +203,26 @@ const onKeydown = usePaneKeyboard({
   onOpen,
   confirmDeleteEntries
 })
+
+function onWindowKeydownFallback(event: KeyboardEvent): void {
+  if (ui.activePane !== props.side || (props.side === 'remote' && sessions.status !== 'connected') || collapsedRail.value) return
+  if (event.defaultPrevented) return
+  if (document.querySelector('[role="dialog"]:not([data-state="closed"])')) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('[data-pane]') || target?.closest('.xterm')) return
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target?.isContentEditable
+  ) {
+    return
+  }
+  void onKeydown(event)
+}
+
+onMounted(() => window.addEventListener('keydown', onWindowKeydownFallback))
+onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydownFallback))
 
 void bookmarks.ensureLoaded()
 
@@ -415,7 +432,13 @@ async function onEdit(entry: FileEntry): Promise<void> {
 async function performEdit(entry: FileEntry, viaSudo = false): Promise<void> {
   try {
     if (props.side === 'local') {
+      if (isTextPreviewable(entry.name) && entry.size <= 5 * 1024 * 1024) {
+        editorState.value = { editId: null, localTempPath: entry.path, remotePath: null }
+        editorOpen.value = true
+        return
+      }
       await invoke<void>(INVOKE_CHANNELS.editOpenLocal, entry.path)
+      notify.success('Opened in external editor', entry.name)
       return
     }
     const sessionId = sessions.activeSessionId
@@ -1038,7 +1061,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :selected-count="visibleSelectedEntries.length"
         :transfer-icon="transferIcon"
         v-model:filter-text="filterText"
-        :visibility-filter="side === 'remote' ? activeVisibilityFilter : undefined"
+        :visibility-filter="activeVisibilityFilter"
         :bookmarks="currentBookmarks"
         :can-bookmark="canBookmark"
         :show-sync="showTail"
@@ -1225,7 +1248,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         </template>
         <template #footer>
           <UButton color="neutral" variant="outline" @click="extractConflict = null">Cancel</UButton>
-          <UButton color="neutral" variant="soft" @click="resolveExtractConflict('newFolder')">
+          <UButton color="neutral" variant="outline" @click="resolveExtractConflict('newFolder')">
             Use "{{ extractConflict?.suggestedName }}"
           </UButton>
           <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
