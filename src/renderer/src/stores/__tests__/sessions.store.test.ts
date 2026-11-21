@@ -308,7 +308,9 @@ describe('sessions.store quick connect and promotion', () => {
     let resolveClose!: () => void
     vi.mocked(api.invoke).mockImplementation((channel) => {
       if (channel === INVOKE_CHANNELS.sessionClose) {
-        return new Promise<void>((resolve) => { resolveClose = resolve })
+        return new Promise<void>((resolve) => {
+          resolveClose = resolve
+        })
       }
       return Promise.resolve(undefined)
     })
@@ -328,7 +330,9 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.tabs).toHaveLength(1)
     resolveClose()
     await closing
-    expect(vi.mocked(api.invoke).mock.calls.filter(([channel]) => channel === INVOKE_CHANNELS.sessionClose)).toHaveLength(1)
+    expect(
+      vi.mocked(api.invoke).mock.calls.filter(([channel]) => channel === INVOKE_CHANNELS.sessionClose)
+    ).toHaveLength(1)
     expect(mockRemoteFs.clearSession).toHaveBeenCalledWith(sessionId)
     expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(sessionId)
   })
