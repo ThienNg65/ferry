@@ -28,6 +28,25 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.3.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.0...ferry-v1.3.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* address tab-close review findings and guard SSH teardown ([77d8f34](https://github.com/ThienNg65/ferry/commit/77d8f34f7a038ea80834c6ab3bffc546acf3129a))
+* preserve graceful SSH shutdown with forced fallback on error ([d81c533](https://github.com/ThienNg65/ferry/commit/d81c5336deb9654e74d925e85059d469a75e37e9))
+* preserve terminal Ctrl+W word deletion ([1866c96](https://github.com/ThienNg65/ferry/commit/1866c9617efbc0c59636019ae7103a67bcb5a043))
+* restore Site Management after closing tabs with Ctrl+W or middle-click ([95f4039](https://github.com/ThienNg65/ferry/commit/95f4039f29510e61474f8b583416ef3cf999cd4b))
+* restore site picker immediately on every tab close ([0cfb014](https://github.com/ThienNg65/ferry/commit/0cfb014a6d016490ef695e23930e11111e069f45))
+
+
+### Tests
+
+* align tab close verification with strict TypeScript patterns ([434e929](https://github.com/ThienNg65/ferry/commit/434e929a499e132114ad0849138c838259e97a5c))
+* await file pane imports before teardown ([6a8ac99](https://github.com/ThienNg65/ferry/commit/6a8ac993809a0f4b283e2dd2a920a5c97fff0e76))
+* format tab close regression coverage ([f372930](https://github.com/ThienNg65/ferry/commit/f37293033ffd89a3f3bdf46b9098c85d2c21d2f2))
+* wait for file pane imports before teardown ([34a9e30](https://github.com/ThienNg65/ferry/commit/34a9e30a60e86259bbfa55c5aaacf081834689f2))
+
 ## [1.3.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.2.3...ferry-v1.3.0) (2026-11-21)
 
 
