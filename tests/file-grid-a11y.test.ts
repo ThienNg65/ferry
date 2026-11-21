@@ -11,6 +11,8 @@ describe('virtual file grid accessibility contract', () => {
     expect(fileList).toMatch(/role="row"[\s\S]*aria-rowindex="1"/)
     expect(fileList).toContain('ref="scrollEl" role="rowgroup"')
     expect(fileList).not.toContain('ref="scrollEl" role="grid"')
+    expect(fileList.indexOf('role="status"')).toBeGreaterThan(fileList.indexOf('<FileRow'))
+    expect(fileList).toContain(':aria-busy="loading"')
   })
 
   it('exposes one-based positions including the header for virtual rows', () => {
