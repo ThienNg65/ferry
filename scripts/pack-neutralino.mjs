@@ -1,9 +1,9 @@
 import { createHash } from 'crypto'
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, copyFileSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, copyFileSync, statSync, writeFileSync } from 'fs'
 import { execFileSync, spawnSync } from 'child_process'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { ZipArchive } from 'archiver'
+import { buildPortableZip } from './lib/portable-zip.mjs'
 import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
 const MAX_COMPRESSED_BYTES = 45 * 1024 * 1024 // 45 MB feasibility gate (<= 50% of Electron setup)
@@ -135,16 +135,20 @@ for (const noticeFile of ['LICENSE', 'PRIVACY.md', 'TERMS.md', 'THIRD_PARTY_LICE
 }
 
 const zipPath = join(distDir, `Ferry-Portable-${version}-win-x64.zip`)
-rmSync(zipPath, { force: true })
-
-await new Promise((resolveZip, rejectZip) => {
-  const output = createWriteStream(zipPath)
-  const archive = new ZipArchive({ zlib: { level: 9 } })
-  output.on('close', resolveZip)
-  archive.on('error', rejectZip)
-  archive.pipe(output)
-  archive.directory(protoDir, false)
-  void archive.finalize()
+await buildPortableZip({
+  sourceDir: protoDir,
+  destination: zipPath,
+  maxBytes: MAX_COMPRESSED_BYTES,
+  requiredEntries: [
+    'ferry-win_x64.exe',
+    'resources.neu',
+    `extensions/js.ferry.sidecar/${process.platform === 'win32' ? 'node.exe' : 'node'}`,
+    'extensions/js.ferry.sidecar/index.cjs',
+    'LICENSE',
+    'PRIVACY.md',
+    'TERMS.md',
+    'THIRD_PARTY_LICENSES.txt'
+  ]
 })
 
 function findMakensis() {
