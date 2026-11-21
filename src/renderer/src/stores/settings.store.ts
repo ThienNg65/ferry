@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { AppSettings, KnownHostEntry, ProxyConfig, ProxyInfo, TermsAcceptance } from '@shared/contract'
 import { invoke } from '../api'
+import { useCompanionStore } from './companion.store'
 import { useUiStore } from './ui.store'
 
 interface SettingsState {
@@ -44,7 +45,9 @@ export const useSettingsStore = defineStore('settings', {
           this.historyRetentionDays = settings.historyRetentionDays === undefined ? 90 : settings.historyRetentionDays
           this.termsAcceptance = settings.termsAcceptance ?? null
           if (!this.loaded) {
-            useUiStore().hydrateFromPrefs(settings.uiPrefs ?? {})
+            const prefs = settings.uiPrefs ?? {}
+            useUiStore().hydrateFromPrefs(prefs)
+            useCompanionStore().hydrateFromPrefs(prefs)
           }
           this.loaded = true
         } finally {
@@ -101,6 +104,7 @@ export const useSettingsStore = defineStore('settings', {
       await invoke<void>(INVOKE_CHANNELS.privacyDeleteAllData)
       localStorage.clear()
       useUiStore().resetGlassUi()
+      useCompanionStore().reset()
       await this.fetch()
     }
   }

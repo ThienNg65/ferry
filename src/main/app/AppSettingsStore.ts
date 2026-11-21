@@ -1,7 +1,14 @@
 import Conf from 'conf'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
-import type { AppSettings, ProxyConfig, TermsAcceptance } from '../../shared/contract'
+import type {
+  AppSettings,
+  CompanionAiConfigInfo,
+  CompanionAiConfigInput,
+  CompanionAiProvider,
+  ProxyConfig,
+  TermsAcceptance
+} from '../../shared/contract'
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
 interface StoredProxy {
@@ -12,6 +19,13 @@ interface StoredProxy {
   secretPassword?: string
 }
 
+interface StoredCompanionAi {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  secretApiKey?: string
+}
+
 interface StoreSchema {
   openTabSiteIds: string[]
   bandwidthLimitKBps: number | null
@@ -20,6 +34,7 @@ interface StoreSchema {
   historyRetentionDays: number | null
   termsAcceptance: TermsAcceptance | null
   uiPrefs: Record<string, string>
+  companionAi: StoredCompanionAi | null
 }
 
 function sanitizeUiPrefs(raw: unknown): Record<string, string> {
@@ -56,7 +71,8 @@ export class AppSettingsStore {
           autoCheckUpdates: true,
           historyRetentionDays: 90,
           termsAcceptance: null,
-          uiPrefs: {}
+          uiPrefs: {},
+          companionAi: null
         }
       })
     }
@@ -122,6 +138,60 @@ export class AppSettingsStore {
     this.store.set('historyRetentionDays', 90)
     this.store.set('termsAcceptance', null)
     this.store.set('uiPrefs', {})
+    this.store.set('companionAi', null)
+  }
+
+  getCompanionAiConfig(): CompanionAiConfigInfo {
+    const stored = this.store.get('companionAi')
+    if (!stored) {
+      return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
+    }
+    return {
+      provider: stored.provider,
+      endpoint: stored.endpoint,
+      model: stored.model,
+      hasApiKey: Boolean(stored.secretApiKey)
+    }
+  }
+
+  setCompanionAiConfig(input: CompanionAiConfigInput): CompanionAiConfigInfo {
+    if (input.provider === 'none') {
+      this.store.set('companionAi', null)
+      return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
+    }
+    const existing = this.store.get('companionAi')
+    const secretApiKey =
+      input.apiKey !== undefined
+        ? input.apiKey.trim()
+          ? encrypt(input.apiKey.trim())
+          : undefined
+        : existing?.secretApiKey
+
+    const next: StoredCompanionAi = {
+      provider: input.provider,
+      endpoint: input.endpoint.trim(),
+      model: input.model.trim(),
+      secretApiKey
+    }
+    this.store.set('companionAi', next)
+    return {
+      provider: next.provider,
+      endpoint: next.endpoint,
+      model: next.model,
+      hasApiKey: Boolean(next.secretApiKey)
+    }
+  }
+
+  getDecryptedCompanionAiConfig(): (CompanionAiConfigInfo & { apiKey?: string }) | null {
+    const stored = this.store.get('companionAi')
+    if (!stored || stored.provider === 'none') return null
+    return {
+      provider: stored.provider,
+      endpoint: stored.endpoint,
+      model: stored.model,
+      hasApiKey: Boolean(stored.secretApiKey),
+      apiKey: stored.secretApiKey ? decrypt(stored.secretApiKey) : undefined
+    }
   }
 
   setBandwidthLimitKBps(limit: number | null): void {

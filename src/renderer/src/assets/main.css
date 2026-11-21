@@ -682,10 +682,10 @@ html.ferry-glass [data-slot="viewport"] > li {
   background-color: var(--ferry-glass-menu-bg) !important;
 }
 
-/* Blink skips nested backdrop-filter over an already-filtered dialog sheet; use an opaque menu surface to prevent text bleed-through. */
-html.ferry-glass:has([role="dialog"]) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
-html.ferry-glass:has([role="dialog"]) [role="listbox"],
-html.ferry-glass:has([role="dialog"]) [role="menu"] {
+/* Blink skips nested backdrop-filter over an already-filtered dialog/companion sheet; use an opaque menu surface to prevent text bleed-through. */
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [role="listbox"],
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [role="menu"] {
   background-color: var(--ferry-glass-menu-nested-bg) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -728,6 +728,7 @@ html.ferry-glass [role="alert"][aria-label="loading"][aria-busy="true"] {
 
 html.ferry-glass .ferry-glass-card input,
 html.ferry-glass .ferry-glass-overlay input,
+html.ferry-glass .ferry-glass-overlay textarea,
 html.ferry-glass .ferry-glass-card [role="combobox"],
 html.ferry-glass .ferry-glass-overlay [role="combobox"] {
   background-color: var(--ferry-surface-subtle);
