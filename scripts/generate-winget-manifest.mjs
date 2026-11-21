@@ -63,9 +63,13 @@ export async function generateWingetManifests({ version, installer, expectedSha2
   }
   await mkdir(outputDir, { recursive: true })
   for (const [name, content] of Object.entries(files)) {
-    await writeFile(join(outputDir, name), content, { flag: 'wx' }).catch((error) => {
+    const target = join(outputDir, name)
+    try {
+      await writeFile(target, content, { flag: 'wx' })
+    } catch (error) {
       if (error.code !== 'EEXIST') throw error
-    })
+      if (await readFile(target, 'utf8') !== content) throw new Error(`Existing manifest differs: ${target}`)
+    }
   }
   return { outputDir, sha256: actualSha256 }
 }
