@@ -5,7 +5,9 @@ import { spawnSync } from 'child_process'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildCompressCommand, compressLocal, splitRemotePath } from './CompressService'
+import { buildCompressCommand, compressLocal, compressRemote, splitRemotePath } from './CompressService'
+import { SessionManager } from '../ssh/SessionManager'
+import { SshError } from '../ssh/errors'
 
 // Fault-inject the actual writable boundary; keep the original writer for real ZIP tests.
 vi.mock('fs', async (importOriginal) => {
@@ -280,16 +282,132 @@ describe('buildCompressCommand', () => {
     expect(output).not.toContain('INJECTED')
   }
 
+  it.runIf(hasShell())('fails without writing into an existing directory at the requested ZIP path', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-remote-zip-directory-'))
+    const source = path.join(tmpDir, 'report.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    await fs.writeFile(source, 'new report')
+    await fs.mkdir(dest)
+    const result = spawnSync('sh', ['-c', buildCompressCommand(source, dest, '.ferry-zip-test')], { encoding: 'utf8' })
+    expect(result.status).not.toBe(0)
+    expect(await fs.readdir(dest)).toEqual([])
+  })
+
   it.runIf(hasShell())('is safe against a remote path containing a command-substitution payload', () => {
-    assertPayloadNotExecuted(buildCompressCommand('/tmp/$(echo INJECTED)file', '/tmp/out.zip'))
+    assertPayloadNotExecuted(buildCompressCommand('/tmp/$(echo INJECTED)file', '/tmp/out.zip', '.ferry-zip-test'))
   })
 
   it.runIf(hasShell())('is safe against a destination path containing a double quote and a payload', () => {
-    assertPayloadNotExecuted(buildCompressCommand('/tmp/source', '/tmp/"$(echo INJECTED)"file'))
+    assertPayloadNotExecuted(buildCompressCommand('/tmp/source', '/tmp/"$(echo INJECTED)"file', '.ferry-zip-test'))
   })
 
   it('separates the source argument from zip flags with `--` so a leading-dash basename cannot be parsed as an option', () => {
-    const command = buildCompressCommand('/tmp/-Tinject', '/tmp/out.zip')
-    expect(command).toMatch(/zip -rq \S+ -- \S+/)
+    const command = buildCompressCommand('/tmp/-Tinject', '/tmp/out.zip', '.ferry-zip-test')
+    expect(command).toMatch(/zip -rq -MM \S+ -- \S+/)
+  })
+})
+
+
+describe('remote ZIP safe replacement (real POSIX shell)', () => {
+  const supported = hasShell() && spawnSync('sh', ['-c', 'command -v zip && command -v unzip']).status === 0
+
+  async function fixture(): Promise<{ source: string; dest: string }> {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ferry-remote-compress-'))
+    const source = path.join(tmpDir, 'new.txt')
+    const dest = path.join(tmpDir, 'out.zip')
+    await fs.writeFile(source, 'new contents')
+    await fs.writeFile(path.join(tmpDir, 'old.txt'), 'old contents')
+    expect(spawnSync('zip', ['-q', dest, 'old.txt'], { cwd: tmpDir }).status).toBe(0)
+    return { source, dest }
+  }
+
+  async function run(source: string, dest: string, abortAfterPreparation?: AbortController): Promise<void> {
+    const shell = {
+      realpath: fs.realpath,
+      exec: async (command: string) => {
+        const result = spawnSync('sh', ['-c', `umask 022\n${command}`], { encoding: 'utf8' })
+        abortAfterPreparation?.abort()
+        return { code: result.status, stdout: result.stdout, stderr: result.stderr }
+      },
+      lstat: async (name: string) => fs.lstat(name).catch(() => { throw new SshError('NOT_FOUND', name) }),
+      sftp: async () => ({
+        ext_openssh_rename: (from: string, to: string, done: (error?: Error) => void) => {
+          void fs.rename(from, to).then(() => done(), done)
+        }
+      }),
+      rename: fs.rename,
+      deleteRecursive: (dir: string) => fs.rm(dir, { recursive: true, force: true })
+    }
+    const manager = vi.spyOn(SessionManager, 'getInstance').mockReturnValue({
+      shell: () => shell
+    } as unknown as SessionManager)
+    try {
+      await compressRemote('archive-test', source, dest, abortAfterPreparation?.signal)
+    } finally {
+      manager.mockRestore()
+    }
+  }
+
+  it.runIf(supported && process.platform !== 'win32')('preserves the login umask for the published archive', async () => {
+    const { source, dest } = await fixture()
+    await run(source, dest)
+    expect((await fs.stat(dest)).mode & 0o777).toBe(0o644)
+  })
+
+  it.runIf(supported)('keeps the previous ZIP byte-for-byte when the source is missing', async () => {
+    const { dest } = await fixture()
+    const before = await fs.readFile(dest)
+    await expect(run(path.join(tmpDir!, 'missing.txt'), dest)).rejects.toMatchObject({ code: 'SSH_EXEC' })
+    expect(await fs.readFile(dest)).toEqual(before)
+    expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+  })
+
+  it.runIf(supported)('replaces the old ZIP only after successful validation', async () => {
+    const { source, dest } = await fixture()
+    await run(source, dest)
+    const entries = spawnSync('unzip', ['-Z', '-1', dest], { encoding: 'utf8' }).stdout
+    expect(entries).toContain('new.txt')
+    expect(entries).not.toContain('old.txt')
+    expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+  })
+
+  it.runIf(supported && process.platform !== 'win32' && process.getuid?.() !== 0)(
+    'preserves the old archive when a source file cannot be read',
+    async () => {
+      const { source, dest } = await fixture()
+      const before = await fs.readFile(dest)
+      const folder = path.join(tmpDir!, 'input')
+      await fs.mkdir(folder)
+      await fs.rename(source, path.join(folder, 'accessible.txt'))
+      const denied = path.join(folder, 'denied.txt')
+      await fs.writeFile(denied, 'unreadable')
+      await fs.chmod(denied, 0)
+      await expect(run(folder, dest)).rejects.toMatchObject({ code: 'SSH_EXEC' })
+      expect(await fs.readFile(dest)).toEqual(before)
+      expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+    }
+  )
+
+  it.runIf(supported)('preserves the old archive when cancelled after remote preparation', async () => {
+    const { source, dest } = await fixture()
+    const before = await fs.readFile(dest)
+    await expect(run(source, dest, new AbortController())).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(await fs.readFile(dest)).toEqual(before)
+    expect((await fs.readdir(tmpDir!)).filter((name) => name.startsWith('.ferry-zip-'))).toEqual([])
+  })
+
+  it.runIf(supported)('rejects an archive inside its source tree without changing it', async () => {
+    const { dest } = await fixture()
+    const before = await fs.readFile(dest)
+    await expect(run(tmpDir!, dest)).rejects.toThrow('Destination cannot be inside the source directory')
+    expect(await fs.readFile(dest)).toEqual(before)
+  })
+
+  it.runIf(supported)('handles shell-special characters without command execution', async () => {
+    const { dest } = await fixture()
+    const source = path.join(tmpDir!, 'hello $(touch injected).txt')
+    await fs.writeFile(source, 'safe')
+    await run(source, dest)
+    expect(await fs.readdir(tmpDir!)).not.toContain('injected')
   })
 })
