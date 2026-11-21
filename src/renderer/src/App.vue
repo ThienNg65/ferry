@@ -67,7 +67,7 @@ onUnmounted(() => {
   unsubscribeUpdateAvailable()
   unsubscribeUpdateDownloaded()
   window.removeEventListener('resize', onWindowResize)
-  window.removeEventListener('keydown', onTabShortcut)
+  window.removeEventListener('keydown', onTabShortcut, true)
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
   window.removeEventListener('mouseup', onPaneResizerMouseUp)
 })
@@ -204,11 +204,13 @@ function onTabShortcut(event: KeyboardEvent): void {
     event.preventDefault()
     const step = event.shiftKey ? -1 : 1
     sessions.setActiveTab(tabs[(index + step + tabs.length) % tabs.length].tabId)
-  } else if (event.key.toLowerCase() === 'w' && !event.shiftKey && !inTerminal) {
-    if (document.querySelector('[role="dialog"]')) {
+  } else if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
+    // Capture the shortcut before descendants can consume it and suppress any
+    // native WebView close action, even when a dialog or terminal has focus.
+    event.preventDefault()
+    if (inTerminal || document.querySelector('[role="dialog"]') || event.repeat) {
       return
     }
-    event.preventDefault()
     void sessions.closeTab(sessions.activeTabId)
   }
 }
@@ -220,7 +222,7 @@ onMounted(() => {
       .then(() => ui.initTheme())
       .catch(() => {})
   })
-  window.addEventListener('keydown', onTabShortcut)
+  window.addEventListener('keydown', onTabShortcut, true)
   void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin

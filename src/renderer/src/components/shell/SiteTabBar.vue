@@ -217,8 +217,8 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
                 ]
           ]"
           :title="tab.hostLabel ? `${tab.label ?? 'Tab'} (${tab.hostLabel})` : (tab.label ?? 'New Tab')"
-          @mousedown.middle.prevent
-          @auxclick.middle.prevent="onCloseTab($event, tab.tabId)"
+          @mousedown.middle.prevent.stop
+          @auxclick.middle.prevent.stop="onCloseTab($event, tab.tabId)"
         >
           <span
             v-if="ui.glassUiEnabled"

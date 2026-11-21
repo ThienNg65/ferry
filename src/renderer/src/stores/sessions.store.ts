@@ -824,49 +824,58 @@ export const useSessionsStore = defineStore('sessions', {
       void this.persistOpenTabs()
     },
 
-    /** Closes and removes a tab entirely, disconnecting its session first if connected. */
+    /** Removes a tab immediately so a slow or failed SSH teardown never blocks the site picker. */
     async closeTab(tabId: string): Promise<void> {
-      const tab = this.tabs.find((t) => t.tabId === tabId)
-      if (!tab) {
+      const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
+      if (closedIndex === -1) {
         return
       }
+      const tab = this.tabs[closedIndex]
       const sid = tab.sessionId
       const pendingConnect = tab.connectPromise
       tab.sessionId = null
       tab.connecting = false
       tab.connectPromise = null
       this.clearPromptsForSession(sid)
-      if (sid) {
-        try {
-          await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
-          if (pendingConnect) {
-            await pendingConnect.catch(() => undefined)
-          }
-        } finally {
-          useRemoteFsStore().clearSession(sid)
-          useFileFiltersStore().clearEphemeralSession(sid)
-          useMonitorStore().clearSession(sid)
-          await useTailStreamsStore().closeForSession(sid)
-          // Fire-and-forget: documented as no-op-safe today, but caught so a
-          // future failure can't become an unhandled rejection — deliberately
-          // not awaited so a slow teardown doesn't block closeTab.
-          void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
-        }
-      }
-      const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
-      if (closedIndex === -1) {
-        return
-      }
       ephemeralQuickSecrets.delete(tabId)
+
+      // Update the visible tab state before awaiting IPC. All close entry points
+      // (button, middle-click, shortcut and context menu) share this guarantee.
       this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
-      void this.persistOpenTabs()
       if (this.tabs.length === 0) {
         this.openNewTab()
+      } else if (this.activeTabId === tabId) {
+        this.activeTabId = this.tabs[Math.min(closedIndex, this.tabs.length - 1)].tabId
+      }
+      void this.persistOpenTabs()
+
+      if (!sid) {
         return
       }
-      if (this.activeTabId === tabId) {
-        const neighborIndex = Math.min(closedIndex, this.tabs.length - 1)
-        this.activeTabId = this.tabs[neighborIndex].tabId
+      try {
+        await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
+        if (pendingConnect) {
+          await pendingConnect.catch(() => undefined)
+        }
+      } catch (error) {
+        useNotify().error(
+          'Could not close SSH session',
+          error instanceof Error ? error.message : String(error)
+        )
+      } finally {
+        useRemoteFsStore().clearSession(sid)
+        useFileFiltersStore().clearEphemeralSession(sid)
+        useMonitorStore().clearSession(sid)
+        try {
+          await useTailStreamsStore().closeForSession(sid)
+        } catch (error) {
+          useNotify().error(
+            'Could not clean up session streams',
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+        // Terminal disposal stays asynchronous to avoid blocking other tabs.
+        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
       }
     }
   }
