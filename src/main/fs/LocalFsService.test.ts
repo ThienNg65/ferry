@@ -46,6 +46,18 @@ describe('LocalFsService.stageDroppedEntries', () => {
     expect(readFileSync(path.join(result[1].path, 'sub', 'config.json'), 'utf8')).toBe('{"ok":true}')
   })
 
+  it('reserves the staging ownership marker path for both staging transports', async () => {
+    await expect(
+      stageDroppedEntries({
+        entries: [{ relativePath: '.ferry-stage-owner', isDir: false, data: new Uint8Array([1]) }]
+      })
+    ).rejects.toThrow(/ownership marker path is reserved/)
+
+    const { stageId } = await beginStageDrop()
+    await expect(openStageDropWriteStream(stageId, '.ferry-stage-owner')).rejects.toThrow(/ownership marker path is reserved/)
+    await abortStageDrop(stageId)
+  })
+
   it('rejects path-traversal and drive-prefixed relative paths', async () => {
     await expect(
       stageDroppedEntries({
@@ -72,7 +84,6 @@ describe('LocalFsService.stageDroppedEntries', () => {
     expect(existsSync(result[0].path)).toBe(false)
     expect(existsSync(stageRoot)).toBe(false)
   })
-
 
   it('leaves ordinary files under matching-prefix directories untouched', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-drop-user-data-'))
@@ -127,6 +138,44 @@ describe('LocalFsService.stageDroppedEntries', () => {
     vi.resetModules()
     const restartedFs = await import('./LocalFsService')
     await restartedFs.cleanupAllStagedDrops(0)
+
+    expect(existsSync(stageRoot)).toBe(false)
+  })
+
+  it('removes expired active staging sessions after validating their ownership marker', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const { stream, targetPath } = await openStageDropWriteStream(stageId, 'expired.txt')
+      const stageRoot = path.dirname(targetPath)
+      stagedRoots.push(stageRoot)
+      await new Promise<void>((resolve, reject) => {
+        stream.once('error', reject)
+        stream.end(resolve)
+      })
+
+      now.mockReturnValue(initialTime + 31 * 60 * 1000)
+      const nextSession = await beginStageDrop()
+      await abortStageDrop(nextSession.stageId)
+
+      expect(existsSync(stageRoot)).toBe(false)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('cleans tracked staging roots during shutdown cleanup', async () => {
+    const { stageId } = await beginStageDrop({ dirs: ['shutdown'] })
+    const { stream, targetPath } = await openStageDropWriteStream(stageId, 'shutdown/file.txt')
+    const stageRoot = path.dirname(path.dirname(targetPath))
+    stagedRoots.push(stageRoot)
+    await new Promise<void>((resolve, reject) => {
+      stream.once('error', reject)
+      stream.end(resolve)
+    })
+
+    await cleanupAllStagedDrops()
 
     expect(existsSync(stageRoot)).toBe(false)
   })
