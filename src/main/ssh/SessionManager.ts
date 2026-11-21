@@ -923,7 +923,7 @@ export class SessionManager {
   }
 }
 
-function extractHostKeyAlgorithm(key: Buffer | string): string | undefined {
+export function extractHostKeyAlgorithm(key: Buffer | string): string | undefined {
   if (!Buffer.isBuffer(key) || key.length < 4) return undefined
   const len = key.readUInt32BE(0)
   if (len <= 0 || 4 + len > key.length) return undefined
