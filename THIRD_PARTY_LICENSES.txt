@@ -2069,7 +2069,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/core@3.28.0 (MIT) ---
+--- @tiptap/core@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2094,7 +2094,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-blockquote@3.28.0 (MIT) ---
+--- @tiptap/extension-blockquote@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2119,7 +2119,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-bold@3.28.0 (MIT) ---
+--- @tiptap/extension-bold@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2144,7 +2144,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-bubble-menu@3.34.0 (MIT) ---
+--- @tiptap/extension-bubble-menu@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2169,7 +2169,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-bullet-list@3.28.0 (MIT) ---
+--- @tiptap/extension-bullet-list@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2194,7 +2194,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-code@3.28.0 (MIT) ---
+--- @tiptap/extension-code@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2219,7 +2219,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-code-block@3.28.0 (MIT) ---
+--- @tiptap/extension-code-block@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2244,7 +2244,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-collaboration@3.28.0 (MIT) ---
+--- @tiptap/extension-collaboration@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2269,7 +2269,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-document@3.28.0 (MIT) ---
+--- @tiptap/extension-document@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2294,7 +2294,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-drag-handle@3.28.0 (MIT) ---
+--- @tiptap/extension-drag-handle@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2319,7 +2319,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-drag-handle-vue-3@3.28.0 (MIT) ---
+--- @tiptap/extension-drag-handle-vue-3@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2344,7 +2344,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-dropcursor@3.28.0 (MIT) ---
+--- @tiptap/extension-dropcursor@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2369,7 +2369,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-floating-menu@3.34.0 (MIT) ---
+--- @tiptap/extension-floating-menu@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2394,7 +2394,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-gapcursor@3.28.0 (MIT) ---
+--- @tiptap/extension-gapcursor@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2419,7 +2419,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-hard-break@3.28.0 (MIT) ---
+--- @tiptap/extension-hard-break@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2444,7 +2444,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-heading@3.28.0 (MIT) ---
+--- @tiptap/extension-heading@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2469,7 +2469,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-horizontal-rule@3.28.0 (MIT) ---
+--- @tiptap/extension-horizontal-rule@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2494,7 +2494,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-image@3.28.0 (MIT) ---
+--- @tiptap/extension-image@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2519,7 +2519,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-italic@3.28.0 (MIT) ---
+--- @tiptap/extension-italic@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2544,7 +2544,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-link@3.28.0 (MIT) ---
+--- @tiptap/extension-link@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2569,7 +2569,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-list@3.28.0 (MIT) ---
+--- @tiptap/extension-list@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2594,7 +2594,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-list-item@3.28.0 (MIT) ---
+--- @tiptap/extension-list-item@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2619,7 +2619,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-list-keymap@3.28.0 (MIT) ---
+--- @tiptap/extension-list-keymap@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2644,7 +2644,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-mention@3.28.0 (MIT) ---
+--- @tiptap/extension-mention@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2669,7 +2669,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-node-range@3.28.0 (MIT) ---
+--- @tiptap/extension-node-range@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2694,7 +2694,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-ordered-list@3.28.0 (MIT) ---
+--- @tiptap/extension-ordered-list@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2719,7 +2719,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-paragraph@3.28.0 (MIT) ---
+--- @tiptap/extension-paragraph@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2744,7 +2744,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-placeholder@3.28.0 (MIT) ---
+--- @tiptap/extension-placeholder@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2769,7 +2769,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-strike@3.28.0 (MIT) ---
+--- @tiptap/extension-strike@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2794,7 +2794,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-text@3.28.0 (MIT) ---
+--- @tiptap/extension-text@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2819,7 +2819,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extension-underline@3.28.0 (MIT) ---
+--- @tiptap/extension-underline@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2844,7 +2844,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/extensions@3.28.0 (MIT) ---
+--- @tiptap/extensions@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2869,7 +2869,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/markdown@3.28.0 (MIT) ---
+--- @tiptap/markdown@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2894,7 +2894,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/pm@3.28.0 (MIT) ---
+--- @tiptap/pm@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2919,7 +2919,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/starter-kit@3.28.0 (MIT) ---
+--- @tiptap/starter-kit@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2944,7 +2944,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/suggestion@3.28.0 (MIT) ---
+--- @tiptap/suggestion@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -2969,7 +2969,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- @tiptap/vue-3@3.28.0 (MIT) ---
+--- @tiptap/vue-3@3.35.0 (MIT) ---
 Repository: https://github.com/ueberdosis/tiptap
 
 MIT License
@@ -10481,7 +10481,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.**
 
---- prosemirror-changeset@2.4.1 (MIT) ---
+--- prosemirror-changeset@2.4.6 (MIT) ---
 Repository: git+https://code.haverbeke.berlin/prosemirror/prosemirror-changeset.git
 
 Copyright (C) 2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -10504,8 +10504,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- prosemirror-commands@1.7.1 (MIT) ---
-Repository: git://github.com/prosemirror/prosemirror-commands.git
+--- prosemirror-commands@1.7.2 (MIT) ---
+Repository: git+https://code.haverbeke.berlin/prosemirror/prosemirror-commands.git
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
@@ -10527,7 +10527,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- prosemirror-dropcursor@1.8.3 (MIT) ---
+--- prosemirror-dropcursor@1.8.4 (MIT) ---
 Repository: git+https://code.haverbeke.berlin/prosemirror/prosemirror-dropcursor.git
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
@@ -10573,8 +10573,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- prosemirror-history@1.5.0 (MIT) ---
-Repository: git://github.com/prosemirror/prosemirror-history.git
+--- prosemirror-history@1.5.2 (MIT) ---
+Repository: git+https://code.haverbeke.berlin/prosemirror/prosemirror-history.git
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
@@ -10734,8 +10734,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- prosemirror-transform@1.12.0 (MIT) ---
-Repository: git://github.com/prosemirror/prosemirror-transform.git
+--- prosemirror-transform@1.12.7 (MIT) ---
+Repository: git+https://code.haverbeke.berlin/prosemirror/prosemirror-transform.git
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 

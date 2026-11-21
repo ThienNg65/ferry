@@ -1,8 +1,8 @@
 import { PassThrough } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { handle, handlers, onSend, sendHandlers } from '../main/ipc/envelope'
+import { handle, handlers, onSend, sendHandlers, type ChannelHandler } from '../main/ipc/envelope'
 import { SshError } from '../main/ssh/errors'
-import { decodeB64Deep, encodeLine, serve, type SidecarHooks } from './protocol'
+import { decodeB64Deep, dispatchInvoke, encodeLine, serve, type SidecarHooks } from './protocol'
 
 function harness(): { input: PassThrough; out: unknown[]; hooks: SidecarHooks & { init: ReturnType<typeof vi.fn>; shutdown: ReturnType<typeof vi.fn> } } {
   const input = new PassThrough()
@@ -70,6 +70,22 @@ describe('sidecar protocol', () => {
     expect(out).toEqual([{ id: 3, result: { ok: false, code: 'UNKNOWN', message: 'IPC channel not handled by sidecar: window:close' } }])
   })
 
+  it('rejects a non-string channel at the protocol boundary', async () => {
+    const { input, out } = harness()
+    send(input, { id: 5, channel: ['sites:list'], args: [] })
+    await settle()
+    expect(out).toEqual([{ id: 5, result: { ok: false, code: 'UNKNOWN', message: 'Invalid sidecar IPC channel' } }])
+  })
+
+  it('returns UNKNOWN when a registry entry is not callable', async () => {
+    handlers.set('sites:list', {} as ChannelHandler)
+    await expect(dispatchInvoke('sites:list', [])).resolves.toEqual({
+      ok: false,
+      code: 'UNKNOWN',
+      message: 'IPC channel not handled by sidecar: sites:list'
+    })
+  })
+
   it('ignores a malformed line and keeps serving', async () => {
     handle('sites:list', () => [])
     const { input, out } = harness()
@@ -98,8 +114,9 @@ describe('sidecar protocol', () => {
 
   it('ignores valid JSON null lines and catches throwing send handlers without crashing', async () => {
     handle('sites:list', () => [])
+    const error = new Error('boom')
     onSend('terminal:input', () => {
-      throw new Error('boom')
+      throw error
     })
     const { input, out } = harness()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -108,6 +125,7 @@ describe('sidecar protocol', () => {
     send(input, { id: 9, channel: 'sites:list', args: [] })
     await settle()
     expect(out).toEqual([{ id: 9, result: { ok: true, data: [] } }])
+    expect(errorSpy).toHaveBeenCalledExactlyOnceWith('sidecar: send handler failed for "%s":', 'terminal:input', error)
     errorSpy.mockRestore()
   })
 })
