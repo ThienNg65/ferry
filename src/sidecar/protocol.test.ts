@@ -60,7 +60,7 @@ describe('sidecar protocol', () => {
       send(input, { id: 12, channel: 'session:close', args: [] })
       await settle()
       expect(out).toHaveLength(3)
-      const replies = new Map((out as Array<{ id: number; result: unknown }>).map(({ id, result }) => [id, result]))
+      const replies = new Map((out as Array<{ id: number; result: unknown }>).map(({ id, result }) => [id, result] as const))
       expect([...replies.keys()].sort((a, b) => a - b)).toEqual([10, 11, 12])
       expect(replies.get(10)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
       expect(replies.get(11)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
