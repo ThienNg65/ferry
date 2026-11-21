@@ -1,11 +1,25 @@
 # Security Policy
 
+## Scope
+
+This policy covers the Ferry desktop app, its official Windows packages, and its update process.
+
 ## Supported versions
 
-Use the latest stable Ferry release for your installation channel. The Windows installer is available from [Ferry releases](https://github.com/ThienNg65/ferry-release/releases). If you installed Ferry through the Microsoft Store, check for updates there.
+Security fixes target the latest stable release. Update through the channel you use, either [GitHub Releases](https://github.com/ThienNg65/ferry-release/releases) or the Microsoft Store. Reports about older versions are welcome. Include the version where you observed the issue.
 
 ## Reporting a vulnerability
 
-Open [Ferry's security advisories](https://github.com/ThienNg65/ferry/security/advisories) and select **Report a vulnerability** to send a private report to the maintainers. Keep vulnerability details out of public issues and discussions.
+Use GitHub to [report a vulnerability privately](https://github.com/ThienNg65/ferry/security/advisories/new). Keep vulnerability details out of public issues, discussions, and pull requests.
 
-Include the Ferry version, how you installed it, your Windows version, what happened, and the potential impact. If available, share steps to reproduce and sanitized logs or screenshots. Remove credentials, private keys, tokens, and sensitive host details from anything you attach.
+Include as much of the following as you can:
+
+- The Ferry version, Windows version, and distribution channel (installer, portable ZIP, or Microsoft Store).
+- What happened, the affected feature, and the potential impact.
+- Steps to reproduce, any relevant configuration, and sanitized logs or screenshots if available.
+
+Remove credentials, private keys, tokens, and sensitive host details from the report and its attachments.
+
+## Coordinated disclosure
+
+Maintainers use the private report to discuss findings, fixes, and disclosure with you. Please coordinate public disclosure through that report so users have a chance to update or apply a mitigation. Published [security advisories](https://github.com/ThienNg65/ferry/security/advisories) describe the impact, affected versions, and any available fixes or mitigations.
