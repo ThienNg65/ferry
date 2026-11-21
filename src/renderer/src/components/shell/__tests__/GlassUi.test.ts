@@ -350,7 +350,7 @@ describe('Modern Glass UI rollout', () => {
 
   it('captures Ctrl+W before nested handlers but does not intercept other shortcuts or terminal input', async () => {
     const sessions = useSessionsStore()
-    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue()
+    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue(undefined)
     sessions.openNewTab()
     const activeId = sessions.activeTabId
     const w = trackMount(mount(App, { attachTo: document.body, global: { stubs: commonStubs } }))
@@ -391,7 +391,7 @@ describe('Modern Glass UI rollout', () => {
   it('routes middle-click and X button through the same close action', async () => {
     const sessions = useSessionsStore()
     const tabId = sessions.activeTabId
-    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue()
+    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue(undefined)
     const w = trackMount(mount(SiteTabBar, { attachTo: document.body, global: { stubs: commonStubs } }))
     const tab = w.get('.ferry-site-tab')
     const mouseDown = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true })

@@ -217,7 +217,6 @@ function onTabShortcut(event: KeyboardEvent): void {
     }
     return
   }
-  const inTerminal = event.target instanceof HTMLElement && event.target.closest('.xterm') !== null
   if (event.key === 'Tab') {
     const tabs = sessions.tabs
     const index = tabs.findIndex((t) => t.tabId === sessions.activeTabId)

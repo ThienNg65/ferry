@@ -404,7 +404,9 @@ describe('sessions.store quick connect and promotion', () => {
       if (channel === INVOKE_CHANNELS.sessionClose) {
         closedSessionIds.push(sessionId as string)
         if (closedSessionIds.length === 1) {
-          return new Promise<void>((resolve) => { releaseFirst = resolve })
+          return new Promise<void>((resolve) => {
+            releaseFirst = resolve
+          })
         }
       }
       return Promise.resolve(undefined)
