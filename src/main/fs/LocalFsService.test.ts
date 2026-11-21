@@ -113,6 +113,8 @@ describe('LocalFsService.stageDroppedEntries', () => {
     writeFileSync(malformedMarkerFile, 'user data')
     writeFileSync(path.join(malformedMarkerRoot, '.ferry-stage-owner'), 'not a Ferry marker')
 
+    await cleanupStagedDropPath(missingMarkerFile)
+    await cleanupStagedDropPath(malformedMarkerFile)
     await cleanupAllStagedDrops(0)
 
     expect(existsSync(missingMarkerFile)).toBe(true)
@@ -158,7 +160,8 @@ describe('LocalFsService.stageDroppedEntries', () => {
       stagedRoots.push(stageRoot)
       await new Promise<void>((resolve, reject) => {
         stream.once('error', reject)
-        stream.end(resolve)
+        stream.once('close', resolve)
+        stream.end()
       })
 
       now.mockReturnValue(initialTime + 31 * 60 * 1000)
@@ -178,7 +181,8 @@ describe('LocalFsService.stageDroppedEntries', () => {
     stagedRoots.push(stageRoot)
     await new Promise<void>((resolve, reject) => {
       stream.once('error', reject)
-      stream.end(resolve)
+      stream.once('close', resolve)
+      stream.end()
     })
 
     await cleanupAllStagedDrops()
