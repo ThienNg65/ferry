@@ -2,8 +2,8 @@
 
 /**
  * The bridge accepts any channel string. Concrete channel safety is provided
- * by the shared contract (src/shared/contract.ts), which both the preload
- * whitelist and the renderer's `api.ts` helper are derived from.
+ * by the shared contract (src/shared/contract.ts), which both the Neutralino
+ * bridge whitelist and the renderer's `api.ts` helper are derived from.
  */
 type InvokeChannel = string
 type OnChannel = string
@@ -11,16 +11,15 @@ type OnChannel = string
 type IpcListener = (...args: unknown[]) => void
 
 /**
- * The contextBridge-exposed `window.api` surface.
- * Declared here so all renderer TypeScript files see the correct types
- * without importing from the preload script (which runs in a different context).
+ * The `window.api` bridge exposed by `neutralinoApi.ts`.
+ * Declared here so all renderer TypeScript files see the correct types.
  */
-interface ElectronAPI {
+interface FerryAPI {
   invoke: (channel: InvokeChannel, ...args: unknown[]) => Promise<unknown>
   on: (channel: OnChannel, listener: IpcListener) => () => void
   off: (channel: OnChannel, listener: IpcListener) => void
   send: (channel: string, ...args: unknown[]) => void
-  /** Resolves a dropped/selected `File`'s absolute path (replaces the removed `File.path`, gone since Electron 32). */
+  /** Resolves a dropped/selected `File`'s absolute path when available on the File object. */
   getPathForFile: (file: File) => string
   /** Streams a dropped `File` directly to the sidecar's staging directory over authenticated localhost HTTP. */
   stageDroppedFile?: (
@@ -30,14 +29,14 @@ interface ElectronAPI {
     modifiedAt?: string,
     signal?: AbortSignal
   ) => Promise<void>
-  /** Returns preload execution timing mark. */
+  /** Returns bridge initialization timing mark. */
   getPreloadTime: () => { start: number; timeOrigin: number }
 }
 
 
 declare global {
   interface Window {
-    api: ElectronAPI
+    api: FerryAPI
   }
 }
 

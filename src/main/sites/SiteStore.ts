@@ -166,7 +166,7 @@ function toPublicSite(s: StoredSite): Site {
 
 /**
  * Persists saved connection profiles to `sites.json` under the OS userData
- * directory. Secrets are encrypted with Electron's `safeStorage` (DPAPI-backed
+ * directory. Secrets are encrypted with `host().encrypt` (DPAPI-backed AES-GCM
  * on Windows) and only ever decrypted in-process at connect-time — the
  * renderer receives `hasPassword`/`hasPassphrase` booleans, never plaintext.
  */

@@ -285,27 +285,11 @@ try {
     assertExists(manifestPath, 'latest.yml')
     verifyUpdateYml({ distDir, expectedVersion: version })
     const installDir = join(tempInstallRoot, 'FerryApp')
-    mkdirSync(join(installDir, 'locales'), { recursive: true })
-    mkdirSync(join(installDir, 'resources'), { recursive: true })
-    writeFileSync(join(installDir, 'Ferry.exe'), 'legacy-electron')
-    writeFileSync(join(installDir, 'Uninstall Ferry.exe'), 'legacy-electron-uninstaller')
-    writeFileSync(join(installDir, 'chrome_100_percent.pak'), 'legacy')
-    writeFileSync(join(installDir, 'locales', 'en-US.pak'), 'legacy')
-    writeFileSync(join(installDir, 'resources', 'app.asar'), 'legacy')
 
-    // Run silent NSIS install over the simulated Electron directory (/D= must be unquoted and last).
+    // Run silent NSIS install (/D= must be unquoted and last).
     execFileSync(installerPath, ['/S', `/D=${installDir}`], { stdio: 'inherit' })
     ranNsisInstaller = true
 
-    if (
-      existsSync(join(installDir, 'Ferry.exe')) ||
-      existsSync(join(installDir, 'Uninstall Ferry.exe')) ||
-      existsSync(join(installDir, 'chrome_100_percent.pak')) ||
-      existsSync(join(installDir, 'locales')) ||
-      existsSync(join(installDir, 'resources'))
-    ) {
-      throw new Error('NSIS installer did not clean up legacy Electron runtime files in installDir')
-    }
     assertExists(join(installDir, 'ferry-win_x64.exe'), 'Installed Neutralino binary')
     assertExists(join(installDir, 'resources.neu'), 'Installed Neutralino resources')
     assertExists(join(installDir, 'Uninstall.exe'), 'Installed NSIS uninstaller')
@@ -332,7 +316,7 @@ try {
     }
 
     runtimeDir = installDir
-    console.log(`NSIS upgrade (Electron & Neutralino) smoke verified at ${installDir} (${statSync(installerPath).size} bytes installer).`)
+    console.log(`NSIS install & upgrade smoke verified at ${installDir} (${statSync(installerPath).size} bytes installer).`)
   }
 
   const nodeBin = join(runtimeDir, 'extensions', 'js.ferry.sidecar', 'node.exe')

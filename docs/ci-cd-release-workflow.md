@@ -6,7 +6,7 @@ This document explains the CI/CD pipeline and release engineering architecture f
 
 ## 1. Overview & Core Philosophy
 
-Ferry is an Electron desktop application. Desktop releases are **immutable client deployments** accompanied by auto-update metadata (`latest.yml`). 
+Ferry is a Neutralinojs + Node.js sidecar desktop application. Desktop releases are **immutable client deployments** accompanied by auto-update metadata (`latest.yml`). 
 
 To guarantee safety, predictability, and compliance with GitHub branch protection:
 - **Zero CI Direct-Pushes to `main`**: CI workflows never commit or push back to `main`.
@@ -28,7 +28,7 @@ flowchart TD
     subgraph Phase1["1. Feature Development & PR"]
         A["Developer creates feature branch"]:::dev --> B["Commit with Conventional Commits\n(feat: ..., fix: ...)"]:::dev
         B --> C["Open Pull Request to 'main'"]:::dev
-        C --> D["ci.yml runs 'verify'\n- Typecheck\n- Vitest suite\n- electron-vite build"]:::ci
+        C --> D["ci.yml runs 'verify'\n- Typecheck\n- Vitest suite\n- Vite build"]:::ci
         D -->|Checks pass & Review approved| E["Merge PR into 'main'"]:::dev
     end
 
@@ -47,7 +47,7 @@ flowchart TD
         L --> M["release.yml runs on 'main'"]:::ci
         M --> N["'release-please' detects Release PR merged\n- Creates Git Tag 'vX.Y.Z'\n- Creates GitHub Release with release notes\n- Outputs release_created = true"]:::bot
         N --> O["'publish-assets' job runs (windows-latest)"]:::ci
-        O --> P["electron-builder packages Windows desktop app\n(dist/Ferry-Setup-*.exe, latest.yml, *.blockmap)"]:::ci
+        O --> P["pack-neutralino packages Windows desktop app\n(dist/Ferry-Setup-*.exe, Ferry-Portable-*-win-x64.zip, latest.yml)"]:::ci
         P --> Q["Upload assets to GitHub Release via 'gh release upload'"]:::release
         Q --> R["Installed Ferry clients detect 'latest.yml'\nand prompt users to auto-update"]:::release
     end
@@ -67,7 +67,7 @@ Release Please relies on [Conventional Commits](https://www.conventionalcommits.
 | `docs:` | None (unless configured) | Documentation | `docs(readme): update installation guidance` |
 | `refactor:` | None | Code Refactoring | `refactor(ipc): simplify envelope serialization` |
 | `test:` | None | Tests | `test(sites): add test for DPAPI credential encryption` |
-| `chore:` | None | Miscellaneous Chores | `chore(deps): update electron to 34.0.0` |
+| `chore:` | None | Miscellaneous Chores | `chore(deps): update @neutralinojs/lib to 6.10.0` |
 | `BREAKING CHANGE:` or `!` | **Major** (`x.0.0`) | Breaking Changes | `feat!: redesign entire IPC contract protocol` |
 
 > [!TIP]
@@ -98,9 +98,9 @@ Release Please relies on [Conventional Commits](https://www.conventionalcommits.
 - **Job 2: `publish-assets` (windows-latest)**:
   - Runs only if `release_created == true`.
   - Checks out the tagged commit.
-  - Builds and packages Windows artifacts via `npx electron-builder --publish never`.
+  - Builds and packages Windows artifacts via `npm run package`.
   - *(Optional / Dormant)* Submits for Authenticode signing if `vars.SIGNPATH_ORGANIZATION_ID` is set.
-  - Attaches `dist/Ferry-Setup-*.exe`, `dist/latest.yml`, and `dist/*.blockmap` to the newly created GitHub Release using `gh release upload`.
+  - Attaches `dist/Ferry-Setup-*.exe`, `dist/Ferry-Portable-*-win-x64.zip`, and `dist/latest.yml` to the newly created GitHub Release using `gh release upload`.
 
 ---
 

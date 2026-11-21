@@ -8,7 +8,7 @@ const MAX_HISTORY_ENTRIES = 2000
 
 /**
  * How long to wait after the last `record()` call before actually writing to
- * disk. `electron-store`/`conf` writes synchronously (`fs.writeFileSync`) on
+ * disk. `conf` writes synchronously (`fs.writeFileSync`) on
  * every `.set()` — without this debounce, a bulk sync enqueueing hundreds or
  * thousands of individual file transfers would trigger that many blocking
  * full-file rewrites on the main process in quick succession. Batching them

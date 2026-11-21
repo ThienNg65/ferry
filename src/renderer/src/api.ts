@@ -31,13 +31,11 @@ const QUIET_CHANNELS = new Set<string>([
 ])
 
 /**
- * Normalises an argument into a plain, structured-cloneable value before it
+ * Normalises an argument into a plain, JSON-safe value before it
  * crosses the IPC boundary.
  *
- * Vue wraps `reactive`/`ref` state in Proxies, and Electron's structured-clone
- * algorithm cannot clone a Proxy — attempting to send one fails with
- * "An object could not be cloned." A JSON round-trip strips the proxy
- * wrappers, leaving a clean object. All IPC payloads here are JSON-safe by
+ * Vue wraps `reactive`/`ref` state in Proxies; stripping the proxy
+ * wrappers leaves a clean object. All IPC payloads here are JSON-safe by
  * design, so this is a lossless normalisation.
  */
 function toCloneable(value: unknown): unknown {

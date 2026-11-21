@@ -3,12 +3,11 @@
  * REAL SFTP/SSH server. See RemoteShell.integration.test.ts's file header
  * for the docker command that starts the required test container.
  *
- * `electron`'s BrowserWindow (status broadcast) is mocked since these tests
- * run outside a real Electron process; SessionManager/KnownHostsStore
- * themselves are real and unmocked — KnownHostsStore's `known_hosts.json`
- * is real on-disk state (electron-store falls back to a plain OS config dir
- * outside Electron), so every test explicitly resets the entry for our test
- * host:port rather than relying on ambient state.
+ * `testHost` (via vitest setup) stubs host broadcasts, while
+ * SessionManager/KnownHostsStore themselves are real and unmocked —
+ * KnownHostsStore's `known_hosts.json` is real on-disk state under `testHost.dataDir`,
+ * so every test explicitly resets the entry for our test host:port rather than
+ * relying on ambient state.
  */
 import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'

@@ -66,7 +66,7 @@ function assignManifestField(target: ParsedManifestEntry, key: string, value: st
   }
 }
 
-/** Parses standard electron-builder/neutralino `latest*.yml` fields without pulling in a YAML dependency. */
+/** Parses standard Neutralino `latest*.yml` fields without pulling in a YAML dependency. */
 export function parseUpdateManifest(yamlText: string): UpdateManifest | null {
   const top: Record<string, string> = {}
   const files: ParsedManifestEntry[] = []
@@ -345,8 +345,8 @@ async function waitForChildSpawn(child: ChildProcess): Promise<void> {
 
 /**
  * GitHub-Releases updater for the standalone Neutralino sidecar runtime.
- * Mirrors the event/method contract of `electron-updater` so `AutoUpdater.ts`
- * can drive both runtimes with identical state/progress/error handling.
+ * `AutoUpdater.ts` drives state, progress, and error handling through its events
+ * and methods.
  */
 export class SidecarUpdater extends EventEmitter {
   autoDownload = true
