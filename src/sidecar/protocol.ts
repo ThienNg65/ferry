@@ -67,6 +67,17 @@ export async function dispatchInvoke(channel: unknown, args: unknown) {
   }
 }
 
+/** Shared invoke/reply boundary used by stdin and both WebSocket transports. */
+export async function replyToInvoke(
+  id: unknown,
+  channel: unknown,
+  args: unknown,
+  reply: (id: unknown, result: Awaited<ReturnType<typeof dispatchInvoke>>) => void
+): Promise<void> {
+  const result = await dispatchInvoke(channel, args)
+  reply(id, result)
+}
+
 export function dispatchSend(channel: unknown, payload: unknown): void {
   if (typeof channel !== 'string') {
     return
@@ -83,8 +94,7 @@ export function dispatchSend(channel: unknown, payload: unknown): void {
 }
 
 async function dispatch(id: unknown, channel: unknown, args: unknown, write: WriteLine): Promise<void> {
-  const result = await dispatchInvoke(channel, args)
-  write(encodeLine({ id, result }))
+  await replyToInvoke(id, channel, args, (replyId, result) => write(encodeLine({ id: replyId, result })))
 }
 
 export function serve(input: Readable, write: WriteLine, hooks: SidecarHooks): void {
