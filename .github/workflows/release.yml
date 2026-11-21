@@ -176,10 +176,6 @@ jobs:
             echo "::error::Unexpected legacy Ferry-Neutralino-* or latest-neutralino.yml artifacts found."
             exit 1
           fi
-          if [ -e dist/ferry-neutralino-win_x64/resources/app.asar ] || [ -e dist/ferry-neutralino-win_x64/chrome_100_percent.pak ]; then
-            echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
-            exit 1
-          fi
           node ./.github/scripts/regenerate-update-yml.js --verify --version "$EXPECTED_VERSION"
 
       - name: Create verified public changelog commit

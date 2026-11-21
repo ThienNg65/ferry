@@ -9,7 +9,7 @@ import { createNodeHost } from '../../sidecar/nodeHost'
 
 const isWindows = process.platform === 'win32'
 
-describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback compatibility', () => {
+describe.runIf(isWindows)('Sidecar user data persistence & v10 DPAPI compatibility', () => {
   let userDataDir: string
 
   beforeEach(() => {
@@ -21,8 +21,8 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
     rmSync(userDataDir, { recursive: true, force: true })
   })
 
-  it('preserves sites, v10 DPAPI secrets, settings, bookmarks, history, and known_hosts across upgrade and rollback', async () => {
-    // 1. Seed userDataDir as an existing Electron installation: Local State DPAPI key + 5 JSON stores.
+  it('preserves sites, v10 DPAPI secrets, settings, bookmarks, history, and known_hosts across restarts', async () => {
+    // 1. Seed userDataDir with Local State DPAPI key + 5 JSON stores.
     const masterKey = unwrapOrCreateMasterKey(userDataDir)
     const box = createSecretBox(masterKey)
 
@@ -37,7 +37,7 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
             port: 22,
             username: 'deploy',
             authMethod: 'password',
-            secretPassword: box.encrypt('electron-secret-pw'),
+            secretPassword: box.encrypt('sidecar-secret-pw'),
             jumpHosts: [
               {
                 host: 'bastion.example.com',
@@ -128,7 +128,7 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
       'utf8'
     )
 
-    // 2. Boot Neutralino Node host against the existing Electron data directory.
+    // 2. Boot Node host against the existing data directory.
     const unwrappedKey = unwrapOrCreateMasterKey(userDataDir)
     expect(unwrappedKey.equals(masterKey)).toBe(true)
     setHost(createNodeHost(unwrappedKey, userDataDir, () => {}))
@@ -141,7 +141,7 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
 
     const siteStore = SiteStore.getInstance()
     expect(siteStore.list().map((s) => s.name)).toEqual(['Prod Web'])
-    expect(siteStore.getDecryptedSecrets('site-1').password).toBe('electron-secret-pw')
+    expect(siteStore.getDecryptedSecrets('site-1').password).toBe('sidecar-secret-pw')
     expect(siteStore.getDecryptedJumpHosts('site-1')[0].passphrase).toBe('jump-passphrase')
     expect(siteStore.getDecryptedProxy('site-1')?.password).toBe('proxy-secret')
 
@@ -158,7 +158,7 @@ describe.runIf(isWindows)('Electron -> Neutralino user data upgrade & rollback c
     expect(HistoryStore.getInstance().list()).toHaveLength(1)
     expect(KnownHostsStore.getInstance().get('prod.example.com', 22)).toBe('SHA256:abcdef1234567890')
 
-    // 3. Write a new site in Neutralino mode and confirm v10 ciphertext still decrypts under Electron/Chromium box.
+    // 3. Write a new site and confirm v10 ciphertext round-trips with the DPAPI master key.
     const created = siteStore.create({
       name: 'Added In Neutralino',
       host: 'staging.example.com',

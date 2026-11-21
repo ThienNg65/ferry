@@ -2,9 +2,9 @@
  * Integration tests for TransferQueue against a REAL SFTP/SSH server, driven
  * through the exact same path the app uses: SessionManager.openQuickConnect()
  * (real ssh2 handshake) feeding TransferQueue.enqueue()/enqueueTree() (real
- * SFTP streams). `electron`'s BrowserWindow is mocked (tests run outside an
- * Electron process) — everything else is real. See RemoteShell.integration.test.ts
- * for the docker command that starts the required test server.
+ * SFTP streams). `testHost` stubs host broadcasts — everything else is real.
+ * See RemoteShell.integration.test.ts for the docker command that starts the
+ * required test server.
  */
 import { randomBytes, randomUUID } from 'crypto'
 import { promises as fs } from 'fs'

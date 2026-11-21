@@ -802,7 +802,7 @@ export function createNeutralinoApi(
   }
 }
 
-/** True when running inside the Neutralinojs native container rather than Electron. */
+/** True when running inside the Neutralinojs native container. */
 export function isNeutralinoRuntime(): boolean {
   return typeof window !== 'undefined' && typeof (window as unknown as { NL_PORT?: unknown }).NL_PORT === 'number'
 }
@@ -832,7 +832,7 @@ export async function openExternal(url: string): Promise<void> {
   }
 }
 
-/** Installs the Neutralino-backed `window.api` bridge when Electron's preload script is absent. */
+/** Installs the Neutralino-backed `window.api` bridge when not already present. */
 export function installNeutralinoApi(): void {
   if (typeof window === 'undefined' || window.api) {
     return

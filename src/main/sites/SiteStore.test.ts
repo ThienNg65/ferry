@@ -6,9 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
  * privateKey auth must clear the now-irrelevant secret, otherwise a stale
  * password could keep getting replayed into keyboard-interactive prompts
  * regardless of the site's configured auth method (see SessionManager.ts's
- * `openFromSite`). `safeStorage` is mocked so importing SiteStore.ts never
- * touches a real Electron runtime; `SiteStore.getInstance()` (which would
- * touch real on-disk config) is never called.
+ * `openFromSite`). `conf` is mocked and `testHost` provides in-memory
+ * encryption; `SiteStore.getInstance()` is never called.
  */
 const disks = new Map<string, Record<string, unknown>>()
 

@@ -4,7 +4,7 @@ import { createSecretBox } from './secretBox'
 
 const key = randomBytes(32)
 
-function electronStyleCiphertext(plaintext: string): string {
+function v10Ciphertext(plaintext: string): string {
   const nonce = randomBytes(12)
   const cipher = createCipheriv('aes-256-gcm', key, nonce)
   const body = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
@@ -14,8 +14,8 @@ function electronStyleCiphertext(plaintext: string): string {
 describe('createSecretBox', () => {
   const box = createSecretBox(key)
 
-  it('decrypts a ciphertext in Electron safeStorage v10 layout', () => {
-    expect(box.decrypt(electronStyleCiphertext('hunter2 ünïcode'))).toBe('hunter2 ünïcode')
+  it('decrypts a ciphertext in v10 AES-256-GCM layout', () => {
+    expect(box.decrypt(v10Ciphertext('hunter2 ünïcode'))).toBe('hunter2 ünïcode')
   })
 
   it('round-trips and writes the v10 prefix', () => {
@@ -35,7 +35,7 @@ describe('createSecretBox', () => {
   })
 
   it('rejects another prefix', () => {
-    const raw = Buffer.from(electronStyleCiphertext('x'), 'base64')
+    const raw = Buffer.from(v10Ciphertext('x'), 'base64')
     raw.write('v20', 0)
     expect(() => box.decrypt(raw.toString('base64'))).toThrow('unsupported ciphertext format')
   })

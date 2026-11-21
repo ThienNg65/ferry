@@ -2,16 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HistoryEntry } from '../../shared/contract'
 
 /**
- * `electron-store` is a real npm CJS package, externalized by vitest — its
- * own internal `require('electron')` call is NOT intercepted by
- * `vi.mock('electron', ...)` (confirmed empirically against AppSettingsStore:
- * it silently fell through to `env-paths` and wrote real, ever-growing JSON
- * files under `%APPDATA%\electron-store-nodejs\Config\`). So `electron-store`
- * itself is mocked here with a minimal in-memory implementation mirroring
- * the two methods `HistoryStore.ts` actually uses (`get`/`set`), keyed by the
- * `name` option so a fresh `new HistoryStore()` reads back whatever a
- * previous instance flushed — exercising the same debounced-write and
- * persistence-round-trip behavior without touching disk.
+ * `conf` is mocked here with a minimal in-memory implementation mirroring the
+ * two methods `HistoryStore.ts` actually uses (`get`/`set`), keyed by the
+ * `configName` option so a fresh `new HistoryStore()` reads back whatever a
+ * previous instance flushed without touching disk.
  */
 const disks = new Map<string, Record<string, unknown>>()
 

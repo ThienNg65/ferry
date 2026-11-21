@@ -56,8 +56,7 @@ setCustomIconLoader(async () => {
   return null
 }, 'lucide')
 
-// In Neutralinojs, Electron's preload script is absent; install the WS/sidecar
-// bridge synchronously before Vue stores initialize.
+// Install the Neutralino WS/sidecar bridge synchronously before Vue stores initialize.
 installNeutralinoApi()
 
 // Benign Chromium ResizeObserver notification raised by virtualized tables

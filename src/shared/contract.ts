@@ -1,17 +1,18 @@
 /**
  * Shared IPC contract — the single source of truth for every channel name,
  * request/response envelope, and push-event payload exchanged between the
- * Electron main process and the renderer.
+ * Node.js sidecar and the renderer.
  *
- * Both `src/preload/index.ts` (whitelist) and the main-process IPC handlers
- * import the channel lists from here, so the two can never silently drift:
- * adding a channel in one place without the other becomes a type error.
+ * Both the renderer bridge (`src/renderer/src/bridge/neutralinoApi.ts`) and
+ * the sidecar IPC handlers import the channel lists from here, so the two
+ * can never silently drift: adding a channel in one place without the other
+ * becomes a type error.
  *
  * Design rules:
  *  - Every `invoke` resolves to an {@link IpcResult} envelope, never a raw value.
- *  - Push events (main → renderer) carry typed payloads keyed by channel.
- *  - No runtime dependencies on Electron or Node here — this module is imported
- *    by the sandboxed renderer too.
+ *  - Push events (sidecar → renderer) carry typed payloads keyed by channel.
+ *  - No runtime dependencies on Node here — this module is imported by the
+ *    renderer too.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
