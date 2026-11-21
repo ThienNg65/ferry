@@ -145,3 +145,72 @@ describe('parseSshConfig', () => {
     expect(out[3].jumpHosts?.[0]).toMatchObject({ host: 'other.example.com', port: 2200, username: 'me' })
   })
 })
+
+
+describe('parseSshConfig wildcard inheritance', () => {
+  it('matches OpenSSH global defaults, inline comments, quoted paths and case-sensitive Host patterns', () => {
+    const out = parseSshConfig([
+      'User global # first value wins',
+      'Host prod* # not an alias',
+      '  Port 2222 # team port',
+      '  IdentityFile "~/.ssh/test # space" # team key',
+      'Host Prod-East "prod-west"',
+      '  HostName example.org'
+    ].join('\n'), '/home/me', 'local')
+    expect(out.map(({ name, username, port }) => ({ name, username, port }))).toEqual([
+      { name: 'Prod-East', username: 'global', port: 22 },
+      { name: 'prod-west', username: 'global', port: 2222 }
+    ])
+    expect(out[1].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/test # space')
+  })
+  it('preserves embedded hash characters and recognizes a separate comment', () => {
+    const out = parseSshConfig([
+      'Host work',
+      '  User ops#work # user',
+      '  IdentityFile ~/.ssh/id#work # key'
+    ].join('\n'), '/home/me', 'local')
+    expect(out[0].username).toBe('ops#work')
+    expect(out[0].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/id#work')
+  })
+
+  it('inherits global defaults including jump host and identity file', () => {
+    const out = parseSshConfig([
+      'Host *',
+      ' User deploy',
+      ' Port 2222',
+      ' IdentityFile ~/.ssh/team_key',
+      ' ProxyJump gateway.example.com',
+      'Host production',
+      ' HostName prod.example.com'
+    ].join('\n'), '/home/alice', 'alice')
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({
+      name: 'production', host: 'prod.example.com', username: 'deploy', port: 2222,
+      jumpHosts: [{ host: 'gateway.example.com', port: 22, username: 'alice' }]
+    })
+    expect(out[0].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/alice/.ssh/team_key')
+  })
+
+  it('respects earlier values, question-mark patterns, and negated exclusions', () => {
+    const out = parseSshConfig([
+      'Host prod1',
+      ' User first',
+      'Host prod? !prod2',
+      ' Port 2200',
+      ' User second',
+      'Host prod1 prod2',
+      ' HostName shared.example.com',
+      'Host *',
+      ' Port 2222',
+      ' User fallback'
+    ].join('\n'), '/home/me', 'local')
+    expect(out.map((c) => c.name)).toEqual(['prod1', 'prod2'])
+    expect(out[0]).toMatchObject({ username: 'first', port: 2200 })
+    expect(out[1]).toMatchObject({ username: 'fallback', port: 2222 })
+  })
+
+  it('does not apply directives from unsupported Match sections', () => {
+    const out = parseSshConfig('Host one\n User valid\nMatch all\n User invalid\nHost two\n HostName two.example', '/home/me', 'local')
+    expect(out.map((c) => c.username)).toEqual(['valid', 'local'])
+  })
+})

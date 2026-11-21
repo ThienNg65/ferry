@@ -162,48 +162,83 @@ export function parseSshConfig(
   home: string = os.homedir(),
   defaultUser: string = os.userInfo().username
 ): ImportedSessionCandidate[] {
-  const hosts: SshConfigHost[] = []
-  let current: SshConfigHost[] = []
+  // Host patterns select candidates; only concrete aliases are imported.
+  // Resolve each option in OpenSSH's first-matching-value-wins order.
+  const sections: Array<{ patterns: string[]; options: Partial<SshConfigHost> }> = []
+  const aliases: string[] = []
+  let current: (typeof sections)[number] | undefined = { patterns: ['*'], options: {} }
+  sections.push(current)
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim()
-    if (!line || line.startsWith('#')) {
-      continue
-    }
+    if (!line || line.startsWith('#')) continue
     const match = /^(\S+?)(?:\s*=\s*|\s+)(.+)$/.exec(line)
-    if (!match) {
-      continue
-    }
+    if (!match) continue
     const key = match[1].toLowerCase()
-    const value = match[2].trim().replace(/^"(.*)"$/, '$1')
+    const args = [...match[2].matchAll(/(?:^|\s+)(?:"([^"]*)"|([^\s"#][^\s"]*)|(#.*$))/g)]
+      .filter((token) => token[3] === undefined)
+      .map((token) => token[1] ?? token[2])
+    if (args.length === 0) continue
+    const [value] = args
     if (key === 'host') {
-      current = value
-        .split(/\s+/)
-        .filter((pattern) => !/[*?!]/.test(pattern))
-        .map((alias) => ({ alias }))
-      hosts.push(...current)
-    } else if (key === 'match') {
-      current = []
-    } else {
-      for (const host of current) {
-        if (key === 'hostname' && host.hostName === undefined) host.hostName = value
-        else if (key === 'user' && host.user === undefined) host.user = value
-        else if (key === 'port' && host.port === undefined) {
-          const parsedPort = parseInt(value, 10)
-          host.port = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : 22
-        }
-        else if (key === 'identityfile' && host.identityFile === undefined) host.identityFile = expandHome(value, home)
-        else if (key === 'proxyjump' && host.proxyJump === undefined) host.proxyJump = value
+      const patterns = args
+      current = { patterns, options: {} }
+      sections.push(current)
+      for (const pattern of patterns) {
+        if (!pattern.startsWith('!') && !/[*?]/.test(pattern) && !aliases.includes(pattern)) aliases.push(pattern)
       }
+    } else if (key === 'match') {
+      // Match conditions are intentionally unsupported.
+      current = undefined
+    } else if (current) {
+      const options = current.options
+      if (key === 'hostname' && options.hostName === undefined) options.hostName = value
+      else if (key === 'user' && options.user === undefined) options.user = value
+      else if (key === 'port' && options.port === undefined) {
+        const port = Number(value)
+        options.port = Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 22
+      } else if (key === 'identityfile' && options.identityFile === undefined) options.identityFile = expandHome(value, home)
+      else if (key === 'proxyjump' && options.proxyJump === undefined) options.proxyJump = value
     }
   }
 
-  const byAlias = new Map(hosts.map((h) => [h.alias, h]))
-const parseValidPort = (raw: string | undefined): number => {
-  const n = raw ? Number.parseInt(raw, 10) : 22
-  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 22
-}
+  const matches = (patterns: string[], alias: string): boolean => {
+    let positive = false
+    for (const raw of patterns) {
+      const negated = raw.startsWith('!')
+      const pattern = negated ? raw.slice(1) : raw
+      const escaped = [...pattern].map((char) => {
+        if (char === '*') return '.*'
+        if (char === '?') return '.'
+        return char.replace(/[\\^$+?.()|[\]{}]/g, '\\$&')
+      }).join('')
+      if (new RegExp('^' + escaped + '$').test(alias)) {
+        if (negated) return false
+        positive = true
+      }
+    }
+    return positive
+  }
 
-const toHop = (spec: string): JumpHostConfig => {
+  const hosts: SshConfigHost[] = aliases.map((alias) => {
+    const host: SshConfigHost = { alias }
+    for (const section of sections) {
+      if (!matches(section.patterns, alias)) continue
+      for (const key of ['hostName', 'user', 'port', 'identityFile', 'proxyJump'] as const) {
+        if (host[key] === undefined && section.options[key] !== undefined) {
+          Object.assign(host, { [key]: section.options[key] })
+        }
+      }
+    }
+    return host
+  })
+
+  const byAlias = new Map(hosts.map((h) => [h.alias, h]))
+  const parseValidPort = (raw: string | undefined): number => {
+    const n = raw ? Number.parseInt(raw, 10) : 22
+    return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 22
+  }
+
+  const toHop = (spec: string): JumpHostConfig => {
     const known = byAlias.get(spec)
     if (known) {
       return {
