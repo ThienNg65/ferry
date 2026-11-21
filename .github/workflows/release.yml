@@ -91,6 +91,13 @@ jobs:
 
       - uses: ./.github/actions/setup-node-deps
 
+      - name: Verify package version matches release tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          node -e 'const version = require("./package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`Package version ${version} does not match release tag version ${process.env.RELEASE_VERSION}`)'
+
       # Fail closed before any publishing side effects. This runs on the exact
       # checked-out tag for both release-please and workflow_dispatch recovery.
       - name: Typecheck release commit
