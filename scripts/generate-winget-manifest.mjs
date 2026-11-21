@@ -34,6 +34,10 @@ export function renderWingetManifests(version, sha256) {
   }
 }
 
+async function readManifest(path) {
+  return (await readFile(path, 'utf8')).replaceAll('\r\n', '\n')
+}
+
 export async function generateWingetManifests({ version, installer, expectedSha256, outputRoot = DEFAULT_OUTPUT }) {
   // Validate user-controlled version before it is used in a directory name or URL.
   renderWingetManifests(version, expectedSha256)
@@ -54,7 +58,7 @@ export async function generateWingetManifests({ version, installer, expectedSha2
   // Never silently replace manifests for the same published version with changed bytes.
   for (const [name, content] of Object.entries(files)) {
     try {
-      if ((await readFile(join(outputDir, name), 'utf8')) !== content) {
+      if ((await readManifest(join(outputDir, name))) !== content) {
         throw new Error(`Existing manifest differs: ${join(outputDir, name)}`)
       }
     } catch (error) {
@@ -68,7 +72,7 @@ export async function generateWingetManifests({ version, installer, expectedSha2
       await writeFile(target, content, { flag: 'wx' })
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
-      if (await readFile(target, 'utf8') !== content) throw new Error(`Existing manifest differs: ${target}`)
+      if (await readManifest(target) !== content) throw new Error(`Existing manifest differs: ${target}`)
     }
   }
   return { outputDir, sha256: actualSha256 }

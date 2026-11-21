@@ -56,10 +56,20 @@ test('rejects invalid executables and refuses silently changed manifests', async
   await assert.rejects(generateWingetManifests(params), /Existing manifest differs/)
 })
 
+test('accepts unchanged manifests checked out with Windows line endings', async (t) => {
+  const { directory, installer, digest } = await fixture(t)
+  const params = { version: '1.2.2', installer, expectedSha256: digest, outputRoot: directory }
+  const { outputDir } = await generateWingetManifests(params)
+  for (const [name, content] of Object.entries(renderWingetManifests('1.2.2', digest))) {
+    await writeFile(join(outputDir, name), content.replaceAll('\n', '\r\n'))
+  }
+  await assert.doesNotReject(generateWingetManifests(params))
+})
+
 test('the checked-in 1.2.2 manifests match the public release asset digest', async () => {
   const digest = '4c19ab4760ff71d0cb2ef44b9e6c5aabe52b1e5c9e3daf24e54f0583229f3590'
   const manifestDir = new URL('../../packaging/winget/manifests/t/ThienNg65/Ferry/1.2.2/', import.meta.url)
   for (const [filename, expected] of Object.entries(renderWingetManifests('1.2.2', digest))) {
-    assert.equal(await readFile(new URL(filename, manifestDir), 'utf8'), expected)
+    assert.equal((await readFile(new URL(filename, manifestDir), 'utf8')).replaceAll('\r\n', '\n'), expected)
   }
 })
