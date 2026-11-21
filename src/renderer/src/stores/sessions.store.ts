@@ -795,11 +795,14 @@ export const useSessionsStore = defineStore('sessions', {
         return
       }
       this.setActiveTab(keepTabId)
-      for (const tab of [...this.tabs]) {
-        if (tab.tabId !== keepTabId) {
-          await this.closeTab(tab.tabId)
-        }
+      const toClose = this.tabs.filter((t) => t.tabId !== keepTabId)
+      // Every closeTab updates the visible tab list before its first await.
+      // Do not serialize native SSH shutdowns: one hung close must not block the rest.
+      const closing = toClose.map((tab) => this.closeTab(tab.tabId, false))
+      if (toClose.length > 0) {
+        void this.persistOpenTabs()
       }
+      await Promise.allSettled(closing)
     },
 
     /** Unlinks or closes tabs referencing deleted saved sites so no ghost siteId remains. */
@@ -818,14 +821,13 @@ export const useSessionsStore = defineStore('sessions', {
           toClose.push(tab.tabId)
         }
       }
-      for (const tabId of toClose) {
-        await this.closeTab(tabId)
-      }
+      const closing = toClose.map((tabId) => this.closeTab(tabId, false))
       void this.persistOpenTabs()
+      await Promise.allSettled(closing)
     },
 
     /** Removes a tab immediately so a slow or failed SSH teardown never blocks the site picker. */
-    async closeTab(tabId: string): Promise<void> {
+    async closeTab(tabId: string, persist = true): Promise<void> {
       const closedIndex = this.tabs.findIndex((t) => t.tabId === tabId)
       if (closedIndex === -1) {
         return
@@ -847,7 +849,9 @@ export const useSessionsStore = defineStore('sessions', {
       } else if (this.activeTabId === tabId) {
         this.activeTabId = this.tabs[Math.min(closedIndex, this.tabs.length - 1)].tabId
       }
-      void this.persistOpenTabs()
+      if (persist) {
+        void this.persistOpenTabs()
+      }
 
       if (!sid) {
         return

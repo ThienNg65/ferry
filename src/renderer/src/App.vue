@@ -67,7 +67,8 @@ onUnmounted(() => {
   unsubscribeUpdateAvailable()
   unsubscribeUpdateDownloaded()
   window.removeEventListener('resize', onWindowResize)
-  window.removeEventListener('keydown', onTabShortcut, true)
+  window.removeEventListener('keydown', onCloseTabShortcut, true)
+  window.removeEventListener('keydown', onTabShortcut)
   window.removeEventListener('mousemove', onPaneResizerMouseMove)
   window.removeEventListener('mouseup', onPaneResizerMouseUp)
 })
@@ -154,6 +155,28 @@ function onPaneResizerMouseUp() {
   ui.saveLocalPaneWidth()
 }
 
+/** Intercept only tab close in capture phase; leave other shortcuts' bubbling behavior unchanged. */
+function onCloseTabShortcut(event: KeyboardEvent): void {
+  if (
+    !(event.ctrlKey || event.metaKey) ||
+    event.altKey ||
+    event.shiftKey ||
+    event.key.toLowerCase() !== 'w'
+  ) {
+    return
+  }
+  // Ctrl+W deletes a word in the embedded SSH terminal; do not steal it.
+  if (event.target instanceof HTMLElement && event.target.closest('.xterm')) {
+    return
+  }
+  // Block the browser/WebView close even when a modal is open or the key repeats.
+  event.preventDefault()
+  if (event.repeat || document.querySelector('[role="dialog"]')) {
+    return
+  }
+  void sessions.closeTab(sessions.activeTabId)
+}
+
 function onTabShortcut(event: KeyboardEvent): void {
   if (event.key === 'F11' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
     event.preventDefault()
@@ -204,18 +227,6 @@ function onTabShortcut(event: KeyboardEvent): void {
     event.preventDefault()
     const step = event.shiftKey ? -1 : 1
     sessions.setActiveTab(tabs[(index + step + tabs.length) % tabs.length].tabId)
-  } else if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
-    // Leave terminal editing shortcuts (Ctrl+W deletes a word) to xterm.
-    if (inTerminal) {
-      return
-    }
-    // Capture before descendants can consume the event; prevent a native
-    // WebView close even when a dialog is open or the key auto-repeats.
-    event.preventDefault()
-    if (document.querySelector('[role="dialog"]') || event.repeat) {
-      return
-    }
-    void sessions.closeTab(sessions.activeTabId)
   }
 }
 
@@ -226,7 +237,8 @@ onMounted(() => {
       .then(() => ui.initTheme())
       .catch(() => {})
   })
-  window.addEventListener('keydown', onTabShortcut, true)
+  window.addEventListener('keydown', onCloseTabShortcut, true)
+  window.addEventListener('keydown', onTabShortcut)
   void updateStore.init()
   const mountTime = performance.now()
   const mountTimeOrigin = performance.timeOrigin

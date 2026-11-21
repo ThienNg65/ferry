@@ -383,6 +383,44 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.activeTab.status).toBeNull()
   })
 
+  it('closes all other tabs without waiting for a stalled SSH teardown and persists once', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    vi.mocked(api.invoke).mockImplementation(async (channel, request) => {
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        return { sessionId: (request as { sessionId: string }).sessionId, status: 'connected' }
+      }
+      return undefined
+    })
+    for (const host of ['first.test', 'second.test', 'keep.test']) {
+      if (host !== 'first.test') store.openNewTab()
+      await store.connect({ name: host, host, port: 22, username: 'user', authMethod: 'agent' })
+    }
+    const keepTabId = store.activeTabId
+    let releaseFirst!: () => void
+    const closedSessionIds: string[] = []
+    vi.mocked(api.invoke).mockClear()
+    vi.mocked(api.invoke).mockImplementation((channel, sessionId) => {
+      if (channel === INVOKE_CHANNELS.sessionClose) {
+        closedSessionIds.push(sessionId as string)
+        if (closedSessionIds.length === 1) {
+          return new Promise<void>((resolve) => { releaseFirst = resolve })
+        }
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const closing = store.closeOtherTabs(keepTabId)
+    expect(store.tabs.map((tab) => tab.tabId)).toEqual([keepTabId])
+    expect(store.activeTabId).toBe(keepTabId)
+    expect(closedSessionIds).toHaveLength(2)
+    expect(vi.mocked(api.invoke).mock.calls.filter(([ch]) => ch === INVOKE_CHANNELS.settingsSetOpenTabs)).toHaveLength(1)
+
+    releaseFirst()
+    await closing
+    expect(closedSessionIds).toHaveLength(2)
+  })
+
   it('reconnectTab reconnects saved sites and falls back to picker if Quick Connect password is missing', async () => {
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()

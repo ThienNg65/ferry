@@ -47,6 +47,36 @@ describe('SessionManager.close() during connect', () => {
     await closed
   })
 
+  it('releases target and jump sockets even when an earlier teardown step throws', async () => {
+    const { SessionManager } = await import('./SessionManager')
+    const { TailManager } = await import('../tail/TailManager')
+    const manager = SessionManager.getInstance()
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions
+    const target = {
+      end: vi.fn(() => { throw new Error('end failed') }),
+      destroy: vi.fn()
+    }
+    const jump = { end: vi.fn(), destroy: vi.fn() }
+    const tailStop = vi.spyOn(TailManager.getInstance(), 'stopAllForSession')
+      .mockImplementation(() => { throw new Error('tail cleanup failed') })
+    sessions.set('teardown-failure', {
+      sessionId: 'teardown-failure', siteId: null, status: 'connected',
+      client: target, jumpClients: [jump], abort: vi.fn()
+    })
+    try {
+      expect(() => manager.close('teardown-failure')).toThrow(AggregateError)
+      expect(target.end).toHaveBeenCalledTimes(1)
+      expect(target.destroy).toHaveBeenCalledTimes(1)
+      expect(jump.end).toHaveBeenCalledTimes(1)
+      expect(jump.destroy).toHaveBeenCalledTimes(1)
+      expect(sessions.has('teardown-failure')).toBe(false)
+      expect(() => manager.close('teardown-failure')).not.toThrow()
+    } finally {
+      tailStop.mockRestore()
+      sessions.delete('teardown-failure')
+    }
+  })
+
   it('cancels a connect closed before the ssh2 module finishes loading', async () => {
     const { SessionManager } = await import('./SessionManager')
     const manager = SessionManager.getInstance()
