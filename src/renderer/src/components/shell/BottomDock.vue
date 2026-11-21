@@ -13,6 +13,7 @@ import {
   useUiStore
 } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
 import { onTablistKeydown, onTabStripWheel } from '../../utils/tablistKeys'
@@ -23,6 +24,7 @@ import TerminalView from '../terminal/TerminalView.vue'
 import ActivityPanel from '../activity/ActivityPanel.vue'
 import MonitorPanel from '../monitor/MonitorPanel.vue'
 import OpenEditsPanel from '../edits/OpenEditsPanel.vue'
+import CompanionTrigger from '../companion/CompanionTrigger.vue'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
@@ -30,6 +32,7 @@ const transfers = useTransferQueueStore()
 const operations = useOperationsStore()
 const ui = useUiStore()
 const editSessions = useEditSessionsStore()
+const companion = useCompanionStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
@@ -366,6 +369,9 @@ watch(
           </UChip>
         </UTooltip>
       </div>
+      <div v-if="companion.showInDock" class="mt-auto pt-1">
+        <CompanionTrigger placement="dock-right-rail" :show-notice="sessions.status === 'connected'" />
+      </div>
     </div>
 
     <div v-show="!(isRight && collapsed)" class="@container flex min-h-0 min-w-0 flex-1 flex-col">
@@ -442,6 +448,11 @@ watch(
           >
             Ctrl+`
           </kbd>
+          <CompanionTrigger
+            v-if="companion.showInDock"
+            :placement="isRight ? 'dock-right-header' : 'dock-bottom'"
+            :show-notice="sessions.status === 'connected' && !(isRight && collapsed)"
+          />
           <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">
             <UButton
               class="ferry-pressable"

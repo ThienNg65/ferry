@@ -10,6 +10,7 @@ import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
 import { useUpdateStore } from '../../stores/update.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useNotify } from '../../composables/useNotify'
 import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
 import { getPaneActions } from '../../composables/usePaneActions'
@@ -37,6 +38,7 @@ const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const { openDock } = useDockState()
 const updateStore = useUpdateStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 const shortcutsDialog = useShortcutsDialog()
 
@@ -103,6 +105,25 @@ const groups = computed<PaletteGroup[]>(() => {
       onSelect: () => run(() => ui.toggleLocalPane())
     },
     { id: 'act-shortcuts', label: 'Keyboard shortcuts', icon: 'i-lucide-keyboard', onSelect: () => run(() => shortcutsDialog.open()) },
+    {
+      id: 'act-companion',
+      label: 'Open Ferry Companion',
+      icon: 'i-lucide-ship',
+      suffix: 'Ctrl+Space',
+      onSelect: () => run(() => companion.openPanel('chat'))
+    },
+    {
+      id: 'act-companion-whats-new',
+      label: "What's New in Ferry",
+      icon: 'i-lucide-sparkles',
+      onSelect: () => run(() => companion.openPanel('whats-new'))
+    },
+    {
+      id: 'act-companion-report',
+      label: 'Report a Bug / Send Feedback',
+      icon: 'i-lucide-bug',
+      onSelect: () => run(() => companion.openPanel('report'))
+    },
     {
       id: 'act-fullscreen',
       label: 'Toggle full screen (F11)',

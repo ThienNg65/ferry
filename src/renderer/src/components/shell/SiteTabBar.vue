@@ -15,9 +15,11 @@ import { useSessionsStore, type SessionTab } from '../../stores/sessions.store'
 import { useSitesStore } from '../../stores/sites.store'
 import { useUiStore } from '../../stores/ui.store'
 import { useUpdateStore } from '../../stores/update.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { ENVIRONMENT_DOT, ENVIRONMENT_LABEL, ENVIRONMENT_TAB_BORDER } from '../../utils/environment'
 import { onTablistKeydown, onTabStripWheel } from '../../utils/tablistKeys'
 import FerryLogo from './FerryLogo.vue'
+import CompanionTrigger from '../companion/CompanionTrigger.vue'
 
 const SiteFormDialog = defineAsyncComponent(() => import('../sessions/SiteFormDialog.vue'))
 
@@ -26,6 +28,7 @@ const remoteFs = useRemoteFsStore()
 const ui = useUiStore()
 const sites = useSitesStore()
 const updateStore = useUpdateStore()
+const companion = useCompanionStore()
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const commandPalette = useCommandPalette()
@@ -365,6 +368,10 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
           <kbd class="rounded bg-muted px-1 py-0.5 font-mono text-2xs text-muted">Ctrl+K</kbd>
         </button>
       </UTooltip>
+      <CompanionTrigger
+        placement="header"
+        :show-notice="sessions.status !== 'connected' || !companion.showInDock"
+      />
       <UTooltip :text="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
         <UButton
           class="ferry-pressable"

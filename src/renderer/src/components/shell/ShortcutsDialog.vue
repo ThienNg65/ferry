@@ -7,6 +7,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: 'Everywhere',
     rows: [
       ['Ctrl+K', 'Command palette'],
+      ['Ctrl+Space', 'Toggle Ferry Companion'],
       ['?', 'This cheat-sheet'],
       ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous site tab'],
       ['Ctrl+W', 'Close site tab'],

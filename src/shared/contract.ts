@@ -1106,9 +1106,66 @@ export const INVOKE_CHANNELS = {
   updateCheck: 'update:check',
   updateGetStatus: 'update:getStatus',
   updateInstallNow: 'update:installNow',
+  // companion
+  companionGetReleases: 'companion:getReleases',
+  companionAiGetConfig: 'companion:ai:getConfig',
+  companionAiSetConfig: 'companion:ai:setConfig',
+  companionAiTest: 'companion:ai:test',
+  companionAiChat: 'companion:ai:chat',
   // profiling
   profileReport: 'profile:report'
 } as const
+
+export type CompanionAiProvider = 'none' | 'ollama' | 'openai-compatible'
+
+export interface CompanionAiConfigInfo {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  hasApiKey: boolean
+}
+
+export interface CompanionAiConfigInput {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  /** Omitting preserves any stored encrypted key; empty string clears it. */
+  apiKey?: string
+}
+
+export interface CompanionAiChatRequest {
+  prompt: string
+  history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  context: {
+    appVersion: string
+    isConnected: boolean
+    theme: string
+  }
+}
+
+export interface CompanionAiChatResult {
+  ok: boolean
+  text?: string
+  provider?: CompanionAiProvider
+  error?: string
+}
+
+export interface CompanionReleaseHighlight {
+  version: string
+  publishedAt: string | null
+  title: string
+  highlights: string[]
+  url: string
+  source: 'github' | 'bundled'
+}
+
+export interface CompanionReleasesResult {
+  releases: CompanionReleaseHighlight[]
+  source: 'github' | 'bundled'
+  fetchedAt: string | null
+  offlineFallback: boolean
+  error?: string
+}
 
 /** Union of every valid invoke channel string. */
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNELS]

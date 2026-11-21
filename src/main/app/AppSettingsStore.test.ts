@@ -184,4 +184,35 @@ describe('AppSettingsStore', () => {
     store.reset()
     expect(new AppSettingsStore().get().uiPrefs).toEqual({})
   })
+
+  it('encrypts companion AI API keys at rest, preserves on omit, and wipes when disabled', () => {
+    const store = new AppSettingsStore()
+    const saved = store.setCompanionAiConfig({
+      provider: 'openai-compatible',
+      endpoint: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      apiKey: 'sk-live-secret'
+    })
+    expect(saved).toEqual({
+      provider: 'openai-compatible',
+      endpoint: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      hasApiKey: true
+    })
+    expect(JSON.stringify(disks.get('app-settings'))).not.toContain('sk-live-secret')
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('sk-live-secret')
+
+    // Omitting apiKey preserves the encrypted secret
+    store.setCompanionAiConfig({
+      provider: 'openai-compatible',
+      endpoint: 'https://api.openai.com/v1',
+      model: 'gpt-4o'
+    })
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('sk-live-secret')
+
+    // Disabling AI wipes the stored secret completely
+    const disabled = store.setCompanionAiConfig({ provider: 'none', endpoint: '', model: '' })
+    expect(disabled).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
+    expect(store.getDecryptedCompanionAiConfig()).toBeNull()
+  })
 })
