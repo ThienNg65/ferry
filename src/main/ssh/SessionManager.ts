@@ -852,10 +852,14 @@ export class SessionManager {
     attempt(() => EditSessionManager.getInstance().closeAllForSession(sessionId))
 
     // Close every socket, including bastions, even when an earlier step threw.
-    // destroy() is also required if a graceful end() cannot complete.
+    // Prefer the SSH graceful disconnect; force-destroy only when end() fails.
     for (const client of [entry.client, ...entry.jumpClients.slice().reverse()]) {
-      attempt(() => client.end())
-      attempt(() => client.destroy())
+      try {
+        client.end()
+      } catch (error) {
+        errors.push(error)
+        attempt(() => client.destroy())
+      }
     }
     // Never retain a session whose tab was closed, even if a listener throws.
     this.sessions.delete(sessionId)

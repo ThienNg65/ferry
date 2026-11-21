@@ -68,7 +68,7 @@ describe('SessionManager.close() during connect', () => {
       expect(target.end).toHaveBeenCalledTimes(1)
       expect(target.destroy).toHaveBeenCalledTimes(1)
       expect(jump.end).toHaveBeenCalledTimes(1)
-      expect(jump.destroy).toHaveBeenCalledTimes(1)
+      expect(jump.destroy).not.toHaveBeenCalled()
       expect(sessions.has('teardown-failure')).toBe(false)
       expect(() => manager.close('teardown-failure')).not.toThrow()
     } finally {
