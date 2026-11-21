@@ -5,6 +5,19 @@ import PasswordInput from '../shell/PasswordInput.vue'
 
 const sessions = useSessionsStore()
 
+const copiedFingerprint = ref(false)
+async function copyFingerprint(): Promise<void> {
+  const fp = sessions.pendingHostKeyPrompt?.fingerprint
+  if (!fp) return
+  try {
+    await navigator.clipboard.writeText(fp)
+    copiedFingerprint.value = true
+    setTimeout(() => { copiedFingerprint.value = false }, 1500)
+  } catch {
+    // Clipboard unavailable in headless environments.
+  }
+}
+
 const keyboardAnswers = ref<string[]>([])
 watch(
   () => sessions.pendingKeyboardPrompt,
@@ -80,15 +93,52 @@ async function submitKeyboardAnswers(): Promise<void> {
   >
     <template #body>
       <div class="flex flex-col gap-3">
-        <div v-if="sessions.pendingHostKeyPromptTab?.label" class="text-xs text-muted">
-          Tab: <span class="font-medium text-highlighted">{{ sessions.pendingHostKeyPromptTab.label }}</span>
+        <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+          <UBadge
+            v-if="sessions.pendingHostKeyPrompt?.role === 'jump'"
+            color="warning"
+            variant="subtle"
+            size="xs"
+          >
+            Jump host{{ typeof sessions.pendingHostKeyPrompt.hopIndex === 'number' ? ` #${sessions.pendingHostKeyPrompt.hopIndex + 1}` : '' }}
+          </UBadge>
+          <UBadge
+            v-else-if="sessions.pendingHostKeyPrompt?.role === 'target'"
+            color="primary"
+            variant="subtle"
+            size="xs"
+          >
+            Target host
+          </UBadge>
+          <UBadge
+            v-if="sessions.pendingHostKeyPrompt?.algorithm"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            class="font-mono"
+          >
+            {{ sessions.pendingHostKeyPrompt.algorithm }}
+          </UBadge>
+          <span v-if="sessions.pendingHostKeyPromptTab?.label">
+            Tab: <span class="font-medium text-highlighted">{{ sessions.pendingHostKeyPromptTab.label }}</span>
+          </span>
         </div>
         <p class="text-sm text-default">
           First connection to
           <span class="font-medium">{{ sessions.pendingHostKeyPrompt?.host }}:{{ sessions.pendingHostKeyPrompt?.port }}</span>.
           Check that this fingerprint matches the one your server administrator gave you.
         </p>
-        <code class="break-all rounded-md bg-muted p-2 font-mono text-xs text-highlighted">{{ sessions.pendingHostKeyPrompt?.fingerprint }}</code>
+        <div class="flex items-start gap-2 rounded-md bg-muted p-2">
+          <code class="min-w-0 flex-1 break-all font-mono text-xs text-highlighted">{{ sessions.pendingHostKeyPrompt?.fingerprint }}</code>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            :icon="copiedFingerprint ? 'i-lucide-check' : 'i-lucide-copy'"
+            :aria-label="copiedFingerprint ? 'Copied fingerprint' : 'Copy fingerprint'"
+            @click="copyFingerprint"
+          />
+        </div>
       </div>
     </template>
     <template #footer>

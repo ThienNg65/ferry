@@ -87,7 +87,7 @@ async function copyText(label: string, value: string): Promise<void> {
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-1 flex-col">
+  <div class="@container flex min-h-0 flex-1 flex-col">
     <!-- Filter & Count Toolbar -->
     <div class="flex shrink-0 items-center justify-between gap-2 border-b border-muted bg-muted/20 px-3 py-0.5">
       <div class="flex items-center gap-1.5">
@@ -128,7 +128,7 @@ async function copyText(label: string, value: string): Promise<void> {
     >
       <button
         type="button"
-        class="flex flex-1 items-center gap-1 truncate text-left transition-colors hover:text-highlighted"
+        class="flex min-w-28 flex-1 items-center gap-1 truncate text-left transition-colors hover:text-highlighted"
         :class="sortKey === 'name' ? 'text-highlighted' : ''"
         @click="toggleSort('name')"
       >
@@ -137,7 +137,7 @@ async function copyText(label: string, value: string): Promise<void> {
       </button>
       <button
         type="button"
-        class="flex w-20 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted"
+        class="flex w-14 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted @[480px]:w-20"
         :class="sortKey === 'pid' ? 'text-highlighted' : ''"
         @click="toggleSort('pid')"
       >
@@ -146,7 +146,7 @@ async function copyText(label: string, value: string): Promise<void> {
       </button>
       <button
         type="button"
-        class="flex w-40 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted"
+        class="flex w-20 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted @[480px]:w-32 @[620px]:w-40"
         :class="sortKey === 'rssBytes' ? 'text-highlighted' : ''"
         @click="toggleSort('rssBytes')"
       >
@@ -155,7 +155,7 @@ async function copyText(label: string, value: string): Promise<void> {
       </button>
       <button
         type="button"
-        class="flex w-24 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted"
+        class="flex w-16 shrink-0 items-center justify-end gap-0.5 transition-colors hover:text-highlighted @[480px]:w-24"
         :class="sortKey === 'cpuPct' ? 'text-highlighted' : ''"
         @click="toggleSort('cpuPct')"
       >
@@ -190,7 +190,7 @@ async function copyText(label: string, value: string): Promise<void> {
           @keydown.enter="selectRow(sortedProcesses[virtualRow.index].pid)"
           @keydown.space.prevent="selectRow(sortedProcesses[virtualRow.index].pid)"
         >
-          <div class="flex min-w-0 flex-1 items-center gap-1.5">
+          <div class="flex min-w-28 flex-1 items-center gap-1.5">
             <span class="truncate font-medium" :title="sortedProcesses[virtualRow.index].name">
               {{ sortedProcesses[virtualRow.index].name }}
             </span>
@@ -226,18 +226,18 @@ async function copyText(label: string, value: string): Promise<void> {
             </div>
           </div>
 
-          <span class="w-20 shrink-0 text-right font-mono text-muted tabular-nums">
+          <span class="w-14 shrink-0 text-right font-mono text-muted tabular-nums @[480px]:w-20">
             {{ sortedProcesses[virtualRow.index].pid }}
           </span>
 
-          <div class="flex w-40 shrink-0 items-center justify-end gap-1.5 tabular-nums">
+          <div class="flex w-20 shrink-0 items-center justify-end gap-1.5 tabular-nums @[480px]:w-32 @[620px]:w-40">
             <span class="shrink-0 whitespace-nowrap font-mono text-default">
               {{ formatBytes(sortedProcesses[virtualRow.index].rssBytes) }}
             </span>
-            <span v-if="totalMemBytes > 0" class="w-10 shrink-0 text-right font-mono text-3xs text-muted">
+            <span v-if="totalMemBytes > 0" class="hidden w-10 shrink-0 text-right font-mono text-3xs text-muted @[480px]:inline">
               {{ ramPercent(sortedProcesses[virtualRow.index].rssBytes).toFixed(1) }}%
             </span>
-            <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">
+            <div class="hidden h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated @[620px]:block">
               <div
                 class="h-full w-full origin-left transform-gpu rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none"
                 :class="barToneClass(ramPercent(sortedProcesses[virtualRow.index].rssBytes))"
@@ -246,7 +246,7 @@ async function copyText(label: string, value: string): Promise<void> {
             </div>
           </div>
 
-          <div class="flex w-24 shrink-0 items-center justify-end gap-1.5 tabular-nums">
+          <div class="flex w-16 shrink-0 items-center justify-end gap-1.5 tabular-nums @[480px]:w-24">
             <span class="font-mono">
               {{
                 sortedProcesses[virtualRow.index].cpuPct === null
@@ -254,7 +254,7 @@ async function copyText(label: string, value: string): Promise<void> {
                   : `${sortedProcesses[virtualRow.index].cpuPct?.toFixed(1)}%`
               }}
             </span>
-            <div class="h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated">
+            <div class="hidden h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-elevated @[480px]:block">
               <div
                 v-if="sortedProcesses[virtualRow.index].cpuPct !== null"
                 class="h-full w-full origin-left transform-gpu rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none"

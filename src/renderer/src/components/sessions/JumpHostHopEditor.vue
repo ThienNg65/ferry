@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import { invoke } from '../../api'
+import { useNotify } from '../../composables/useNotify'
 import PasswordInput from '../shell/PasswordInput.vue'
 
 export interface JumpHopForm {
@@ -32,11 +33,16 @@ const emit = defineEmits<{
   'move-down': []
 }>()
 
+const notify = useNotify()
+const touched = ref({ host: false, port: false, username: false, privateKeyPath: false })
+const dirty = ref({ host: false, port: false, username: false, privateKeyPath: false })
+
 function set<K extends keyof JumpHopForm>(key: K, value: JumpHopForm[K]): void {
+  if (key in dirty.value) {
+    dirty.value[key as keyof typeof dirty.value] = true
+  }
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
-
-const touched = ref({ host: false, port: false, username: false, privateKeyPath: false })
 
 const jumpAuthOptions: { label: string; value: 'password' | 'privateKey' }[] = [
   { label: 'Password', value: 'password' },
@@ -70,6 +76,8 @@ async function browsePrivateKey(): Promise<void> {
   const path = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
   if (path) {
     set('privateKeyPath', path)
+  } else if (!(window as { NL_ARGS?: unknown }).NL_ARGS) {
+    notify.error('Native picker unavailable', 'Type or paste the private key path in browser mode.')
   }
 }
 </script>
@@ -114,7 +122,7 @@ async function browsePrivateKey(): Promise<void> {
           :model-value="modelValue.host"
           placeholder="bastion.example.com"
           class="w-full"
-          @blur="touched.host = true"
+          @blur="dirty.host && (touched.host = true)"
           @update:model-value="(v: unknown) => set('host', String(v))"
         />
       </UFormField>
@@ -125,7 +133,7 @@ async function browsePrivateKey(): Promise<void> {
           min="1"
           max="65535"
           class="w-full"
-          @blur="touched.port = true"
+          @blur="dirty.port && (touched.port = true)"
           @update:model-value="(v: unknown) => set('port', v === '' ? '' : Number(v))"
         />
       </UFormField>
@@ -134,7 +142,7 @@ async function browsePrivateKey(): Promise<void> {
       <UInput
         :model-value="modelValue.username"
         class="w-full"
-        @blur="touched.username = true"
+        @blur="dirty.username && (touched.username = true)"
         @update:model-value="(v: unknown) => set('username', String(v))"
       />
     </UFormField>
@@ -163,7 +171,7 @@ async function browsePrivateKey(): Promise<void> {
             :model-value="modelValue.privateKeyPath"
             placeholder="Path to private key"
             class="w-full flex-1"
-            @blur="touched.privateKeyPath = true"
+            @blur="dirty.privateKeyPath && (touched.privateKeyPath = true)"
             @update:model-value="(v: unknown) => set('privateKeyPath', String(v))"
           />
           <UButton

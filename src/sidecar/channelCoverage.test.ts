@@ -1,9 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { HOST_INVOKE_CHANNELS, INVOKE_CHANNELS, SEND_CHANNELS } from '../shared/contract'
-
-vi.mock('electron', () => {
-  throw new Error('the sidecar module graph must not import electron')
-})
 
 const { handlers, sendHandlers } = await import('../main/ipc/envelope')
 const { registerSidecarHandlers } = await import('../main/ipc/registerSidecar')

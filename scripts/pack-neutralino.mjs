@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 import { buildPortableZip } from './lib/portable-zip.mjs'
 import { Data, NtExecutable, NtExecutableResource, Resource } from 'resedit'
 
-const MAX_COMPRESSED_BYTES = 45 * 1024 * 1024 // 45 MB feasibility gate (<= 50% of Electron setup)
+const MAX_COMPRESSED_BYTES = 45 * 1024 * 1024 // 45 MB installer size budget
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const rootDir = resolve(__dirname, '..')

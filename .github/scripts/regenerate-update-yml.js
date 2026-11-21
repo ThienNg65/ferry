@@ -28,7 +28,7 @@ function findUniqueInstaller(distDir, version) {
   return exeName;
 }
 
-/** Builds standard electron-builder/neutralino `latest.yml` content for an installer. */
+/** Builds standard Neutralino `latest.yml` content for an installer. */
 function buildLatestYml({ version, exeName, sha512, size, releaseDate }) {
   return `version: ${version}
 files:

@@ -35,7 +35,7 @@ function dpapiUnprotect(blob: Buffer): Buffer {
 }
 
 /**
- * Unwraps Chromium/Electron's DPAPI-protected 32-byte AES master key from
+ * Unwraps the DPAPI-protected 32-byte AES master key from
  * `<dataDir>/Local State` (`os_crypt.encrypted_key`), or creates a fresh
  * DPAPI-protected key if none exists yet. Cached in memory per `dataDir`.
  */

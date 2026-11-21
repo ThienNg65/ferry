@@ -269,8 +269,24 @@ function sessionLabel(sessionId: string): string | null {
 }
 
 function openTerminalSearch(): void {
-  window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT))
+  window.dispatchEvent(new CustomEvent(TERMINAL_SEARCH_EVENT, { detail: { toggle: true } }))
 }
+
+const tailTablistRef = ref<HTMLElement | null>(null)
+watch(
+  [() => tailStreams.activeTailId, tailActive],
+  ([activeId, isTailActive]) => {
+    if (!activeId || !isTailActive) return
+    void nextTick(() => {
+      const strip = tailTablistRef.value
+      if (!strip) return
+      strip
+        .querySelector<HTMLElement>(`[data-tail-tab-id="${CSS.escape(activeId)}"]`)
+        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
+  },
+  { flush: 'post' }
+)
 </script>
 
 <template>
@@ -328,18 +344,28 @@ function openTerminalSearch(): void {
         />
       </UTooltip>
       <div class="my-0.5 h-px w-5 bg-default" />
-      <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
-        <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
-          <UButton
-            :icon="panel.icon"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            :aria-label="panel.label"
-            @click="openDock(panel.id)"
-          />
-        </UChip>
-      </UTooltip>
+      <div
+        role="tablist"
+        aria-orientation="vertical"
+        aria-label="Dock panels"
+        class="flex flex-col items-center gap-1.5"
+        @keydown="onTablistKeydown($event, false, true)"
+      >
+        <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
+          <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
+            <UButton
+              :icon="panel.icon"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              role="tab"
+              :aria-selected="!collapsed && tab === panel.id"
+              :aria-label="panel.label"
+              @click="openDock(panel.id)"
+            />
+          </UChip>
+        </UTooltip>
+      </div>
     </div>
 
     <div v-show="!(isRight && collapsed)" class="@container flex min-h-0 min-w-0 flex-1 flex-col">
@@ -478,10 +504,11 @@ function openTerminalSearch(): void {
     >
       <!-- Tail Tabs Header Bar -->
       <div v-if="tailStreams.tabs.length > 0" class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-muted bg-muted/30 px-2 py-1">
-        <div class="ferry-scroll-fade-x scrollbar-none flex min-w-[120px] flex-1 touch-pan-x items-center gap-1 overflow-x-auto" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)" @wheel="onTabStripWheel">
+        <div ref="tailTablistRef" class="ferry-scroll-fade-x scrollbar-none flex min-w-[120px] flex-1 touch-pan-x items-center gap-1 overflow-x-auto" role="tablist" aria-label="Open log tails" @keydown="onTablistKeydown($event, true)" @wheel="onTabStripWheel">
           <div
             v-for="openTail in tailStreams.tabs"
             :key="openTail.tailId"
+            :data-tail-tab-id="openTail.tailId"
             class="group flex shrink-0 items-center rounded-md border transition-all"
             :class="
               tailStreams.activeTailId === openTail.tailId

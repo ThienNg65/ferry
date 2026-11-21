@@ -28,6 +28,19 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.3.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.1...ferry-v1.3.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* remediate Modern Glass UI audit regressions and UX polish ([#151](https://github.com/ThienNg65/ferry/issues/151)) ([e6e6773](https://github.com/ThienNg65/ferry/commit/e6e67734f7207bd49d218d40080614edd0a5e1d7))
+
+
+### Miscellaneous Chores
+
+* remove legacy Electron references and upgrade shims ([c12e086](https://github.com/ThienNg65/ferry/commit/c12e086a4e47cdca2fb614421271e9b3b8ba1288))
+* remove legacy Electron references and upgrade shims ([7abee66](https://github.com/ThienNg65/ferry/commit/7abee665d2cfdeeb1e5de28058d871d3ba2f33a5))
+
 ## [1.3.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.0...ferry-v1.3.1) (2026-11-21)
 
 

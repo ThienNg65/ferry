@@ -6,6 +6,7 @@ import { ENVIRONMENT_OPTIONS } from '../../utils/environment'
 import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify } from '../../composables/useNotify'
 // Not yet used elsewhere in the app, so not in the auto-generated global
 // components.d.ts yet — deep-import instead of relying on <USwitch>/<UCollapsible>
 // (see FileRow.vue's ContextMenu for the same pattern).
@@ -140,6 +141,8 @@ function currentSnapshot(): string {
 
 const isDirty = computed(() => props.open && initialSnapshot.value !== '' && currentSnapshot() !== initialSnapshot.value)
 
+const dirty = reactive({ host: false, port: false, username: false, privateKeyPath: false, proxyHost: false, proxyPort: false })
+
 function resetForm(seed?: Site | Partial<SiteInput> | null): void {
   form.name = seed?.name ?? ''
   form.host = seed?.host ?? ''
@@ -182,6 +185,12 @@ function resetForm(seed?: Site | Partial<SiteInput> | null): void {
   touched.privateKeyPath = false
   touched.proxyHost = false
   touched.proxyPort = false
+  dirty.host = false
+  dirty.port = false
+  dirty.username = false
+  dirty.privateKeyPath = false
+  dirty.proxyHost = false
+  dirty.proxyPort = false
   generateKeyOpen.value = false
   error.value = null
   initialSnapshot.value = currentSnapshot()
@@ -289,10 +298,15 @@ const proxyPasswordPlaceholder = computed(() =>
   props.site?.proxy?.hasPassword ? 'Leave blank to keep current password' : 'Password (optional)'
 )
 
+const notify = useNotify()
+
 async function browsePrivateKey(): Promise<void> {
   const path = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
   if (path) {
     form.privateKeyPath = path
+    dirty.privateKeyPath = true
+  } else if (!(window as { NL_ARGS?: unknown }).NL_ARGS) {
+    notify.error('Native picker unavailable', 'Type or paste the private key path in browser mode.')
   }
 }
 
@@ -306,6 +320,12 @@ async function browseLocalPath(): Promise<void> {
 function onKeyGenerated(result: KeyGenerateResult): void {
   form.privateKeyPath = result.privateKeyPath
   form.authMethod = 'privateKey'
+}
+
+function onModalEscapeKeyDown(event: KeyboardEvent): void {
+  if (document.querySelector('[data-reka-popper-content-wrapper]')) {
+    event.preventDefault()
+  }
 }
 
 async function requestClose(): Promise<void> {
@@ -408,6 +428,7 @@ async function save(andConnect = false): Promise<void> {
         : 'Saved sites appear in the connect list for one-click access.'
     "
     :ui="{ footer: 'flex-wrap justify-end' }"
+    :content="{ onEscapeKeyDown: onModalEscapeKeyDown }"
     @update:open="(v: boolean) => { if (!v) void requestClose() }"
   >
     <template #body>
@@ -449,7 +470,8 @@ async function save(andConnect = false): Promise<void> {
               v-model="form.host"
               placeholder="example.com"
               class="w-full"
-              @blur="touched.host = true"
+              @input="dirty.host = true"
+              @blur="dirty.host && (touched.host = true)"
             />
           </UFormField>
           <UFormField label="Port" required :error="portError || undefined" class="w-full sm:w-28" :ui="{ error: 'text-xs leading-tight' }">
@@ -459,7 +481,8 @@ async function save(andConnect = false): Promise<void> {
               min="1"
               max="65535"
               class="w-full"
-              @blur="touched.port = true"
+              @input="dirty.port = true"
+              @blur="dirty.port && (touched.port = true)"
             />
           </UFormField>
         </div>
@@ -468,7 +491,8 @@ async function save(andConnect = false): Promise<void> {
             v-model="form.username"
             placeholder="e.g. root"
             class="w-full"
-            @blur="touched.username = true"
+            @input="dirty.username = true"
+            @blur="dirty.username && (touched.username = true)"
           />
         </UFormField>
         <UFormField label="Authentication">
@@ -494,7 +518,8 @@ async function save(andConnect = false): Promise<void> {
                 v-model="form.privateKeyPath"
                 placeholder="Path to private key"
                 class="w-full flex-1"
-                @blur="touched.privateKeyPath = true"
+                @input="dirty.privateKeyPath = true"
+                @blur="dirty.privateKeyPath && (touched.privateKeyPath = true)"
               />
               <div class="flex gap-2">
                 <UButton color="neutral" variant="outline" aria-label="Browse private key file" @click="browsePrivateKey">
@@ -602,7 +627,8 @@ async function save(andConnect = false): Promise<void> {
                       v-model="proxyHost"
                       placeholder="proxy.example.com"
                       class="w-full"
-                      @blur="touched.proxyHost = true"
+                      @input="dirty.proxyHost = true"
+                      @blur="dirty.proxyHost && (touched.proxyHost = true)"
                     />
                   </UFormField>
                   <UFormField label="Port" required :error="proxyPortError || undefined" class="w-full sm:w-28" :ui="{ error: 'text-xs leading-tight' }">
@@ -612,7 +638,8 @@ async function save(andConnect = false): Promise<void> {
                       min="1"
                       max="65535"
                       class="w-full"
-                      @blur="touched.proxyPort = true"
+                      @input="dirty.proxyPort = true"
+                      @blur="dirty.proxyPort && (touched.proxyPort = true)"
                     />
                   </UFormField>
                 </div>

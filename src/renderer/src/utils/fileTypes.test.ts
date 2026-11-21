@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { colorForFile, iconForFile } from './fileTypes'
+import { colorForFile, iconForFile, isTextPreviewable } from './fileTypes'
 
 describe('iconForFile', () => {
   it('always returns the folder icon for directories, regardless of name', () => {
@@ -57,5 +57,18 @@ describe('colorForFile', () => {
   it('falls back to text-dimmed for unknown/no extension', () => {
     expect(colorForFile('LICENSE', false)).toBe('text-dimmed')
     expect(colorForFile('binary.exe', false)).toBe('text-dimmed')
+  })
+})
+
+describe('isTextPreviewable', () => {
+  it('supports .env* dotfiles, common dotfiles, and extensionless text files', () => {
+    expect(isTextPreviewable('.env')).toBe(true)
+    expect(isTextPreviewable('.env.example')).toBe(true)
+    expect(isTextPreviewable('.env.production.local')).toBe(true)
+    expect(isTextPreviewable('.gitignore')).toBe(true)
+    expect(isTextPreviewable('Dockerfile')).toBe(true)
+    expect(isTextPreviewable('Makefile')).toBe(true)
+    expect(isTextPreviewable('notes.txt')).toBe(true)
+    expect(isTextPreviewable('binary.exe')).toBe(false)
   })
 })

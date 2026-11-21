@@ -18,7 +18,7 @@
 
 ## Rollback
 
-Before the source repository is made private, restore the previous `electron-builder.yml` publishing target and previous release workflow through a new commit if the dual-publish pipeline fails. Keep `ferry` public while investigating. Avoid deleting public releases, tags, or installers. Once `ferry` becomes private, the old update endpoint is inaccessible to unauthenticated clients; changing it back to public is a separate deliberate owner action.
+Before the source repository is made private, restore the previous publishing target and release workflow through a new commit if the dual-publish pipeline fails. Keep `ferry` public while investigating. Avoid deleting public releases, tags, or installers. Once `ferry` becomes private, the old update endpoint is inaccessible to unauthenticated clients; changing it back to public is a separate deliberate owner action.
 
 ## Scope and security
 

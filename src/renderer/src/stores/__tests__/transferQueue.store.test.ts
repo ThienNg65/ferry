@@ -124,4 +124,14 @@ describe('transferQueue.store', () => {
     expect(localFs.entries.map((e) => e.name)).toEqual(['a.txt', 'b.txt', 'existing.txt'])
     expect(localFs.selected.has('C:\\existing.txt')).toBe(true)
   })
+
+  it('excludes cancelled transfers from aggregate summary percent and file counts', () => {
+    const queue = useTransferQueueStore()
+    queue.ensureSubscription()
+
+    eventHandler?.({ transferId: 't-done', kind: 'download', state: 'done', sessionId: 's1', localPath: 'C:\\a.bin', remotePath: '/a.bin', bytesTransferred: 100, totalBytes: 100, filesDone: 1, filesTotal: 1 })
+    eventHandler?.({ transferId: 't-cancel', kind: 'download', state: 'cancelled', sessionId: 's1', localPath: 'C:\\b.bin', remotePath: '/b.bin', bytesTransferred: 0, totalBytes: 900, filesDone: 0, filesTotal: 1 })
+
+    expect(queue.summary).toEqual({ filesDone: 1, filesTotal: 1, percent: 100 })
+  })
 })

@@ -89,9 +89,7 @@ watch(
 const { isBusy } = useGlobalActivity()
 const { collapsed: dockCollapsed, tab: dockTab, isMaximized: dockMaximized, openDock } = useDockState()
 const isDockFullHeight = computed(() => !dockCollapsed.value && dockMaximized.value)
-const toasterViewportClass = computed(() =>
-  isConnected.value && ui.dockPosition === 'right' && dockCollapsed.value ? 'bottom-4 right-12' : 'bottom-12 right-4'
-)
+const toasterViewportClass = computed(() => 'top-12')
 const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const shortcutsDialog = useShortcutsDialog()
@@ -290,6 +288,17 @@ const unsubscribeUpdateDownloaded = onEvent<UpdateDownloadedEvent>(EVENT_CHANNEL
 })
 
 let promoToastShown = false
+let promoToastId: string | number | null = null
+
+watch(
+  () => ui.glassUiEnabled,
+  (enabled) => {
+    if (enabled && promoToastId !== null) {
+      toast.remove(promoToastId)
+      promoToastId = null
+    }
+  }
+)
 
 watch(
   [() => settingsStore.loaded, needsLegalConsent],
@@ -306,6 +315,7 @@ watch(
       duration: 0,
       'onUpdate:open': (open: boolean) => {
         if (!open) {
+          promoToastId = null
           ui.dismissGlassUiPromo()
         }
       },
@@ -318,6 +328,7 @@ watch(
             ui.setGlassUiEnabled(true)
             ui.dismissGlassUiPromo()
             toast.remove(id)
+            promoToastId = null
             notify.success(
               'Modern Glass UI enabled',
               'You can switch back anytime in Settings → Appearance.'
@@ -331,10 +342,12 @@ watch(
           onClick: () => {
             ui.dismissGlassUiPromo()
             toast.remove(id)
+            promoToastId = null
           }
         }
       ]
     })
+    promoToastId = id
   },
   { immediate: true }
 )
@@ -343,9 +356,9 @@ watch(
 <template>
   <UApp
     :locale="appLocale"
-    :tooltip="{ delayDuration: 250, skipDelayDuration: 300 }"
+    :tooltip="{ delayDuration: 250, skipDelayDuration: 300, ignoreNonKeyboardFocus: true }"
     :toaster="{
-      position: 'bottom-right',
+      position: 'top-center',
       duration: 3500,
       max: 3,
       expand: false,

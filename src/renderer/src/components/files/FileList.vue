@@ -142,6 +142,7 @@ function onBandStart(event: MouseEvent): void {
   const onEmptySpace = target === el || target.parentElement === el
   if (!onEmptySpace && !event.altKey) return
   if (event.offsetX > el.clientWidth && target === el) return
+  el.closest<HTMLElement>('[data-pane]')?.focus({ preventScroll: true })
   event.preventDefault()
   activeBandCleanup?.()
   const rect = el.getBoundingClientRect()

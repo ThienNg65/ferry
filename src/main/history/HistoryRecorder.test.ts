@@ -113,9 +113,9 @@ describe('HistoryRecorder', () => {
     })
   })
 
-  it('derives a Download label with the remote basename for downloads', () => {
+  it('derives a Download label with the destination local basename for downloads', () => {
     getRawMock.mockReturnValue({ name: 'Prod Site' })
-    const job = transferJob({ kind: 'download', remotePath: '/remote/dir/data.csv' })
+    const job = transferJob({ kind: 'download', localPath: 'C:\\local\\data.csv', remotePath: '/remote/dir/source.csv' })
     const evt: TransferEvent = { transferId: 't1', kind: 'download', state: 'error', error: 'connection reset' }
 
     transferListener!(job, evt)

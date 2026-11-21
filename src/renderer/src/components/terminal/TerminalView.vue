@@ -189,6 +189,7 @@ function onWindowResize(): void {
 }
 
 const searchOpen = ref(false)
+const searchBarRef = ref<InstanceType<typeof LogSearchBar> | null>(null)
 const searchQuery = ref('')
 const caseSensitive = ref(false)
 const isRegex = ref(false)
@@ -239,9 +240,19 @@ function openSearch(): void {
   resultsSub?.dispose()
   resultsSub = inst.search.onDidChangeResults(({ resultIndex, resultCount }) => {
     matchCount.value = resultCount
-    currentMatch.value = resultIndex + 1
+    currentMatch.value = resultCount > 0 && resultIndex >= 0 ? resultIndex + 1 : 0
   })
   runSearch(true)
+  searchBarRef.value?.focusInput()
+}
+
+function onTerminalSearchEvent(event: Event): void {
+  const detail = event instanceof CustomEvent ? (event.detail as { toggle?: boolean } | undefined) : undefined
+  if (detail?.toggle && searchOpen.value) {
+    closeSearch()
+    return
+  }
+  openSearch()
 }
 
 function closeSearch(): void {
@@ -275,7 +286,7 @@ watch(
     }
     resultsSub = nextInst.search.onDidChangeResults(({ resultIndex, resultCount }) => {
       matchCount.value = resultCount
-      currentMatch.value = resultIndex + 1
+      currentMatch.value = resultCount > 0 && resultIndex >= 0 ? resultIndex + 1 : 0
     })
     runSearch(true)
   }
@@ -293,7 +304,7 @@ let resizeRaf = 0
 
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
-  window.addEventListener(TERMINAL_SEARCH_EVENT, openSearch)
+  window.addEventListener(TERMINAL_SEARCH_EVENT, onTerminalSearchEvent)
   
   resizeObserver = new ResizeObserver(() => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf)
@@ -310,7 +321,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unmounted = true
   window.removeEventListener('resize', onWindowResize)
-  window.removeEventListener(TERMINAL_SEARCH_EVENT, openSearch)
+  window.removeEventListener(TERMINAL_SEARCH_EVENT, onTerminalSearchEvent)
   resultsSub?.dispose()
   resizeObserver?.disconnect()
   if (resizeRaf) {
@@ -339,11 +350,14 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="searchOpen" class="absolute right-3 top-1 z-10 rounded-md border border-muted bg-default shadow-md">
         <LogSearchBar
+          ref="searchBarRef"
           v-model="searchQuery"
           v-model:case-sensitive="caseSensitive"
           v-model:is-regex="isRegex"
           :match-count="matchCount"
           :current-match="currentMatch"
+          :show-log-controls="false"
+          :show-close="true"
           placeholder="Find in terminal…"
           @next="runSearch(true)"
           @prev="runSearch(false)"

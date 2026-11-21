@@ -12,7 +12,7 @@ const emit = defineEmits<{ dismiss: []; resolve: [choice: ConflictChoice] }>()
   <UModal
     :open="conflicts.length > 0"
     title="File Conflict"
-    :ui="{ footer: 'flex-wrap justify-end' }"
+    :ui="{ content: 'sm:max-w-xl', footer: 'flex-nowrap justify-end gap-1.5 overflow-x-auto' }"
     @update:open="(v: boolean) => { if (!v) emit('dismiss') }"
   >
     <template #body>
@@ -30,11 +30,11 @@ const emit = defineEmits<{ dismiss: []; resolve: [choice: ConflictChoice] }>()
       </ul>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="outline" @click="emit('dismiss')">Cancel</UButton>
-      <UButton color="neutral" variant="outline" @click="emit('resolve', 'skip')">Skip existing</UButton>
-      <UButton color="neutral" variant="outline" @click="emit('resolve', 'rename')">Keep both</UButton>
-      <UButton color="neutral" variant="outline" @click="emit('resolve', 'newer')">Overwrite if newer</UButton>
-      <UButton color="primary" @click="emit('resolve', 'overwrite')">Overwrite all</UButton>
+      <UButton size="sm" color="neutral" variant="outline" class="shrink-0 whitespace-nowrap" @click="emit('dismiss')">Cancel</UButton>
+      <UButton size="sm" color="neutral" variant="outline" class="shrink-0 whitespace-nowrap" @click="emit('resolve', 'skip')">Skip existing</UButton>
+      <UButton size="sm" color="neutral" variant="outline" class="shrink-0 whitespace-nowrap" @click="emit('resolve', 'rename')">Keep both</UButton>
+      <UButton size="sm" color="neutral" variant="outline" class="shrink-0 whitespace-nowrap" @click="emit('resolve', 'newer')">Overwrite if newer</UButton>
+      <UButton size="sm" color="primary" class="shrink-0 whitespace-nowrap" @click="emit('resolve', 'overwrite')">Overwrite all</UButton>
     </template>
   </UModal>
 </template>

@@ -1,5 +1,5 @@
 /**
- * Pure parsers for the Monitor tick command's output — no Electron/Node
+ * Pure parsers for the Monitor tick command's output — no Node/host
  * imports so everything here is unit-testable without a server (the
  * regQuery.ts/keyboardInteractive.ts precedent).
  *

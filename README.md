@@ -78,11 +78,10 @@ push/PR to `main`. Release Please handles versioning and source release tags thr
 scoped `PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` to
 `ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
 the same assets are uploaded to the legacy `ferry` release for existing installations.
-Note: `v0.23.1` Neutralino preview users must run `Ferry-Setup-0.24.0.exe` manually once (preserving `%APPDATA%\Ferry`); `v0.22.x`/`v0.23.x` Electron users and `v0.24.0+` Neutralino users update automatically.
+Note: `v0.23.1` Neutralino preview users must run `Ferry-Setup-0.24.0.exe` manually once (preserving `%APPDATA%\Ferry`); `v0.24.0+` Neutralino users update automatically.
 See [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 
-Signing goes through a currently-dormant SignPath stage rather than `electron-builder`'s native
-`CSC_LINK`/`CSC_KEY_PASSWORD` pickup: every step in that stage is gated on the
+Signing goes through a currently-dormant SignPath stage: every step in that stage is gated on the
 `SIGNPATH_ORGANIZATION_ID` repo variable, which isn't set yet, so today it's a no-op and every
 release ships unsigned. Once a SignPath OSS account is approved and that variable (plus its
 matching secrets) are added, the workflow uploads the built installer as an artifact, submits it to

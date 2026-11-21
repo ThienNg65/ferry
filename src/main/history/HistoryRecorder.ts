@@ -20,7 +20,7 @@ function basename(fullPath: string): string {
 
 function labelForTransfer(job: TransferJob): string {
   const verb = job.kind === 'upload' ? 'Upload' : 'Download'
-  const name = basename(job.kind === 'upload' ? job.localPath : job.remotePath)
+  const name = basename(job.kind === 'upload' ? job.remotePath : job.localPath)
   return `${verb} ${name}`
 }
 

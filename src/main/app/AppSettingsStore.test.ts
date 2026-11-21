@@ -1,19 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * `electron-store` is a real npm CJS package, externalized by vitest — its
- * own internal `require('electron')` call is NOT intercepted by
- * `vi.mock('electron', ...)` (confirmed empirically: it silently fell
- * through to `env-paths` and wrote real, ever-growing JSON files under
- * `%APPDATA%\electron-store-nodejs\Config\`). So instead of mocking
- * `electron` and letting the real `electron-store`/`conf` machinery run,
- * `electron-store` itself is mocked here with a minimal in-memory
- * implementation that mirrors the two methods `AppSettingsStore.ts` actually
- * uses (`get`/`set`), keyed by the `name` option so a fresh
- * `new AppSettingsStore()` reads back whatever a previous instance wrote —
- * exercising the same persistence-round-trip behavior without touching disk.
- * `safeStorage` is still mocked the same way as SiteStore.test.ts, since
- * AppSettingsStore imports it directly.
+ * `conf` is mocked here with a minimal in-memory implementation mirroring the
+ * two methods `AppSettingsStore.ts` actually uses (`get`/`set`), keyed by the
+ * `configName` option so a fresh `new AppSettingsStore()` reads back whatever a
+ * previous instance wrote without touching disk. Encryption uses `testHost`.
  */
 const disks = new Map<string, Record<string, unknown>>()
 

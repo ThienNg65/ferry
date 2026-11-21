@@ -65,10 +65,6 @@ jobs:
             echo "::error::Unexpected legacy Ferry-Neutralino-* artifacts found: ${legacy_nl[*]}"
             exit 1
           fi
-          if [ -e dist/ferry-neutralino-win_x64/resources/app.asar ] || [ -e dist/ferry-neutralino-win_x64/chrome_100_percent.pak ]; then
-            echo "::error::Unexpected Electron runtime files in packaged Neutralino distribution."
-            exit 1
-          fi
 
       - name: Smoke test Neutralino package
         run: npm run smoke:neutralino

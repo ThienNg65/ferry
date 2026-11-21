@@ -20,13 +20,59 @@ const TEXT_EXTENSIONS = new Set([
 ])
 const LOG_EXTENSIONS = new Set(['log', 'txt'])
 
+const TEXT_FILENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'gnumakefile',
+  'procfile',
+  'vagrantfile',
+  'gemfile',
+  'rakefile',
+  'brewfile',
+  'justfile',
+  'license',
+  'readme',
+  'changelog',
+  'authors',
+  'contributors',
+  'notice',
+  '.gitignore',
+  '.gitattributes',
+  '.gitmodules',
+  '.dockerignore',
+  '.npmignore',
+  '.prettierignore',
+  '.eslintignore',
+  '.editorconfig',
+  '.env',
+  '.bashrc',
+  '.zshrc',
+  '.profile',
+  '.bash_profile',
+  '.zprofile',
+  '.npmrc',
+  '.nvmrc',
+  '.yarnrc',
+  '.prettierrc',
+  '.eslintrc',
+  '.babelrc',
+  '.browserslistrc'
+])
+
 function ext(name: string): string {
-  return name.slice(name.lastIndexOf('.') + 1).toLowerCase()
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return ''
+  return name.slice(dot + 1).toLowerCase()
 }
 
 /** Whether double-clicking this file should attempt a text preview (vs. offering a download). */
 export function isTextPreviewable(name: string): boolean {
-  return TEXT_EXTENSIONS.has(ext(name))
+  const lower = name.toLowerCase()
+  if (TEXT_FILENAMES.has(lower)) return true
+  if (lower.startsWith('.env.')) return true
+  if (lower.startsWith('readme.') || lower.startsWith('license.') || lower.startsWith('dockerfile.')) return true
+  const fileExt = ext(lower)
+  return fileExt !== '' && TEXT_EXTENSIONS.has(fileExt)
 }
 
 /** Whether this file should show a "tail" affordance in the preview dialog. */

@@ -8,6 +8,7 @@ import { useNotify } from '../../composables/useNotify'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { renderLegalMarkdown } from '../../utils/renderLegalMarkdown'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import { onDialogTabKeydown } from '../../composables/useDialogFocusTrap'
 import FerryLogo from './FerryLogo.vue'
 
 const props = defineProps<{ open: boolean }>()
@@ -87,7 +88,7 @@ async function onContinue(): Promise<void> {
       </div>
     </template>
     <template #body>
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-3" @keydown.tab="onDialogTabKeydown">
         <div
           class="flex gap-1 overflow-x-auto border-b border-muted pb-2"
           role="tablist"
@@ -153,7 +154,7 @@ async function onContinue(): Promise<void> {
       </div>
     </template>
     <template #footer>
-      <div class="flex w-full justify-end">
+      <div class="flex w-full justify-end" @keydown.tab="onDialogTabKeydown">
         <UButton :disabled="!acceptedCheckbox" :loading="saving" @click="onContinue">
           Accept &amp; Continue
         </UButton>

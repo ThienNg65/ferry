@@ -79,6 +79,7 @@ export const useTransferQueueStore = defineStore('transferQueue', {
       let bytes = 0
       let totalBytes = 0
       for (const item of this.items.values()) {
+        if (item.state === 'cancelled') continue
         filesDone += item.filesDone
         filesTotal += item.filesTotal
         bytes += item.bytesTransferred
