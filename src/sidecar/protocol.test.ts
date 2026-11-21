@@ -178,7 +178,7 @@ describe('sidecar protocol', () => {
     await expect(dispatchInvoke('sites:list', [])).resolves.toEqual({
       ok: false,
       code: 'UNKNOWN',
-      message: 'IPC channel not handled by sidecar: sites:list'
+      message: 'IPC channel not handled by sidecar'
     })
   })
 
