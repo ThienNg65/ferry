@@ -426,54 +426,59 @@ try {
 
   await readyPromise
 
-  const directPendingReplies = new Map()
   directSocket = new WebSocket(
     `ws://127.0.0.1:${directEndpoint.port}?token=${encodeURIComponent(directEndpoint.token)}`
   )
-  directSocket.on('message', (raw) => {
-    let msg
-    try {
-      msg = JSON.parse(raw.toString())
-    } catch {
-      return
-    }
-    if (msg.event !== 'rpc_reply') return
-    const { id, result } = msg.data ?? {}
-    const resolver = directPendingReplies.get(id)
-    if (resolver) {
-      directPendingReplies.delete(id)
-      resolver(result)
-    }
-  })
   await new Promise((resolveConnection, rejectConnection) => {
     const timer = setTimeout(() => rejectConnection(new Error('Direct WebSocket connection timed out')), 10_000)
-    directSocket.once('open', () => {
+    const onOpen = () => {
       clearTimeout(timer)
+      directSocket.off('error', onError)
       resolveConnection()
-    })
-    directSocket.once('error', (error) => {
+    }
+    const onError = (error) => {
       clearTimeout(timer)
+      directSocket.off('open', onOpen)
       rejectConnection(error)
-    })
+    }
+    directSocket.once('open', onOpen)
+    directSocket.once('error', onError)
   })
 
   function directRpcInvoke(channel, ...args) {
     const id = `direct-smoke-${nextReq++}`
     return new Promise((resolveCall, rejectCall) => {
+      const cleanup = () => {
+        clearTimeout(timer)
+        directSocket.off('message', onMessage)
+        directSocket.off('error', onError)
+        directSocket.off('close', onClose)
+      }
+      const onMessage = (raw) => {
+        let msg
+        try {
+          msg = JSON.parse(raw.toString())
+        } catch {
+          return
+        }
+        if (msg.event !== 'rpc_reply' || msg.data?.id !== id) return
+        cleanup()
+        resolveCall(msg.data.result)
+      }
+      const onError = (error) => {
+        cleanup()
+        rejectCall(error)
+      }
+      const onClose = () => onError(new Error('Direct WebSocket closed before replying'))
       const timer = setTimeout(() => {
-        directPendingReplies.delete(id)
+        cleanup()
         rejectCall(new Error(`Timed out waiting for direct WebSocket ${channel}`))
       }, 10_000)
-      directPendingReplies.set(id, (result) => {
-        clearTimeout(timer)
-        resolveCall(result)
-      })
+      directSocket.on('message', onMessage)
+      directSocket.on('error', onError)
+      directSocket.on('close', onClose)
       directSocket.send(JSON.stringify({ event: 'rpc_invoke', data: { id, channel, args } }), (error) => {
-        if (error) {
-          clearTimeout(timer)
-          directPendingReplies.delete(id)
-          rejectCall(error)
-        }
+        if (error) onError(error)
       })
     })
   }
