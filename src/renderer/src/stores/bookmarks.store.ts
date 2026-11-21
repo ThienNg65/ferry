@@ -20,12 +20,9 @@ export const useBookmarksStore = defineStore('bookmarks', {
     localBookmarks(state): Bookmark[] {
       return state.bookmarks.filter((b) => b.scope === 'local')
     },
-    /** Remote bookmarks belonging to a specific saved site or Quick Connect hostLabel. */
-    forSite(state): (siteId: string, hostLabel?: string | null) => Bookmark[] {
-      return (siteId: string, hostLabel?: string | null) =>
-        state.bookmarks.filter(
-          (b) => b.scope === 'remote' && (b.siteId === siteId || (Boolean(hostLabel) && b.siteId === hostLabel))
-        )
+    /** Remote bookmarks belonging to a saved site or a port-specific Quick Connect endpoint. */
+    forSite(state): (siteId: string) => Bookmark[] {
+      return (siteId: string) => state.bookmarks.filter((b) => b.scope === 'remote' && b.siteId === siteId)
     }
   },
 
@@ -54,6 +51,13 @@ export const useBookmarksStore = defineStore('bookmarks', {
     async create(input: BookmarkInput): Promise<void> {
       const bookmark = await invoke<Bookmark>(INVOKE_CHANNELS.bookmarksCreate, input)
       this.bookmarks.push(bookmark)
+    },
+
+    async copyEndpointToSite(endpoint: string, siteId: string): Promise<void> {
+      await this.ensureLoaded()
+      const added = await invoke<Bookmark[]>(INVOKE_CHANNELS.bookmarksCopyToSite, endpoint, siteId)
+      const known = new Set(this.bookmarks.map((item) => item.id))
+      this.bookmarks.push(...added.filter((item) => !known.has(item.id)))
     },
 
     async remove(id: string): Promise<void> {

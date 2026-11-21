@@ -48,6 +48,11 @@ const mockLocalFs = {
   load: vi.fn().mockResolvedValue(undefined)
 }
 
+const copyEndpointToSite = vi.fn().mockResolvedValue(undefined)
+vi.mock('../bookmarks.store', () => ({
+  useBookmarksStore: () => ({ copyEndpointToSite })
+}))
+
 vi.mock('../remoteFs.store', () => ({
   useRemoteFsStore: () => mockRemoteFs
 }))
@@ -179,7 +184,7 @@ describe('sessions.store quick connect and promotion', () => {
       updatedAt: '2026-11-15T00:00:00.000Z'
     }
 
-    store.promoteTabToSite(store.activeTab.tabId, savedSite)
+    await store.promoteTabToSite(store.activeTab.tabId, savedSite)
 
     expect(store.activeTab.siteId).toBe('site-123')
     expect(store.activeTab.label).toBe('agent1@127.0.0.1')
@@ -451,8 +456,9 @@ describe('sessions.store quick connect and promotion', () => {
       createdAt: '2026-11-17T00:00:00.000Z',
       updatedAt: '2026-11-17T00:00:00.000Z'
     }
-    sessions.promoteTabToSite(tabId, savedSite)
+    await sessions.promoteTabToSite(tabId, savedSite)
 
+    expect(copyEndpointToSite).toHaveBeenCalledWith('host:v2:ops@logs.example.com:22', savedSite.id)
     expect(filters.getFilter('site:site-promoted-1')).toEqual({
       include: ['*.log'],
       exclude: ['*.log.????-??-??']

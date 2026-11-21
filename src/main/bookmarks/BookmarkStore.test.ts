@@ -103,6 +103,20 @@ describe('BookmarkStore', () => {
     expect(store.list()).toHaveLength(1)
   })
 
+  it('copies only the exact endpoint and preserves existing site bookmarks on repeated promotion', () => {
+    const store = BookmarkStore.getInstance()
+    const endpoint = 'host:v2:ops@logs.example.com:2222'
+    store.create({ scope: 'remote', siteId: endpoint, path: '/logs', label: 'Logs' })
+    store.create({ scope: 'remote', siteId: endpoint, path: '/shared', label: 'Shared' })
+    store.create({ scope: 'remote', siteId: 'host:v2:ops@logs.example.com:22', path: '/other', label: 'Other' })
+    store.create({ scope: 'remote', siteId: 'saved', path: '/shared', label: 'Existing' })
+
+    expect(store.copyEndpointToSite(endpoint, 'saved').map((item) => item.path)).toEqual(['/logs'])
+    expect(store.copyEndpointToSite(endpoint, 'saved')).toEqual([])
+    expect(store.list().filter((item) => item.siteId === 'saved').map((item) => item.label)).toEqual(['Existing', 'Logs'])
+    expect(store.list().filter((item) => item.siteId === endpoint)).toHaveLength(2)
+  })
+
   it('deleteForSite removes only remote bookmarks for that site, leaving local and other sites bookmarks alone', () => {
     const store = new BookmarkStore()
     const local = store.create({ scope: 'local', path: '/a', label: 'Local' })
