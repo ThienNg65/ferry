@@ -102,6 +102,10 @@ matching secrets) are added, the workflow uploads the built installer as an arti
 SignPath for Authenticode signing, and regenerates `latest.yml`'s hash/size before publishing —
 without touching anything else in this flow.
 
+## Sponsor
+
+If you find Ferry useful and would like to support its development, you can sponsor me on [GitHub Sponsors](https://github.com/sponsors/ThienNg65).
+
 ## Legal, Privacy & Licenses
 
 - **License:** [MIT](LICENSE) — third-party notices in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)
