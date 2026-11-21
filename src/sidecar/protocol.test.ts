@@ -2,7 +2,7 @@ import { PassThrough } from 'stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handle, handlers, onSend, sendHandlers, type ChannelHandler } from '../main/ipc/envelope'
 import { SshError } from '../main/ssh/errors'
-import { decodeB64Deep, dispatchInvoke, encodeLine, replyToInvoke, serve, type SidecarHooks } from './protocol'
+import { decodeB64Deep, dispatchInvoke, dispatchWebSocketMessage, encodeLine, serve, type SidecarHooks } from './protocol'
 
 function harness(): { input: PassThrough; out: unknown[]; hooks: SidecarHooks & { init: ReturnType<typeof vi.fn>; shutdown: ReturnType<typeof vi.fn> } } {
   const input = new PassThrough()
@@ -55,11 +55,11 @@ describe('sidecar protocol', () => {
       send(input, { id: 12, channel: 'session:close', args: [] })
       await settle()
       expect(out).toHaveLength(3)
-      expect(out).toEqual([
-        { id: 10, result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } },
-        { id: 11, result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } },
-        { id: 12, result: { ok: true, data: 'still-responsive' } }
-      ])
+      const replies = new Map((out as Array<{ id: number; result: unknown }>).map(({ id, result }) => [id, result]))
+      expect([...replies.keys()].sort((a, b) => a - b)).toEqual([10, 11, 12])
+      expect(replies.get(10)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
+      expect(replies.get(11)).toEqual({ ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' })
+      expect(replies.get(12)).toEqual({ ok: true, data: 'still-responsive' })
       expect(JSON.stringify(out)).not.toContain(secret)
       expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
     } finally {
@@ -67,20 +67,66 @@ describe('sidecar protocol', () => {
     }
   })
 
-  it('returns exactly one sanitized reply through the shared WebSocket invoke path', async () => {
+  it('sanitizes unexpected errors returned by the registered IPC envelope', async () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      handlers.set('sites:list', (async () => { throw new Error('credential=secret') }) as ChannelHandler)
+      const secret = 'password=private-value; path=C:\\Users\\private'
+      handle('sites:list', () => {
+        throw new Error(secret)
+      })
+
+      await expect(dispatchInvoke('sites:list', [])).resolves.toEqual({
+        ok: false,
+        code: 'UNKNOWN',
+        message: 'The operation failed unexpectedly'
+      })
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(secret)
+    } finally {
+      diagnostic.mockRestore()
+    }
+  })
+
+  it('contains rejected handlers and replies once through the shared WebSocket dispatcher', async () => {
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      handlers.set('sites:list', (async () => {
+        throw new Error('credential=secret')
+      }) as ChannelHandler)
       const replies: unknown[] = []
-      await replyToInvoke('ws-1', 'sites:list', [], (id, result) => replies.push({ id, result }))
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-1', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push(JSON.parse(encodeLine({ event: 'rpc_reply', data: { id, result } }))),
+        vi.fn(),
+        vi.fn()
+      )
       expect(replies).toEqual([
-        { id: 'ws-1', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+        {
+          event: 'rpc_reply',
+          data: { id: 'ws-1', result: { ok: false, code: 'UNKNOWN', message: 'The operation failed unexpectedly' } }
+        }
       ])
+
       handle('sites:list', () => new Uint8Array([0, 255]))
-      await replyToInvoke('ws-2', 'sites:list', [], (id, result) => replies.push(JSON.parse(encodeLine({ id, result }))))
-      expect(replies[1]).toEqual({ id: 'ws-2', result: { ok: true, data: { __b64: 'AP8=' } } })
+      await dispatchWebSocketMessage(
+        { event: 'rpc_invoke', data: { id: 'ws-2', channel: 'sites:list', args: [] } },
+        (id, result) => replies.push(JSON.parse(encodeLine({ event: 'rpc_reply', data: { id, result } }))),
+        vi.fn(),
+        vi.fn()
+      )
+      expect(replies[1]).toEqual({
+        event: 'rpc_reply',
+        data: { id: 'ws-2', result: { ok: true, data: { __b64: 'AP8=' } } }
+      })
+      await settle()
+      expect(unhandled).toEqual([])
       expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('credential=secret')
     } finally {
+      process.off('unhandledRejection', onUnhandled)
       diagnostic.mockRestore()
     }
   })
