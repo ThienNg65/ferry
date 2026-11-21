@@ -174,7 +174,7 @@ export function parseSshConfig(
     const match = /^(\S+?)(?:\s*=\s*|\s+)(.+)$/.exec(line)
     if (!match) continue
     const key = match[1].toLowerCase()
-    const args = [...match[2].matchAll(/(?:^|\s+)(?:"([^"]*)"|([^\s"#]+)|(#.*$))/g)]
+    const args = [...match[2].matchAll(/(?:^|\s+)(?:"([^"]*)"|([^\s"#][^\s"]*)|(#.*$))/g)]
       .filter((token) => token[3] === undefined)
       .map((token) => token[1] ?? token[2])
     if (args.length === 0) continue

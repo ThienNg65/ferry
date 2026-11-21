@@ -163,6 +163,16 @@ describe('parseSshConfig wildcard inheritance', () => {
     ])
     expect(out[1].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/test # space')
   })
+  it('preserves embedded hash characters and recognizes a separate comment', () => {
+    const out = parseSshConfig([
+      'Host work',
+      '  User ops#work # user',
+      '  IdentityFile ~/.ssh/id#work # key'
+    ].join('\n'), '/home/me', 'local')
+    expect(out[0].username).toBe('ops#work')
+    expect(out[0].privateKeyPath?.replace(/\\/g, '/')).toBe('/home/me/.ssh/id#work')
+  })
+
   it('inherits global defaults including jump host and identity file', () => {
     const out = parseSshConfig([
       'Host *',
