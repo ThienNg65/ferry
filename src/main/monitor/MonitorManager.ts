@@ -1,6 +1,7 @@
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
 import {
+  DEFAULT_PAGE_SIZE_BYTES,
   capProcesses,
   cpuPercentages,
   parseDiskUsage,
@@ -10,6 +11,7 @@ import {
   parseProcStat,
   parseUptime,
   processCpuPercentages,
+  resolvePageSizeBytes,
   splitSections,
   type CpuTimes,
   type ProcessSnapshot
@@ -27,12 +29,15 @@ const TICK_TIMEOUT_MS = 10_000
 
 /** Number of @@@-delimited sections in TICK_COMMAND's output — keep in sync with splitSections() calls below. */
 const TICK_SECTION_COUNT = 6
+const INITIAL_TICK_SECTION_COUNT = TICK_SECTION_COUNT + 1
 
 const TICK_COMMAND =
   'cat /proc/stat 2>/dev/null; echo @@@; cat /proc/meminfo 2>/dev/null; echo @@@; ' +
   'cat /proc/loadavg 2>/dev/null; echo @@@; cat /proc/uptime 2>/dev/null; echo @@@; ' +
   'df -Pk / 2>/dev/null; echo @@@; ' +
   'for d in /proc/[0-9]*; do p=${d#/proc/}; if IFS= read -r s < "$d/stat" 2>/dev/null; then printf "@P@%s\\n%s\\n" "$p" "$s"; fi; done'
+
+const INITIAL_TICK_COMMAND = `${TICK_COMMAND}; echo @@@; getconf PAGE_SIZE 2>/dev/null || true`
 
 export function sanitizeIntervalMs(value: number | undefined): number {
   if (value === undefined) {
@@ -51,6 +56,8 @@ interface MonitorEntry {
   prevStat: CpuTimes[] | null
   /** Rebuilt fully from every tick's process dump (not merged) — naturally sheds exited pids and gives any newly-hot pid a fresh baseline. */
   prevProcesses: Map<number, ProcessSnapshot> | null
+  /** Resolved once per session; null means the first tick still needs discovery. */
+  pageSizeBytes: number | null
   consecutiveFailures: number
   timer: ReturnType<typeof setTimeout> | null
   stopped: boolean
@@ -87,6 +94,7 @@ export class MonitorManager {
       intervalMs: sanitizeIntervalMs(intervalMs),
       prevStat: null,
       prevProcesses: null,
+      pageSizeBytes: null,
       consecutiveFailures: 0,
       timer: null,
       stopped: false
@@ -129,16 +137,22 @@ export class MonitorManager {
     }
 
     try {
-      const result = await shell.exec(TICK_COMMAND, { timeoutMs: TICK_TIMEOUT_MS })
+      const discoveringPageSize = entry.pageSizeBytes === null
+      const command = discoveringPageSize ? INITIAL_TICK_COMMAND : TICK_COMMAND
+      const result = await shell.exec(command, { timeoutMs: TICK_TIMEOUT_MS })
       if (entry.stopped) {
         // stop()/stopAllForSession() fired while the exec was in flight — don't
         // broadcast a sample or status for a monitor that's already stopped.
         return
       }
-      const [statText, memText, loadText, uptimeText, diskText, procText] = splitSections(
+      const sections = splitSections(
         result.stdout,
-        TICK_SECTION_COUNT
+        discoveringPageSize ? INITIAL_TICK_SECTION_COUNT : TICK_SECTION_COUNT
       )
+      const [statText, memText, loadText, uptimeText, diskText, procText] = sections
+      if (discoveringPageSize) {
+        entry.pageSizeBytes = resolvePageSizeBytes(sections[TICK_SECTION_COUNT] ?? '')
+      }
       const currStat = parseProcStat(statText)
 
       if (currStat.length === 0) {
@@ -159,7 +173,12 @@ export class MonitorManager {
       const cpu = entry.prevStat ? cpuPercentages(entry.prevStat, currStat) : null
       const aggregateTotalDelta = entry.prevStat ? currStat[0].total - entry.prevStat[0].total : null
       const currProcesses = parseProcessSnapshot(procText)
-      const processSamples = processCpuPercentages(entry.prevProcesses, currProcesses, aggregateTotalDelta)
+      const processSamples = processCpuPercentages(
+        entry.prevProcesses,
+        currProcesses,
+        aggregateTotalDelta,
+        entry.pageSizeBytes ?? DEFAULT_PAGE_SIZE_BYTES
+      )
       const { processes, totalCount } = capProcesses(processSamples, mem.totalBytes)
 
       const sample: MonitorSample = {

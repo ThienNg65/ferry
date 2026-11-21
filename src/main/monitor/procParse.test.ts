@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_PAGE_SIZE_BYTES,
   capProcesses,
   cpuPercentages,
   parseDiskUsage,
   parseLoadAvg,
   parseMeminfo,
+  parsePageSizeBytes,
   parseProcessSnapshot,
   parseProcStat,
   parseUptime,
   processCpuPercentages,
+  resolvePageSizeBytes,
   splitSections,
   type CpuTimes,
   type ProcessSnapshot
@@ -54,6 +57,28 @@ describe('splitSections', () => {
   it('splits six sections (adds disk usage + process dump)', () => {
     const out = splitSections('a\n@@@\nb\n@@@\nc\n@@@\nd\n@@@\ne\n@@@\nf', 6)
     expect(out).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+  })
+})
+
+describe('page-size discovery', () => {
+  it.each([
+    { output: '4096', expected: 4096 },
+    { output: '16384', expected: 16384 },
+    { output: '65536', expected: 65536 }
+  ])('parses a $expected-byte Linux base page size', ({ output, expected }) => {
+    expect(parsePageSizeBytes(output)).toBe(expected)
+  })
+
+  it.each(['', 'not-a-number', '0', '-4096', '1.5', '9007199254740992'])(
+    'rejects invalid getconf output: %s',
+    (output) => {
+      expect(parsePageSizeBytes(output)).toBeNull()
+    }
+  )
+
+  it('uses the documented 4 KiB fallback when getconf is unavailable or invalid', () => {
+    expect(resolvePageSizeBytes('')).toBe(DEFAULT_PAGE_SIZE_BYTES)
+    expect(resolvePageSizeBytes('not-a-number')).toBe(DEFAULT_PAGE_SIZE_BYTES)
   })
 })
 
@@ -253,7 +278,12 @@ describe('processCpuPercentages', () => {
     const curr = [snap(1, 20, 10)]
     // busyDelta = (20+10) - (10+5) = 15; aggregateTotalDelta = 100 -> 15%
     const result = processCpuPercentages(prev, curr, 100)
-    expect(result).toEqual([{ pid: 1, name: 'proc1', rssBytes: 100 * 4096, cpuPct: 15 }])
+    expect(result).toEqual([{ pid: 1, name: 'proc1', rssBytes: 100 * DEFAULT_PAGE_SIZE_BYTES, cpuPct: 15 }])
+  })
+
+  it.each([4096, 16384, 65536])('converts RSS pages using a %i-byte remote page size', (pageSizeBytes) => {
+    const result = processCpuPercentages(null, [snap(1, 0, 0, 2)], null, pageSizeBytes)
+    expect(result[0].rssBytes).toBe(2 * pageSizeBytes)
   })
 
   it('reports cpuPct null for a pid absent from the previous sample (new process)', () => {
@@ -277,6 +307,21 @@ describe('capProcesses', () => {
     const { processes, totalCount } = capProcesses([cpuHeavy, ramHeavy, light], memTotalBytes, 2)
     expect(totalCount).toBe(3)
     expect(processes.map((p) => p.pid)).toEqual([2, 1])
+  })
+
+  it('ranks processes using RSS calculated with the remote page size', () => {
+    const samples = processCpuPercentages(
+      null,
+      [snap(1, 0, 0, 10), snap(2, 0, 0, 1)],
+      null,
+      65536
+    )
+    const ranked = capProcesses(
+      samples.map((sample, index) => ({ ...sample, cpuPct: index === 0 ? 0 : 40 })),
+      1_000_000,
+      1
+    )
+    expect(ranked.processes.map((process) => process.pid)).toEqual([1])
   })
 
   it('reports the full totalCount even when not truncated', () => {
