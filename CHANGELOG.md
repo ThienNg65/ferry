@@ -28,6 +28,19 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.3.3](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.2...ferry-v1.3.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* preserve UTF-8 across SSH output chunks ([02022d0](https://github.com/ThienNg65/ferry/commit/02022d0344efb114d305b373d7e867a94738d163))
+* **ssh:** preserve UTF-8 across remote output chunks ([a8c6cfa](https://github.com/ThienNg65/ferry/commit/a8c6cfa7c6459da03c6e557b233356509ab07196))
+
+
+### Tests
+
+* **ssh:** clarify UTF-8 chunk boundary coverage ([e6d9786](https://github.com/ThienNg65/ferry/commit/e6d9786ba281d97042f1893f126bc0eb10869213))
+
 ## [1.3.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.1...ferry-v1.3.2) (2026-11-21)
 
 
