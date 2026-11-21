@@ -49,22 +49,29 @@ export function decodeB64Deep(value: unknown): unknown {
 }
 
 export async function dispatchInvoke(channel: unknown, args: unknown) {
-  const handler = typeof channel === 'string' ? handlers.get(channel as InvokeChannel) : undefined
+  if (typeof channel !== 'string') {
+    return err('UNKNOWN', 'Invalid sidecar IPC channel')
+  }
+  const handler = handlers.get(channel as InvokeChannel)
+  if (typeof handler !== 'function') {
+    return err('UNKNOWN', `IPC channel not handled by sidecar: ${channel}`)
+  }
   const decodedArgs = Array.isArray(args) ? (decodeB64Deep(args) as unknown[]) : []
-  return handler
-    ? await handler({}, ...decodedArgs)
-    : err('UNKNOWN', `IPC channel not handled by sidecar: ${String(channel)}`)
+  return handler({}, ...decodedArgs)
 }
 
 export function dispatchSend(channel: unknown, payload: unknown): void {
-  const handler = typeof channel === 'string' ? sendHandlers.get(channel as SendChannel) : undefined
-  if (!handler) {
+  if (typeof channel !== 'string') {
+    return
+  }
+  const handler = sendHandlers.get(channel as SendChannel)
+  if (typeof handler !== 'function') {
     return
   }
   try {
     handler({}, decodeB64Deep(payload))
   } catch (e) {
-    console.error(`sidecar: send handler failed for "${String(channel)}":`, e)
+    console.error('sidecar: send handler failed for "%s":', channel, e)
   }
 }
 
