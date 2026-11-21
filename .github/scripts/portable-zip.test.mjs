@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { createWriteStream, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import { test } from 'node:test'
-import { buildPortableZip, verifyPortableZip } from './lib/portable-zip.mjs'
+import { buildPortableZip, verifyPortableZip } from '../../scripts/lib/portable-zip.mjs'
 
 class FakeArchive extends PassThrough {
   directory() {}
@@ -41,9 +41,9 @@ test('verification failure preserves original artifact', async () => withDestina
 
 test('premature output close fails and preserves original artifact', async () => withDestination(async ({ dir, destination }) => {
   const earlyClose = () => {
-    const stream = new Writable({ write(_chunk, _encoding, callback) { callback() } })
-    queueMicrotask(() => stream.destroy())
-    return stream
+    return new Writable({
+      write() { this.destroy() }
+    })
   }
   await assert.rejects(buildPortableZip({
     sourceDir: dir, destination, requiredEntries: [],
@@ -77,4 +77,15 @@ test('finalization rejection preserves original artifact', async () => withDesti
 test('truncated ZIP fails structural validation', async () => withDestination(async ({ dir, destination }) => {
   writeFileSync(destination, Buffer.from('PK\\x03\\x04'))
   assert.throws(() => verifyPortableZip(destination, ['ferry-win_x64.exe']), /central-directory/)
+}))
+
+test('rejects a ZIP when the local header disagrees with the central entry', async () => withDestination(async ({ dir, destination }) => {
+  const sourceDir = join(dir, 'payload')
+  mkdirSync(sourceDir)
+  writeFileSync(join(sourceDir, 'ferry-win_x64.exe'), 'test')
+  await buildPortableZip({ sourceDir, destination, requiredEntries: ['ferry-win_x64.exe'] })
+  const bytes = readFileSync(destination)
+  bytes.writeUInt16LE(bytes.readUInt16LE(8) === 0 ? 8 : 0, 8)
+  writeFileSync(destination, bytes)
+  assert.throws(() => verifyPortableZip(destination, ['ferry-win_x64.exe']), /headers disagree/)
 }))

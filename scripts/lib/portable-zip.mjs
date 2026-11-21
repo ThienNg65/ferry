@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import { createWriteStream, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { createWriteStream, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { finished } from 'node:stream/promises'
 import { inflateRawSync } from 'node:zlib'
 import { dirname, join, basename } from 'node:path'
@@ -48,6 +47,9 @@ export function verifyPortableZip(path, requiredEntries) {
     if (names.has(name)) throw new Error(`Duplicate ZIP entry: ${name}`)
     names.add(name)
     if (localOffset + 30 > cursor || data.readUInt32LE(localOffset) !== 0x04034b50) throw new Error('Invalid ZIP local header')
+    if (data.readUInt16LE(localOffset + 6) !== flags || data.readUInt16LE(localOffset + 8) !== method) {
+      throw new Error(`ZIP local and central headers disagree: ${name}`)
+    }
     const localNameLength = data.readUInt16LE(localOffset + 26)
     const localExtraLength = data.readUInt16LE(localOffset + 28)
     const start = localOffset + 30 + localNameLength + localExtraLength
@@ -65,25 +67,30 @@ export function verifyPortableZip(path, requiredEntries) {
 
 /** Never touch the existing artifact until the replacement has been fully written and verified. */
 export async function buildPortableZip({ sourceDir, destination, requiredEntries, maxBytes = Infinity, archiveFactory = () => new ZipArchive({ zlib: { level: 9 } }), outputFactory = createWriteStream, verify = verifyPortableZip }) {
-  const temporary = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`)
-  const archive = archiveFactory()
-  const output = outputFactory(temporary)
+  const stagingDir = mkdtempSync(join(dirname(destination), '.ferry-portable-'))
+  const temporary = join(stagingDir, basename(destination))
+  let archive
+  let output
   try {
+    archive = archiveFactory()
+    output = outputFactory(temporary)
     const completed = finished(output)
+    void completed.catch(() => undefined)
     const archiveError = new Promise((_, reject) => { archive.once('error', reject); archive.once('warning', reject) })
     archive.pipe(output)
     archive.directory(sourceDir, false)
     await Promise.race([Promise.all([completed, archive.finalize()]), archiveError])
-    verify(temporary, requiredEntries)
+    if (!output.writableFinished) throw new Error('Portable ZIP stream closed before finishing')
     if (statSync(temporary).size > maxBytes) throw new Error('Portable ZIP exceeds compressed size limit')
+    verify(temporary, requiredEntries)
     renameSync(temporary, destination)
   } catch (error) {
-    archive.abort?.()
-    output.destroy()
+    archive?.abort?.()
+    output?.destroy()
     // On Windows the stream must release its handle before deleting the temporary file.
-    if (!output.closed) await new Promise((resolve) => output.once('close', resolve))
+    if (output && !output.closed) await new Promise((resolve) => output.once('close', resolve))
     throw error
   } finally {
-    rmSync(temporary, { force: true })
+    rmSync(stagingDir, { recursive: true, force: true })
   }
 }
