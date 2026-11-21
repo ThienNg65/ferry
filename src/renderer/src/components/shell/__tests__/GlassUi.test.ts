@@ -348,6 +348,66 @@ describe('Modern Glass UI rollout', () => {
     expect(tabs[1].find('span.h-0\\.5.rounded-full.bg-primary').classes()).toContain('scale-x-100')
   })
 
+  it('captures Ctrl+W before nested handlers but does not intercept other shortcuts or terminal input', async () => {
+    const sessions = useSessionsStore()
+    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue(undefined)
+    sessions.openNewTab()
+    const activeId = sessions.activeTabId
+    const w = trackMount(mount(App, { attachTo: document.body, global: { stubs: commonStubs } }))
+    const main = w.get('main').element
+    main.addEventListener('keydown', (event) => event.stopPropagation())
+
+    const ctrlW = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true })
+    main.dispatchEvent(ctrlW)
+    expect(ctrlW.defaultPrevented).toBe(true)
+    expect(close).toHaveBeenCalledWith(activeId)
+
+    close.mockClear()
+    const ctrlTab = new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, bubbles: true, cancelable: true })
+    main.dispatchEvent(ctrlTab)
+    expect(ctrlTab.defaultPrevented).toBe(false)
+    expect(sessions.activeTabId).toBe(activeId)
+    expect(close).not.toHaveBeenCalled()
+
+    const terminal = document.createElement('div')
+    terminal.className = 'xterm'
+    const terminalInput = document.createElement('textarea')
+    terminal.appendChild(terminalInput)
+    main.appendChild(terminal)
+    const terminalCtrlW = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true })
+    terminalInput.dispatchEvent(terminalCtrlW)
+    expect(terminalCtrlW.defaultPrevented).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    main.appendChild(dialog)
+    const blocked = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true })
+    main.dispatchEvent(blocked)
+    expect(blocked.defaultPrevented).toBe(true)
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('routes middle-click and X button through the same close action', async () => {
+    const sessions = useSessionsStore()
+    const tabId = sessions.activeTabId
+    const close = vi.spyOn(sessions, 'closeTab').mockResolvedValue(undefined)
+    const w = trackMount(mount(SiteTabBar, { attachTo: document.body, global: { stubs: commonStubs } }))
+    const tab = w.get('.ferry-site-tab')
+    const mouseDown = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true })
+    tab.element.dispatchEvent(mouseDown)
+    expect(mouseDown.defaultPrevented).toBe(true)
+
+    const middleClick = new MouseEvent('auxclick', { button: 1, bubbles: true, cancelable: true })
+    tab.element.dispatchEvent(middleClick)
+    expect(middleClick.defaultPrevented).toBe(true)
+    expect(close).toHaveBeenCalledWith(tabId)
+
+    await tab.get('button[aria-label="Close New Tab"]').trigger('click')
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenLastCalledWith(tabId)
+  })
+
   it('App.vue configures sibling tooltip warmup delay and skipDelayDuration on UApp', () => {
     const w = trackMount(mount(App, { global: { stubs: commonStubs } }))
     const root = w.get('[data-tooltip-delay]')

@@ -823,7 +823,7 @@ export class SessionManager {
     return { sessionId, status: 'connected' }
   }
 
-  /** Closes and forgets a session. Safe to call on an already-closed session. */
+  /** Releases all resources even if one shutdown step fails; safe on repeated close. */
   close(sessionId: string): void {
     const entry = this.sessions.get(sessionId)
     if (!entry) {
@@ -831,25 +831,42 @@ export class SessionManager {
       this.clearPendingPrompts(sessionId)
       return
     }
-    const wasConnecting = entry.status === 'connecting'
-    if (wasConnecting) {
-      entry.abort()
+
+    const errors: unknown[] = []
+    const attempt = (step: () => void): void => {
+      try {
+        step()
+      } catch (error) {
+        errors.push(error)
+      }
     }
-    this.clearPendingPrompts(sessionId)
-    // Stop tails before flipping `entry.status` to `'disconnected'` so `killRemoteTail`
-    // can still dispatch `kill <pid>` while the SSH client is connected.
-    TailManager.getInstance().stopAllForSession(sessionId)
+
+    // Stop tails before flipping status so remote kill commands can still run.
+    if (entry.status === 'connecting') attempt(() => entry.abort())
+    attempt(() => this.clearPendingPrompts(sessionId))
+    attempt(() => TailManager.getInstance().stopAllForSession(sessionId))
     entry.status = 'disconnected'
-    TerminalManager.getInstance().closeAllForSession(sessionId)
-    OperationRegistry.getInstance().cancelAllForSession(sessionId)
-    MonitorManager.getInstance().stopAllForSession(sessionId)
-    EditSessionManager.getInstance().closeAllForSession(sessionId)
-    entry.client.end()
-    for (let i = entry.jumpClients.length - 1; i >= 0; i--) {
-      entry.jumpClients[i].end()
+    attempt(() => TerminalManager.getInstance().closeAllForSession(sessionId))
+    attempt(() => OperationRegistry.getInstance().cancelAllForSession(sessionId))
+    attempt(() => MonitorManager.getInstance().stopAllForSession(sessionId))
+    attempt(() => EditSessionManager.getInstance().closeAllForSession(sessionId))
+
+    // Close every socket, including bastions, even when an earlier step threw.
+    // Prefer the SSH graceful disconnect; force-destroy only when end() fails.
+    for (const client of [entry.client, ...entry.jumpClients.slice().reverse()]) {
+      try {
+        client.end()
+      } catch (error) {
+        errors.push(error)
+        attempt(() => client.destroy())
+      }
     }
+    // Never retain a session whose tab was closed, even if a listener throws.
     this.sessions.delete(sessionId)
-    this.broadcastStatus(sessionId, 'disconnected')
+    attempt(() => this.broadcastStatus(sessionId, 'disconnected'))
+    if (errors.length > 0) {
+      throw new AggregateError(errors, `Failed to fully clean up session ${sessionId}`)
+    }
   }
 
   private broadcastStatus(sessionId: string, status: SessionStatus, message?: string): void {

@@ -292,6 +292,137 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.tabs[0].tabId).not.toBe(tabId)
   })
 
+  it('restores the site picker synchronously when closing the last connected tab', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    await store.connect({
+      name: 'Quick Connect',
+      host: 'pending-close.example.com',
+      port: 22,
+      username: 'alice',
+      authMethod: 'password',
+      password: 'secret'
+    })
+    const closedTabId = store.activeTabId
+    const sessionId = store.activeSessionId
+    let resolveClose!: () => void
+    vi.mocked(api.invoke).mockImplementation((channel) => {
+      if (channel === INVOKE_CHANNELS.sessionClose) {
+        return new Promise<void>((resolve) => {
+          resolveClose = resolve
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const closing = store.closeTab(closedTabId)
+    // The UI must show Site Management even if the SSH close request is still pending.
+    expect(store.tabs).toHaveLength(1)
+    expect(store.activeTabId).not.toBe(closedTabId)
+    expect(store.activeTab.status).toBeNull()
+    expect(store.activeTab.sessionId).toBeNull()
+    expect(store.activeTab.connecting).toBe(false)
+    expect(api.invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.sessionClose, sessionId)
+    expect(api.invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.settingsSetOpenTabs, [])
+
+    // A second close from an overlapping mouse or keyboard event must not close the replacement tab.
+    await store.closeTab(closedTabId)
+    expect(store.tabs).toHaveLength(1)
+    resolveClose()
+    await closing
+    expect(
+      vi.mocked(api.invoke).mock.calls.filter(([channel]) => channel === INVOKE_CHANNELS.sessionClose)
+    ).toHaveLength(1)
+    expect(mockRemoteFs.clearSession).toHaveBeenCalledWith(sessionId)
+    expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('keeps the site picker usable even if native session close fails', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    await store.connect({
+      name: 'Quick Connect',
+      host: 'failed-close.example.com',
+      port: 22,
+      username: 'alice',
+      authMethod: 'password',
+      password: 'secret'
+    })
+    const sessionId = store.activeSessionId
+    vi.mocked(api.invoke).mockImplementation((channel) => {
+      if (channel === INVOKE_CHANNELS.sessionClose) {
+        return Promise.reject(new Error('close failed'))
+      }
+      return Promise.resolve(undefined)
+    })
+
+    await expect(store.closeTab(store.activeTabId)).resolves.toBeUndefined()
+    expect(store.tabs).toHaveLength(1)
+    expect(store.activeTab.status).toBeNull()
+    expect(store.activeSessionId).toBeNull()
+    expect(mockRemoteFs.clearSession).toHaveBeenCalledWith(sessionId)
+    expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('keeps the current picker active when a background connected tab is closed', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    await store.connect({
+      name: 'Quick Connect',
+      host: 'background.example.com',
+      port: 22,
+      username: 'bob',
+      authMethod: 'agent'
+    })
+    const backgroundTabId = store.activeTabId
+    store.openNewTab()
+    const pickerTabId = store.activeTabId
+    await store.closeTab(backgroundTabId)
+    expect(store.tabs).toHaveLength(1)
+    expect(store.activeTabId).toBe(pickerTabId)
+    expect(store.activeTab.status).toBeNull()
+  })
+
+  it('closes all other tabs without waiting for a stalled SSH teardown and persists once', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    vi.mocked(api.invoke).mockImplementation(async (channel, request) => {
+      if (channel === INVOKE_CHANNELS.sessionOpen) {
+        return { sessionId: (request as { sessionId: string }).sessionId, status: 'connected' }
+      }
+      return undefined
+    })
+    for (const host of ['first.test', 'second.test', 'keep.test']) {
+      if (host !== 'first.test') store.openNewTab()
+      await store.connect({ name: host, host, port: 22, username: 'user', authMethod: 'agent' })
+    }
+    const keepTabId = store.activeTabId
+    let releaseFirst!: () => void
+    const closedSessionIds: string[] = []
+    vi.mocked(api.invoke).mockClear()
+    vi.mocked(api.invoke).mockImplementation((channel, sessionId) => {
+      if (channel === INVOKE_CHANNELS.sessionClose) {
+        closedSessionIds.push(sessionId as string)
+        if (closedSessionIds.length === 1) {
+          return new Promise<void>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const closing = store.closeOtherTabs(keepTabId)
+    expect(store.tabs.map((tab) => tab.tabId)).toEqual([keepTabId])
+    expect(store.activeTabId).toBe(keepTabId)
+    expect(closedSessionIds).toHaveLength(2)
+    expect(vi.mocked(api.invoke).mock.calls.filter(([ch]) => ch === INVOKE_CHANNELS.settingsSetOpenTabs)).toHaveLength(1)
+
+    releaseFirst()
+    await closing
+    expect(closedSessionIds).toHaveLength(2)
+  })
+
   it('reconnectTab reconnects saved sites and falls back to picker if Quick Connect password is missing', async () => {
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()
