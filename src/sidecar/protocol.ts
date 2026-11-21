@@ -56,8 +56,15 @@ export async function dispatchInvoke(channel: unknown, args: unknown) {
   if (typeof handler !== 'function') {
     return err('UNKNOWN', `IPC channel not handled by sidecar: ${channel}`)
   }
-  const decodedArgs = Array.isArray(args) ? (decodeB64Deep(args) as unknown[]) : []
-  return handler({}, ...decodedArgs)
+  try {
+    const decodedArgs = Array.isArray(args) ? (decodeB64Deep(args) as unknown[]) : []
+    return await handler({}, ...decodedArgs)
+  } catch {
+    // Never forward raw exception messages or stacks: handlers can include credentials or paths.
+    // This boundary also contains unexpected rejections from handlers registered directly.
+    console.error('sidecar: invoke handler failed for channel "%s"', channel)
+    return err('UNKNOWN', 'The operation failed unexpectedly')
+  }
 }
 
 export function dispatchSend(channel: unknown, payload: unknown): void {
