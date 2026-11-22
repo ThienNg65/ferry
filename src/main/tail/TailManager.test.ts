@@ -194,7 +194,7 @@ describe('TailManager', () => {
       for (let index = 0; index < 9; index++) {
         opts.onStderr?.(chunk)
       }
-      opts.onStderr?.('\\nnext line\\n')
+      opts.onStderr?.('\nnext line\n')
       return 0
     }
     const manager = TailManager.getInstance()
