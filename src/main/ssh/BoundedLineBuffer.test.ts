@@ -49,5 +49,6 @@ describe('BoundedLineBuffer', () => {
   it('rejects invalid buffer limits', () => {
     expect(() => new BoundedLineBuffer(0)).toThrow(RangeError)
     expect(() => new BoundedLineBuffer(Number.POSITIVE_INFINITY)).toThrow(RangeError)
+    expect(() => new BoundedLineBuffer(Number.MAX_SAFE_INTEGER)).toThrow(RangeError)
   })
 })
