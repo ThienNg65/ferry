@@ -858,13 +858,19 @@ export const useSessionsStore = defineStore('sessions', {
       const remaining = this.tabs.filter((t) => t.tabId !== tabId)
       if (remaining.length === 0) {
         const replacement = freshTab()
-        this.tabs = [replacement]
-        this.activeTabId = replacement.tabId
+        this.$patch({
+          tabs: [replacement],
+          activeTabId: replacement.tabId
+        })
       } else {
-        if (this.activeTabId === tabId) {
-          this.activeTabId = remaining[Math.min(closedIndex, remaining.length - 1)].tabId
-        }
-        this.tabs = remaining
+        const nextActiveTabId =
+          this.activeTabId === tabId
+            ? remaining[Math.min(closedIndex, remaining.length - 1)].tabId
+            : this.activeTabId
+        this.$patch({
+          activeTabId: nextActiveTabId,
+          tabs: remaining
+        })
       }
       if (persist) {
         void this.persistOpenTabs()
