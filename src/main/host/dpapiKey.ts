@@ -158,31 +158,6 @@ function selectOrCreateAtomicMasterKey(keyPath: string): StoredMasterKey {
   }
 }
 
-function replaceAtomicMasterKeyFile(keyPath: string, wrapped: string): void {
-  const tmpPath = writeSyncedTemporaryFile(keyPath, wrapped)
-  try {
-    renameSync(tmpPath, keyPath)
-  } finally {
-    try {
-      unlinkSync(tmpPath)
-    } catch {
-      // Ignore cleanup errors after an atomic replacement.
-    }
-  }
-}
-
-function ensureAtomicMasterKeyFile(keyPath: string, wrapped: string): void {
-  let currentWrapped: string | undefined
-  try {
-    currentWrapped = readFileSync(keyPath, 'utf8').trim()
-  } catch {
-    // The Local State key remains authoritative if the recovery copy is unreadable.
-  }
-  if (currentWrapped !== wrapped) {
-    replaceAtomicMasterKeyFile(keyPath, wrapped)
-  }
-}
-
 function persistLocalState(
   localStatePath: string,
   state: Record<string, unknown>,
@@ -235,29 +210,16 @@ export function unwrapOrCreateMasterKey(dataDir: string): Buffer {
   }
 
   const localStatePath = path.join(resolved, 'Local State')
-  const keyPath = `${localStatePath}.dpapi-key`
   const existing = readMasterKey(localStatePath)
   if (existing.stored) {
-    try {
-      ensureAtomicMasterKeyFile(keyPath, existing.stored.wrapped)
-    } catch {
-      // A valid Local State key remains authoritative if the recovery copy cannot be repaired.
-    }
     keyCache.set(resolved, existing.stored.key)
     return existing.stored.key
   }
 
   mkdirSync(resolved, { recursive: true })
-  const selected = selectOrCreateAtomicMasterKey(keyPath)
+  const selected = selectOrCreateAtomicMasterKey(`${localStatePath}.dpapi-key`)
   const current = readMasterKey(localStatePath)
   if (current.stored) {
-    if (current.stored.wrapped !== selected.wrapped) {
-      try {
-        ensureAtomicMasterKeyFile(keyPath, current.stored.wrapped)
-      } catch {
-        // Local State remains authoritative; never cache the competing candidate.
-      }
-    }
     keyCache.set(resolved, current.stored.key)
     return current.stored.key
   }
