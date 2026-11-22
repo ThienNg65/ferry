@@ -276,11 +276,15 @@ jobs:
           fi
 
       - name: Trigger website rebuild
-        if: secrets.VERCEL_DEPLOY_HOOK_URL != ''
         shell: bash
         env:
           VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
-        run: curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK_URL" >/dev/null
+        run: |
+          if [ -n "$VERCEL_DEPLOY_HOOK_URL" ]; then
+            curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK_URL" >/dev/null
+          else
+            echo "VERCEL_DEPLOY_HOOK_URL not configured; skipping website rebuild."
+          fi
 
       # Keep this enabled during migration: existing installers currently poll
       # ThienNg65/ferry, so they need one bridge release from the old feed.

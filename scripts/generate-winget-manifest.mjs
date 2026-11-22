@@ -26,7 +26,7 @@ export function renderWingetManifests(version, sha256) {
       `    InstallerSha256: ${sha256.toUpperCase()}\n    ProductCode: Ferry\n${suffix('installer')}`,
     [`${PACKAGE_ID}.locale.en-US.yaml`]: `${header('defaultLocale')}${common}PackageLocale: en-US\n` +
       `Publisher: ThienNg65\nPublisherUrl: https://github.com/ThienNg65\n` +
-      `PublisherSupportUrl: https://github.com/ThienNg65/ferry/issues\nPackageName: Ferry\n` +
+      `PublisherSupportUrl: https://github.com/ThienNg65/ferry-release/issues\nPackageName: Ferry\n` +
       `PackageUrl: https://github.com/ThienNg65/ferry-release\nLicense: MIT\n` +
       `LicenseUrl: https://github.com/ThienNg65/ferry-release/blob/main/LICENSE\n` +
       `ShortDescription: Lightweight Windows SSH/SFTP client for file transfers, terminal access, and live logs.\n` +

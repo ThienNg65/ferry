@@ -23,6 +23,7 @@ test('renders a version-pinned three-file WinGet package', () => {
   assert.match(files['ThienNg65.Ferry.installer.yaml'], /Scope: user/)
   assert.match(files['ThienNg65.Ferry.installer.yaml'], /InstallerSha256: A{64}/)
   assert.match(files['ThienNg65.Ferry.installer.yaml'], /ferry-v1\.2\.2\/Ferry-Setup-1\.2\.2\.exe/)
+  assert.match(files['ThienNg65.Ferry.locale.en-US.yaml'], /PublisherSupportUrl: https:\/\/github\.com\/ThienNg65\/ferry-release\/issues/)
   for (const content of Object.values(files)) assert.match(content, /ManifestVersion: 1\.28\.0/)
 })
 
