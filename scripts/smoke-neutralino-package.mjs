@@ -545,6 +545,27 @@ try {
   if (!directSettingsRes?.ok) {
     throw new Error(`Direct WebSocket did not continue after an error reply: ${JSON.stringify(directSettingsRes)}`)
   }
+
+  // The sidecar routes broadcasts to connected direct clients before the Neutralino socket.
+  // Close this test-only client before the SSH/SFTP smoke so Neutralino events remain observable.
+  await new Promise((resolveClose, rejectClose) => {
+    if (!directSocket || directSocket.readyState === WebSocket.CLOSED) {
+      resolveClose()
+      return
+    }
+    const socket = directSocket
+    const onClose = () => {
+      clearTimeout(timer)
+      resolveClose()
+    }
+    const timer = setTimeout(() => {
+      socket.off('close', onClose)
+      rejectClose(new Error('Direct WebSocket did not close before the Neutralino smoke'))
+    }, 10_000)
+    socket.once('close', onClose)
+    socket.close()
+  })
+  directSocket = null
   console.log('Packaged Neutralino and direct WebSocket error/success RPC paths verified.')
 
   const settingsRes = await rpcInvoke('settings:get')
