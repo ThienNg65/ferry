@@ -120,6 +120,26 @@ describe('RemoteShell UTF-8 output', () => {
     ])
   })
 
+  it('cancels cleanly when aborted mid-way through an oversized unterminated line', async () => {
+    const { shell, channel } = createHarness()
+    const controller = new AbortController()
+    const lines: string[] = []
+    const execution = shell.execLines('tail -f output', {
+      timeoutMs: null,
+      signal: controller.signal,
+      onLine: (line) => lines.push(line)
+    })
+
+    const chunk = Buffer.from('x'.repeat(32 * 1024))
+    channel.emit('data', chunk)
+    channel.emit('data', chunk)
+    channel.emit('data', chunk)
+    controller.abort()
+
+    await expect(execution).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(lines).toEqual([])
+  })
+
   it('flushes incomplete UTF-8 sequences consistently when each command closes', async () => {
     const incomplete = Buffer.from([0xe2])
 

@@ -40,7 +40,13 @@ export class BoundedLineBuffer {
     while (offset < chunk.length) {
       const newline = chunk.indexOf('\n', offset)
       const end = newline === -1 ? chunk.length : newline
-      this.append(chunk.slice(offset, end))
+      const segment = chunk.slice(offset, end)
+      if (newline !== -1 && this.line.length === 0 && !this.truncated && Buffer.byteLength(segment, 'utf8') <= this.maxBytes) {
+        onLine(segment)
+        offset = newline + 1
+        continue
+      }
+      this.append(segment)
 
       if (newline === -1) {
         return
