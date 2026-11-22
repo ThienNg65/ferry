@@ -312,7 +312,10 @@ describe('capProcesses', () => {
   it('ranks processes using RSS calculated with the remote page size', () => {
     const samples = processCpuPercentages(
       null,
-      [snap(1, 0, 0, 10), snap(2, 0, 0, 1)],
+      [
+        { pid: 1, comm: 'proc1', utime: 0, stime: 0, rssPages: 10 },
+        { pid: 2, comm: 'proc2', utime: 0, stime: 0, rssPages: 1 }
+      ],
       null,
       65536
     )
