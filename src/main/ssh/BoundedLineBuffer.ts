@@ -6,17 +6,16 @@ export const MAX_BUFFERED_LINE_BYTES = 64 * 1024
 export const TRUNCATED_LINE_SUFFIX = ' … [truncated]'
 
 function utf8Prefix(value: string, maxBytes: number): string {
+  const prefix = Buffer.allocUnsafe(maxBytes)
   let byteLength = 0
-  let end = 0
   for (const character of value) {
     const characterBytes = Buffer.byteLength(character, 'utf8')
     if (byteLength + characterBytes > maxBytes) {
       break
     }
-    byteLength += characterBytes
-    end += character.length
+    byteLength += prefix.write(character, byteLength, characterBytes, 'utf8')
   }
-  return value.slice(0, end)
+  return prefix.subarray(0, byteLength).toString('utf8')
 }
 
 /**
@@ -66,7 +65,8 @@ export class BoundedLineBuffer {
     const valueBytes = Buffer.byteLength(value, 'utf8')
     const remainingBytes = this.maxBytes - this.lineBytes
     if (valueBytes <= remainingBytes) {
-      this.line += value
+      // Copy the bounded segment so a small substring cannot retain a huge SSH chunk.
+      this.line += Buffer.from(value, 'utf8').toString('utf8')
       this.lineBytes += valueBytes
       return
     }
