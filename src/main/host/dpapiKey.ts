@@ -9,7 +9,6 @@ import {
   openSync,
   readFileSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
@@ -17,21 +16,10 @@ import * as path from 'path'
 
 const DPAPI_PREFIX = Buffer.from('DPAPI')
 const keyCache = new Map<string, Buffer>()
-const LOCK_RETRY_MS = 50
-const LOCK_TIMEOUT_MS = 30_000
-const LOCK_EMPTY_STALE_MS = 1_000
-const LOCK_MAX_AGE_MS = 5 * 60_000
-const lockWaitBuffer = new Int32Array(new SharedArrayBuffer(4))
 
-interface MasterKeyLockOwner {
-  pid: number
-  createdAt: number
-  token: string
-}
-
-interface MasterKeyLock {
-  assertOwned(): void
-  release(): void
+interface StoredMasterKey {
+  key: Buffer
+  wrapped: string
 }
 
 function dpapiProtect(raw: Buffer): Buffer {
@@ -62,7 +50,22 @@ function dpapiUnprotect(blob: Buffer): Buffer {
   return Buffer.from(out, 'base64')
 }
 
-function readMasterKey(localStatePath: string): { state: Record<string, unknown>; key?: Buffer } {
+function unwrapWrappedMasterKey(wrappedBase64: string): Buffer {
+  const wrapped = Buffer.from(wrappedBase64, 'base64')
+  if (!wrapped.subarray(0, DPAPI_PREFIX.length).equals(DPAPI_PREFIX)) {
+    throw new Error('Local State os_crypt.encrypted_key lacks DPAPI prefix')
+  }
+  const key = dpapiUnprotect(wrapped.subarray(DPAPI_PREFIX.length))
+  if (key.length !== 32) {
+    throw new Error(`Unwrapped DPAPI master key must be 32 bytes, got ${key.length}`)
+  }
+  return key
+}
+
+function readMasterKey(localStatePath: string): {
+  state: Record<string, unknown>
+  stored?: StoredMasterKey
+} {
   let state: Record<string, unknown> = {}
   if (existsSync(localStatePath)) {
     const rawText = readFileSync(localStatePath, 'utf8').trim()
@@ -76,155 +79,135 @@ function readMasterKey(localStatePath: string): { state: Record<string, unknown>
     return { state }
   }
 
-  const wrapped = Buffer.from(osCrypt.encrypted_key, 'base64')
-  if (!wrapped.subarray(0, DPAPI_PREFIX.length).equals(DPAPI_PREFIX)) {
-    throw new Error('Local State os_crypt.encrypted_key lacks DPAPI prefix')
+  return {
+    state,
+    stored: {
+      key: unwrapWrappedMasterKey(osCrypt.encrypted_key),
+      wrapped: osCrypt.encrypted_key
+    }
   }
-  const key = dpapiUnprotect(wrapped.subarray(DPAPI_PREFIX.length))
-  if (key.length !== 32) {
-    throw new Error(`Unwrapped DPAPI master key must be 32 bytes, got ${key.length}`)
-  }
-  return { state, key }
 }
 
-function readLockOwner(lockPath: string): MasterKeyLockOwner | undefined {
-  try {
-    const owner = JSON.parse(readFileSync(lockPath, 'utf8')) as Partial<MasterKeyLockOwner>
-    if (
-      !Number.isSafeInteger(owner.pid) ||
-      (owner.pid ?? 0) <= 0 ||
-      typeof owner.createdAt !== 'number' ||
-      typeof owner.token !== 'string'
-    ) {
-      return undefined
-    }
-    return owner as MasterKeyLockOwner
-  } catch {
+function readAtomicMasterKey(keyPath: string): StoredMasterKey | undefined {
+  if (!existsSync(keyPath)) {
     return undefined
   }
+  const wrapped = readFileSync(keyPath, 'utf8').trim()
+  if (!wrapped) {
+    throw new Error('The atomically selected DPAPI master-key file is empty')
+  }
+  return { key: unwrapWrappedMasterKey(wrapped), wrapped }
 }
 
-function isProcessRunning(pid: number): boolean {
+function writeSyncedTemporaryFile(targetPath: string, content: string): string {
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${randomUUID()}`
   try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-function isStaleLock(lockPath: string): boolean {
-  let age: number
-  try {
-    age = Date.now() - statSync(lockPath).mtimeMs
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false
-    }
-    throw error
-  }
-
-  const owner = readLockOwner(lockPath)
-  if (!owner) {
-    return age >= LOCK_EMPTY_STALE_MS
-  }
-  if (!isProcessRunning(owner.pid)) {
-    return true
-  }
-  return age >= LOCK_MAX_AGE_MS
-}
-
-function removeStaleLock(lockPath: string): boolean {
-  const expectedOwner = readLockOwner(lockPath)
-  if (!isStaleLock(lockPath)) {
-    return false
-  }
-
-  const quarantinePath = `${lockPath}.stale.${process.pid}.${randomUUID()}`
-  try {
-    renameSync(lockPath, quarantinePath)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return true
-    }
-    throw error
-  }
-
-  const movedOwner = readLockOwner(quarantinePath)
-  if (expectedOwner?.token !== movedOwner?.token) {
-    // The lock changed after the stale check. Restore it unless another
-    // initializer has already acquired the now-free lock path.
+    const fd = openSync(tmpPath, 'wx', 0o600)
     try {
-      linkSync(quarantinePath, lockPath)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error
-      }
-    }
-    unlinkSync(quarantinePath)
-    return false
-  }
-
-  unlinkSync(quarantinePath)
-  return true
-}
-
-function acquireMasterKeyLock(lockPath: string): MasterKeyLock {
-  const startedAt = Date.now()
-
-  while (true) {
-    const token = randomUUID()
-    let fd: number
-    try {
-      fd = openSync(lockPath, 'wx', 0o600)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error
-      }
-
-      if (removeStaleLock(lockPath)) {
-        continue
-      }
-
-      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
-        throw new Error('Timed out waiting for DPAPI master-key initialization')
-      }
-      Atomics.wait(lockWaitBuffer, 0, 0, LOCK_RETRY_MS)
-      continue
-    }
-
-    try {
-      writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now(), token }))
+      writeFileSync(fd, content, 'utf8')
       fsyncSync(fd)
-    } catch (error) {
+    } finally {
       closeSync(fd)
-      try {
-        unlinkSync(lockPath)
-      } catch {
-        // The next initializer can recover an abandoned lock.
+    }
+    return tmpPath
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      // Ignore cleanup errors when temporary-file creation fails.
+    }
+    throw error
+  }
+}
+
+/**
+ * Selects one wrapped key across processes using an atomic same-directory hard
+ * link. Only the first process can publish the destination; all others read
+ * that complete, already-flushed value instead of using their own candidate.
+ */
+function selectOrCreateAtomicMasterKey(keyPath: string): StoredMasterKey {
+  const existing = readAtomicMasterKey(keyPath)
+  if (existing) {
+    return existing
+  }
+
+  const candidateKey = randomBytes(32)
+  const candidateWrapped = Buffer.concat([DPAPI_PREFIX, dpapiProtect(candidateKey)]).toString('base64')
+  const tmpPath = writeSyncedTemporaryFile(keyPath, candidateWrapped)
+
+  try {
+    try {
+      linkSync(tmpPath, keyPath)
+      return { key: candidateKey, wrapped: candidateWrapped }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error
+      }
+      const winner = readAtomicMasterKey(keyPath)
+      if (!winner) {
+        throw new Error('The selected DPAPI master key disappeared during initialization')
+      }
+      return winner
+    }
+  } finally {
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      // The published hard link remains valid if temporary-link cleanup fails.
+    }
+  }
+}
+
+function replaceAtomicMasterKeyFile(keyPath: string, wrapped: string): void {
+  const tmpPath = writeSyncedTemporaryFile(keyPath, wrapped)
+  try {
+    renameSync(tmpPath, keyPath)
+  } finally {
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      // Ignore cleanup errors after an atomic replacement.
+    }
+  }
+}
+
+function persistLocalState(
+  localStatePath: string,
+  state: Record<string, unknown>,
+  stored: StoredMasterKey
+): Buffer {
+  const nextState = {
+    ...state,
+    os_crypt: {
+      ...(typeof state.os_crypt === 'object' && state.os_crypt !== null ? state.os_crypt : {}),
+      encrypted_key: stored.wrapped
+    }
+  }
+  const tmpPath = writeSyncedTemporaryFile(localStatePath, JSON.stringify(nextState))
+
+  try {
+    try {
+      renameSync(tmpPath, localStatePath)
+    } catch (error) {
+      const current = readMasterKey(localStatePath).stored
+      if (current?.key.equals(stored.key)) {
+        return current.key
       }
       throw error
     }
-
-    return {
-      assertOwned() {
-        if (readLockOwner(lockPath)?.token !== token) {
-          throw new Error('DPAPI master-key initialization lock was lost')
-        }
-      },
-      release() {
-        const ownsLock = readLockOwner(lockPath)?.token === token
-        closeSync(fd)
-        if (ownsLock) {
-          try {
-            unlinkSync(lockPath)
-          } catch {
-            // The persisted key is authoritative; stale-lock recovery can remove this file later.
-          }
-        }
-      }
+  } finally {
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      // Ignore cleanup errors after a successful rename.
     }
   }
+
+  const persisted = readMasterKey(localStatePath).stored
+  if (!persisted?.key.equals(stored.key)) {
+    throw new Error('Persisted DPAPI master key does not match the selected key')
+  }
+  return persisted.key
 }
 
 /**
@@ -240,60 +223,39 @@ export function unwrapOrCreateMasterKey(dataDir: string): Buffer {
   }
 
   const localStatePath = path.join(resolved, 'Local State')
+  const keyPath = `${localStatePath}.dpapi-key`
   const existing = readMasterKey(localStatePath)
-  if (existing.key) {
-    keyCache.set(resolved, existing.key)
-    return existing.key
+  if (existing.stored) {
+    try {
+      const atomicKey = readAtomicMasterKey(keyPath)
+      if (atomicKey?.wrapped !== existing.stored.wrapped) {
+        replaceAtomicMasterKeyFile(keyPath, existing.stored.wrapped)
+      }
+    } catch {
+      // A valid Local State key remains authoritative if the recovery copy cannot be repaired.
+    }
+    keyCache.set(resolved, existing.stored.key)
+    return existing.stored.key
   }
 
   mkdirSync(resolved, { recursive: true })
-  const lock = acquireMasterKeyLock(`${localStatePath}.lock`)
-  let tmpPath: string | undefined
-
-  try {
-    // Another process may have created the shared key while this process waited.
-    const current = readMasterKey(localStatePath)
-    if (current.key) {
-      keyCache.set(resolved, current.key)
-      return current.key
-    }
-
-    const freshKey = randomBytes(32)
-    const wrapped = Buffer.concat([DPAPI_PREFIX, dpapiProtect(freshKey)]).toString('base64')
-    const nextState = {
-      ...current.state,
-      os_crypt: {
-        ...(typeof current.state.os_crypt === 'object' && current.state.os_crypt !== null
-          ? current.state.os_crypt
-          : {}),
-        encrypted_key: wrapped
-      }
-    }
-
-    tmpPath = `${localStatePath}.tmp.${process.pid}.${randomUUID()}`
-    const tmpFd = openSync(tmpPath, 'wx', 0o600)
-    try {
-      writeFileSync(tmpFd, JSON.stringify(nextState), 'utf8')
-      fsyncSync(tmpFd)
-    } finally {
-      closeSync(tmpFd)
-    }
-
-    lock.assertOwned()
-    renameSync(tmpPath, localStatePath)
-    tmpPath = undefined
-    keyCache.set(resolved, freshKey)
-    return freshKey
-  } finally {
-    if (tmpPath) {
+  const selected = selectOrCreateAtomicMasterKey(keyPath)
+  const current = readMasterKey(localStatePath)
+  if (current.stored) {
+    if (current.stored.wrapped !== selected.wrapped) {
       try {
-        unlinkSync(tmpPath)
+        replaceAtomicMasterKeyFile(keyPath, current.stored.wrapped)
       } catch {
-        // Ignore cleanup errors; the next startup can safely overwrite no key.
+        // Local State remains authoritative; never cache the competing candidate.
       }
     }
-    lock.release()
+    keyCache.set(resolved, current.stored.key)
+    return current.stored.key
   }
+
+  const key = persistLocalState(localStatePath, current.state, selected)
+  keyCache.set(resolved, key)
+  return key
 }
 
 /** Clears the in-memory key cache (intended for tests). */
