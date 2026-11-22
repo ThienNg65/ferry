@@ -1,6 +1,7 @@
 import { StringDecoder } from 'node:string_decoder'
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
 import type { IpcErrorCode } from '../../shared/contract'
+import { BoundedLineBuffer } from './BoundedLineBuffer'
 import { SshError } from './errors'
 import { withRetry } from './retry'
 import { shellEscape } from './shellEscape'
@@ -29,7 +30,7 @@ export interface RemoteOptions {
 export interface ExecLinesOptions extends Omit<RemoteOptions, 'timeoutMs'> {
   /** Idle timeout after channel open. Null keeps a quiet stream connected. */
   timeoutMs?: number | null
-  /** Called for each complete stdout line (newline-stripped). */
+  /** Called for each stdout line; oversized lines are capped and marked as truncated. */
   onLine: (line: string) => void
   /** Called for each chunk of stderr. */
   onStderr?: (chunk: string) => void
@@ -311,22 +312,17 @@ export class RemoteShell {
 
         const stdoutDecoder = new StringDecoder('utf8')
         const stderrDecoder = new StringDecoder('utf8')
-        let buf = ''
-        const flush = (final: boolean): void => {
-          const parts = buf.split('\n')
-          buf = final ? '' : parts.pop() ?? ''
-          for (const raw of parts) {
-            const line = raw.replace(/\r$/, '')
-            if (line.length > 0) {
-              opts.onLine(line)
-            }
+        const stdoutLines = new BoundedLineBuffer()
+        const emitStdoutLine = (raw: string): void => {
+          const line = raw.replace(/\r$/, '')
+          if (line.length > 0) {
+            opts.onLine(line)
           }
         }
 
         stream.on('data', (chunk: Buffer) => {
           arm(timeoutMs)
-          buf += stdoutDecoder.write(chunk)
-          flush(false)
+          stdoutLines.push(stdoutDecoder.write(chunk), emitStdoutLine)
         })
         stream.stderr.on('data', (chunk: Buffer) => {
           arm(timeoutMs)
@@ -342,10 +338,8 @@ export class RemoteShell {
           }
           settled = true
           cleanup()
-          buf += stdoutDecoder.end()
-          if (buf.length > 0) {
-            opts.onLine(buf.replace(/\r$/, ''))
-          }
+          stdoutLines.push(stdoutDecoder.end(), emitStdoutLine)
+          stdoutLines.flush(emitStdoutLine)
           const stderrRemainder = stderrDecoder.end()
           if (stderrRemainder.length > 0) {
             opts.onStderr?.(stderrRemainder)
