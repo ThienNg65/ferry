@@ -4,17 +4,20 @@ import * as path from 'path'
 import { SshError } from '../ssh/errors'
 
 const UNSAFE_LINK_MESSAGE =
-  'Unsafe download destination: symbolic links and reparse points are not allowed beneath the selected folder.'
-const UNSAFE_PATH_MESSAGE = 'Unsafe download destination: the target is outside the selected folder.'
-const MISSING_PARENT_MESSAGE = 'Unsafe download destination: a parent folder is missing or unavailable.'
+  'symbolic links and reparse points are not allowed beneath the selected folder.'
+const MISSING_PARENT_MESSAGE = 'a parent folder is missing or unavailable.'
 
 function unsafeDestination(message = UNSAFE_LINK_MESSAGE): SshError {
-  return new SshError('VALIDATION', message)
+  return new SshError('VALIDATION', 'Unsafe download destination: ' + message)
+}
+
+function unsafeComponent(target: string, reason = UNSAFE_LINK_MESSAGE): SshError {
+  return unsafeDestination('component "' + path.basename(target) + '": ' + reason)
 }
 
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
 }
 
 function relativeTarget(root: string, target: string, allowRoot: boolean): string {
@@ -22,7 +25,7 @@ function relativeTarget(root: string, target: string, allowRoot: boolean): strin
   const resolvedTarget = path.resolve(target)
   const relative = path.relative(resolvedRoot, resolvedTarget)
   if (!isWithin(resolvedRoot, resolvedTarget) || (!allowRoot && relative === '')) {
-    throw unsafeDestination(UNSAFE_PATH_MESSAGE)
+    throw unsafeComponent(target, 'it resolves outside the selected folder.')
   }
   return relative
 }
@@ -35,7 +38,7 @@ async function verifyRoot(root: string): Promise<void> {
     throw unsafeDestination(MISSING_PARENT_MESSAGE)
   }
   if (info.isSymbolicLink() || !info.isDirectory()) {
-    throw unsafeDestination()
+    throw unsafeComponent(root, 'the selected root is no longer a real directory.')
   }
 }
 
@@ -45,10 +48,10 @@ async function verifyRealPathInside(root: string, target: string): Promise<void>
   try {
     ;[realRoot, realTarget] = await Promise.all([fs.realpath(root), fs.realpath(target)])
   } catch {
-    throw unsafeDestination(MISSING_PARENT_MESSAGE)
+    throw unsafeComponent(target, MISSING_PARENT_MESSAGE)
   }
   if (!isWithin(realRoot, realTarget)) {
-    throw unsafeDestination(UNSAFE_PATH_MESSAGE)
+    throw unsafeComponent(target, 'it resolves outside the selected folder.')
   }
 }
 
@@ -71,7 +74,7 @@ export async function prepareSafeLocalDownloadRoot(rootPath: string): Promise<st
     const resolvedRoot = await fs.realpath(rootPath)
     const info = await fs.lstat(resolvedRoot)
     if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw unsafeDestination('The selected download folder is not a directory.')
+      throw unsafeComponent(resolvedRoot, 'the selected root is not a directory.')
     }
     return resolvedRoot
   } catch (error) {
@@ -99,7 +102,7 @@ export async function ensureSafeLocalDownloadDirectory(root: string, target: str
       info = await fs.lstat(current)
     }
     if (info.isSymbolicLink() || !info.isDirectory()) {
-      throw unsafeDestination()
+      throw unsafeComponent(current)
     }
     await verifyRealPathInside(root, current)
   }
@@ -121,10 +124,10 @@ export async function assertSafeLocalDownloadPath(root: string, target: string):
     const isFinal = index === segments.length - 1
     if (!info) {
       if (isFinal) return
-      throw unsafeDestination(MISSING_PARENT_MESSAGE)
+      throw unsafeComponent(current, MISSING_PARENT_MESSAGE)
     }
     if (info.isSymbolicLink() || (isFinal ? !info.isFile() : !info.isDirectory())) {
-      throw unsafeDestination()
+      throw unsafeComponent(current)
     }
     await verifyRealPathInside(root, current)
   }
@@ -139,7 +142,7 @@ export async function assertSafeLocalDownloadHandle(root: string, target: string
   const [opened, current] = await Promise.all([handle.stat(), fs.lstat(target)])
   const sameFile = opened.dev === current.dev && (opened.ino === 0 || current.ino === 0 || opened.ino === current.ino)
   if (current.isSymbolicLink() || !current.isFile() || !sameFile) {
-    throw unsafeDestination()
+    throw unsafeComponent(target)
   }
   await assertSafeLocalDownloadPath(root, target)
 }

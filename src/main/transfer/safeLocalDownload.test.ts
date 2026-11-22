@@ -58,7 +58,7 @@ describe('safe local tree download paths', () => {
     const link = path.join(root, 'config')
     await linkDirectory(outside, link)
 
-    await expect(ensureSafeLocalDownloadDirectory(root, link)).rejects.toThrow(/symbolic links and reparse points/)
+    await expect(ensureSafeLocalDownloadDirectory(root, link)).rejects.toThrow(/component "config".*symbolic links and reparse points/)
     await expect(assertSafeLocalDownloadPath(root, path.join(link, 'probe.txt'))).rejects.toThrow(
       /symbolic links and reparse points/
     )
