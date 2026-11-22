@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import type { SFTPWrapper } from 'ssh2'
@@ -208,7 +209,7 @@ describe('sftpPipeline.transferPipelined', () => {
     fake.files.set('/remote/guarded.txt', data)
     const destination = path.join(tmpDir, '.ferry-transfer-guarded.part')
     const beforeLocalOpen = vi.fn(async () => undefined)
-    const afterLocalOpen = vi.fn(async (handle: import('fs/promises').FileHandle) => {
+    const afterLocalOpen = vi.fn(async (handle: FileHandle) => {
       expect((await handle.stat()).isFile()).toBe(true)
     })
 
