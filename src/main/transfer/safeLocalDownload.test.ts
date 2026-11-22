@@ -49,7 +49,7 @@ describe('safe local tree download paths', () => {
   it('rejects a target path outside the selected root', async () => {
     const { root, outside } = await fixture()
     await expect(assertSafeLocalDownloadPath(root, path.join(outside, 'escape.txt'))).rejects.toThrow(
-      /target is outside the selected folder/
+      /resolves outside the selected folder/
     )
   })
 
@@ -95,21 +95,20 @@ describe('safe local tree download paths', () => {
     expect(await fs.readFile(sentinel, 'utf-8')).toBe('keep-me')
   })
 
-  it('detects a parent replaced by a junction after the local file was opened', async () => {
+  it('rejects an opened handle that does not match the validated destination', async () => {
     const { root, outside } = await fixture()
     const parent = path.join(root, 'config')
     await fs.mkdir(parent)
     const target = path.join(parent, '.ferry-transfer-test.part')
-    await fs.writeFile(target, 'partial')
-    const handle = await fs.open(target, 'r+')
+    const outsideFile = path.join(outside, '.ferry-transfer-test.part')
+    await fs.writeFile(target, 'inside-file')
+    await fs.writeFile(outsideFile, 'different-outside-file-content')
+    const handle = await fs.open(outsideFile, 'r+')
 
     try {
-      await fs.rename(parent, path.join(root, 'config-original'))
-      await linkDirectory(outside, parent)
-      await expect(assertSafeLocalDownloadHandle(root, target, handle)).rejects.toThrow(
-        /symbolic links and reparse points/
-      )
-      expect(await fs.readdir(outside)).toEqual([])
+      await expect(assertSafeLocalDownloadHandle(root, target, handle)).rejects.toThrow(/component ".part"/)
+      expect(await fs.readFile(target, 'utf-8')).toBe('inside-file')
+      expect(await fs.readFile(outsideFile, 'utf-8')).toBe('different-outside-file-content')
     } finally {
       await handle.close()
     }

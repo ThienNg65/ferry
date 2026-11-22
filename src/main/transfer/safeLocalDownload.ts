@@ -140,7 +140,12 @@ export async function assertSafeLocalDownloadPath(root: string, target: string):
 export async function assertSafeLocalDownloadHandle(root: string, target: string, handle: FileHandle): Promise<void> {
   await assertSafeLocalDownloadPath(root, target)
   const [opened, current] = await Promise.all([handle.stat(), fs.lstat(target)])
-  const sameFile = opened.dev === current.dev && (opened.ino === 0 || current.ino === 0 || opened.ino === current.ino)
+  const hasFileIds = opened.ino !== 0 && current.ino !== 0
+  const sameFile = opened.dev === current.dev && (
+    hasFileIds
+      ? opened.ino === current.ino
+      : opened.size === current.size && opened.mtimeMs === current.mtimeMs && opened.birthtimeMs === current.birthtimeMs
+  )
   if (current.isSymbolicLink() || !current.isFile() || !sameFile) {
     throw unsafeComponent(target)
   }

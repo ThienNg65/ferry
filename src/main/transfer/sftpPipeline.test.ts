@@ -359,6 +359,46 @@ describe('sftpPipeline.transferPipelined', () => {
     }
   })
 
+  it('rejects symlinked local parents for tree downloads before opening SFTP files', async () => {
+    const root = path.join(tmpDir, 'tree')
+    const outside = path.join(tmpDir, 'outside')
+    await fs.mkdir(root)
+    await fs.mkdir(outside)
+    const sentinel = path.join(outside, 'sentinel.txt')
+    await fs.writeFile(sentinel, 'keep-me')
+    await fs.symlink(outside, path.join(root, 'config'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    const fake = createFakeSftp()
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    const getSftp = vi.fn(async () => fake.sftp)
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [
+        { relPath: 'config', isDir: true, size: 0 },
+        { relPath: 'config/probe.txt', isDir: false, size: 10, mtimeMs: 1 }
+      ],
+      sftp: getSftp
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const transferId = queue.enqueueTree('session', 'download', root, '/remote/tree')
+    const failed = (): boolean => events.mock.calls.some(
+      ([channel, event]) => channel === EVENT_CHANNELS.transferEvent
+        && (event as TransferEvent).transferId === transferId
+        && (event as TransferEvent).state === 'error'
+    )
+
+    try {
+      await vi.waitFor(() => expect(failed()).toBe(true))
+      expect(getSftp).not.toHaveBeenCalled()
+      expect(await fs.readFile(sentinel, 'utf-8')).toBe('keep-me')
+      expect(await fs.readdir(outside)).toEqual(['sentinel.txt'])
+    } finally {
+      queue.cancel(transferId)
+    }
+  })
+
   it('does not hang indefinitely on abort when sftp.close never responds', async () => {
     const localFile = path.join(tmpDir, 'hung-close.bin')
     await fs.writeFile(localFile, Buffer.alloc(512 * 1024, 2))
