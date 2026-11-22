@@ -69,6 +69,7 @@ const stubs = {
 
 const dialogProps = { open: true, sessionId: 'server-a', initialLocalPath: '/local', initialRemotePath: '/remote' }
 let wrapper: VueWrapper
+const originalWindowApi = Object.getOwnPropertyDescriptor(window, 'api')
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -89,6 +90,8 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   vi.unstubAllGlobals()
+  if (originalWindowApi) Object.defineProperty(window, 'api', originalWindowApi)
+  else Reflect.deleteProperty(window, 'api')
 })
 
 describe('sync and compare snapshots', () => {
@@ -295,5 +298,90 @@ describe('remote deletion', () => {
       expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteDelete, 'server-a', entry.path)
     }
     expect(remote.entries).toEqual([entry, second])
+  })
+})
+
+
+function setDropBridge(getPathForFile: (file: File) => string): void {
+  window.api = {
+    invoke: async () => undefined,
+    on: () => () => {},
+    off: () => {},
+    send: () => {},
+    getPathForFile,
+    getPreloadTime: () => ({ start: 0, timeOrigin: 0 })
+  }
+}
+
+function osDropEvent(file: File): DragEvent {
+  return {
+    dataTransfer: {
+      types: ['Files'],
+      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }]
+    }
+  } as unknown as DragEvent
+}
+
+describe('local OS drops into folders', () => {
+  const folder: FileEntry = {
+    name: 'target',
+    path: '/local/target',
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedAt: null
+  }
+
+  it('cleans a staged entry after its local move succeeds', async () => {
+    const staged: FileEntry = {
+      name: 'report.txt',
+      path: '/tmp/ferry-drop-session/report.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 7,
+      modifiedAt: null
+    }
+    setDropBridge(() => '')
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [staged] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'report.txt')))
+    await flushPromises()
+
+    const calls = vi.mocked(invoke).mock.calls
+    const renameIndex = calls.findIndex(([channel]) => channel === INVOKE_CHANNELS.fsLocalRename)
+    const cleanupIndex = calls.findIndex(([channel]) => channel === INVOKE_CHANNELS.fsLocalCleanupStagedDrop)
+    expect(renameIndex).toBeGreaterThanOrEqual(0)
+    expect(cleanupIndex).toBeGreaterThan(renameIndex)
+    expect(calls[cleanupIndex]).toEqual([
+      INVOKE_CHANNELS.fsLocalCleanupStagedDrop,
+      { paths: [staged.path] }
+    ])
+  })
+
+  it('does not clean a direct OS path under a similarly named temporary directory', async () => {
+    const directPath = 'C:\\Temp\\ferry-drop-user-data\\keep.txt'
+    setDropBridge(() => directPath)
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'keep.txt')))
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(
+      INVOKE_CHANNELS.fsLocalRename,
+      directPath,
+      '/local/target/keep.txt'
+    )
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, expect.anything())
   })
 })
