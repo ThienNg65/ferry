@@ -4,7 +4,7 @@
 
 Ferry is a fast, local-first Windows SSH/SFTP desktop workspace built for developers, sysadmins, and DevOps engineers. Stop juggling separate WinSCP, PuTTY, log tail, and monitoring windows: connect once and manage remote files, run commands, watch live logs, and inspect server health side by side.
 
-> **Website:** [ferry-website-gamma.vercel.app](https://ferry-website-gamma.vercel.app/) · **Install from:** [Microsoft Store](https://apps.microsoft.com/detail/9PJPWK568P53) · [GitHub Releases](../../releases/latest)
+> **Website:** [www.ferryssh.com](https://www.ferryssh.com) · **Install from:** [Microsoft Store](https://apps.microsoft.com/detail/9PJPWK568P53) · [GitHub Releases](../../releases/latest)
 
 ## Features
 
@@ -18,15 +18,15 @@ Ferry is a fast, local-first Windows SSH/SFTP desktop workspace built for develo
 
 ## Screenshots
 
-![Ferry file browser](assets/ferry_overview.jpg)
+![Ferry file browser](assets/files.jpg)
 
-![Folder synchronization](assets/sync-folder-function.jpg)
+![Folder synchronization](assets/sync.jpg)
 
-![Resource monitor](assets/resource-monitoring-built-in.jpg)
+![Resource monitor](assets/monitor.jpg)
 
 | Connection settings | Appearance settings |
 |---|---|
-| ![Connections](assets/connectivity.jpg) | ![Appearance](assets/customization.jpg) |
+| ![Connections](assets/connection.jpg) | ![Appearance](assets/settings.jpg) |
 
 ## Download & Install
 

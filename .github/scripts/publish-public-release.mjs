@@ -4,7 +4,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const API = 'https://api.github.com'
 const GRAPHQL = `${API}/graphql`
-const PUBLIC_README_TEMPLATE = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'public-release-template', 'README.md')
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const PUBLIC_README_TEMPLATE = resolve(REPO_ROOT, 'docs', 'public-release-template', 'README.md')
+
+export const PUBLIC_ASSET_FILES = [
+  ['public/files.jpg', 'assets/files.jpg'],
+  ['public/sync.jpg', 'assets/sync.jpg'],
+  ['public/monitor.jpg', 'assets/monitor.jpg'],
+  ['public/connection.jpg', 'assets/connection.jpg'],
+  ['public/settings.jpg', 'assets/settings.jpg']
+]
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -93,7 +102,13 @@ export function prependChangelog(existing, notes, version) {
   return { content: `${header}\n\n${notes}\n\n${previous}`.replace(/\n*$/, '\n'), changed: true }
 }
 
-export function buildPublicFileAdditions({ currentChangelog, nextChangelog, currentReadme, nextReadme }) {
+export function buildPublicFileAdditions({
+  currentChangelog,
+  nextChangelog,
+  currentReadme,
+  nextReadme,
+  assets = []
+}) {
   const additions = []
   if (nextChangelog !== undefined && normalizeLf(currentChangelog) !== normalizeLf(nextChangelog)) {
     additions.push({
@@ -106,6 +121,14 @@ export function buildPublicFileAdditions({ currentChangelog, nextChangelog, curr
       path: 'README.md',
       contents: Buffer.from(normalizeLf(nextReadme), 'utf8').toString('base64')
     })
+  }
+  for (const asset of assets) {
+    if (asset.nextBase64 && asset.nextBase64 !== (asset.currentBase64 ?? null)) {
+      additions.push({
+        path: asset.path,
+        contents: asset.nextBase64
+      })
+    }
   }
   return additions
 }
@@ -131,15 +154,32 @@ async function github(path, token, options = {}) {
   return data
 }
 
-async function fetchRepoTextFile(repo, filePath, token, { optional = false } = {}) {
+async function fetchRepoFileBase64(repo, filePath, token, { optional = false } = {}) {
   try {
     const file = await github(`/repos/${repo}/contents/${filePath}?ref=main`, token)
-    if (file.encoding !== 'base64') throw new Error(`Unexpected ${filePath} encoding`)
-    return Buffer.from(file.content.replace(/\s+/g, ''), 'base64').toString('utf8')
+    if (file.encoding !== 'base64' || typeof file.content !== 'string') {
+      throw new Error(`Unexpected ${filePath} encoding`)
+    }
+    return file.content.replace(/\s+/g, '')
   } catch (error) {
     if (optional && error.status === 404) return null
     throw error
   }
+}
+
+async function fetchRepoTextFile(repo, filePath, token, options) {
+  const base64 = await fetchRepoFileBase64(repo, filePath, token, options)
+  return base64 === null ? null : Buffer.from(base64, 'base64').toString('utf8')
+}
+
+async function collectPublicAssetSyncEntries(publicRepo, publicToken, repoRoot = REPO_ROOT) {
+  return Promise.all(
+    PUBLIC_ASSET_FILES.map(async ([localRel, remotePath]) => {
+      const nextBase64 = (await readFile(resolve(repoRoot, localRel))).toString('base64')
+      const currentBase64 = await fetchRepoFileBase64(publicRepo, remotePath, publicToken, { optional: true })
+      return { path: remotePath, nextBase64, currentBase64 }
+    })
+  )
 }
 
 async function signedCommit(publicRepo, token, expectedHeadOid, additions, headline) {
@@ -193,7 +233,8 @@ export async function syncPublicReadmeOnly({
   sourceRepo = process.env.GITHUB_REPOSITORY,
   publicRepo = process.env.PUBLIC_REPO,
   publicToken = process.env.PUBLIC_RELEASE_TOKEN,
-  readmePath = PUBLIC_README_TEMPLATE
+  readmePath = PUBLIC_README_TEMPLATE,
+  repoRoot = REPO_ROOT
 } = {}) {
   if (!sourceRepo || !publicRepo || !publicToken) {
     throw new Error('Missing source/public repository or publishing token')
@@ -201,13 +242,14 @@ export async function syncPublicReadmeOnly({
   if (publicRepo === sourceRepo) throw new Error('Refusing to publish into the private source repo')
   const nextReadme = validatePublicReadme(await readFile(readmePath, 'utf8'), sourceRepo)
   const currentReadme = await fetchRepoTextFile(publicRepo, 'README.md', publicToken, { optional: true })
-  const additions = buildPublicFileAdditions({ currentReadme, nextReadme })
+  const assets = await collectPublicAssetSyncEntries(publicRepo, publicToken, repoRoot)
+  const additions = buildPublicFileAdditions({ currentReadme, nextReadme, assets })
   if (!additions.length) {
-    console.log('Public README.md is already in sync')
+    console.log('Public README.md and assets are already in sync')
     return { changed: false, sha: null }
   }
-  const sha = await commitAndVerifyFiles(publicRepo, publicToken, additions, 'docs: sync public README')
-  console.log(`Verified public README commit: ${sha}`)
+  const sha = await commitAndVerifyFiles(publicRepo, publicToken, additions, 'docs: sync public README and screenshots')
+  console.log(`Verified public README/assets commit: ${sha}`)
   return { changed: true, sha }
 }
 
@@ -233,11 +275,13 @@ async function main() {
   const { content, changed } = prependChangelog(current, notes, version)
   let sha
   if (changed) {
+    const assets = await collectPublicAssetSyncEntries(publicRepo, publicToken)
     const additions = buildPublicFileAdditions({
       currentChangelog: current,
       nextChangelog: content,
       currentReadme,
-      nextReadme
+      nextReadme,
+      assets
     })
     sha = await commitAndVerifyFiles(publicRepo, publicToken, additions, `docs: publish Ferry ${version} changelog`)
   } else {

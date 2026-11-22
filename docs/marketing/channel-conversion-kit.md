@@ -3,7 +3,7 @@
 **Target Product Version:** `v1.3.2`  
 **Microsoft Store ID:** [`9PJPWK568P53`](https://apps.microsoft.com/detail/9PJPWK568P53) (`ms-windows-store://pdp/?productid=9PJPWK568P53`)  
 **Public Releases Repo:** [`ThienNg65/ferry-release`](https://github.com/ThienNg65/ferry-release)  
-**Current Landing Page:** [`ferry-website-gamma.vercel.app`](https://ferry-website-gamma.vercel.app/)
+**Official Website:** [`www.ferryssh.com`](https://www.ferryssh.com)
 
 This kit provides ready-to-paste copy and implementation specs to eliminate the conversion leaks across Ferry's Microsoft Store listing and landing page (`ferry-website`).
 
@@ -154,13 +154,13 @@ Update `#compare` to include **Termius** alongside Ferry, WinSCP, and MobaXterm.
 **Updated "When another tool fits better" blurb:**
 > Need FTP, WebDAV, S3, or scripted transfers? **WinSCP** is the gold standard. Need RDP, VNC, or an X11 server? **MobaXterm** covers them. Need cross-platform mobile + team cloud sync? **Termius** fits well. **Ferry** is built for Windows developers who want fast SFTP, terminal, live `tail -F` logs, and server monitoring in one clean local-first window — without paying $120/year.
 
-### D. Custom Domain Migration Checklist (Leaving `ferry-website-gamma.vercel.app`)
+### D. Custom Domain Migration Checklist (`www.ferryssh.com`)
 
-Hosting an SSH/credential tool on a `*-gamma.vercel.app` staging URL hurts developer trust. Complete this checklist in order:
+Moving off the `*-gamma.vercel.app` staging URL onto `https://www.ferryssh.com` lifts developer trust. Track completion across every surface:
 
-- [ ] **1. Register a clean product domain** (e.g., `getferry.dev`, `ferryssh.com`, or `ferryapp.dev`).
-- [ ] **2. Bind domain in Vercel:** Project Settings → Domains → add apex + `www` redirect, wait for Let's Encrypt TLS certificate.
-- [ ] **3. Update Nuxt runtime config:** Set `siteUrl` in `ferry-website` (`nuxt.config.ts` / `.env`) from `https://ferry-website-gamma.vercel.app` to the canonical domain so `<link rel="canonical">` and Open Graph `og:url` / `og:image` tags resolve cleanly.
-- [ ] **4. Update GitHub `ferry-release` metadata:** Set the repository **Website / Homepage** URL in GitHub Settings to the custom domain, and update the website link in `docs/public-release-template/README.md`.
-- [ ] **5. Update Microsoft Partner Center:** Set Website URL and Support/Privacy Policy URLs on listing `9PJPWK568P53` to match the custom domain.
-- [ ] **6. Update WinGet manifest template:** Once the custom domain is live, update `PackageUrl` in `scripts/generate-winget-manifest.mjs` (or add `PackageUrl` / `PublisherUrl` pointing to the custom domain alongside `ferry-release`) on the next release.
+- [x] **1. Register domain:** `ferryssh.com` registered on Hostinger.
+- [x] **2. Bind domain in Vercel:** `ferryssh.com` and `www.ferryssh.com` bound in Vercel with SSL.
+- [x] **3. Update Nuxt runtime config:** Set `siteUrl: 'https://www.ferryssh.com'` in `ferry-website` (`nuxt.config.ts`) so `<link rel="canonical">` and Open Graph `og:url` / `og:image` tags resolve to `https://www.ferryssh.com`.
+- [ ] **4. Update GitHub `ferry-release` metadata:** Set the repository **Website / Homepage** URL in GitHub Settings to `https://www.ferryssh.com`.
+- [ ] **5. Update Microsoft Partner Center:** Set Website URL and Support/Privacy Policy URLs on listing `9PJPWK568P53` to `https://www.ferryssh.com`.
+- [ ] **6. Update WinGet manifest template:** Add/update `PackageUrl` in `scripts/generate-winget-manifest.mjs` if desired on the next release.

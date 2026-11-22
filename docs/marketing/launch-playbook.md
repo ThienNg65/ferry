@@ -36,7 +36,7 @@ Stop pitching Ferry as *"a lightweight WinSCP alternative"* in isolation. Lead w
 ### 3.1 AlternativeTo.net Listing Metadata
 
 - **Name:** `Ferry`
-- **Website:** *(Your custom domain, or `https://ferry-website-gamma.vercel.app/` until cutover)*
+- **Website:** `https://www.ferryssh.com`
 - **Download URL:** `https://apps.microsoft.com/detail/9PJPWK568P53`
 - **Short Summary (1–2 sentences):**
   > Ferry is a lightweight (~23 MB) Windows desktop SSH/SFTP workspace that combines a dual-pane file browser, GPU-accelerated terminal, live `tail -F` log viewer, and CPU/memory/process monitor in a single server tab over one SSH connection.
@@ -78,7 +78,7 @@ Honest trade-offs:
 - SSH & SFTP only (no FTP, FTPS, SCP, RDP, or X11—WinSCP and MobaXterm remain better choices if you need those).
 - Available via the Microsoft Store (signed MSIX, zero SmartScreen prompt) as well as a direct NSIS installer and portable ZIP on GitHub Releases.
 
-Site: https://ferry-website-gamma.vercel.app/
+Site: https://www.ferryssh.com
 Microsoft Store: https://apps.microsoft.com/detail/9PJPWK568P53
 Releases & Issue Tracker: https://github.com/ThienNg65/ferry-release
 
@@ -119,7 +119,7 @@ I built **Ferry** to unify those into one clean, local-first Windows workspace o
 **Where to get it (Free, Windows 10/11 x64):**
 - **Microsoft Store** (1-click signed install, auto-updates): https://apps.microsoft.com/detail/9PJPWK568P53
 - **Portable ZIP & Direct Installer:** https://github.com/ThienNg65/ferry-release/releases/latest
-- **Interactive Demo & Comparison:** https://ferry-website-gamma.vercel.app/
+- **Interactive Demo & Comparison:** https://www.ferryssh.com
 
 Happy to answer questions or take feature requests for homelab/Docker workflows!
 ```
@@ -147,7 +147,7 @@ Instead of bundling another 200+ MB Chromium copy with Electron, Ferry pairs Win
 
 - **Microsoft Store:** https://apps.microsoft.com/detail/9PJPWK568P53
 - **Portable ZIP & Release Notes:** https://github.com/ThienNg65/ferry-release/releases/latest
-- **Website & WinSCP/MobaXterm Comparison:** https://ferry-website-gamma.vercel.app/
+- **Website & WinSCP/MobaXterm Comparison:** https://www.ferryssh.com
 ```
 
 ---
