@@ -70,7 +70,17 @@ async function lstatOrMissing(target: string): Promise<Awaited<ReturnType<typeof
  */
 export async function prepareSafeLocalDownloadRoot(rootPath: string): Promise<string> {
   try {
-    await fs.mkdir(rootPath, { recursive: true })
+    const existingRoot = await lstatOrMissing(rootPath)
+    if (!existingRoot) {
+      await fs.mkdir(rootPath, { recursive: true })
+    }
+    const rootEntry = await fs.lstat(rootPath)
+    if (existingRoot && (
+      existingRoot.dev !== rootEntry.dev
+      || (existingRoot.ino !== 0 && rootEntry.ino !== 0 && existingRoot.ino !== rootEntry.ino)
+    )) {
+      throw unsafeComponent(rootPath, 'it changed while the selected root was being resolved.')
+    }
     const resolvedRoot = await fs.realpath(rootPath)
     const info = await fs.lstat(resolvedRoot)
     if (info.isSymbolicLink() || !info.isDirectory()) {
