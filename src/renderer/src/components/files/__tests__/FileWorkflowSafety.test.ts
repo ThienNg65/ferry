@@ -15,9 +15,10 @@ import FilePane from '../FilePane.vue'
 import SyncDialog from '../SyncDialog.vue'
 
 const confirm = vi.hoisted(() => vi.fn<(options: ConfirmOptions) => Promise<boolean>>())
+const notifyError = vi.hoisted(() => vi.fn())
 vi.mock('../../../composables/useConfirm', () => ({ useConfirm: () => confirm }))
 vi.mock('../../../composables/useNotify', () => ({
-  useNotify: () => ({ success: vi.fn(), error: vi.fn(), prompt: vi.fn() })
+  useNotify: () => ({ success: vi.fn(), error: notifyError, prompt: vi.fn() })
 }))
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
@@ -317,11 +318,11 @@ function setDropBridge(getPathForFile: (file: File) => string): void {
   }
 }
 
-function osDropEvent(file: File): DragEvent {
+function osDropEvent(...files: File[]): DragEvent {
   return {
     dataTransfer: {
       types: ['Files'],
-      items: [{ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }]
+      items: files.map((file) => ({ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }))
     }
   } as unknown as DragEvent
 }
@@ -387,5 +388,61 @@ describe('local OS drops into folders', () => {
       '/local/target/keep.txt'
     )
     expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, expect.anything())
+  })
+
+  it('refreshes the pane and preserves remaining staged items on partial multi-item move failure', async () => {
+    const first: FileEntry = { name: 'first.txt', path: '/tmp/ferry-drop-session/first.txt', isDir: false, isSymlink: false, size: 1, modifiedAt: null }
+    const second: FileEntry = { name: 'second.txt', path: '/tmp/ferry-drop-session/second.txt', isDir: false, isSymlink: false, size: 1, modifiedAt: null }
+    setDropBridge(() => '')
+    let listCalls = 0
+    vi.mocked(invoke).mockImplementation(async (channel, fromPath) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [first, second] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) {
+        listCalls += 1
+        return { path: '/local', entries: [] } as never
+      }
+      if (channel === INVOKE_CHANNELS.fsLocalRename && fromPath === second.path) {
+        throw new Error('destination denied')
+      }
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    const baselineListCalls = listCalls
+    wrapper.getComponent(FileList).vm.$emit(
+      'drop-on',
+      folder,
+      osDropEvent(new File(['1'], 'first.txt'), new File(['2'], 'second.txt'))
+    )
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: [first.path] })
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: [second.path] })
+    expect(listCalls).toBeGreaterThan(baselineListCalls)
+    expect(notifyError).toHaveBeenCalledWith('Move failed', 'destination denied')
+  })
+
+  it('reports cleanup failure without treating the completed local move as failed', async () => {
+    const staged: FileEntry = { name: 'report.txt', path: '/tmp/ferry-drop-session/report.txt', isDir: false, isSymlink: false, size: 7, modifiedAt: null }
+    setDropBridge(() => '')
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [staged] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      if (channel === INVOKE_CHANNELS.fsLocalCleanupStagedDrop) throw new Error('cleanup transport failed')
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'report.txt')))
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalRename, staged.path, '/local/target/report.txt')
+    expect(notifyError).toHaveBeenCalledWith(
+      'Temporary drop cleanup failed',
+      'The item was moved, but its temporary staging folder could not be removed.'
+    )
+    expect(notifyError).not.toHaveBeenCalledWith('Move failed', expect.anything())
   })
 })
