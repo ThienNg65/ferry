@@ -117,6 +117,10 @@ test('release build and tests do not receive the public token', () => {
   }
 
   assertNoReleaseCredentials(
+    stepUsing(publishJob, 'actions/checkout@v4'),
+    'release checkout'
+  )
+  assertNoReleaseCredentials(
     stepUsing(publishJob, './.github/actions/setup-node-deps'),
     'dependency installation'
   )
