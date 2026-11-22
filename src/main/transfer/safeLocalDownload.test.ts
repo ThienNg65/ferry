@@ -46,6 +46,13 @@ describe('safe local tree download paths', () => {
     expect((await fs.stat(nested)).isDirectory()).toBe(true)
   })
 
+  it('rejects a target path outside the selected root', async () => {
+    const { root, outside } = await fixture()
+    await expect(assertSafeLocalDownloadPath(root, path.join(outside, 'escape.txt'))).rejects.toThrow(
+      /target is outside the selected folder/
+    )
+  })
+
   it('rejects a symlinked directory before creating descendants outside the root', async () => {
     const { root, outside } = await fixture()
     const link = path.join(root, 'config')

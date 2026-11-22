@@ -14,7 +14,7 @@ function unsafeDestination(message = UNSAFE_LINK_MESSAGE): SshError {
 
 function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
-  return relative === '' || (relative !== '..' && !relative.startsWith(\`..\${path.sep}\`) && !path.isAbsolute(relative))
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
 function relativeTarget(root: string, target: string, allowRoot: boolean): string {

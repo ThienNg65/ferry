@@ -647,6 +647,13 @@ export class TransferQueue {
       job.sourceStamps ??= new Map()
 
       const completedSet = job.completedFiles
+      if (localDownloadRoot && job.resume) {
+        await runConcurrent(
+          files.filter((file) => completedSet.has(file.relPath)),
+          TREE_ITEM_CONCURRENCY,
+          async (file) => assertSafeLocalDownloadPath(localDownloadRoot, joinLocal(localDownloadRoot, file.relPath))
+        )
+      }
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
       let filesDone = 0
