@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { INVOKE_CHANNELS, type Site } from '@shared/contract'
 import * as api from '../../api'
@@ -362,6 +363,42 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.activeSessionId).toBeNull()
     expect(mockRemoteFs.clearSession).toHaveBeenCalledWith(sessionId)
     expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('never exposes an empty tabs array to sync watchers when closing the last connected tab', async () => {
+    const { useSessionsStore } = await import('../sessions.store')
+    const store = useSessionsStore()
+    await store.connect({
+      name: 'Quick Connect',
+      host: 'sync-watch.example.com',
+      port: 22,
+      username: 'alice',
+      authMethod: 'agent'
+    })
+    const closedTabId = store.activeTabId
+    const closedSessionId = store.activeSessionId
+    const observed: Array<{ count: number; status: string | null }> = []
+    const stop = watch(
+      () => [store.tabs.length, store.activeTab.tabId, store.activeSessionId, store.status] as const,
+      ([count, , , status]) => {
+        observed.push({ count, status })
+      },
+      { flush: 'sync' }
+    )
+
+    try {
+      await store.closeTab(closedTabId)
+    } finally {
+      stop()
+    }
+
+    expect(observed.length).toBeGreaterThan(0)
+    expect(observed.every((entry) => entry.count === 1)).toBe(true)
+    expect(store.tabs).toHaveLength(1)
+    expect(store.activeTabId).not.toBe(closedTabId)
+    expect(store.activeTab.status).toBeNull()
+    expect(store.activeSessionId).toBeNull()
+    expect(api.invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.sessionClose, closedSessionId)
   })
 
   it('keeps the current picker active when a background connected tab is closed', async () => {

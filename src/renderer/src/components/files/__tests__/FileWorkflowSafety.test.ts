@@ -296,4 +296,32 @@ describe('remote deletion', () => {
     }
     expect(remote.entries).toEqual([entry, second])
   })
+
+  it('closes the sole connected tab cleanly while CompareDialog and SyncDialog sync watchers are mounted', async () => {
+    const sessions = useSessionsStore()
+    const tab = sessions.activeTab
+    Object.assign(tab, { sessionId: 'sole-session', status: 'connected', hostLabel: 'sole.example' })
+    const closedTabId = tab.tabId
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    const compare = mount(CompareDialog, {
+      props: { open: false, sessionId: 'sole-session', initialLocalPath: '/local', initialRemotePath: '/remote' },
+      global: { stubs }
+    })
+    const sync = mount(SyncDialog, {
+      props: { open: false, sessionId: 'sole-session', initialLocalPath: '/local', initialRemotePath: '/remote' },
+      global: { stubs }
+    })
+    try {
+      await sessions.closeTab(closedTabId)
+      expect(sessions.tabs).toHaveLength(1)
+      expect(sessions.activeTabId).not.toBe(closedTabId)
+      expect(sessions.status).toBeNull()
+      expect(sessions.activeSessionId).toBeNull()
+      expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.sessionClose, 'sole-session')
+    } finally {
+      compare.unmount()
+      sync.unmount()
+    }
+  })
 })
