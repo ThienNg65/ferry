@@ -77,11 +77,12 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     expect(key1).toHaveLength(32)
 
     const localStatePath = path.join(dir, 'Local State')
-    const atomicKeyPath = `${localStatePath}.dpapi-key`
+    const atomicKeyDir = localStatePath + '.dpapi-key'
+    const atomicKeyPath = path.join(atomicKeyDir, 'key')
     const localState = JSON.parse(readFileSync(localStatePath, 'utf8'))
     const rawWrapped = Buffer.from(localState.os_crypt.encrypted_key, 'base64')
     expect(rawWrapped.subarray(0, 5).toString('ascii')).toBe('DPAPI')
-    expect(existsSync(atomicKeyPath)).toBe(true)
+    expect(existsSync(atomicKeyDir)).toBe(true)
     expect(readFileSync(atomicKeyPath, 'utf8')).toBe(localState.os_crypt.encrypted_key)
 
     clearMasterKeyCache()
@@ -106,7 +107,7 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
 
     const localStatePath = path.join(dir, 'Local State')
     const localState = JSON.parse(readFileSync(localStatePath, 'utf8'))
-    const atomicWrapped = readFileSync(`${localStatePath}.dpapi-key`, 'utf8')
+    const atomicWrapped = readFileSync(path.join(localStatePath + '.dpapi-key', 'key'), 'utf8')
     expect(localState.os_crypt.encrypted_key).toBe(atomicWrapped)
 
     clearMasterKeyCache()
@@ -124,7 +125,8 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
 
     const key = unwrapOrCreateMasterKey(dir)
     const localStatePath = path.join(dir, 'Local State')
-    const atomicKeyPath = `${localStatePath}.dpapi-key`
+    const atomicKeyDir = localStatePath + '.dpapi-key'
+    const atomicKeyPath = path.join(atomicKeyDir, 'key')
     const selectedWrapped = readFileSync(atomicKeyPath, 'utf8')
     unlinkSync(localStatePath)
 
@@ -132,6 +134,25 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     const recovered = unwrapOrCreateMasterKey(dir)
     expect(recovered.equals(key)).toBe(true)
     expect(readFileSync(path.join(dir, 'Local State'), 'utf8')).toContain(selectedWrapped)
+  })
+
+  it('reads a flat recovery-key file created by an earlier draft version', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ferry-dpapi-legacy-key-'))
+    tempDirs.push(dir)
+
+    const key = unwrapOrCreateMasterKey(dir)
+    const localStatePath = path.join(dir, 'Local State')
+    const atomicKeyDir = localStatePath + '.dpapi-key'
+    const wrapped = readFileSync(path.join(atomicKeyDir, 'key'), 'utf8')
+
+    rmSync(atomicKeyDir, { recursive: true, force: true })
+    writeFileSync(localStatePath + '.dpapi-key', wrapped, 'utf8')
+    unlinkSync(localStatePath)
+
+    clearMasterKeyCache()
+    const recovered = unwrapOrCreateMasterKey(dir)
+    expect(recovered.equals(key)).toBe(true)
+    expect(readFileSync(localStatePath, 'utf8')).toContain(wrapped)
   })
 
   it('recovers when Local State is an empty truncated file from an interrupted first run', () => {
