@@ -11,9 +11,9 @@ describe('BoundedLineBuffer', () => {
     buffer.push('9abc', (line) => lines.push(line))
     expect(lines).toEqual([])
 
-    buffer.push('\nnext line\n', (line) => lines.push(line))
+    buffer.push('\nnext1234\n', (line) => lines.push(line))
 
-    expect(lines).toEqual(['12345678' + TRUNCATED_LINE_SUFFIX, 'next line'])
+    expect(lines).toEqual(['12345678' + TRUNCATED_LINE_SUFFIX, 'next1234'])
   })
 
   it('does not split a multibyte UTF-8 character at the byte limit', () => {
