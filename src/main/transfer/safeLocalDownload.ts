@@ -113,8 +113,11 @@ export async function ensureSafeLocalDownloadDirectory(root: string, target: str
       }
       info = await fs.lstat(current)
     }
-    if (info.isSymbolicLink() || !info.isDirectory()) {
+    if (info.isSymbolicLink()) {
       throw unsafeComponent(current)
+    }
+    if (!info.isDirectory()) {
+      throw unsafeComponent(current, 'it is not a folder.')
     }
     await verifyRealPathInside(root, current)
   }
@@ -138,8 +141,11 @@ export async function assertSafeLocalDownloadPath(root: string, target: string):
       if (isFinal) return
       throw unsafeComponent(current, MISSING_PARENT_MESSAGE)
     }
-    if (info.isSymbolicLink() || (isFinal ? !info.isFile() : !info.isDirectory())) {
+    if (info.isSymbolicLink()) {
       throw unsafeComponent(current)
+    }
+    if (isFinal ? !info.isFile() : !info.isDirectory()) {
+      throw unsafeComponent(current, isFinal ? 'it is not a regular file.' : 'it is not a folder.')
     }
     await verifyRealPathInside(root, current)
   }

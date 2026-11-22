@@ -143,4 +143,17 @@ describe('safe local tree download paths', () => {
     await ensureSafeLocalDownloadDirectory(root, nested)
     await expect(assertSafeLocalDownloadPath(root, path.join(nested, 'probe.txt'))).resolves.toBeUndefined()
   })
+
+  it('reports when an existing non-symlink file blocks a directory component', async () => {
+    const { root } = await fixture()
+    const blocker = path.join(root, 'config')
+    await fs.writeFile(blocker, 'not-a-dir')
+
+    await expect(ensureSafeLocalDownloadDirectory(root, path.join(blocker, 'nested'))).rejects.toThrow(
+      /component "config": it is not a folder\./
+    )
+    await expect(assertSafeLocalDownloadPath(root, path.join(blocker, 'probe.txt'))).rejects.toThrow(
+      /component "config": it is not a folder\./
+    )
+  })
 })

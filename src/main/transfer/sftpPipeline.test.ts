@@ -467,6 +467,54 @@ describe('sftpPipeline.transferPipelined', () => {
     }
   })
 
+  it('re-resolves the selected root when restarting a failed tree download', async () => {
+    const data = Buffer.from('restarted-tree-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/tree/probe.txt', data)
+    const firstTarget = path.join(tmpDir, 'first-target')
+    const secondTarget = path.join(tmpDir, 'second-target')
+    const selectedRoot = path.join(tmpDir, 'selected-root')
+    await fs.mkdir(firstTarget)
+    await fs.mkdir(secondTarget)
+    await fs.symlink(firstTarget, selectedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    let shouldFail = true
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [{ relPath: 'probe.txt', isDir: false, size: data.length, mtimeMs: 1 }],
+      sftp: async () => {
+        if (shouldFail) {
+          shouldFail = false
+          throw new Error('transient sftp error')
+        }
+        return fake.sftp
+      }
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const transferId = queue.enqueueTree('session', 'download', selectedRoot, '/remote/tree')
+    const terminalEvents = (): TransferEvent[] => events.mock.calls
+      .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+      .map(([, event]) => event as TransferEvent)
+      .filter((event) => event.transferId === transferId && (event.state === 'error' || event.state === 'done'))
+
+    try {
+      await vi.waitFor(() => expect(terminalEvents().at(-1)?.state).toBe('error'))
+      await fs.rm(selectedRoot, { recursive: true, force: true })
+      await fs.symlink(secondTarget, selectedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+      queue.retry(transferId, true)
+      await vi.waitFor(() => expect(terminalEvents().at(-1)?.state).toBe('done'))
+
+      expect(await fs.readFile(path.join(secondTarget, 'probe.txt'))).toEqual(data)
+      expect(await fs.readdir(firstTarget)).toEqual([])
+    } finally {
+      queue.cancel(transferId)
+    }
+  })
+
   it('does not hang indefinitely on abort when sftp.close never responds', async () => {
     const localFile = path.join(tmpDir, 'hung-close.bin')
     await fs.writeFile(localFile, Buffer.alloc(512 * 1024, 2))

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { rename, stat, unlink, utimes } from 'fs/promises'
+import { lstat, rename, stat, unlink, utimes } from 'fs/promises'
 import * as path from 'path'
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
@@ -295,6 +295,7 @@ export class TransferQueue {
     }
     if (restart) {
       this.cleanupStaging(job)
+      job.localDownloadRoot = undefined
       job.sourceStamp = undefined
       job.completedFiles = undefined
       job.sourceStamps = undefined
@@ -521,7 +522,7 @@ export class TransferQueue {
     }
     let offset = 0
     if (part && opts.resume && part.offset > 0) {
-      const partSize = await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path))
+      const partSize = await (opts.kind === 'upload' ? opts.shell.stat(part.path) : lstat(part.path))
         .then((info) => info.size)
         .catch((error: unknown) => {
           const code = (error as NodeJS.ErrnoException | undefined)?.code
