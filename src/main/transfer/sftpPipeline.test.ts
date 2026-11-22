@@ -408,14 +408,18 @@ describe('sftpPipeline.transferPipelined', () => {
     const queue = new TransferQueue()
     const root = path.join(tmpDir, 'ordinary-tree')
     const transferId = queue.enqueueTree('session', 'download', root, '/remote/tree')
-    const completed = (): boolean => events.mock.calls.some(
-      ([channel, event]) => channel === EVENT_CHANNELS.transferEvent
-        && (event as TransferEvent).transferId === transferId
-        && (event as TransferEvent).state === 'done'
-    )
+    const terminalEvent = (): TransferEvent | undefined => events.mock.calls
+      .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+      .map(([, event]) => event as TransferEvent)
+      .find((event) => event.transferId === transferId && (event.state === 'done' || event.state === 'error'))
+    let result: TransferEvent | undefined
 
     try {
-      await vi.waitFor(() => expect(completed()).toBe(true))
+      await vi.waitFor(() => {
+        result = terminalEvent()
+        expect(result).toBeDefined()
+      })
+      expect(result?.state, result?.error ?? JSON.stringify(result)).toBe('done')
       expect(await fs.readFile(path.join(root, 'nested', 'probe.txt'))).toEqual(data)
       expect(await fs.readdir(path.join(root, 'nested'))).toEqual(['probe.txt'])
     } finally {
