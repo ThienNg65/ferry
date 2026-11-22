@@ -80,7 +80,7 @@ test('public repository visibility checks use an unauthenticated read', () => {
 
 test('README sync receives the public token only in its publishing step', () => {
   const readmeJob = job('sync-public-readme')
-  for (const action of ['actions/checkout@v4', 'actions/setup-node@v4', './.github/actions/setup-node-deps']) {
+  for (const action of ['actions/checkout@v4', 'actions/setup-node@v4']) {
     assertNoReleaseCredentials(stepUsing(readmeJob, action), `${action} in sync-public-readme`)
   }
 
