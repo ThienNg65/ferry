@@ -44,16 +44,24 @@ FTP/FTPS/SCP.
 
 ## Installation
 
-Download the latest Windows installer from the public
-[Ferry releases](https://github.com/ThienNg65/ferry-release/releases) page and run it.
-Ferry is currently Windows-only. Development takes place in this source repository, while
-packaged releases and update metadata are published to `ferry-release` by GitHub Actions.
-Existing installations first need a bridge release published to the original `ferry` feed.
+Ferry is currently Windows-only (Windows 10/11, 64-bit). Install via any of these official channels:
 
-The installer is currently **unsigned**, so Windows SmartScreen will warn on first run — this is
-expected, not a sign of tampering. Ferry's release pipeline (`.github/workflows/release.yml`) has a
-dormant signing stage ready to go live via [SignPath](https://signpath.io)'s free open-source
-Authenticode signing program the moment that application is approved; see
+1. **Microsoft Store (Recommended):** Install from the
+   [Microsoft Store listing](https://apps.microsoft.com/detail/9PJPWK568P53) (`ms-windows-store://pdp/?productid=9PJPWK568P53`)
+   for a 1-click signed MSIX install with no Windows SmartScreen warning and automatic Store updates.
+2. **GitHub Releases (`Ferry-Setup-*.exe` or `Ferry-Portable-*-win-x64.zip`):** Download the latest
+   Windows installer or zero-install portable archive from the public
+   [Ferry releases](https://github.com/ThienNg65/ferry-release/releases) page.
+
+Development takes place in this source repository, while packaged releases and update metadata are
+published to `ferry-release` by GitHub Actions. Existing installations first need a bridge release
+published to the original `ferry` feed.
+
+The direct GitHub `.exe` installer is currently **unsigned**, so Windows SmartScreen will warn on
+first run — this is expected, not a sign of tampering (use the Microsoft Store build above if you
+prefer a signed install). Ferry's release pipeline (`.github/workflows/release.yml`) has a dormant
+signing stage ready to go live via [SignPath](https://signpath.io)'s free open-source Authenticode
+signing program the moment that application is approved; see
 `.claude/plan/ferry-smartscreen-signing-plan.md` for the full plan.
 
 ## Development

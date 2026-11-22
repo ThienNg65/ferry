@@ -31,6 +31,38 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  sync-public-readme:
+    needs: release-please
+    if: ${{ github.event_name == 'push' && needs.release-please.outputs.release_created != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PUBLIC_REPO: ThienNg65/ferry-release
+      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+      PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+
+      - name: Verify public publishing access
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Configure PUBLIC_RELEASE_TOKEN with Contents: Read and write on ${PUBLIC_REPO}."
+            exit 1
+          fi
+          visibility=$(gh api "repos/$PUBLIC_REPO" --jq '.visibility')
+          if [ "$visibility" != "public" ]; then
+            echo "::error::$PUBLIC_REPO must be public (got $visibility)."
+            exit 1
+          fi
+
+      - name: Sync public README template
+        run: node .github/scripts/publish-public-release.mjs --sync-readme
+
   publish-assets:
     needs: release-please
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
@@ -178,6 +210,34 @@ jobs:
           fi
           node ./.github/scripts/regenerate-update-yml.js --verify --version "$EXPECTED_VERSION"
 
+      - name: Generate WinGet manifests
+        shell: bash
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            installer="dist/Ferry-Setup-${VERSION}.exe"
+            sha256=$(node -e "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex').toUpperCase())" "$installer")
+            node scripts/generate-winget-manifest.mjs --version "$VERSION" --installer "$installer" --expected-sha256 "$sha256"
+            {
+              echo "### WinGet Manifests ($VERSION)"
+              echo ""
+              echo "- **Installer:** \`$installer\`"
+              echo "- **SHA-256:** \`$sha256\`"
+              echo "- **Manifests:** \`dist/winget/manifests/t/ThienNg65/Ferry/${VERSION}/\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Skipping WinGet manifest generation for prerelease version $VERSION"
+          fi
+
+      - name: Upload WinGet manifests
+        if: ${{ !contains(steps.target.outputs.version, '-') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifests-${{ steps.target.outputs.version }}
+          path: dist/winget/manifests/t/ThienNg65/Ferry/${{ steps.target.outputs.version }}/
+          if-no-files-found: error
+
       - name: Create verified public changelog commit
         id: public-release
         shell: bash
@@ -214,6 +274,13 @@ jobs:
           else
             gh release create "$TAG" "${assets[@]}" --repo "$PUBLIC_REPO" --title "Ferry $VERSION" --notes-file "$NOTES_FILE" --target "$VERIFIED_SHA"
           fi
+
+      - name: Trigger website rebuild
+        if: secrets.VERCEL_DEPLOY_HOOK_URL != ''
+        shell: bash
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: curl --fail --silent --show-error -X POST "$VERCEL_DEPLOY_HOOK_URL" >/dev/null
 
       # Keep this enabled during migration: existing installers currently poll
       # ThienNg65/ferry, so they need one bridge release from the old feed.

@@ -78,10 +78,15 @@ test('accepts unchanged manifests checked out with Windows line endings', async 
   await assert.doesNotReject(generateWingetManifests(params))
 })
 
-test('the checked-in 1.2.2 manifests match the public release asset digest', async () => {
-  const digest = '4c19ab4760ff71d0cb2ef44b9e6c5aabe52b1e5c9e3daf24e54f0583229f3590'
-  const manifestDir = new URL('../../packaging/winget/manifests/t/ThienNg65/Ferry/1.2.2/', import.meta.url)
-  for (const [filename, expected] of Object.entries(renderWingetManifests('1.2.2', digest))) {
-    assert.equal((await readFile(new URL(filename, manifestDir), 'utf8')).replaceAll('\r\n', '\n'), expected)
+test('the checked-in 1.2.2 and 1.3.2 manifests match the public release asset digests', async () => {
+  const checkedIn = [
+    ['1.2.2', '4c19ab4760ff71d0cb2ef44b9e6c5aabe52b1e5c9e3daf24e54f0583229f3590'],
+    ['1.3.2', 'cd7e5ef29011ca03460607505ec41c308c35f78672305a6d99bb2c83abce9db2']
+  ]
+  for (const [version, digest] of checkedIn) {
+    const manifestDir = new URL(`../../packaging/winget/manifests/t/ThienNg65/Ferry/${version}/`, import.meta.url)
+    for (const [filename, expected] of Object.entries(renderWingetManifests(version, digest))) {
+      assert.equal((await readFile(new URL(filename, manifestDir), 'utf8')).replaceAll('\r\n', '\n'), expected)
+    }
   }
 })
