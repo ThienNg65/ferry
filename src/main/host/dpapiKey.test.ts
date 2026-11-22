@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -69,17 +69,20 @@ afterEach(() => {
 })
 
 describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
-  it('creates a DPAPI-protected 32-byte key in Local State and unwraps the exact same bytes across cache clears', () => {
+  it('creates a DPAPI-protected 32-byte key and preserves it across cache clears', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ferry-dpapi-test-'))
     tempDirs.push(dir)
 
     const key1 = unwrapOrCreateMasterKey(dir)
     expect(key1).toHaveLength(32)
 
-    const localState = JSON.parse(readFileSync(path.join(dir, 'Local State'), 'utf8'))
+    const localStatePath = path.join(dir, 'Local State')
+    const atomicKeyPath = `${localStatePath}.dpapi-key`
+    const localState = JSON.parse(readFileSync(localStatePath, 'utf8'))
     const rawWrapped = Buffer.from(localState.os_crypt.encrypted_key, 'base64')
     expect(rawWrapped.subarray(0, 5).toString('ascii')).toBe('DPAPI')
-    expect(existsSync(path.join(dir, 'Local State.lock'))).toBe(false)
+    expect(existsSync(atomicKeyPath)).toBe(true)
+    expect(readFileSync(atomicKeyPath, 'utf8')).toBe(localState.os_crypt.encrypted_key)
 
     clearMasterKeyCache()
     const key2 = unwrapOrCreateMasterKey(dir)
@@ -101,6 +104,11 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     expect(key1).toHaveLength(32)
     expect(key2.equals(key1)).toBe(true)
 
+    const localStatePath = path.join(dir, 'Local State')
+    const localState = JSON.parse(readFileSync(localStatePath, 'utf8'))
+    const atomicWrapped = readFileSync(`${localStatePath}.dpapi-key`, 'utf8')
+    expect(localState.os_crypt.encrypted_key).toBe(atomicWrapped)
+
     clearMasterKeyCache()
     const persistedKey = unwrapOrCreateMasterKey(dir)
     expect(persistedKey.equals(key1)).toBe(true)
@@ -110,23 +118,20 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     expect(box.decrypt(encrypted)).toBe('concurrent-first-run-secret')
   }, 30_000)
 
-  it('recovers an abandoned initialization lock whose owner process no longer exists', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'ferry-dpapi-stale-lock-'))
+  it('reuses the atomically selected key if Local State was not written by the first process', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ferry-dpapi-orphan-key-'))
     tempDirs.push(dir)
-    const lockPath = path.join(dir, 'Local State.lock')
-    writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: 2_147_483_647, createdAt: Date.now() - 5_000, token: 'abandoned' }),
-      'utf8'
-    )
-    const staleTime = new Date(Date.now() - 5_000)
-    utimesSync(lockPath, staleTime, staleTime)
 
     const key = unwrapOrCreateMasterKey(dir)
-    expect(key).toHaveLength(32)
-    expect(existsSync(lockPath)).toBe(false)
+    const localStatePath = path.join(dir, 'Local State')
+    const atomicKeyPath = `${localStatePath}.dpapi-key`
+    const selectedWrapped = readFileSync(atomicKeyPath, 'utf8')
+    unlinkSync(localStatePath)
+
     clearMasterKeyCache()
-    expect(unwrapOrCreateMasterKey(dir).equals(key)).toBe(true)
+    const recovered = unwrapOrCreateMasterKey(dir)
+    expect(recovered.equals(key)).toBe(true)
+    expect(readFileSync(path.join(dir, 'Local State'), 'utf8')).toContain(selectedWrapped)
   })
 
   it('recovers when Local State is an empty truncated file from an interrupted first run', () => {
