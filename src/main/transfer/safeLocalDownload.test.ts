@@ -122,13 +122,15 @@ describe('safe local tree download paths', () => {
     try {
       const [opened, current] = await Promise.all([handle.stat(), fs.lstat(target)])
       const identity = (info: typeof opened) => ({
-        dev: info.dev,
         ino: info.ino,
         size: info.size,
         mtimeMs: info.mtimeMs,
         birthtimeMs: info.birthtimeMs
       })
       expect(identity(opened)).toEqual(identity(current))
+      if (opened.dev !== 0 && current.dev !== 0) {
+        expect(opened.dev).toBe(current.dev)
+      }
       await expect(assertSafeLocalDownloadHandle(root, target, handle)).resolves.toBeUndefined()
     } finally {
       await handle.close()

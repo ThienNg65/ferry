@@ -153,11 +153,12 @@ export async function assertSafeLocalDownloadHandle(root: string, target: string
   await assertSafeLocalDownloadPath(root, target)
   const [opened, current] = await Promise.all([handle.stat(), fs.lstat(target)])
   const hasFileIds = opened.ino !== 0 && current.ino !== 0
-  const sameFile = opened.dev === current.dev && (
-    hasFileIds
-      ? opened.ino === current.ino
-      : opened.size === current.size && opened.mtimeMs === current.mtimeMs && opened.birthtimeMs === current.birthtimeMs
-  )
+  const hasDeviceIds = opened.dev !== 0 && current.dev !== 0
+  // Windows may report dev=0 for a FileHandle stat while lstat reports the volume ID.
+  const sameFile = hasFileIds
+    ? opened.ino === current.ino && (!hasDeviceIds || opened.dev === current.dev)
+    : hasDeviceIds && opened.dev === current.dev
+      && opened.size === current.size && opened.mtimeMs === current.mtimeMs && opened.birthtimeMs === current.birthtimeMs
   if (current.isSymbolicLink()) {
     throw unsafeComponent(target)
   }
