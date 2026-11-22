@@ -158,8 +158,14 @@ export async function assertSafeLocalDownloadHandle(root: string, target: string
       ? opened.ino === current.ino
       : opened.size === current.size && opened.mtimeMs === current.mtimeMs && opened.birthtimeMs === current.birthtimeMs
   )
-  if (current.isSymbolicLink() || !current.isFile() || !sameFile) {
+  if (current.isSymbolicLink()) {
     throw unsafeComponent(target)
+  }
+  if (!current.isFile()) {
+    throw unsafeComponent(target, 'it is not a regular file.')
+  }
+  if (!sameFile) {
+    throw unsafeComponent(target, 'the opened file no longer matches the validated destination.')
   }
   await assertSafeLocalDownloadPath(root, target)
 }
