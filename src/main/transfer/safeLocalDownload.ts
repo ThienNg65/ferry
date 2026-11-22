@@ -75,10 +75,12 @@ export async function prepareSafeLocalDownloadRoot(rootPath: string): Promise<st
       await fs.mkdir(rootPath, { recursive: true })
     }
     const rootEntry = await fs.lstat(rootPath)
-    if (existingRoot && (
-      existingRoot.dev !== rootEntry.dev
-      || (existingRoot.ino !== 0 && rootEntry.ino !== 0 && existingRoot.ino !== rootEntry.ino)
-    )) {
+    const rootChanged = existingRoot
+      ? existingRoot.isSymbolicLink() !== rootEntry.isSymbolicLink()
+        || existingRoot.dev !== rootEntry.dev
+        || (existingRoot.ino !== 0 && rootEntry.ino !== 0 && existingRoot.ino !== rootEntry.ino)
+      : rootEntry.isSymbolicLink()
+    if (rootChanged) {
       throw unsafeComponent(rootPath, 'it changed while the selected root was being resolved.')
     }
     const resolvedRoot = await fs.realpath(rootPath)
