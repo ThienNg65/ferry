@@ -90,7 +90,7 @@ function readMasterKey(localStatePath: string): {
 }
 
 function readAtomicMasterKey(keyPath: string): StoredMasterKey | undefined {
-  let entry
+  let entry: ReturnType<typeof lstatSync>
   try {
     entry = lstatSync(keyPath)
   } catch (error) {
