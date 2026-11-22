@@ -20,7 +20,7 @@ const keyCache = new Map<string, Buffer>()
 const LOCK_RETRY_MS = 50
 const LOCK_TIMEOUT_MS = 30_000
 const LOCK_EMPTY_STALE_MS = 1_000
-const LOCK_MAX_AGE_MS = 60 * 60_000
+const LOCK_MAX_AGE_MS = 5 * 60_000
 const lockWaitBuffer = new Int32Array(new SharedArrayBuffer(4))
 
 interface MasterKeyLockOwner {
@@ -218,10 +218,8 @@ function acquireMasterKeyLock(lockPath: string): MasterKeyLock {
         if (ownsLock) {
           try {
             unlinkSync(lockPath)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-              throw error
-            }
+          } catch {
+            // The persisted key is authoritative; stale-lock recovery can remove this file later.
           }
         }
       }
