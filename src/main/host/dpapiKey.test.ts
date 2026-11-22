@@ -15,7 +15,7 @@ function runMasterKeyWorker(dataDir: string): Promise<Buffer> {
     import * as path from 'node:path'
     import { unwrapOrCreateMasterKey } from ${JSON.stringify(moduleUrl)}
 
-    writeFileSync(path.join(${JSON.stringify(dataDir)}, `.dpapi-ready-${process.pid}`), '')
+    writeFileSync(path.join(${JSON.stringify(dataDir)}, '.dpapi-ready-' + process.pid), '')
     const waitBuffer = new Int32Array(new SharedArrayBuffer(4))
     const deadline = Date.now() + 15_000
     while (readdirSync(${JSON.stringify(dataDir)}).filter((name) => name.startsWith('.dpapi-ready-')).length < 2) {
