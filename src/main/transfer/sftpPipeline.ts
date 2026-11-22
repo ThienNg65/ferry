@@ -1,3 +1,4 @@
+import { constants } from 'fs'
 import { open as openLocal, type FileHandle } from 'fs/promises'
 import type { OpenMode, SFTPWrapper } from 'ssh2'
 import type { TransferKind } from '../../shared/contract'
@@ -24,6 +25,10 @@ export interface PipelinedTransferOptions {
   rateLimiter: RateLimiterLike
   onProgress: (bytesTransferred: number, offset: number) => void
   onContigOffset?: (contigOffset: number) => void
+  /** Revalidates a guarded local destination immediately before opening it. */
+  beforeLocalOpen?: () => Promise<void>
+  /** Revalidates the opened local file and its parent chain before any bytes are written. */
+  afterLocalOpen?: (handle: FileHandle) => Promise<void>
   /** Uses exclusive create and records ownership only after the destination opens. */
   onDestinationCreated?: () => void
   concurrency?: number
@@ -139,18 +144,24 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
 
   try {
     const writeFlags: OpenMode = opts.onDestinationCreated ? 'wx' : offset > 0 ? 'r+' : 'w'
-    const localFlags = kind === 'upload' ? 'r' : writeFlags
     const remoteFlags = kind === 'download' ? 'r' : writeFlags
 
     if (kind === 'upload') {
-      localHandle = await openLocal(localPath, localFlags)
+      localHandle = await openLocal(localPath, 'r')
       checkAborted(signal)
       remoteHandle = await sftpOpen(sftp, remotePath, remoteFlags)
       opts.onDestinationCreated?.()
     } else {
+      await opts.beforeLocalOpen?.()
       remoteHandle = await sftpOpen(sftp, remotePath, remoteFlags)
       checkAborted(signal)
+      await opts.beforeLocalOpen?.()
+      const noFollow = opts.beforeLocalOpen && process.platform !== 'win32' ? (constants.O_NOFOLLOW ?? 0) : 0
+      const localFlags = offset > 0
+        ? constants.O_RDWR | noFollow
+        : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow
       localHandle = await openLocal(localPath, localFlags, 0o600)
+      await opts.afterLocalOpen?.(localHandle)
       opts.onDestinationCreated?.()
       if (offset > 0) {
         await localHandle.truncate(offset)
