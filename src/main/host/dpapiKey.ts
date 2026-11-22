@@ -4,6 +4,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -19,7 +20,7 @@ const keyCache = new Map<string, Buffer>()
 const LOCK_RETRY_MS = 50
 const LOCK_TIMEOUT_MS = 30_000
 const LOCK_EMPTY_STALE_MS = 1_000
-const LOCK_MAX_AGE_MS = 2 * 60_000
+const LOCK_MAX_AGE_MS = 60 * 60_000
 const lockWaitBuffer = new Int32Array(new SharedArrayBuffer(4))
 
 interface MasterKeyLockOwner {
@@ -133,6 +134,41 @@ function isStaleLock(lockPath: string): boolean {
   return age >= LOCK_MAX_AGE_MS
 }
 
+function removeStaleLock(lockPath: string): boolean {
+  const expectedOwner = readLockOwner(lockPath)
+  if (!isStaleLock(lockPath)) {
+    return false
+  }
+
+  const quarantinePath = `${lockPath}.stale.${process.pid}.${randomUUID()}`
+  try {
+    renameSync(lockPath, quarantinePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return true
+    }
+    throw error
+  }
+
+  const movedOwner = readLockOwner(quarantinePath)
+  if (expectedOwner?.token !== movedOwner?.token) {
+    // The lock changed after the stale check. Restore it unless another
+    // initializer has already acquired the now-free lock path.
+    try {
+      linkSync(quarantinePath, lockPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error
+      }
+    }
+    unlinkSync(quarantinePath)
+    return false
+  }
+
+  unlinkSync(quarantinePath)
+  return true
+}
+
 function acquireMasterKeyLock(lockPath: string): MasterKeyLock {
   const startedAt = Date.now()
 
@@ -146,14 +182,7 @@ function acquireMasterKeyLock(lockPath: string): MasterKeyLock {
         throw error
       }
 
-      if (isStaleLock(lockPath)) {
-        try {
-          unlinkSync(lockPath)
-        } catch (unlinkError) {
-          if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-            throw unlinkError
-          }
-        }
+      if (removeStaleLock(lockPath)) {
         continue
       }
 
