@@ -171,6 +171,18 @@ function replaceAtomicMasterKeyFile(keyPath: string, wrapped: string): void {
   }
 }
 
+function ensureAtomicMasterKeyFile(keyPath: string, wrapped: string): void {
+  let currentWrapped: string | undefined
+  try {
+    currentWrapped = readFileSync(keyPath, 'utf8').trim()
+  } catch {
+    // The Local State key remains authoritative if the recovery copy is unreadable.
+  }
+  if (currentWrapped !== wrapped) {
+    replaceAtomicMasterKeyFile(keyPath, wrapped)
+  }
+}
+
 function persistLocalState(
   localStatePath: string,
   state: Record<string, unknown>,
@@ -227,10 +239,7 @@ export function unwrapOrCreateMasterKey(dataDir: string): Buffer {
   const existing = readMasterKey(localStatePath)
   if (existing.stored) {
     try {
-      const atomicKey = readAtomicMasterKey(keyPath)
-      if (atomicKey?.wrapped !== existing.stored.wrapped) {
-        replaceAtomicMasterKeyFile(keyPath, existing.stored.wrapped)
-      }
+      ensureAtomicMasterKeyFile(keyPath, existing.stored.wrapped)
     } catch {
       // A valid Local State key remains authoritative if the recovery copy cannot be repaired.
     }
@@ -244,7 +253,7 @@ export function unwrapOrCreateMasterKey(dataDir: string): Buffer {
   if (current.stored) {
     if (current.stored.wrapped !== selected.wrapped) {
       try {
-        replaceAtomicMasterKeyFile(keyPath, current.stored.wrapped)
+        ensureAtomicMasterKeyFile(keyPath, current.stored.wrapped)
       } catch {
         // Local State remains authoritative; never cache the competing candidate.
       }
