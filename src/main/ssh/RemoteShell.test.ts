@@ -110,7 +110,7 @@ describe('RemoteShell UTF-8 output', () => {
     }
     expect(lines).toEqual([])
 
-    channel.emit('data', Buffer.from('\\nnext line\\n'))
+    channel.emit('data', Buffer.from('\nnext line\n'))
     channel.emit('close', 0)
 
     await expect(execution).resolves.toBe(0)
