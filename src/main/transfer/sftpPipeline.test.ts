@@ -202,6 +202,28 @@ describe('sftpPipeline.transferPipelined', () => {
     expect(fake.getStats().openHandlesLeft).toBe(0)
   })
 
+  it('overwrites an existing download destination when exclusive creation is not requested', async () => {
+    const data = Buffer.from('new')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/overwrite.txt', data)
+    const destination = path.join(tmpDir, 'overwrite.txt')
+    await fs.writeFile(destination, 'old-content-that-is-longer')
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: destination,
+      remotePath: '/remote/overwrite.txt',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined
+    })
+
+    expect(await fs.readFile(destination)).toEqual(data)
+  })
+
   it('handles 0-byte files and resumes from offset > 0 with r+ without truncating', async () => {
     const fake = createFakeSftp()
     const emptyLocal = path.join(tmpDir, 'empty.txt')

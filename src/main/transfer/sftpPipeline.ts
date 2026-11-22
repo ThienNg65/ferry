@@ -157,9 +157,13 @@ export async function transferPipelined(opts: PipelinedTransferOptions): Promise
       checkAborted(signal)
       await opts.beforeLocalOpen?.()
       const noFollow = opts.beforeLocalOpen && process.platform !== 'win32' ? (constants.O_NOFOLLOW ?? 0) : 0
-      const localFlags = offset > 0
-        ? constants.O_RDWR | noFollow
-        : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow
+      const localFlags = opts.beforeLocalOpen
+        ? writeFlags === 'wx'
+          ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow
+          : writeFlags === 'r+'
+            ? constants.O_RDWR | noFollow
+            : constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow
+        : writeFlags
       localHandle = await openLocal(localPath, localFlags, 0o600)
       await opts.afterLocalOpen?.(localHandle)
       opts.onDestinationCreated?.()
