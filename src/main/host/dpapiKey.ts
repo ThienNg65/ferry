@@ -4,11 +4,12 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
@@ -57,7 +58,7 @@ function unwrapWrappedMasterKey(wrappedBase64: string): Buffer {
   }
   const key = dpapiUnprotect(wrapped.subarray(DPAPI_PREFIX.length))
   if (key.length !== 32) {
-    throw new Error(`Unwrapped DPAPI master key must be 32 bytes, got ${key.length}`)
+    throw new Error('Unwrapped DPAPI master key must be 32 bytes, got ' + key.length)
   }
   return key
 }
@@ -89,10 +90,27 @@ function readMasterKey(localStatePath: string): {
 }
 
 function readAtomicMasterKey(keyPath: string): StoredMasterKey | undefined {
-  if (!existsSync(keyPath)) {
-    return undefined
+  let entry
+  try {
+    entry = lstatSync(keyPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined
+    }
+    throw error
   }
-  const wrapped = readFileSync(keyPath, 'utf8').trim()
+
+  if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+    throw new Error('The atomically selected DPAPI master-key entry has an invalid type')
+  }
+
+  const wrappedPath = entry.isDirectory() ? path.join(keyPath, 'key') : keyPath
+  const wrappedEntry = lstatSync(wrappedPath)
+  if (wrappedEntry.isSymbolicLink() || !wrappedEntry.isFile()) {
+    throw new Error('The atomically selected DPAPI master key must be a regular file')
+  }
+
+  const wrapped = readFileSync(wrappedPath, 'utf8').trim()
   if (!wrapped) {
     throw new Error('The atomically selected DPAPI master-key file is empty')
   }
@@ -100,7 +118,7 @@ function readAtomicMasterKey(keyPath: string): StoredMasterKey | undefined {
 }
 
 function writeSyncedTemporaryFile(targetPath: string, content: string): string {
-  const tmpPath = `${targetPath}.tmp.${process.pid}.${randomUUID()}`
+  const tmpPath = targetPath + '.tmp.' + process.pid + '.' + randomUUID()
   try {
     const fd = openSync(tmpPath, 'wx', 0o600)
     try {
@@ -121,9 +139,12 @@ function writeSyncedTemporaryFile(targetPath: string, content: string): string {
 }
 
 /**
- * Selects one wrapped key across processes using an atomic same-directory hard
- * link. Only the first process can publish the destination; all others read
- * that complete, already-flushed value instead of using their own candidate.
+ * Selects one wrapped key across processes by atomically renaming a complete,
+ * same-volume directory. This avoids relying on hard-link support, which is
+ * unavailable on some Windows filesystems. Published directories are non-empty,
+ * so competing renames cannot replace the selected key.
+ *
+ * Flat key files from earlier draft builds remain readable for compatibility.
  */
 function selectOrCreateAtomicMasterKey(keyPath: string): StoredMasterKey {
   const existing = readAtomicMasterKey(keyPath)
@@ -133,27 +154,28 @@ function selectOrCreateAtomicMasterKey(keyPath: string): StoredMasterKey {
 
   const candidateKey = randomBytes(32)
   const candidateWrapped = Buffer.concat([DPAPI_PREFIX, dpapiProtect(candidateKey)]).toString('base64')
-  const tmpPath = writeSyncedTemporaryFile(keyPath, candidateWrapped)
+  const temporaryDirectory = keyPath + '.tmp.' + process.pid + '.' + randomUUID()
+  mkdirSync(temporaryDirectory)
 
   try {
+    const temporaryKeyPath = writeSyncedTemporaryFile(path.join(temporaryDirectory, 'key'), candidateWrapped)
+    renameSync(temporaryKeyPath, path.join(temporaryDirectory, 'key'))
+
     try {
-      linkSync(tmpPath, keyPath)
+      renameSync(temporaryDirectory, keyPath)
       return { key: candidateKey, wrapped: candidateWrapped }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
-        throw error
-      }
       const winner = readAtomicMasterKey(keyPath)
-      if (!winner) {
-        throw new Error('The selected DPAPI master key disappeared during initialization')
+      if (winner) {
+        return winner
       }
-      return winner
+      throw error
     }
   } finally {
     try {
-      unlinkSync(tmpPath)
+      rmSync(temporaryDirectory, { recursive: true, force: true })
     } catch {
-      // The published hard link remains valid if temporary-link cleanup fails.
+      // Keep cleanup failures from hiding the key-publication result.
     }
   }
 }
@@ -217,7 +239,7 @@ export function unwrapOrCreateMasterKey(dataDir: string): Buffer {
   }
 
   mkdirSync(resolved, { recursive: true })
-  const selected = selectOrCreateAtomicMasterKey(`${localStatePath}.dpapi-key`)
+  const selected = selectOrCreateAtomicMasterKey(localStatePath + '.dpapi-key')
   const current = readMasterKey(localStatePath)
   if (current.stored) {
     keyCache.set(resolved, current.stored.key)
