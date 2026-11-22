@@ -30,7 +30,7 @@ export interface RemoteOptions {
 export interface ExecLinesOptions extends Omit<RemoteOptions, 'timeoutMs'> {
   /** Idle timeout after channel open. Null keeps a quiet stream connected. */
   timeoutMs?: number | null
-  /** Called for each complete stdout line (newline-stripped). */
+  /** Called for each stdout line; oversized lines are capped and marked as truncated. */
   onLine: (line: string) => void
   /** Called for each chunk of stderr. */
   onStderr?: (chunk: string) => void
