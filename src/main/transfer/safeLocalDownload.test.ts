@@ -114,6 +114,27 @@ describe('safe local tree download paths', () => {
     }
   })
 
+  it('accepts a handle opened for its validated destination', async () => {
+    const { root } = await fixture()
+    const target = path.join(root, '.ferry-transfer-positive.part')
+    const handle = await fs.open(target, 'wx', 0o600)
+
+    try {
+      const [opened, current] = await Promise.all([handle.stat(), fs.lstat(target)])
+      const identity = (info: typeof opened) => ({
+        dev: info.dev,
+        ino: info.ino,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        birthtimeMs: info.birthtimeMs
+      })
+      expect(identity(opened)).toEqual(identity(current))
+      await expect(assertSafeLocalDownloadHandle(root, target, handle)).resolves.toBeUndefined()
+    } finally {
+      await handle.close()
+    }
+  })
+
   it('allows ordinary nested directories and a missing final file', async () => {
     const { root } = await fixture()
     const nested = path.join(root, 'config', 'nested')
