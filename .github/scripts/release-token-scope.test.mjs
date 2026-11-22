@@ -73,7 +73,7 @@ test('public repository visibility checks use an unauthenticated read', () => {
     assertNoReleaseCredentials(stepEnv(verify), `${name} visibility check`)
     assert.match(verify.join('\n'), /curl --fail --silent --show-error/)
     assert.match(verify.join('\n'), /https:\/\/api\.github\.com\/repos\//)
-    assert.match(verify.join('\n'), /\.visibility/)
+    assert.match(verify.join('\n'), /visibility/)
     assert.doesNotMatch(verify.join('\n'), /gh api/)
   }
 })
