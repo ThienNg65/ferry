@@ -5,6 +5,7 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS, type FileEntry, type OperationEvent, t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
+import { useBookmarksStore } from '../../../stores/bookmarks.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import CompareDialog from '../CompareDialog.vue'
@@ -83,6 +84,9 @@ function button(label: string) {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  const bookmarks = useBookmarksStore()
+  bookmarks.bookmarks = []
+  bookmarks.loaded = true
   vi.resetAllMocks()
   vi.mocked(invoke).mockResolvedValue(undefined)
   vi.stubGlobal('useToast', () => ({ add: vi.fn() }))
