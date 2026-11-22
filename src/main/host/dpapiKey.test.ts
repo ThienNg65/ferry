@@ -11,7 +11,18 @@ const tempDirs: string[] = []
 function runMasterKeyWorker(dataDir: string): Promise<Buffer> {
   const moduleUrl = new URL('./dpapiKey.ts', import.meta.url).href
   const script = `
+    import { readdirSync, writeFileSync } from 'node:fs'
+    import * as path from 'node:path'
     import { unwrapOrCreateMasterKey } from ${JSON.stringify(moduleUrl)}
+
+    writeFileSync(path.join(${JSON.stringify(dataDir)}, `.dpapi-ready-${process.pid}`), '')
+    const waitBuffer = new Int32Array(new SharedArrayBuffer(4))
+    const deadline = Date.now() + 15_000
+    while (readdirSync(${JSON.stringify(dataDir)}).filter((name) => name.startsWith('.dpapi-ready-')).length < 2) {
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for the second DPAPI worker')
+      Atomics.wait(waitBuffer, 0, 0, 10)
+    }
+
     const key = unwrapOrCreateMasterKey(${JSON.stringify(dataDir)})
     process.stdout.write(key.toString('base64'))
   `
@@ -22,6 +33,12 @@ function runMasterKeyWorker(dataDir: string): Promise<Buffer> {
       ['--experimental-default-type=module', '--experimental-strip-types', '--input-type=module', '-e', script],
       { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }
     )
+    if (!child.stdout || !child.stderr) {
+      child.kill()
+      reject(new Error('DPAPI worker stdout/stderr streams were not created'))
+      return
+    }
+
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
