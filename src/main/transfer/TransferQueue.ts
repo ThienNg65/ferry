@@ -604,14 +604,6 @@ export class TransferQueue {
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
       const tree = kind === 'upload' ? await listRecursive(job.localPath) : await shell.readdirRecursive(job.remotePath)
-      const localDownloadRoot = kind === 'download'
-        ? job.localDownloadRoot ?? await prepareSafeLocalDownloadRoot(job.localPath)
-        : undefined
-      if (localDownloadRoot) {
-        job.localDownloadRoot = localDownloadRoot
-        await ensureSafeLocalDownloadDirectory(localDownloadRoot, localDownloadRoot)
-      }
-
       const files = tree.filter((e) => !e.isDir)
       const stampFor = (file: (typeof files)[number]): string => `${file.size}:${file.mtimeMs ?? ''}`
       if (job.resume && job.sourceStamps?.size) {
@@ -621,6 +613,14 @@ export class TransferQueue {
             throw new TransferRestartRequired('A source file in the folder changed. Restart the transfer to copy the current folder.')
           }
         }
+      }
+
+      const localDownloadRoot = kind === 'download'
+        ? job.localDownloadRoot ?? await prepareSafeLocalDownloadRoot(job.localPath)
+        : undefined
+      if (localDownloadRoot) {
+        job.localDownloadRoot = localDownloadRoot
+        await ensureSafeLocalDownloadDirectory(localDownloadRoot, localDownloadRoot)
       }
       if (kind === 'upload') {
         await shell.mkdirRecursive(job.remotePath)
