@@ -106,7 +106,7 @@ describe('safe local tree download paths', () => {
     const handle = await fs.open(outsideFile, 'r+')
 
     try {
-      await expect(assertSafeLocalDownloadHandle(root, target, handle)).rejects.toThrow(/component ".part"/)
+      await expect(assertSafeLocalDownloadHandle(root, target, handle)).rejects.toThrow(/component "\.ferry-transfer-test\.part"/)
       expect(await fs.readFile(target, 'utf-8')).toBe('inside-file')
       expect(await fs.readFile(outsideFile, 'utf-8')).toBe('different-outside-file-content')
     } finally {
