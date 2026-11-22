@@ -30,8 +30,8 @@ export class BoundedLineBuffer {
   private truncated = false
 
   constructor(private readonly maxBytes = MAX_BUFFERED_LINE_BYTES) {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-      throw new RangeError('maxBytes must be a positive safe integer')
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_BUFFERED_LINE_BYTES) {
+      throw new RangeError('maxBytes must be a positive safe integer no greater than 64 KiB')
     }
   }
 
