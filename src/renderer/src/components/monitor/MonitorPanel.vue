@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { MONITOR_INTERVAL_OPTIONS, useMonitorStore } from '../../stores/monitor.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { formatBytes, formatElapsed, formatUptime } from '../../utils/format'
 import {
@@ -13,6 +14,7 @@ import {
 import ProcessTable from './ProcessTable.vue'
 
 const monitor = useMonitorStore()
+const companion = useCompanionStore()
 const sessions = useSessionsStore()
 const cpuGradId = useId()
 
@@ -165,6 +167,26 @@ const sampleAgeLabel = computed(() => {
   const diff = now.value - monitor.latest.timestamp
   return diff < 2500 ? 'just now' : `${formatElapsed(diff)} ago`
 })
+
+const hasSpikeAlert = computed(() => {
+  const s = monitor.latest
+  if (!s) return false
+  return (
+    (s.cpu?.aggregatePct ?? 0) >= 80 ||
+    memPercent.value >= 85 ||
+    diskPercent.value >= 90 ||
+    currentLoadTone.value !== 'primary'
+  )
+})
+
+const spikeAlertColor = computed<'error' | 'warning' | 'neutral'>(() => {
+  const s = monitor.latest
+  if (!s) return 'neutral'
+  if ((s.cpu?.aggregatePct ?? 0) >= 90 || memPercent.value >= 95 || diskPercent.value >= 95) {
+    return 'error'
+  }
+  return hasSpikeAlert.value ? 'warning' : 'neutral'
+})
 </script>
 
 <template>
@@ -223,6 +245,16 @@ const sampleAgeLabel = computed(() => {
       </div>
 
       <div class="flex items-center gap-1">
+        <UTooltip v-if="monitor.latest" text="Triage CPU, RAM, disk, and top processes with Ferry Companion">
+          <UButton
+            label="Diagnose Spike"
+            icon="i-lucide-sparkles"
+            :color="spikeAlertColor"
+            :variant="hasSpikeAlert ? 'soft' : 'ghost'"
+            size="xs"
+            @click="companion.diagnoseMonitorSpike(monitor.latest)"
+          />
+        </UTooltip>
         <UTooltip text="Polling interval">
           <USelect
             v-model="selectedInterval"

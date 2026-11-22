@@ -2,12 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Popover from '@nuxt/ui/components/Popover.vue'
 import USwitch from '@nuxt/ui/components/Switch.vue'
+import type { CompanionCommandCard, CompanionCommandRisk, CompanionUiActionCard } from '@shared/contract'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { useCompanionStore, type CompanionView } from '../../stores/companion.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useUiStore } from '../../stores/ui.store'
 import { OFFICIAL_RELEASES_URL } from '../../utils/companionChangelogFallback'
 import type { CompanionActionChip } from '../../utils/companionEngine'
+import { classifyCommandRisk } from '../../utils/companionSnippets'
 import { COMPANION_TOUR_STEPS } from '../../utils/companionTour'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import CompanionAvatar from './CompanionAvatar.vue'
@@ -23,6 +25,11 @@ const inputRef = ref<HTMLInputElement | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
 const actionFeedback = ref<string | null>(null)
 const prefsOpen = ref(false)
+const snippetFilter = ref('')
+const showSnippetForm = ref(false)
+const newSnippetLabel = ref('')
+const newSnippetCommand = ref('')
+const newSnippetDescription = ref('')
 let previouslyFocused: HTMLElement | null = null
 
 const currentTourStep = computed(() =>
@@ -31,10 +38,24 @@ const currentTourStep = computed(() =>
 
 const views: { id: CompanionView; label: string; icon: string }[] = [
   { id: 'chat', label: 'Chat', icon: 'i-lucide-message-circle' },
+  { id: 'snippets', label: 'Snippets', icon: 'i-lucide-terminal' },
   { id: 'whats-new', label: "What's New", icon: 'i-lucide-sparkles' },
   { id: 'report', label: 'Report', icon: 'i-lucide-bug' },
   { id: 'history', label: 'Updates', icon: 'i-lucide-bell' }
 ]
+
+const filteredSnippets = computed(() => {
+  const q = snippetFilter.value.trim().toLowerCase()
+  if (!q) return companion.allSnippets
+  return companion.allSnippets.filter(
+    (s) =>
+      s.label.toLowerCase().includes(q) ||
+      s.command.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q)
+  )
+})
+
+const draftSnippetRisk = computed(() => classifyCommandRisk(newSnippetCommand.value))
 
 const quickStarters = computed(() => {
   const items: Array<{ label: string; prompt: string; icon: string }> = []
@@ -58,6 +79,7 @@ const quickStarters = computed(() => {
     })
   }
   items.push(
+    { label: 'Command to check disk usage', prompt: 'Command to check disk usage', icon: 'i-lucide-terminal' },
     { label: 'Take the 4-step tour', prompt: 'Start guided tour', icon: 'i-lucide-map' },
     { label: 'Help me use Ferry', prompt: 'Help me use Ferry', icon: 'i-lucide-compass' },
     { label: 'Report a problem', prompt: 'I want to report a bug', icon: 'i-lucide-bug' }
@@ -166,6 +188,64 @@ async function onQuickStarter(prompt: string): Promise<void> {
 
 async function onActionClick(action: CompanionActionChip): Promise<void> {
   actionFeedback.value = await companion.executeAction(action)
+}
+
+async function onRunCommandCard(card: CompanionCommandCard): Promise<void> {
+  actionFeedback.value = await companion.runCommandCard(card)
+}
+
+async function onUiActionCardClick(card: CompanionUiActionCard): Promise<void> {
+  actionFeedback.value = await companion.executeUiActionCard(card)
+}
+
+async function copyCommandText(command: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(command)
+    actionFeedback.value = 'Copied command to clipboard.'
+  } catch {
+    actionFeedback.value = 'Could not access clipboard.'
+  }
+}
+
+function saveCardAsSnippet(card: CompanionCommandCard): void {
+  const saved = companion.saveCustomSnippet({
+    label: card.description.slice(0, 50) || card.command.slice(0, 32),
+    command: card.command,
+    description: card.description
+  })
+  actionFeedback.value = saved ? `Saved "${saved.label}" to Snippets.` : 'Could not save snippet.'
+}
+
+function onCreateSnippet(): void {
+  const saved = companion.saveCustomSnippet({
+    label: newSnippetLabel.value,
+    command: newSnippetCommand.value,
+    description: newSnippetDescription.value
+  })
+  if (!saved) return
+  newSnippetLabel.value = ''
+  newSnippetCommand.value = ''
+  newSnippetDescription.value = ''
+  showSnippetForm.value = false
+  actionFeedback.value = `Saved snippet "${saved.label}".`
+}
+
+function riskBadgeLabel(risk: CompanionCommandRisk): string {
+  if (risk === 'destructive') return 'Destructive'
+  if (risk === 'mutating') return 'Mutating'
+  return 'Read-only'
+}
+
+function riskBadgeClass(risk: CompanionCommandRisk): string {
+  if (risk === 'destructive') return 'bg-error/15 text-error ring-1 ring-error/30'
+  if (risk === 'mutating') return 'bg-warning/15 text-warning ring-1 ring-warning/30'
+  return 'bg-success/15 text-success ring-1 ring-success/30'
+}
+
+function uiActionCardIcon(kind: CompanionUiActionCard['kind']): string {
+  if (kind === 'open-editor') return 'i-lucide-file-pen'
+  if (kind === 'tail-log') return 'i-lucide-scroll-text'
+  return 'i-lucide-filter'
 }
 
 function openFullNotes(url?: string): void {
@@ -306,7 +386,7 @@ function openFullNotes(url?: string): void {
           :aria-selected="companion.activeView === v.id"
           :aria-controls="`companion-panel-${v.id}`"
           :tabindex="companion.activeView === v.id ? 0 : -1"
-          class="inline-flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+          class="inline-flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 py-1 text-2xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
           :class="
             companion.activeView === v.id
               ? 'bg-primary/12 text-primary'
@@ -429,6 +509,87 @@ function openFullNotes(url?: string): void {
                 {{ msg.text }}
               </div>
 
+              <!-- Diagnosed Root Cause -->
+              <div
+                v-if="msg.rootCause"
+                data-companion-root-cause
+                class="w-full rounded-md border border-primary/25 bg-primary/8 px-2.5 py-2 text-2xs leading-relaxed text-default"
+              >
+                <span class="font-semibold text-primary">Root cause: </span>{{ msg.rootCause }}
+              </div>
+
+              <!-- Structured Risk-Badged Command Cards -->
+              <div
+                v-if="msg.commandCards && msg.commandCards.length > 0"
+                class="flex w-full flex-col gap-2"
+                data-companion-command-cards
+              >
+                <div
+                  v-for="(card, cIdx) in msg.commandCards"
+                  :key="card.command + cIdx"
+                  class="rounded-lg border border-default bg-muted/30 p-2.5 text-xs"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="truncate text-2xs font-medium text-highlighted">{{ card.description }}</span>
+                    <span
+                      class="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
+                      :class="riskBadgeClass(card.risk)"
+                    >
+                      {{ riskBadgeLabel(card.risk) }}
+                    </span>
+                  </div>
+                  <pre class="mt-1.5 overflow-x-auto rounded bg-default/80 px-2 py-1.5 font-mono text-2xs text-default select-text">{{ card.command }}</pre>
+                  <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                    <UButton
+                      size="xs"
+                      :color="card.risk === 'destructive' ? 'error' : card.risk === 'mutating' ? 'warning' : 'primary'"
+                      variant="soft"
+                      icon="i-lucide-play"
+                      data-run-command
+                      @click="onRunCommandCard(card)"
+                    >
+                      Run in Terminal
+                    </UButton>
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-copy"
+                      @click="copyCommandText(card.command)"
+                    >
+                      Copy
+                    </UButton>
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      icon="i-lucide-bookmark-plus"
+                      @click="saveCardAsSnippet(card)"
+                    >
+                      Save
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Structured UI Action Cards -->
+              <div
+                v-if="msg.uiActionCards && msg.uiActionCards.length > 0"
+                class="flex flex-wrap gap-1.5"
+                data-companion-ui-actions
+              >
+                <button
+                  v-for="(uiAct, uIdx) in msg.uiActionCards"
+                  :key="uiAct.kind + uiAct.label + uIdx"
+                  type="button"
+                  class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary"
+                  @click="onUiActionCardClick(uiAct)"
+                >
+                  <UIcon :name="uiActionCardIcon(uiAct.kind)" class="size-3 shrink-0" />
+                  <span>{{ uiAct.label }}</span>
+                </button>
+              </div>
+
               <!-- Structured What's New card -->
               <div
                 v-if="msg.releaseCard"
@@ -498,6 +659,163 @@ function openFullNotes(url?: string): void {
           <p role="status" aria-live="polite" class="text-3xs text-muted" :class="actionFeedback ? '' : 'sr-only'">
             {{ actionFeedback ?? '' }}
           </p>
+        </div>
+
+        <!-- SNIPPETS & COMMAND HISTORY VIEW -->
+        <div v-else-if="companion.activeView === 'snippets'" class="flex flex-col gap-3" data-companion-snippets>
+          <div class="flex items-center gap-1.5">
+            <input
+              v-model="snippetFilter"
+              type="text"
+              aria-label="Search snippets"
+              placeholder="Filter local snippets…"
+              class="min-w-0 flex-1 rounded-md border border-default bg-default/70 px-2.5 py-1 text-xs text-default placeholder:text-muted focus:border-primary focus:outline-none"
+            />
+            <UButton
+              size="xs"
+              color="primary"
+              variant="soft"
+              :icon="showSnippetForm ? 'i-lucide-x' : 'i-lucide-plus'"
+              @click="showSnippetForm = !showSnippetForm"
+            >
+              {{ showSnippetForm ? 'Cancel' : 'New' }}
+            </UButton>
+          </div>
+
+          <form
+            v-if="showSnippetForm"
+            class="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-xs"
+            @submit.prevent="onCreateSnippet"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold text-highlighted">Save Local Snippet</span>
+              <span
+                v-if="newSnippetCommand.trim()"
+                class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
+                :class="riskBadgeClass(draftSnippetRisk)"
+              >
+                {{ riskBadgeLabel(draftSnippetRisk) }}
+              </span>
+            </div>
+            <input
+              v-model="newSnippetLabel"
+              type="text"
+              aria-label="Snippet label"
+              placeholder="Label (e.g. Check nginx config)"
+              class="rounded border border-default bg-default/80 px-2 py-1 text-xs text-default"
+            />
+            <input
+              v-model="newSnippetCommand"
+              type="text"
+              aria-label="Snippet command"
+              placeholder="Shell command (e.g. nginx -t)"
+              class="rounded border border-default bg-default/80 px-2 py-1 font-mono text-xs text-default"
+            />
+            <input
+              v-model="newSnippetDescription"
+              type="text"
+              aria-label="Snippet description"
+              placeholder="Optional note"
+              class="rounded border border-default bg-default/80 px-2 py-1 text-xs text-default"
+            />
+            <div class="flex justify-end">
+              <UButton
+                type="submit"
+                size="xs"
+                color="primary"
+                :disabled="!newSnippetLabel.trim() || !newSnippetCommand.trim()"
+              >
+                Save Snippet
+              </UButton>
+            </div>
+          </form>
+
+          <div class="flex flex-col gap-2">
+            <div
+              v-for="snip in filteredSnippets"
+              :key="snip.id"
+              class="rounded-lg border border-default bg-muted/25 p-2.5 text-xs"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="truncate font-semibold text-highlighted">{{ snip.label }}</span>
+                <div class="flex shrink-0 items-center gap-1">
+                  <span
+                    class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
+                    :class="riskBadgeClass(snip.risk)"
+                  >
+                    {{ riskBadgeLabel(snip.risk) }}
+                  </span>
+                  <button
+                    v-if="!snip.builtIn"
+                    type="button"
+                    aria-label="Delete snippet"
+                    class="cursor-pointer rounded p-0.5 text-muted hover:text-error"
+                    @click="companion.deleteCustomSnippet(snip.id)"
+                  >
+                    <UIcon name="i-lucide-trash-2" class="size-3" />
+                  </button>
+                </div>
+              </div>
+              <pre class="mt-1.5 overflow-x-auto rounded bg-default/80 px-2 py-1 font-mono text-2xs text-default select-text">{{ snip.command }}</pre>
+              <p v-if="snip.description" class="mt-1 text-2xs text-muted">{{ snip.description }}</p>
+              <div class="mt-2 flex items-center gap-1.5">
+                <UButton
+                  size="xs"
+                  color="primary"
+                  variant="soft"
+                  icon="i-lucide-play"
+                  @click="onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })"
+                >
+                  Run in Terminal
+                </UButton>
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-copy"
+                  @click="copyCommandText(snip.command)"
+                >
+                  Copy
+                </UButton>
+              </div>
+            </div>
+            <p v-if="filteredSnippets.length === 0" class="py-3 text-center text-xs text-muted">
+              No snippets match "{{ snippetFilter }}".
+            </p>
+          </div>
+
+          <div v-if="companion.commandHistory.length > 0" class="border-t border-muted pt-3">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <p class="text-2xs font-semibold text-muted">Recent Command History</p>
+              <button
+                type="button"
+                class="cursor-pointer text-3xs text-muted hover:text-default"
+                @click="companion.clearCommandHistory()"
+              >
+                Clear
+              </button>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <div
+                v-for="item in companion.commandHistory.slice(0, 10)"
+                :key="item.id"
+                class="flex items-center justify-between gap-2 rounded border border-default/70 bg-muted/15 px-2 py-1.5 text-2xs"
+              >
+                <div class="min-w-0 flex-1">
+                  <code class="block truncate font-mono text-default">{{ item.command }}</code>
+                  <span v-if="item.hostLabel" class="text-3xs text-muted">{{ item.hostLabel }}</span>
+                </div>
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-play"
+                  aria-label="Re-run command"
+                  @click="onRunCommandCard({ command: item.command, description: 'Re-run from history', risk: item.risk })"
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- WHAT'S NEW VIEW -->

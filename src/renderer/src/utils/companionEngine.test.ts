@@ -74,4 +74,15 @@ describe('companionEngine', () => {
     expect(diagnoseErrorText('ENOSPC: no space left on device')).toContain('disk')
     expect(diagnoseErrorText('Host key fingerprint mismatch')).toContain('Trusted SSH Hosts')
   })
+
+  it('returns risk-badged Command Cards for plain-English shell command requests', () => {
+    const reply = answerCompanionQuery('Command to check disk usage', {
+      currentVersion: '1.3.1',
+      previousVersion: null,
+      releases: SAMPLE_RELEASES,
+      offlineFallback: false,
+      isConnected: true
+    })
+    expect(reply.commandCards?.some((c) => c.command === 'df -h' && c.risk === 'read_only')).toBe(true)
+  })
 })

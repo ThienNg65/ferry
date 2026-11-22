@@ -21,6 +21,7 @@ const stubs = {
   UIcon: { template: '<span />' },
   UButton: {
     props: ['disabled', 'loading'],
+    emits: ['click'],
     template: '<button :disabled="disabled" @click="$emit(\'click\', $event)"><slot /></button>'
   },
   UTooltip: { template: '<span><slot /></span>' },
@@ -93,6 +94,36 @@ describe('CompanionPanel', () => {
     expect(clearBtn.exists()).toBe(true)
     await clearBtn.trigger('click')
     expect(store.messages.length).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('renders risk-badged Command Cards and manages custom snippets in the Snippets tab', async () => {
+    const store = useCompanionStore()
+    store.openPanel('chat')
+
+    const wrapper = mount(CompanionPanel, { global: { stubs } })
+    await store.ask('Command to check disk usage')
+    await nextTick()
+
+    expect(wrapper.find('[data-companion-command-cards]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('df -h')
+    expect(wrapper.text()).toContain('Read-only')
+
+    await wrapper.find('#companion-tab-snippets').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-companion-snippets]').exists()).toBe(true)
+
+    const newBtn = wrapper.find('[data-companion-snippets]').findAll('button').find((b) => b.text().trim() === 'New')!
+    await newBtn.trigger('click')
+    await nextTick()
+    await wrapper.find('input[aria-label="Snippet label"]').setValue('Flush cache')
+    await wrapper.find('input[aria-label="Snippet command"]').setValue('rm -rf /tmp/app-cache')
+    expect(wrapper.text()).toContain('Destructive')
+    await wrapper.find('[data-companion-snippets] form').trigger('submit')
+    await nextTick()
+
+    expect(store.customSnippets[0].label).toBe('Flush cache')
+    expect(store.customSnippets[0].risk).toBe('destructive')
     wrapper.unmount()
   })
 })

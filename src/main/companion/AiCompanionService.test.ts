@@ -1,12 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AiCompanionService, validateAiEndpoint } from './AiCompanionService'
+import {
+  AiCompanionService,
+  classifyCommandRisk,
+  DEFAULT_GEMINI_ENDPOINT,
+  DEFAULT_GEMINI_MODEL,
+  parseStructuredCompanionResponse,
+  validateAiEndpoint
+} from './AiCompanionService'
 
 describe('AiCompanionService', () => {
-  it('enforces https for remote endpoints and allows loopback http for local providers', () => {
-    expect(() => validateAiEndpoint('ollama', 'http://localhost:11434')).not.toThrow()
-    expect(() => validateAiEndpoint('openai-compatible', 'https://api.openai.com/v1')).not.toThrow()
-    expect(() => validateAiEndpoint('openai-compatible', 'http://api.openai.com/v1')).toThrow(/https:\/\//)
-    expect(() => validateAiEndpoint('ollama', 'http://192.168.1.50:11434')).toThrow(/localhost/)
+  it('enforces https for remote endpoints, defaults Gemini endpoint, and allows localhost proxy', () => {
+    expect(validateAiEndpoint('gemini', '').toString()).toBe(`${DEFAULT_GEMINI_ENDPOINT}/`)
+    expect(() => validateAiEndpoint('ferry-pro', 'http://localhost:8787')).not.toThrow()
+    expect(() => validateAiEndpoint('ferry-pro', 'https://proxy.ferry.example')).not.toThrow()
+    expect(() => validateAiEndpoint('ferry-pro', 'http://proxy.ferry.example')).toThrow(/https:\/\//)
+    expect(() => validateAiEndpoint('gemini', 'https://user:secret@generativelanguage.googleapis.com')).toThrow()
   })
 
   it('refuses to call fetch when provider is disabled', async () => {
@@ -23,85 +31,126 @@ describe('AiCompanionService', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('calls local Ollama /api/chat and returns reply text', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ message: { content: 'Try checking file permissions first.' } })
-    })
+  it('requires a Gemini API key when provider is gemini', async () => {
+    const fetchImpl = vi.fn()
     const svc = new AiCompanionService({
       fetchImpl: fetchImpl as unknown as typeof fetch,
       getConfig: () => ({
-        provider: 'ollama',
-        endpoint: 'http://localhost:11434',
-        model: 'llama3.2',
+        provider: 'gemini',
+        endpoint: DEFAULT_GEMINI_ENDPOINT,
+        model: DEFAULT_GEMINI_MODEL,
         hasApiKey: false
       })
     })
     const res = await svc.chat({
-      prompt: 'Why did upload fail?',
+      prompt: 'Check disk space',
       context: { appVersion: '1.3.1', isConnected: true, theme: 'dark' }
     })
-    expect(res).toEqual({
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/API key/i)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('calls Gemini v1beta/interactions with store=false, schema, and parses structured Command & UI Action Cards', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
-      provider: 'ollama',
-      text: 'Try checking file permissions first.'
+      status: 200,
+      json: async () => ({
+        output_text: JSON.stringify({
+          summary: 'Disk space is nearly full on /var/log.',
+          rootCause: 'Rotated nginx logs filled the volume.',
+          commandCards: [
+            { command: 'df -h', description: 'Check disk usage', risk: 'read_only' },
+            { command: 'rm -rf /var/log/old-cache', description: 'Delete stale cache', risk: 'read_only' }
+          ],
+          uiActionCards: [
+            { kind: 'tail-log', remotePath: '/var/log/nginx/error.log', label: 'Tail error.log' }
+          ]
+        })
+      })
     })
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'http://localhost:11434/api/chat',
-      expect.objectContaining({ method: 'POST', redirect: 'error' })
-    )
+
+    const svc = new AiCompanionService({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      getConfig: () => ({
+        provider: 'gemini',
+        endpoint: DEFAULT_GEMINI_ENDPOINT,
+        model: 'gemini-2.5-flash',
+        hasApiKey: true,
+        apiKey: 'AIza-test-key'
+      })
+    })
+
+    const res = await svc.chat({
+      prompt: 'Explain why disk is full',
+      intent: 'explain-log',
+      workspaceSignal: { logPath: '/var/log/nginx/error.log', logSnippet: 'ENOSPC: no space left on device' },
+      context: { appVersion: '1.3.1', isConnected: true, theme: 'dark' }
+    })
+
+    expect(res.ok).toBe(true)
+    expect(res.provider).toBe('gemini')
+    expect(res.text).toBe('Disk space is nearly full on /var/log.')
+    expect(res.structured?.rootCause).toBe('Rotated nginx logs filled the volume.')
+    expect(res.structured?.commandCards).toEqual([
+      { command: 'df -h', description: 'Check disk usage', risk: 'read_only' },
+      // Deterministic safety floor prevents destructive commands from being labeled read_only
+      { command: 'rm -rf /var/log/old-cache', description: 'Delete stale cache', risk: 'destructive' }
+    ])
+    expect(res.structured?.uiActionCards).toEqual([
+      { kind: 'tail-log', remotePath: '/var/log/nginx/error.log', label: 'Tail error.log' }
+    ])
+
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions')
+    expect(init.redirect).toBe('error')
+    expect(init.headers['x-goog-api-key']).toBe('AIza-test-key')
+    expect(init.headers['Api-Revision']).toBe('2026-05-20')
+    const sentBody = JSON.parse(init.body)
+    expect(sentBody.model).toBe('gemini-4-hydrogen')
+    expect(sentBody.store).toBe(false)
+    expect(sentBody.response_format.mime_type).toBe('application/json')
 
     const ping = await svc.testConnection()
     expect(ping.ok).toBe(true)
   })
 
-  it('sends Bearer token to openai-compatible endpoint and fails gracefully on HTTP error', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 429
-    })
+  it('calls Managed Ferry Pro proxy with Bearer token and strips secrets on error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 429 })
     const svc = new AiCompanionService({
       fetchImpl: fetchImpl as unknown as typeof fetch,
       getConfig: () => ({
-        provider: 'openai-compatible',
-        endpoint: 'https://api.openai.com/v1',
-        model: 'gpt-4o-mini',
+        provider: 'ferry-pro',
+        endpoint: 'https://proxy.ferry.example',
+        model: DEFAULT_GEMINI_MODEL,
         hasApiKey: true,
-        apiKey: 'sk-secret-key'
+        apiKey: 'ferry-pro-secret'
       })
     })
     const res = await svc.chat({
-      prompt: 'Help me',
-      context: { appVersion: '1.3.1', isConnected: false, theme: 'light' }
+      prompt: 'Diagnose CPU spike',
+      intent: 'diagnose-spike',
+      context: { appVersion: '1.3.1', isConnected: true, theme: 'dark' }
     })
     expect(res.ok).toBe(false)
     expect(res.error).toContain('429')
-  })
-
-  it('rejects endpoint URLs with embedded credentials, handles malformed history/decrypt errors, and strips apiKey from error messages', async () => {
-    expect(() => validateAiEndpoint('openai-compatible', 'https://user:secret@api.example.com/v1')).toThrow()
-
-    const svcThrowDecrypt = new AiCompanionService({
-      getConfig: () => {
-        throw new Error('keychain locked')
-      }
-    })
-    const decryptRes = await svcThrowDecrypt.chat({
-      prompt: 'Hello',
-      context: { appVersion: '1.3.1', isConnected: false, theme: 'light' }
-    })
-    expect(decryptRes.ok).toBe(false)
-    expect(decryptRes.error).toContain('keychain locked')
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://proxy.ferry.example/v1/companion/chat',
+      expect.objectContaining({
+        method: 'POST',
+        redirect: 'error',
+        headers: expect.objectContaining({ Authorization: 'Bearer ferry-pro-secret' })
+      })
+    )
 
     const svcLeak = new AiCompanionService({
-      fetchImpl: vi.fn().mockRejectedValue(new Error('Failed with sk-top-secret-key')) as unknown as typeof fetch,
+      fetchImpl: vi.fn().mockRejectedValue(new Error('Failed with AIza-secret-token')) as unknown as typeof fetch,
       getConfig: () => ({
-        provider: 'openai-compatible',
-        endpoint: 'https://api.openai.com/v1',
-        model: 'gpt-4o-mini',
+        provider: 'gemini',
+        endpoint: DEFAULT_GEMINI_ENDPOINT,
+        model: DEFAULT_GEMINI_MODEL,
         hasApiKey: true,
-        apiKey: 'sk-top-secret-key'
+        apiKey: 'AIza-secret-token'
       })
     })
     const leakRes = await svcLeak.chat({
@@ -110,6 +159,18 @@ describe('AiCompanionService', () => {
       context: { appVersion: '1.3.1', isConnected: false, theme: 'light' }
     })
     expect(leakRes.ok).toBe(false)
-    expect(leakRes.error).not.toContain('sk-top-secret-key')
+    expect(leakRes.error).not.toContain('AIza-secret-token')
+  })
+
+  it('classifies command risks and handles fenced or plain-text responses safely', () => {
+    expect(classifyCommandRisk('df -h')).toBe('read_only')
+    expect(classifyCommandRisk('systemctl restart nginx')).toBe('mutating')
+    expect(classifyCommandRisk('rm -rf /tmp/build')).toBe('destructive')
+
+    const parsedFenced = parseStructuredCompanionResponse('```json\n{"summary":"All good"}\n```')
+    expect(parsedFenced).toEqual({ summary: 'All good' })
+
+    const parsedPlain = parseStructuredCompanionResponse('Plain fallback text')
+    expect(parsedPlain).toEqual({ summary: 'Plain fallback text' })
   })
 })

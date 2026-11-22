@@ -1,15 +1,64 @@
-import type {
-  CompanionAiChatRequest,
-  CompanionAiChatResult,
-  CompanionAiProvider
+import {
+  classifyCommandRisk,
+  DEFAULT_GEMINI_ENDPOINT,
+  DEFAULT_GEMINI_MODEL,
+  escalateCommandRisk,
+  normalizeGeminiModel,
+  type CompanionAiChatRequest,
+  type CompanionAiChatResult,
+  type CompanionAiIntent,
+  type CompanionAiProvider,
+  type CompanionCommandCard,
+  type CompanionCommandRisk,
+  type CompanionStructuredOutput,
+  type CompanionUiActionCard
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
+
+export { classifyCommandRisk, DEFAULT_GEMINI_ENDPOINT, DEFAULT_GEMINI_MODEL, escalateCommandRisk }
 
 const AI_TIMEOUT_MS = 15_000
 const MAX_HISTORY_TURNS = 6
 const MAX_PROMPT_CHARS = 2_000
 const MAX_REPLY_CHARS = 4_000
 const MAX_AI_RESPONSE_BYTES = 256 * 1024
+const MAX_CARDS = 4
+const GEMINI_API_REVISION = '2026-05-20'
+
+export const COMPANION_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string', description: 'Concise practical summary for the user.' },
+    rootCause: { type: 'string', description: 'Optional diagnosed root cause for logs or resource spikes.' },
+    commandCards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'Exact POSIX shell command to inspect or remediate.' },
+          description: { type: 'string', description: 'Brief explanation of what this command does.' },
+          risk: { type: 'string', enum: ['read_only', 'mutating', 'destructive'] }
+        },
+        required: ['command', 'description', 'risk']
+      }
+    },
+    uiActionCards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['open-editor', 'tail-log', 'apply-filter'] },
+          label: { type: 'string', description: 'Short button label for the Ferry UI action.' },
+          remotePath: { type: 'string', description: 'Remote file path for open-editor or tail-log.' },
+          mode: { type: 'string', enum: ['include', 'exclude'] },
+          pattern: { type: 'string', description: 'Glob filename pattern for apply-filter.' }
+        },
+        required: ['kind', 'label']
+      }
+    }
+  },
+  required: ['summary']
+} as const
 
 function isLoopbackHost(hostname: string): boolean {
   const lower = hostname.toLowerCase()
@@ -30,8 +79,7 @@ async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unkno
     throw new Error('AI response exceeded size limit')
   }
   if (!res.body || typeof res.body.getReader !== 'function') {
-    const data = await res.json()
-    return data
+    return res.json()
   }
   const reader = res.body.getReader()
   const chunks: Uint8Array[] = []
@@ -53,9 +101,13 @@ async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unkno
 }
 
 export function validateAiEndpoint(provider: CompanionAiProvider, rawEndpoint: string): URL {
-  const trimmed = rawEndpoint.trim()
+  const trimmed = rawEndpoint.trim() || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
   if (!trimmed) {
-    throw new Error('AI endpoint URL is required')
+    throw new Error(
+      provider === 'ferry-pro'
+        ? 'Ferry Pro Proxy endpoint URL is required'
+        : 'AI endpoint URL is required'
+    )
   }
   let parsed: URL
   try {
@@ -66,30 +118,196 @@ export function validateAiEndpoint(provider: CompanionAiProvider, rawEndpoint: s
   if (parsed.username || parsed.password) {
     throw new Error('AI endpoint URL must not include credentials')
   }
-
   if (parsed.protocol === 'https:') {
     return parsed
   }
   if (parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname)) {
     return parsed
   }
-  throw new Error(
-    provider === 'ollama'
-      ? 'Ollama endpoint must use http://localhost (loopback) or https://'
-      : 'Remote AI endpoints must use https:// (http:// is allowed only for localhost)'
-  )
+  throw new Error('Remote AI endpoints must use https:// (http:// is allowed only for localhost)')
 }
 
-function buildSystemPrompt(ctx: CompanionAiChatRequest['context']): string {
+function buildSystemPrompt(ctx: CompanionAiChatRequest['context'], intent?: CompanionAiIntent): string {
+  const intentHint =
+    intent === 'explain-log'
+      ? 'Focus on diagnosing the redacted log snippet: summarize what happened, provide a concise rootCause, and suggest read-only verification commands or UI actions.'
+      : intent === 'diagnose-spike'
+        ? 'Focus on triaging the remote Resource Monitor spike: identify likely bottlenecks in rootCause and propose safe inspection Command Cards.'
+        : intent === 'command'
+          ? 'Translate the user request into safe, accurate POSIX/Linux shell Command Cards with honest risk labels.'
+          : 'Answer concisely and suggest Command Cards or Ferry UI Action Cards only when clearly helpful.'
+
   return [
-    'You are Ferry Companion, a concise, friendly desktop assistant inside Ferry (an SFTP/SSH client with live remote log tailing).',
+    'You are Ferry Companion, a concise, trustworthy desktop assistant inside Ferry (an SFTP/SSH client with live log tailing, resource monitoring, and embedded terminal).',
     `Current app context (non-sensitive): Ferry v${ctx.appVersion || 'unknown'}, connected=${ctx.isConnected ? 'yes' : 'no'}, theme=${ctx.theme || 'unknown'}.`,
+    intentHint,
     'Rules:',
-    '- Be brief, practical, and trustworthy (under 140 words unless steps are needed).',
-    '- Never claim you executed a command, modified a file, or accessed a remote server.',
-    '- Only suggest non-destructive steps the user can perform themselves in Ferry.',
+    '- Respond strictly matching the JSON schema (`summary`, optional `rootCause`, optional `commandCards`, optional `uiActionCards`).',
+    '- Keep `summary` under 140 words unless diagnostic steps require more clarity.',
+    '- Never claim you executed a command, modified a file, or accessed a remote server directly.',
+    '- Classify every command honestly: read_only (inspect/read), mutating (edits/restarts), destructive (deletes/stops/irreversible).',
     '- Never ask for passwords, private keys, or secrets.'
   ].join('\n')
+}
+
+function buildUserInput(request: CompanionAiChatRequest, prompt: string): string {
+  const sections: string[] = []
+  const history = (request.history ?? [])
+    .slice(-MAX_HISTORY_TURNS)
+    .filter(
+      (m): m is { role: 'user' | 'assistant'; text: string } =>
+        Boolean(
+          m &&
+            typeof m === 'object' &&
+            (m.role === 'user' || m.role === 'assistant') &&
+            typeof m.text === 'string' &&
+            m.text.trim()
+        )
+    )
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text.trim().slice(0, 1000)}`)
+
+  if (history.length > 0) {
+    sections.push(`Recent conversation:\n${history.join('\n')}`)
+  }
+
+  const sig = request.workspaceSignal
+  if (sig) {
+    const signalLines: string[] = []
+    if (typeof sig.logPath === 'string' && sig.logPath.trim()) {
+      signalLines.push(`Remote log path: ${sig.logPath.trim().slice(0, 256)}`)
+    }
+    if (typeof sig.logSnippet === 'string' && sig.logSnippet.trim()) {
+      signalLines.push(`Redacted log snippet:\n${sig.logSnippet.trim().slice(0, 2500)}`)
+    }
+    if (typeof sig.monitorSummary === 'string' && sig.monitorSummary.trim()) {
+      signalLines.push(`Resource monitor snapshot:\n${sig.monitorSummary.trim().slice(0, 1500)}`)
+    }
+    if (signalLines.length > 0) {
+      sections.push(signalLines.join('\n\n'))
+    }
+  }
+
+  sections.push(`Current request:\n${prompt}`)
+  return sections.join('\n\n')
+}
+
+function sanitizeRisk(raw: unknown): CompanionCommandRisk {
+  return raw === 'destructive' || raw === 'mutating' || raw === 'read_only' ? raw : 'read_only'
+}
+
+function sanitizeCommandText(raw: string): string {
+  // Strip ANSI CSI escapes and ASCII control chars so hidden newline commands cannot hide inside one card.
+  return raw
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .slice(0, 500)
+}
+
+export function normalizeStructuredOutput(raw: unknown): CompanionStructuredOutput | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const obj = raw as Record<string, unknown>
+  const summary = typeof obj.summary === 'string' ? obj.summary.trim().slice(0, MAX_REPLY_CHARS) : ''
+  if (!summary) return null
+
+  const out: CompanionStructuredOutput = { summary }
+
+  if (typeof obj.rootCause === 'string' && obj.rootCause.trim()) {
+    out.rootCause = obj.rootCause.trim().slice(0, 1000)
+  }
+
+  if (Array.isArray(obj.commandCards)) {
+    const cards: CompanionCommandCard[] = []
+    for (const item of obj.commandCards) {
+      if (!item || typeof item !== 'object' || cards.length >= MAX_CARDS) continue
+      const c = item as Record<string, unknown>
+      const command = typeof c.command === 'string' ? sanitizeCommandText(c.command) : ''
+      const description = typeof c.description === 'string' ? c.description.trim().slice(0, 300) : ''
+      if (!command) continue
+      cards.push({
+        command,
+        description: description || 'Run in terminal',
+        risk: escalateCommandRisk(sanitizeRisk(c.risk), command)
+      })
+    }
+    if (cards.length > 0) out.commandCards = cards
+  }
+
+  if (Array.isArray(obj.uiActionCards)) {
+    const actions: CompanionUiActionCard[] = []
+    for (const item of obj.uiActionCards) {
+      if (!item || typeof item !== 'object' || actions.length >= MAX_CARDS) continue
+      const a = item as Record<string, unknown>
+      const label = typeof a.label === 'string' ? a.label.trim().slice(0, 80) : ''
+      if (!label) continue
+      if (a.kind === 'open-editor' || a.kind === 'tail-log') {
+        const remotePath = typeof a.remotePath === 'string' ? a.remotePath.trim().slice(0, 512) : ''
+        if (remotePath) {
+          actions.push({ kind: a.kind, remotePath, label })
+        }
+      } else if (a.kind === 'apply-filter') {
+        const mode = a.mode === 'include' || a.mode === 'exclude' ? a.mode : null
+        const pattern = typeof a.pattern === 'string' ? a.pattern.trim().slice(0, 120) : ''
+        if (mode && pattern) {
+          actions.push({ kind: 'apply-filter', mode, pattern, label })
+        }
+      }
+    }
+    if (actions.length > 0) out.uiActionCards = actions
+  }
+
+  return out
+}
+
+export function parseStructuredCompanionResponse(rawText: string): CompanionStructuredOutput {
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim()
+
+  if (cleaned.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(cleaned) as unknown
+      const normalized = normalizeStructuredOutput(parsed)
+      if (normalized) return normalized
+    } catch {
+      // Fall through to plain text wrapper.
+    }
+  }
+
+  return {
+    summary: rawText.trim().slice(0, MAX_REPLY_CHARS)
+  }
+}
+
+function extractGeminiInteractionText(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const record = data as Record<string, unknown>
+  if (typeof record.output_text === 'string' && record.output_text.trim()) {
+    return record.output_text
+  }
+  if (Array.isArray(record.steps)) {
+    for (let i = record.steps.length - 1; i >= 0; i--) {
+      const step = record.steps[i] as Record<string, unknown> | undefined
+      if (step?.type === 'model_output' && Array.isArray(step.content)) {
+        const text = step.content
+          .map((part) => (part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? (part as Record<string, string>).text : ''))
+          .join('')
+          .trim()
+        if (text) return text
+      }
+    }
+  }
+  if (Array.isArray(record.candidates) && record.candidates.length > 0) {
+    const first = record.candidates[0] as { content?: { parts?: Array<{ text?: unknown }> } }
+    const text = (first?.content?.parts ?? [])
+      .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+      .join('')
+      .trim()
+    if (text) return text
+  }
+  return ''
 }
 
 export interface AiCompanionServiceDeps {
@@ -122,7 +340,7 @@ export class AiCompanionService {
       return { ok: false, error: sanitizeErrorMessage(err) }
     }
     if (!config || config.provider === 'none') {
-      return { ok: false, error: 'Optional AI provider is disabled' }
+      return { ok: false, error: 'AI provider is disabled' }
     }
 
     const prompt = request.prompt.trim().slice(0, MAX_PROMPT_CHARS)
@@ -134,59 +352,64 @@ export class AiCompanionService {
     try {
       endpointUrl = validateAiEndpoint(config.provider, config.endpoint)
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'Invalid AI endpoint' }
+      return { ok: false, provider: config.provider, error: err instanceof Error ? err.message : 'Invalid AI endpoint' }
     }
 
-    const model = config.model.trim()
-    if (!model) {
-      return { ok: false, error: 'AI model name is required' }
-    }
-
-    const history = (request.history ?? [])
-      .slice(-MAX_HISTORY_TURNS)
-      .filter(
-        (m): m is { role: 'user' | 'assistant'; text: string } =>
-          Boolean(m && typeof m === 'object' && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string' && m.text.trim())
-      )
-      .map((m) => ({ role: m.role, content: m.text.trim().slice(0, 1000) }))
-
-    const messages = [
-      { role: 'system', content: buildSystemPrompt(request.context) },
-      ...history,
-      { role: 'user', content: prompt }
-    ]
+    const model = normalizeGeminiModel(config.model)
+    const systemPrompt = buildSystemPrompt(request.context, request.intent)
+    const fullInput = buildUserInput(request, prompt)
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 
     try {
-      if (config.provider === 'ollama') {
+      if (config.provider === 'gemini') {
+        if (!config.apiKey) {
+          return { ok: false, provider: 'gemini', error: 'Gemini API key is required' }
+        }
         const base = endpointUrl.toString().replace(/\/+$/, '')
-        const url = base.endsWith('/api/chat') ? base : `${base}/api/chat`
+        const url = base.endsWith('/interactions') ? base : `${base}/v1beta/interactions`
         const res = await this.fetchImpl(url, {
           method: 'POST',
           redirect: 'error',
           signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model, messages, stream: false })
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': config.apiKey,
+            'Api-Revision': GEMINI_API_REVISION
+          },
+          body: JSON.stringify({
+            model,
+            system_instruction: systemPrompt,
+            input: fullInput,
+            store: false,
+            response_format: {
+              type: 'text',
+              mime_type: 'application/json',
+              schema: COMPANION_RESPONSE_SCHEMA
+            }
+          })
         })
         if (!res.ok) {
-          return { ok: false, provider: 'ollama', error: `Ollama returned HTTP ${res.status}` }
+          return { ok: false, provider: 'gemini', error: `Gemini API returned HTTP ${res.status}` }
         }
-        const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)) as { message?: { content?: unknown } }
-        const text =
-          typeof data?.message?.content === 'string'
-            ? data.message.content.trim().slice(0, MAX_REPLY_CHARS)
-            : ''
-        if (!text) {
-          return { ok: false, provider: 'ollama', error: 'Empty response from Ollama' }
+        const data = await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)
+        const rawText = extractGeminiInteractionText(data)
+        if (!rawText) {
+          return { ok: false, provider: 'gemini', error: 'Empty response from Gemini API' }
         }
-        return { ok: true, provider: 'ollama', text }
+        const structured = parseStructuredCompanionResponse(rawText)
+        return {
+          ok: true,
+          provider: 'gemini',
+          text: structured.summary,
+          structured
+        }
       }
 
-      // openai-compatible
+      // Managed Ferry Pro Proxy (no company API keys ever shipped in the desktop binary)
       const base = endpointUrl.toString().replace(/\/+$/, '')
-      const url = base.endsWith('/chat/completions') ? base : `${base}/chat/completions`
+      const url = base.endsWith('/chat') ? base : `${base}/v1/companion/chat`
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (config.apiKey) {
         headers['Authorization'] = `Bearer ${config.apiKey}`
@@ -196,22 +419,42 @@ export class AiCompanionService {
         redirect: 'error',
         signal: controller.signal,
         headers,
-        body: JSON.stringify({ model, messages, max_tokens: 450, temperature: 0.3 })
+        body: JSON.stringify({
+          model,
+          intent: request.intent ?? 'chat',
+          prompt,
+          history: request.history ?? [],
+          workspaceSignal: request.workspaceSignal,
+          context: request.context,
+          schema: COMPANION_RESPONSE_SCHEMA
+        })
       })
       if (!res.ok) {
-        return { ok: false, provider: 'openai-compatible', error: `AI provider returned HTTP ${res.status}` }
+        return { ok: false, provider: 'ferry-pro', error: `Ferry Pro AI returned HTTP ${res.status}` }
       }
-      const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)) as {
-        choices?: Array<{ message?: { content?: unknown } }>
+      const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)) as Record<string, unknown>
+      const directStructured = normalizeStructuredOutput(data?.structured)
+      if (directStructured) {
+        return {
+          ok: true,
+          provider: 'ferry-pro',
+          text: directStructured.summary,
+          structured: directStructured
+        }
       }
-      const text =
-        typeof data?.choices?.[0]?.message?.content === 'string'
-          ? data.choices[0].message.content.trim().slice(0, MAX_REPLY_CHARS)
-          : ''
-      if (!text) {
-        return { ok: false, provider: 'openai-compatible', error: 'Empty response from AI provider' }
+      const rawText =
+        (typeof data?.text === 'string' && data.text) ||
+        extractGeminiInteractionText(data)
+      if (!rawText.trim()) {
+        return { ok: false, provider: 'ferry-pro', error: 'Empty response from Ferry Pro AI' }
       }
-      return { ok: true, provider: 'openai-compatible', text }
+      const structured = parseStructuredCompanionResponse(rawText)
+      return {
+        ok: true,
+        provider: 'ferry-pro',
+        text: structured.summary,
+        structured
+      }
     } catch (err) {
       return {
         ok: false,
@@ -226,7 +469,8 @@ export class AiCompanionService {
   /** Lightweight connectivity check against the currently saved AI provider config. */
   async testConnection(): Promise<CompanionAiChatResult> {
     return this.chat({
-      prompt: 'Reply with OK in one word.',
+      prompt: 'Reply with a JSON summary saying OK.',
+      intent: 'chat',
       history: [],
       context: { appVersion: 'test', isConnected: false, theme: 'neutral' }
     })

@@ -185,32 +185,48 @@ describe('AppSettingsStore', () => {
     expect(new AppSettingsStore().get().uiPrefs).toEqual({})
   })
 
-  it('encrypts companion AI API keys at rest, preserves on omit, and wipes when disabled', () => {
+  it('encrypts companion AI API keys at rest, preserves on omit, normalizes legacy providers, and wipes when disabled', () => {
     const store = new AppSettingsStore()
     const saved = store.setCompanionAiConfig({
-      provider: 'openai-compatible',
-      endpoint: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
-      apiKey: 'sk-live-secret'
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-2.5-flash',
+      apiKey: 'AIza-live-secret'
     })
     expect(saved).toEqual({
-      provider: 'openai-compatible',
-      endpoint: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-hydrogen',
       hasApiKey: true
     })
-    expect(JSON.stringify(disks.get('app-settings'))).not.toContain('sk-live-secret')
-    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('sk-live-secret')
+    expect(JSON.stringify(disks.get('app-settings'))).not.toContain('AIza-live-secret')
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-live-secret')
 
     // Omitting apiKey preserves the encrypted secret
     store.setCompanionAiConfig({
-      provider: 'openai-compatible',
-      endpoint: 'https://api.openai.com/v1',
-      model: 'gpt-4o'
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-argon'
     })
-    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('sk-live-secret')
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-live-secret')
+    expect(store.getCompanionAiConfig().model).toBe('gemini-4-argon')
+
+    // Legacy stored providers normalize safely to 'none'
+    disks.get('app-settings')!.companionAi = {
+      provider: 'ollama',
+      endpoint: 'http://localhost:11434',
+      model: 'llama3.2'
+    }
+    expect(store.getCompanionAiConfig()).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
+    expect(store.getDecryptedCompanionAiConfig()).toBeNull()
 
     // Disabling AI wipes the stored secret completely
+    store.setCompanionAiConfig({
+      provider: 'ferry-pro',
+      endpoint: 'https://proxy.ferry.example',
+      model: 'gemini-4-hydrogen',
+      apiKey: 'ferry-pro-secret'
+    })
     const disabled = store.setCompanionAiConfig({ provider: 'none', endpoint: '', model: '' })
     expect(disabled).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
     expect(store.getDecryptedCompanionAiConfig()).toBeNull()

@@ -1,4 +1,9 @@
-import type { CompanionReleaseHighlight } from '@shared/contract'
+import type {
+  CompanionCommandCard,
+  CompanionReleaseHighlight,
+  CompanionUiActionCard
+} from '@shared/contract'
+import { translatePlainEnglishCommandOffline } from './companionSnippets'
 import { getReleasesSince, parseSemver } from './companionVersion'
 
 export type CompanionActionId =
@@ -31,6 +36,9 @@ export interface CompanionReply {
   text: string
   /** True when the reply is a generic fallback and an opt-in AI provider may enhance it. */
   isFallback?: boolean
+  rootCause?: string
+  commandCards?: CompanionCommandCard[]
+  uiActionCards?: CompanionUiActionCard[]
   actions?: CompanionActionChip[]
   releaseCard?: {
     version: string
@@ -211,6 +219,17 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
         { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' },
         { id: 'open-shortcuts', label: 'Keyboard Shortcuts', icon: 'i-lucide-keyboard' }
       ]
+    }
+  }
+
+  const commandMatch = translatePlainEnglishCommandOffline(rawInput)
+  if (commandMatch) {
+    return {
+      isFallback: true,
+      text: commandMatch.summary,
+      commandCards: commandMatch.commandCards,
+      uiActionCards: commandMatch.uiActionCards,
+      actions: [{ id: 'open-dock-terminal', label: 'Open Terminal', icon: 'i-lucide-terminal' }]
     }
   }
 

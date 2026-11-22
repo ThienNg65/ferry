@@ -1,14 +1,20 @@
 import Conf from 'conf'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
-import type {
-  AppSettings,
-  CompanionAiConfigInfo,
-  CompanionAiConfigInput,
-  CompanionAiProvider,
-  ProxyConfig,
-  TermsAcceptance
+import {
+  DEFAULT_GEMINI_ENDPOINT,
+  normalizeGeminiModel,
+  type AppSettings,
+  type CompanionAiConfigInfo,
+  type CompanionAiConfigInput,
+  type CompanionAiProvider,
+  type ProxyConfig,
+  type TermsAcceptance
 } from '../../shared/contract'
+
+function normalizeProvider(raw: unknown): CompanionAiProvider {
+  return raw === 'gemini' || raw === 'ferry-pro' ? raw : 'none'
+}
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
 interface StoredProxy {
@@ -143,19 +149,21 @@ export class AppSettingsStore {
 
   getCompanionAiConfig(): CompanionAiConfigInfo {
     const stored = this.store.get('companionAi')
-    if (!stored) {
+    const provider = normalizeProvider(stored?.provider)
+    if (!stored || provider === 'none') {
       return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
     }
     return {
-      provider: stored.provider,
-      endpoint: stored.endpoint,
-      model: stored.model,
+      provider,
+      endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(stored.model),
       hasApiKey: Boolean(stored.secretApiKey)
     }
   }
 
   setCompanionAiConfig(input: CompanionAiConfigInput): CompanionAiConfigInfo {
-    if (input.provider === 'none') {
+    const provider = normalizeProvider(input.provider)
+    if (provider === 'none') {
       this.store.set('companionAi', null)
       return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
     }
@@ -167,10 +175,11 @@ export class AppSettingsStore {
           : undefined
         : existing?.secretApiKey
 
+    const rawEndpoint = input.endpoint.trim()
     const next: StoredCompanionAi = {
-      provider: input.provider,
-      endpoint: input.endpoint.trim(),
-      model: input.model.trim(),
+      provider,
+      endpoint: rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(input.model),
       secretApiKey
     }
     this.store.set('companionAi', next)
@@ -184,11 +193,12 @@ export class AppSettingsStore {
 
   getDecryptedCompanionAiConfig(): (CompanionAiConfigInfo & { apiKey?: string }) | null {
     const stored = this.store.get('companionAi')
-    if (!stored || stored.provider === 'none') return null
+    const provider = normalizeProvider(stored?.provider)
+    if (!stored || provider === 'none') return null
     return {
-      provider: stored.provider,
-      endpoint: stored.endpoint,
-      model: stored.model,
+      provider,
+      endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(stored.model),
       hasApiKey: Boolean(stored.secretApiKey),
       apiKey: stored.secretApiKey ? decrypt(stored.secretApiKey) : undefined
     }
