@@ -390,6 +390,39 @@ describe('sftpPipeline.transferPipelined', () => {
     }
   })
 
+  it('downloads a tree into ordinary nested directories through the guarded path pipeline', async () => {
+    const data = Buffer.from('normal-tree-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/tree/nested/probe.txt', data)
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [
+        { relPath: 'nested', isDir: true, size: 0 },
+        { relPath: 'nested/probe.txt', isDir: false, size: data.length, mtimeMs: 1_700_000_000_000 }
+      ],
+      sftp: async () => fake.sftp
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const root = path.join(tmpDir, 'ordinary-tree')
+    const transferId = queue.enqueueTree('session', 'download', root, '/remote/tree')
+    const completed = (): boolean => events.mock.calls.some(
+      ([channel, event]) => channel === EVENT_CHANNELS.transferEvent
+        && (event as TransferEvent).transferId === transferId
+        && (event as TransferEvent).state === 'done'
+    )
+
+    try {
+      await vi.waitFor(() => expect(completed()).toBe(true))
+      expect(await fs.readFile(path.join(root, 'nested', 'probe.txt'))).toEqual(data)
+      expect(await fs.readdir(path.join(root, 'nested'))).toEqual(['probe.txt'])
+    } finally {
+      queue.cancel(transferId)
+    }
+  })
+
   it('rejects symlinked local parents for tree downloads before opening SFTP files', async () => {
     const root = path.join(tmpDir, 'tree')
     const outside = path.join(tmpDir, 'outside')
