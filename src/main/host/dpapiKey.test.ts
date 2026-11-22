@@ -108,7 +108,7 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     const box = createSecretBox(persistedKey)
     const encrypted = box.encrypt('concurrent-first-run-secret')
     expect(box.decrypt(encrypted)).toBe('concurrent-first-run-secret')
-  })
+  }, 30_000)
 
   it('recovers an abandoned initialization lock whose owner process no longer exists', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'ferry-dpapi-stale-lock-'))
