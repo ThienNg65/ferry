@@ -202,6 +202,36 @@ describe('sftpPipeline.transferPipelined', () => {
     expect(fake.getStats().openHandlesLeft).toBe(0)
   })
 
+  it('validates guarded local download handles before writing bytes', async () => {
+    const data = Buffer.from('guarded-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/guarded.txt', data)
+    const destination = path.join(tmpDir, '.ferry-transfer-guarded.part')
+    const beforeLocalOpen = vi.fn(async () => undefined)
+    const afterLocalOpen = vi.fn(async (handle: import('fs/promises').FileHandle) => {
+      expect((await handle.stat()).isFile()).toBe(true)
+    })
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: destination,
+      remotePath: '/remote/guarded.txt',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined,
+      beforeLocalOpen,
+      afterLocalOpen,
+      onDestinationCreated: () => undefined
+    })
+
+    expect(beforeLocalOpen).toHaveBeenCalledTimes(2)
+    expect(afterLocalOpen).toHaveBeenCalledOnce()
+    expect(await fs.readFile(destination)).toEqual(data)
+  })
+
   it('overwrites an existing download destination when exclusive creation is not requested', async () => {
     const data = Buffer.from('new')
     const fake = createFakeSftp()
