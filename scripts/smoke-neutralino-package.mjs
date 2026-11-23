@@ -499,7 +499,7 @@ try {
   const stagedFile = join(stagedFolder, 'hello.txt')
   const stagedRoot = dirname(stagedFolder)
   const ownershipMarker = join(stagedRoot, '.ferry-stage-owner')
-  if (!existsSync(ownershipMarker) || readFileSync(ownershipMarker, 'utf8') !== 'ferry-stage-drop:v1\\n') {
+  if (!existsSync(ownershipMarker) || readFileSync(ownershipMarker, 'utf8') !== 'ferry-stage-drop:v1\n') {
     throw new Error('Packaged stage-drop did not create a valid ownership marker')
   }
 
