@@ -3,10 +3,11 @@ import { unlink } from 'fs/promises'
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'http'
 import * as os from 'os'
 import * as path from 'path'
+import { Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import WebSocket, { WebSocketServer } from 'ws'
 import { EVENT_CHANNELS } from '../shared/contract'
-import { openStageDropWriteStream } from '../main/fs/LocalFsService'
+import { openStageDropWriteStream, touchStageDropSession } from '../main/fs/LocalFsService'
 import { setHost } from '../main/host/host'
 import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
@@ -98,7 +99,13 @@ export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: str
     try {
       const opened = await openStageDropWriteStream(stageId, relativePath, modifiedAt)
       targetPath = opened.targetPath
-      await pipeline(req, opened.stream)
+      const activityStream = new Transform({
+        transform(chunk, _encoding, callback) {
+          touchStageDropSession(stageId)
+          callback(null, chunk)
+        }
+      })
+      await pipeline(req, activityStream, opened.stream)
       sendJson(res, 200, { ok: true })
     } catch (err) {
       if (targetPath) {
