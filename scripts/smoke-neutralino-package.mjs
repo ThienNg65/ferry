@@ -496,6 +496,11 @@ try {
   }
   const stagedFolder = dropRes.data[0].path
   const stagedFile = join(stagedFolder, 'hello.txt')
+  const stagedRoot = dirname(stagedFolder)
+  const ownershipMarker = join(stagedRoot, '.ferry-stage-owner')
+  if (!existsSync(ownershipMarker) || readFileSync(ownershipMarker, 'utf8') !== 'ferry-stage-drop:v1\\n') {
+    throw new Error('Packaged stage-drop did not create a valid ownership marker')
+  }
 
   const updateRes = await rpcInvoke('update:getStatus')
   if (!updateRes?.ok || updateRes.data?.currentVersion !== version) {
@@ -542,8 +547,30 @@ try {
       [...remoteFiles.keys()].some((p) => pathPosix.basename(p).startsWith('.ferry-transfer-'))) {
     throw new Error('Packaged SFTP upload did not preserve the existing .part or clean up staging')
   }
-  if (existsSync(stagedFile)) {
-    throw new Error(`Staged temp drop file was not cleaned up after upload: ${stagedFile}`)
+  if (existsSync(stagedFile) || existsSync(ownershipMarker) || existsSync(stagedRoot)) {
+    throw new Error(`Staged temp drop root was not fully cleaned up after upload: ${stagedRoot}`)
+  }
+
+  // Ordinary user data under the same public temp prefix must never be treated as Ferry-owned.
+  const unownedDropRoot = mkdtempSync(join(os.tmpdir(), 'ferry-drop-smoke-unowned-'))
+  const unownedDropFile = join(unownedDropRoot, 'keep.txt')
+  writeFileSync(unownedDropFile, 'must-survive')
+  const unownedUploadRes = await rpcInvoke('transfer:enqueue', {
+    sessionId,
+    kind: 'upload',
+    localPath: unownedDropFile,
+    remotePath: '/home/tester/uploads/unowned.txt'
+  })
+  if (!unownedUploadRes?.ok) throw new Error(`transfer:enqueue unowned upload failed: ${JSON.stringify(unownedUploadRes)}`)
+  await waitForEvent(
+    'transfer:event',
+    (e) => e?.transferId === unownedUploadRes.data.transferId && e?.state === 'done'
+  )
+  if (remoteFiles.get('/home/tester/uploads/unowned.txt')?.toString('utf8') !== 'must-survive') {
+    throw new Error('Packaged SFTP upload from a matching-prefix user directory failed')
+  }
+  if (!existsSync(unownedDropFile) || readFileSync(unownedDropFile, 'utf8') !== 'must-survive') {
+    throw new Error(`Ordinary user file under a matching-prefix directory was deleted: ${unownedDropFile}`)
   }
 
   const downloadTarget = join(tempAppData, 'downloaded-welcome.txt')
