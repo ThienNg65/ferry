@@ -166,6 +166,4 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     clearMasterKeyCache()
     expect(unwrapOrCreateMasterKey(dir).equals(key)).toBe(true)
   })
-
-
 })
