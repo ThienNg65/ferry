@@ -28,6 +28,19 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.3.4](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.3...ferry-v1.3.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* contain sidecar RPC handler rejections across transports ([#150](https://github.com/ThienNg65/ferry/issues/150)) ([55b8925](https://github.com/ThienNg65/ferry/commit/55b892531ca25a0a2eed872faa86c823c08d14e0))
+* **files:** clean staged OS drops after local moves ([#182](https://github.com/ThienNg65/ferry/issues/182)) ([d6a733b](https://github.com/ThienNg65/ferry/commit/d6a733b40d818447ea9a90145d1216ded84cfb2c))
+* **security:** serialize DPAPI master-key initialization ([#181](https://github.com/ThienNg65/ferry/issues/181)) ([812f32e](https://github.com/ThienNg65/ferry/commit/812f32eb177a306c2b5e67b3b8a4ac8f8e8aba0c))
+* **sessions:** avoid empty tabs state during closeTab for sync watchers ([#185](https://github.com/ThienNg65/ferry/issues/185)) ([cea5066](https://github.com/ThienNg65/ferry/commit/cea5066d4c09a2ac088e040174c1c134f5e9964b))
+* **ssh:** bound streamed SSH line buffers ([#178](https://github.com/ThienNg65/ferry/issues/178)) ([24f3c3a](https://github.com/ThienNg65/ferry/commit/24f3c3abd69a77aafa8a17316f9d2eac078ee09e))
+* **transfer:** reject symlinked tree download destinations ([#177](https://github.com/ThienNg65/ferry/issues/177)) ([db91bde](https://github.com/ThienNg65/ferry/commit/db91bdeb03914d78e68189a755761316a7ceeb6f))
+* verify ownership before staged-drop cleanup ([#156](https://github.com/ThienNg65/ferry/issues/156)) ([3630d0f](https://github.com/ThienNg65/ferry/commit/3630d0f3c1fe1ebf163b1b28aa57b0890336d715))
+
 ## [1.3.3](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.2...ferry-v1.3.3) (2026-11-22)
 
 
