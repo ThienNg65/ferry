@@ -78,6 +78,7 @@ let runtimeDir = protoDir
 let ranNsisInstaller = false
 let child = null
 let wss = null
+let unownedDropRoot = null
 let sshServer = null
 
 /** Starts an in-process SSH + SFTP + PTY test server for packaged end-to-end verification. */
@@ -552,7 +553,7 @@ try {
   }
 
   // Ordinary user data under the same public temp prefix must never be treated as Ferry-owned.
-  const unownedDropRoot = mkdtempSync(join(os.tmpdir(), 'ferry-drop-smoke-unowned-'))
+  unownedDropRoot = mkdtempSync(join(os.tmpdir(), 'ferry-drop-smoke-unowned-'))
   const unownedDropFile = join(unownedDropRoot, 'keep.txt')
   writeFileSync(unownedDropFile, 'must-survive')
   const unownedUploadRes = await rpcInvoke('transfer:enqueue', {
@@ -674,6 +675,13 @@ try {
     rmSync(tempInstallRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   } catch {
     // ignore OS handle release delay
+  }
+  if (unownedDropRoot) {
+    try {
+      rmSync(unownedDropRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    } catch {
+      // ignore OS handle release delay
+    }
   }
   try {
     rmSync(tempAppData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
