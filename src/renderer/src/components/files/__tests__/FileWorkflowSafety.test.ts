@@ -5,6 +5,7 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS, type FileEntry, type OperationEvent, t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
+import { useBookmarksStore } from '../../../stores/bookmarks.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import CompareDialog from '../CompareDialog.vue'
@@ -14,9 +15,10 @@ import FilePane from '../FilePane.vue'
 import SyncDialog from '../SyncDialog.vue'
 
 const confirm = vi.hoisted(() => vi.fn<(options: ConfirmOptions) => Promise<boolean>>())
+const notifyError = vi.hoisted(() => vi.fn())
 vi.mock('../../../composables/useConfirm', () => ({ useConfirm: () => confirm }))
 vi.mock('../../../composables/useNotify', () => ({
-  useNotify: () => ({ success: vi.fn(), error: vi.fn(), prompt: vi.fn() })
+  useNotify: () => ({ success: vi.fn(), error: notifyError, prompt: vi.fn() })
 }))
 vi.mock('../../../api', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../../api')>(),
@@ -69,6 +71,7 @@ const stubs = {
 
 const dialogProps = { open: true, sessionId: 'server-a', initialLocalPath: '/local', initialRemotePath: '/remote' }
 let wrapper: VueWrapper
+const originalWindowApi = Object.getOwnPropertyDescriptor(window, 'api')
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
@@ -82,6 +85,9 @@ function button(label: string) {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  const bookmarks = useBookmarksStore()
+  bookmarks.bookmarks = []
+  bookmarks.loaded = true
   vi.resetAllMocks()
   vi.mocked(invoke).mockResolvedValue(undefined)
   vi.stubGlobal('useToast', () => ({ add: vi.fn() }))
@@ -89,6 +95,8 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount()
   vi.unstubAllGlobals()
+  if (originalWindowApi) Object.defineProperty(window, 'api', originalWindowApi)
+  else Reflect.deleteProperty(window, 'api')
 })
 
 describe('sync and compare snapshots', () => {
@@ -295,5 +303,174 @@ describe('remote deletion', () => {
       expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteDelete, 'server-a', entry.path)
     }
     expect(remote.entries).toEqual([entry, second])
+  })
+
+  it('closes the sole connected tab cleanly while CompareDialog and SyncDialog sync watchers are mounted', async () => {
+    const sessions = useSessionsStore()
+    const tab = sessions.activeTab
+    Object.assign(tab, { sessionId: 'sole-session', status: 'connected', hostLabel: 'sole.example' })
+    const closedTabId = tab.tabId
+    vi.mocked(invoke).mockResolvedValue(undefined)
+
+    const compare = mount(CompareDialog, {
+      props: { open: false, sessionId: 'sole-session', initialLocalPath: '/local', initialRemotePath: '/remote' },
+      global: { stubs }
+    })
+    const sync = mount(SyncDialog, {
+      props: { open: false, sessionId: 'sole-session', initialLocalPath: '/local', initialRemotePath: '/remote' },
+      global: { stubs }
+    })
+    try {
+      await sessions.closeTab(closedTabId)
+      expect(sessions.tabs).toHaveLength(1)
+      expect(sessions.activeTabId).not.toBe(closedTabId)
+      expect(sessions.status).toBeNull()
+      expect(sessions.activeSessionId).toBeNull()
+      expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.sessionClose, 'sole-session')
+    } finally {
+      compare.unmount()
+      sync.unmount()
+    }
+  })
+})
+
+
+function setDropBridge(getPathForFile: (file: File) => string): void {
+  window.api = {
+    invoke: async () => undefined,
+    on: () => () => {},
+    off: () => {},
+    send: () => {},
+    getPathForFile,
+    getPreloadTime: () => ({ start: 0, timeOrigin: 0 })
+  }
+}
+
+function osDropEvent(...files: File[]): DragEvent {
+  return {
+    dataTransfer: {
+      types: ['Files'],
+      items: files.map((file) => ({ kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => null }))
+    }
+  } as unknown as DragEvent
+}
+
+describe('local OS drops into folders', () => {
+  const folder: FileEntry = {
+    name: 'target',
+    path: '/local/target',
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedAt: null
+  }
+
+  it('cleans a staged entry after its local move succeeds', async () => {
+    const staged: FileEntry = {
+      name: 'report.txt',
+      path: '/tmp/ferry-drop-session/report.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 7,
+      modifiedAt: null
+    }
+    setDropBridge(() => '')
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [staged] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'report.txt')))
+    await flushPromises()
+
+    const calls = vi.mocked(invoke).mock.calls
+    const renameIndex = calls.findIndex(([channel]) => channel === INVOKE_CHANNELS.fsLocalRename)
+    const cleanupIndex = calls.findIndex(([channel]) => channel === INVOKE_CHANNELS.fsLocalCleanupStagedDrop)
+    expect(renameIndex).toBeGreaterThanOrEqual(0)
+    expect(cleanupIndex).toBeGreaterThan(renameIndex)
+    expect(calls[cleanupIndex]).toEqual([
+      INVOKE_CHANNELS.fsLocalCleanupStagedDrop,
+      { paths: [staged.path] }
+    ])
+  })
+
+  it('does not clean a direct OS path under a similarly named temporary directory', async () => {
+    const directPath = 'C:\\Temp\\ferry-drop-user-data\\keep.txt'
+    setDropBridge(() => directPath)
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'keep.txt')))
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(
+      INVOKE_CHANNELS.fsLocalRename,
+      directPath,
+      '/local/target/keep.txt'
+    )
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, expect.anything())
+  })
+
+  it('refreshes the pane and preserves remaining staged items on partial multi-item move failure', async () => {
+    const first: FileEntry = { name: 'first.txt', path: '/tmp/ferry-drop-session/first.txt', isDir: false, isSymlink: false, size: 1, modifiedAt: null }
+    const second: FileEntry = { name: 'second.txt', path: '/tmp/ferry-drop-session/second.txt', isDir: false, isSymlink: false, size: 1, modifiedAt: null }
+    setDropBridge(() => '')
+    let listCalls = 0
+    vi.mocked(invoke).mockImplementation(async (channel, fromPath) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [first, second] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) {
+        listCalls += 1
+        return { path: '/local', entries: [] } as never
+      }
+      if (channel === INVOKE_CHANNELS.fsLocalRename && fromPath === second.path) {
+        throw new Error('destination denied')
+      }
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    const baselineListCalls = listCalls
+    wrapper.getComponent(FileList).vm.$emit(
+      'drop-on',
+      folder,
+      osDropEvent(new File(['1'], 'first.txt'), new File(['2'], 'second.txt'))
+    )
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: [first.path] })
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: [second.path] })
+    expect(listCalls).toBeGreaterThan(baselineListCalls)
+    expect(notifyError).toHaveBeenCalledWith('Move failed', 'destination denied')
+  })
+
+  it('reports cleanup failure without treating the completed local move as failed', async () => {
+    const staged: FileEntry = { name: 'report.txt', path: '/tmp/ferry-drop-session/report.txt', isDir: false, isSymlink: false, size: 7, modifiedAt: null }
+    setDropBridge(() => '')
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalStageDrop) return [staged] as never
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [] } as never
+      if (channel === INVOKE_CHANNELS.fsLocalCleanupStagedDrop) throw new Error('cleanup transport failed')
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('drop-on', folder, osDropEvent(new File(['payload'], 'report.txt')))
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalRename, staged.path, '/local/target/report.txt')
+    expect(notifyError).toHaveBeenCalledWith(
+      'Temporary drop cleanup failed',
+      'The item was moved, but its temporary staging folder could not be removed.'
+    )
+    expect(notifyError).not.toHaveBeenCalledWith('Move failed', expect.anything())
   })
 })

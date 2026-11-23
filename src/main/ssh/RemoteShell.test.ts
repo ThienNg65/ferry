@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { Client, ClientChannel } from 'ssh2'
 import { describe, expect, it } from 'vitest'
+import { MAX_BUFFERED_LINE_BYTES, TRUNCATED_LINE_SUFFIX } from './BoundedLineBuffer'
 import { RemoteShell } from './RemoteShell'
 
 class MockChannel extends EventEmitter {
@@ -93,6 +94,50 @@ describe('RemoteShell UTF-8 output', () => {
     await expect(execution).resolves.toBe(0)
     expect(lines).toEqual(['before' + value + 'after'])
     expect(stderr.join('')).toBe(stderrText)
+  })
+
+  it('bounds chunked unterminated stdout lines and resumes after the next newline', async () => {
+    const { shell, channel } = createHarness()
+    const lines: string[] = []
+    const execution = shell.execLines('tail -f output', {
+      timeoutMs: null,
+      onLine: (line) => lines.push(line)
+    })
+    const chunk = 'x'.repeat(16 * 1024)
+
+    for (let index = 0; index < 5; index++) {
+      channel.emit('data', Buffer.from(chunk))
+    }
+    expect(lines).toEqual([])
+
+    channel.emit('data', Buffer.from('\nnext line\n'))
+    channel.emit('close', 0)
+
+    await expect(execution).resolves.toBe(0)
+    expect(lines).toEqual([
+      'x'.repeat(MAX_BUFFERED_LINE_BYTES) + TRUNCATED_LINE_SUFFIX,
+      'next line'
+    ])
+  })
+
+  it('cancels cleanly when aborted mid-way through an oversized unterminated line', async () => {
+    const { shell, channel } = createHarness()
+    const controller = new AbortController()
+    const lines: string[] = []
+    const execution = shell.execLines('tail -f output', {
+      timeoutMs: null,
+      signal: controller.signal,
+      onLine: (line) => lines.push(line)
+    })
+
+    const chunk = Buffer.from('x'.repeat(32 * 1024))
+    channel.emit('data', chunk)
+    channel.emit('data', chunk)
+    channel.emit('data', chunk)
+    controller.abort()
+
+    await expect(execution).rejects.toMatchObject({ code: 'CANCELLED' })
+    expect(lines).toEqual([])
   })
 
   it('flushes incomplete UTF-8 sequences consistently when each command closes', async () => {

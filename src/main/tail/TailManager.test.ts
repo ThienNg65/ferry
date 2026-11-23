@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MAX_BUFFERED_LINE_BYTES, TRUNCATED_LINE_SUFFIX } from '../ssh/BoundedLineBuffer'
 import { SshError } from '../ssh/errors'
 import { EVENT_CHANNELS } from '../../shared/contract'
 import type { ExecLinesOptions, ExecResult } from '../ssh/RemoteShell'
@@ -183,6 +184,27 @@ describe('TailManager', () => {
     expect(noticeEvents()).toEqual([
       { tailId: 'tail-1', message: 'tail: file truncated' },
       { tailId: 'tail-1', message: 'second line' }
+    ])
+  })
+
+  it('bounds oversized stderr lines across chunks and resumes after the next newline', async () => {
+    execLinesImpl = async (_command, opts) => {
+      opts.onLine('FERRYPID:1')
+      const chunk = 'x'.repeat(8 * 1024)
+      for (let index = 0; index < 9; index++) {
+        opts.onStderr?.(chunk)
+      }
+      opts.onStderr?.('\nnext line\n')
+      return 0
+    }
+    const manager = TailManager.getInstance()
+
+    manager.start('tail-oversized-stderr', 'session-1', '/var/log/app.log')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(noticeEvents()).toEqual([
+      { tailId: 'tail-oversized-stderr', message: 'x'.repeat(MAX_BUFFERED_LINE_BYTES) + TRUNCATED_LINE_SUFFIX },
+      { tailId: 'tail-oversized-stderr', message: 'next line' }
     ])
   })
 

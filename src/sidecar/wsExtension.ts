@@ -12,7 +12,7 @@ import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { SshError } from '../main/ssh/errors'
 import { createNodeHost } from './nodeHost'
-import { dispatchInvoke, dispatchSend, encodeLine } from './protocol'
+import { dispatchWebSocketMessage, encodeLine } from './protocol'
 import { initSidecarServices, registerShutdownHandler, shutdownSidecarServices } from './sidecar'
 
 export interface NeutralinoExtensionOptions {
@@ -236,20 +236,13 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     } catch {
       return
     }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return
-    }
-    const msg = parsed as { event?: string; data?: Record<string, unknown> }
-    if (msg.event === 'rpc_send' && msg.data && typeof msg.data === 'object') {
-      dispatchSend(msg.data.channel, msg.data.payload)
-    } else if (msg.event === 'rpc_invoke' && msg.data && typeof msg.data === 'object') {
-      const { id, channel, args } = msg.data
-      const result = await dispatchInvoke(channel, args)
-      sendReply(id, result)
-    } else if (msg.event === 'sidecar:hello') {
-      sendReadyBroadcast()
-    } else if (msg.event === 'windowClose') {
-      void shutdown()
+
+    try {
+      await dispatchWebSocketMessage(parsed, sendReply, sendReadyBroadcast, () => {
+        void shutdown()
+      })
+    } catch {
+      console.error('sidecar: WebSocket message handling failed')
     }
   }
 

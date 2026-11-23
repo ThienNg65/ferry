@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { rename, stat, unlink, utimes } from 'fs/promises'
+import { lstat, rename, stat, unlink, utimes } from 'fs/promises'
 import * as path from 'path'
 import { host } from '../host/host'
 import { SessionManager } from '../ssh/SessionManager'
@@ -7,6 +7,7 @@ import type { RemoteShell } from '../ssh/RemoteShell'
 import { SshError } from '../ssh/errors'
 import { commitRemoteFile } from '../fs/RemoteFsService'
 import { cleanupStagedDropPath, listRecursive, mkdirRecursive as mkdirLocalRecursive } from '../fs/LocalFsService'
+import { assertSafeLocalDownloadHandle, assertSafeLocalDownloadPath, ensureSafeLocalDownloadDirectory, prepareSafeLocalDownloadRoot } from './safeLocalDownload'
 import { runConcurrent } from '../util/concurrency'
 import { transferPipelined } from './sftpPipeline'
 import { EVENT_CHANNELS, type TransferEvent, type TransferKind, type TransferState } from '../../shared/contract'
@@ -22,6 +23,8 @@ export interface TransferJob {
   kind: TransferKind
   localPath: string
   remotePath: string
+  /** Canonical root for a tree download; retained to guard resume and cleanup paths. */
+  localDownloadRoot?: string
   controller: AbortController
   /** True when this job moves a whole directory tree rather than a single file. */
   isTree: boolean
@@ -292,6 +295,7 @@ export class TransferQueue {
     }
     if (restart) {
       this.cleanupStaging(job)
+      job.localDownloadRoot = undefined
       job.sourceStamp = undefined
       job.completedFiles = undefined
       job.sourceStamps = undefined
@@ -358,7 +362,9 @@ export class TransferQueue {
         const sessionId = sessions.connectedTransferSession(job.sessionId, job.connectionIdentity)
         const op = job.kind === 'upload'
           ? sessionId && sessions.shell(sessionId).unlink(part.path)
-          : unlink(part.path)
+          : job.localDownloadRoot
+            ? assertSafeLocalDownloadPath(job.localDownloadRoot, part.path).then(() => unlink(part.path))
+            : unlink(part.path)
         if (!op) continue
         void op.catch(() => undefined)
       } catch {
@@ -500,15 +506,23 @@ export class TransferQueue {
     size: number
     resume: boolean
     remoteMtime?: Date
+    localDownloadRoot?: string
     staging: NonNullable<TransferJob['staging']>
     onProgress: (bytesTransferred: number, offset: number) => void
   }): Promise<void> {
     const sftp = await opts.shell.sftp()
     const destPath = opts.kind === 'upload' ? opts.remotePath : opts.localPath
     let part = opts.staging.get(destPath)
+    const localDownloadRoot = opts.kind === 'download' ? opts.localDownloadRoot : undefined
+    if (localDownloadRoot) {
+      await assertSafeLocalDownloadPath(localDownloadRoot, destPath)
+    }
+    if (part && localDownloadRoot) {
+      await assertSafeLocalDownloadPath(localDownloadRoot, part.path)
+    }
     let offset = 0
     if (part && opts.resume && part.offset > 0) {
-      const partSize = await (opts.kind === 'upload' ? opts.shell.stat(part.path) : stat(part.path))
+      const partSize = await (opts.kind === 'upload' ? opts.shell.stat(part.path) : lstat(part.path))
         .then((info) => info.size)
         .catch((error: unknown) => {
           const code = (error as NodeJS.ErrnoException | undefined)?.code
@@ -540,13 +554,24 @@ export class TransferQueue {
       // Display the contiguous prefix the next attempt can actually reuse.
       onProgress: (_bytesMoved, startOffset) => opts.onProgress(staging.offset, startOffset),
       onContigOffset: (contig) => { staging.offset = contig },
+      beforeLocalOpen: localDownloadRoot ? () => assertSafeLocalDownloadPath(localDownloadRoot, staging.path) : undefined,
+      afterLocalOpen: localDownloadRoot
+        ? (handle) => assertSafeLocalDownloadHandle(localDownloadRoot, staging.path, handle)
+        : undefined,
       onDestinationCreated: fresh ? () => { opts.staging.set(destPath, staging) } : undefined
     })
     if (opts.signal.aborted) throw new SshError('CANCELLED', 'Transfer cancelled')
     if (opts.kind === 'upload') {
       await commitRemoteFile(opts.shell, staging.path, destPath)
     } else {
+      if (localDownloadRoot) {
+        await assertSafeLocalDownloadPath(localDownloadRoot, staging.path)
+        await assertSafeLocalDownloadPath(localDownloadRoot, destPath)
+      }
       await rename(staging.path, destPath)
+      if (localDownloadRoot) {
+        await assertSafeLocalDownloadPath(localDownloadRoot, destPath)
+      }
       if (opts.remoteMtime) {
         await utimes(destPath, opts.remoteMtime, opts.remoteMtime).catch(() => undefined)
       }
@@ -554,10 +579,13 @@ export class TransferQueue {
     opts.staging.delete(destPath)
   }
 
-  private async removePart(opts: { shell: RemoteShell; kind: TransferKind }, partPath: string): Promise<void> {
+  private async removePart(opts: { shell: RemoteShell; kind: TransferKind; localDownloadRoot?: string }, partPath: string): Promise<void> {
     if (opts.kind === 'upload') {
       await opts.shell.unlink(partPath).catch(() => undefined)
     } else {
+      if (opts.localDownloadRoot) {
+        await assertSafeLocalDownloadPath(opts.localDownloadRoot, partPath)
+      }
       await unlink(partPath).catch(() => undefined)
     }
   }
@@ -577,7 +605,6 @@ export class TransferQueue {
     try {
       const shell = SessionManager.getInstance().shell(job.sessionId)
       const tree = kind === 'upload' ? await listRecursive(job.localPath) : await shell.readdirRecursive(job.remotePath)
-
       const files = tree.filter((e) => !e.isDir)
       const stampFor = (file: (typeof files)[number]): string => `${file.size}:${file.mtimeMs ?? ''}`
       if (job.resume && job.sourceStamps?.size) {
@@ -588,10 +615,16 @@ export class TransferQueue {
           }
         }
       }
+
+      const localDownloadRoot = kind === 'download'
+        ? job.localDownloadRoot ?? await prepareSafeLocalDownloadRoot(job.localPath)
+        : undefined
+      if (localDownloadRoot) {
+        job.localDownloadRoot = localDownloadRoot
+        await ensureSafeLocalDownloadDirectory(localDownloadRoot, localDownloadRoot)
+      }
       if (kind === 'upload') {
         await shell.mkdirRecursive(job.remotePath)
-      } else {
-        await mkdirLocalRecursive(job.localPath)
       }
 
       const dirs = tree.filter((e) => e.isDir)
@@ -603,7 +636,10 @@ export class TransferQueue {
         if (kind === 'upload') {
           await shell.mkdirRecursive(joinRemote(job.remotePath, dir.relPath))
         } else {
-          await mkdirLocalRecursive(joinLocal(job.localPath, dir.relPath))
+          if (!localDownloadRoot) {
+            throw new SshError('VALIDATION', 'The local download folder could not be resolved safely.')
+          }
+          await ensureSafeLocalDownloadDirectory(localDownloadRoot, joinLocal(localDownloadRoot, dir.relPath))
         }
       })
 
@@ -612,6 +648,13 @@ export class TransferQueue {
       job.sourceStamps ??= new Map()
 
       const completedSet = job.completedFiles
+      if (localDownloadRoot && job.resume) {
+        await runConcurrent(
+          files.filter((file) => completedSet.has(file.relPath)),
+          TREE_ITEM_CONCURRENCY,
+          async (file) => assertSafeLocalDownloadPath(localDownloadRoot, joinLocal(localDownloadRoot, file.relPath))
+        )
+      }
       const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       let doneBytes = 0
       let filesDone = 0
@@ -660,7 +703,8 @@ export class TransferQueue {
           await this.runFile({
             shell,
             kind,
-            localPath: joinLocal(job.localPath, file.relPath),
+            localPath: joinLocal(localDownloadRoot ?? job.localPath, file.relPath),
+            localDownloadRoot,
             remotePath: joinRemote(job.remotePath, file.relPath),
             signal: job.controller.signal,
             size: file.size,

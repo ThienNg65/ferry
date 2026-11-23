@@ -187,6 +187,41 @@ describe.skipIf(!serverAvailable)('TransferQueue against a real SFTP/SSH server'
     expect(await fs.readFile(path.join(localTreeRoot, 'sub', 'nested.txt'), 'utf-8')).toBe('nested-content')
   })
 
+  it('rejects a symlinked local parent during a tree download without touching the target', async () => {
+    const { remoteDir, localDir } = await freshDirs()
+    const remoteTreeRoot = `${remoteDir}/tree`
+    const shell = SessionManager.getInstance().shell(sessionId)
+    await shell.mkdirRecursive(`${remoteTreeRoot}/config`)
+    await shell.exec(`printf 'remote-data' > ${remoteTreeRoot}/config/probe.txt`)
+
+    const localTreeRoot = path.join(localDir, 'tree')
+    const outsideDir = path.join(localDir, 'outside')
+    await fs.mkdir(localTreeRoot, { recursive: true })
+    await fs.mkdir(outsideDir, { recursive: true })
+    const sentinel = path.join(outsideDir, 'probe.txt')
+    await fs.writeFile(sentinel, 'keep-me')
+    await fs.symlink(outsideDir, path.join(localTreeRoot, 'config'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    const queue = TransferQueue.getInstance()
+    const broadcast = vi.spyOn(host(), 'broadcast')
+    let transferId: string | undefined
+    const events = (): TransferEvent[] => broadcast.mock.calls
+      .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+      .map(([, event]) => event as TransferEvent)
+    const last = (): TransferEvent | undefined => events().filter((event) => event.transferId === transferId).at(-1)
+
+    try {
+      transferId = queue.enqueueTree(sessionId, 'download', localTreeRoot, remoteTreeRoot)
+      await waitFor(async () => last()?.state === 'error')
+      expect(last()?.error).toMatch(/symbolic links and reparse points/i)
+      expect(await fs.readFile(sentinel, 'utf-8')).toBe('keep-me')
+      expect(await fs.readdir(outsideDir)).toEqual(['probe.txt'])
+    } finally {
+      if (transferId) queue.cancel(transferId)
+      broadcast.mockRestore()
+    }
+  })
+
   it('cancel() on a still-queued job prevents it from ever running', async () => {
     const { remoteDir, localDir } = await freshDirs()
     // Each source file is a few hundred KB so the first MAX_CONCURRENT jobs

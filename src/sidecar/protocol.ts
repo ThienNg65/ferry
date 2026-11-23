@@ -54,10 +54,56 @@ export async function dispatchInvoke(channel: unknown, args: unknown) {
   }
   const handler = handlers.get(channel as InvokeChannel)
   if (typeof handler !== 'function') {
-    return err('UNKNOWN', `IPC channel not handled by sidecar: ${channel}`)
+    return err('UNKNOWN', 'IPC channel not handled by sidecar')
   }
-  const decodedArgs = Array.isArray(args) ? (decodeB64Deep(args) as unknown[]) : []
-  return handler({}, ...decodedArgs)
+  try {
+    const decodedArgs = Array.isArray(args) ? (decodeB64Deep(args) as unknown[]) : []
+    const result = await handler({}, ...decodedArgs)
+    if (!result.ok && result.code === 'UNKNOWN') {
+      // The IPC envelope can convert an unexpected Error into UNKNOWN with its raw message.
+      console.error('sidecar: invoke handler failed')
+      return err('UNKNOWN', 'The operation failed unexpectedly')
+    }
+    return result
+  } catch {
+    // Do not forward exception messages or stacks across the renderer boundary.
+    console.error('sidecar: invoke handler failed')
+    return err('UNKNOWN', 'The operation failed unexpectedly')
+  }
+}
+
+/** Shared invoke/reply boundary used by stdin and both WebSocket transports. */
+export async function replyToInvoke(
+  id: unknown,
+  channel: unknown,
+  args: unknown,
+  reply: (id: unknown, result: Awaited<ReturnType<typeof dispatchInvoke>>) => void
+): Promise<void> {
+  const result = await dispatchInvoke(channel, args)
+  reply(id, result)
+}
+
+export async function dispatchWebSocketMessage(
+  message: unknown,
+  sendReply: (id: unknown, result: Awaited<ReturnType<typeof dispatchInvoke>>) => void,
+  onHello: () => void,
+  onWindowClose: () => void
+): Promise<void> {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    return
+  }
+
+  const msg = message as { event?: string; data?: Record<string, unknown> }
+  if (msg.event === 'rpc_send' && msg.data && typeof msg.data === 'object') {
+    dispatchSend(msg.data.channel, msg.data.payload)
+  } else if (msg.event === 'rpc_invoke' && msg.data && typeof msg.data === 'object') {
+    const { id, channel, args } = msg.data
+    await replyToInvoke(id, channel, args, sendReply)
+  } else if (msg.event === 'sidecar:hello') {
+    onHello()
+  } else if (msg.event === 'windowClose') {
+    onWindowClose()
+  }
 }
 
 export function dispatchSend(channel: unknown, payload: unknown): void {
@@ -76,8 +122,11 @@ export function dispatchSend(channel: unknown, payload: unknown): void {
 }
 
 async function dispatch(id: unknown, channel: unknown, args: unknown, write: WriteLine): Promise<void> {
-  const result = await dispatchInvoke(channel, args)
-  write(encodeLine({ id, result }))
+  try {
+    await replyToInvoke(id, channel, args, (replyId, result) => write(encodeLine({ id: replyId, result })))
+  } catch {
+    console.error('sidecar: failed to write invoke reply')
+  }
 }
 
 export function serve(input: Readable, write: WriteLine, hooks: SidecarHooks): void {
