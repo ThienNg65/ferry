@@ -13,7 +13,8 @@ import {
   MAX_STAGE_DROP_BYTES,
   openStageDropWriteStream,
   rename,
-  stageDroppedEntries
+  stageDroppedEntries,
+  touchStageDropSession
 } from './LocalFsService'
 
 describe('LocalFsService.stageDroppedEntries', () => {
@@ -174,19 +175,167 @@ describe('LocalFsService.stageDroppedEntries', () => {
     }
   })
 
-  it('cleans tracked staging roots during shutdown cleanup', async () => {
+  it('keeps a streaming session alive when data progresses after its creation TTL', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const { stream, targetPath } = await openStageDropWriteStream(stageId, 'active.txt')
+      const stageRoot = path.dirname(targetPath)
+      stagedRoots.push(stageRoot)
+      const closed = new Promise<void>((resolve, reject) => {
+        stream.once('error', reject)
+        stream.once('close', resolve)
+      })
+
+      stream.write('first')
+      now.mockReturnValue(initialTime + 31 * 60 * 1000)
+      stream.write('second')
+      touchStageDropSession(stageId)
+
+      const nextSession = await beginStageDrop()
+      await abortStageDrop(nextSession.stageId)
+
+      expect(existsSync(stageRoot)).toBe(true)
+      await expect(finishStageDrop(stageId)).rejects.toMatchObject({ code: 'VALIDATION' })
+
+      stream.end('third')
+      await closed
+      const entries = await finishStageDrop(stageId)
+      expect(entries).toHaveLength(1)
+      expect(readFileSync(entries[0].path, 'utf8')).toBe('firstsecondthird')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+
+  it('expires an idle open stream and closes it before removing its staging root', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const { stream, targetPath } = await openStageDropWriteStream(stageId, 'idle.txt')
+      const stageRoot = path.dirname(targetPath)
+      stagedRoots.push(stageRoot)
+      await new Promise<void>((resolve, reject) => {
+        stream.once('open', resolve)
+        stream.once('error', reject)
+      })
+      const closed = new Promise<void>((resolve) => stream.once('close', resolve))
+
+      now.mockReturnValue(initialTime + 31 * 60 * 1000)
+      const nextSession = await beginStageDrop()
+      await closed
+
+      expect(stream.closed).toBe(true)
+      expect(existsSync(stageRoot)).toBe(false)
+      await abortStageDrop(nextSession.stageId)
+      await expect(finishStageDrop(stageId)).rejects.toThrow(/not found or expired/)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('refreshes an idle session when streamed activity is recorded', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const { stream, targetPath } = await openStageDropWriteStream(stageId, 'completed.txt')
+      const stageRoot = path.dirname(targetPath)
+      stagedRoots.push(stageRoot)
+      await new Promise<void>((resolve, reject) => {
+        stream.once('error', reject)
+        stream.once('close', resolve)
+        stream.end('payload')
+      })
+
+      now.mockReturnValue(initialTime + 20 * 60 * 1000)
+      touchStageDropSession(stageId)
+      now.mockReturnValue(initialTime + 40 * 60 * 1000)
+
+      const nextSession = await beginStageDrop()
+      await abortStageDrop(nextSession.stageId)
+      const entries = await finishStageDrop(stageId)
+
+      expect(existsSync(stageRoot)).toBe(true)
+      expect(entries).toHaveLength(1)
+      expect(readFileSync(entries[0].path, 'utf8')).toBe('payload')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('closes active write streams before removing an aborted staging session', async () => {
+    const { stageId } = await beginStageDrop()
+    const { stream, targetPath } = await openStageDropWriteStream(stageId, 'aborted.txt')
+    const stageRoot = path.dirname(targetPath)
+    stagedRoots.push(stageRoot)
+    stream.on('error', () => {})
+    await new Promise<void>((resolve, reject) => {
+      stream.once('open', () => resolve())
+      stream.once('error', reject)
+    })
+    const closed = new Promise<void>((resolve) => stream.once('close', resolve))
+
+    await abortStageDrop(stageId)
+    await closed
+
+    expect(stream.closed).toBe(true)
+    expect(existsSync(stageRoot)).toBe(false)
+    await expect(finishStageDrop(stageId)).rejects.toThrow(/not found or expired/)
+  })
+
+  it('refreshes the inactivity window across a multi-file staging session', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const first = await openStageDropWriteStream(stageId, 'first.txt')
+      const stageRoot = path.dirname(first.targetPath)
+      stagedRoots.push(stageRoot)
+      await new Promise<void>((resolve, reject) => {
+        first.stream.once('error', reject)
+        first.stream.once('close', resolve)
+        first.stream.end('first')
+      })
+
+      now.mockReturnValue(initialTime + 20 * 60 * 1000)
+      const second = await openStageDropWriteStream(stageId, 'second.txt')
+      await new Promise<void>((resolve, reject) => {
+        second.stream.once('error', reject)
+        second.stream.once('close', resolve)
+        second.stream.end('second')
+      })
+
+      now.mockReturnValue(initialTime + 40 * 60 * 1000)
+      const nextSession = await beginStageDrop()
+      await abortStageDrop(nextSession.stageId)
+      const entries = await finishStageDrop(stageId)
+
+      expect(entries.map((entry) => entry.name)).toEqual(['first.txt', 'second.txt'])
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('closes active streams and removes tracked staging roots during shutdown cleanup', async () => {
     const { stageId } = await beginStageDrop({ dirs: ['shutdown'] })
     const { stream, targetPath } = await openStageDropWriteStream(stageId, 'shutdown/file.txt')
     const stageRoot = path.dirname(path.dirname(targetPath))
     stagedRoots.push(stageRoot)
+    stream.on('error', () => {})
     await new Promise<void>((resolve, reject) => {
+      stream.once('open', () => resolve())
       stream.once('error', reject)
-      stream.once('close', resolve)
-      stream.end()
     })
+    const closed = new Promise<void>((resolve) => stream.once('close', resolve))
 
     await cleanupAllStagedDrops()
+    await closed
 
+    expect(stream.closed).toBe(true)
     expect(existsSync(stageRoot)).toBe(false)
   })
 
@@ -209,8 +358,9 @@ describe('LocalFsService.stageDroppedEntries', () => {
       }
     }
     await new Promise<void>((resolve, reject) => {
-      stream.on('error', reject)
-      stream.end(resolve)
+      stream.once('error', reject)
+      stream.once('close', resolve)
+      stream.end()
     })
 
     const result = await finishStageDrop(stageId)
