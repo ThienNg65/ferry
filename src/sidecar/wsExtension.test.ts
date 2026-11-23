@@ -107,7 +107,7 @@ describe('createStageDropHttpHandler', () => {
             Origin: `http://localhost:${nlPort}`,
             'X-Ferry-Token': token
           },
-          body: Readable.from(createPayloadChunks()) as unknown as BodyInit,
+          body: Readable.from(createPayloadChunks()) as unknown as NonNullable<RequestInit['body']>,
           duplex: 'half'
         } as RequestInit & { duplex: 'half' }
       )
