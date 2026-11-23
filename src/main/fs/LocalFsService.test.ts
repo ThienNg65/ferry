@@ -219,7 +219,7 @@ describe('LocalFsService.stageDroppedEntries', () => {
       const stageRoot = path.dirname(targetPath)
       stagedRoots.push(stageRoot)
       await new Promise<void>((resolve, reject) => {
-        stream.once('open', resolve)
+        stream.once('open', () => resolve())
         stream.once('error', reject)
       })
       const closed = new Promise<void>((resolve) => stream.once('close', resolve))
