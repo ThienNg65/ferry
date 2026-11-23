@@ -72,4 +72,28 @@ describe('createStageDropHttpHandler', () => {
     expect(existsSync(entries[0].path)).toBe(true)
     await cleanupStagedDropPath(entries[0].path)
   })
+  it('streams files larger than the inline staging limit without buffering them inline', async () => {
+    const { stageId } = await beginStageDrop()
+    const payload = Buffer.alloc(16 * 1024 * 1024 + 1, 0x5a)
+    const upload = await fetch(
+      `${baseUrl}/stage-drop?stageId=${encodeURIComponent(stageId)}&relativePath=over-inline-limit.bin`,
+      {
+        method: 'POST',
+        headers: {
+          Origin: `http://localhost:${nlPort}`,
+          'X-Ferry-Token': token
+        },
+        body: payload
+      }
+    )
+    expect(upload.status).toBe(200)
+
+    const entries = await finishStageDrop(stageId)
+    expect(entries).toHaveLength(1)
+    stagedRoots.push(path.dirname(entries[0].path))
+    expect(existsSync(entries[0].path)).toBe(true)
+    expect(readFileSync(entries[0].path)).toEqual(payload)
+    await cleanupStagedDropPath(entries[0].path)
+  })
+
 })
