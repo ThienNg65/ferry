@@ -8,8 +8,8 @@ test('DPAPI tests stay isolated from the installed Ferry profile', async () => {
     'utf8'
   )
 
-  assert.doesNotMatch(source, /process\.env\.APPDATA\b/)
-  assert.doesNotMatch(source, /%APPDATA%/i)
+  assert.doesNotMatch(source, /\b(?:APPDATA|USERPROFILE)\b/i)
+  assert.doesNotMatch(source, /['"]Ferry['"]/i)
   assert.doesNotMatch(source, /sites\.json/i)
   assert.match(source, /mkdtempSync\(path\.join\(tmpdir\(\)/)
 })
