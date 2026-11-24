@@ -28,6 +28,26 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.4.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.4...ferry-v1.4.0) (2026-11-24)
+
+
+### Features
+
+* **automation:** add phase labels and Director approval gate ([#189](https://github.com/ThienNg65/ferry/issues/189)) ([9bba303](https://github.com/ThienNg65/ferry/commit/9bba303f7788974ff9146b5d6179ae6aba13bb23))
+
+
+### Bug Fixes
+
+* bound OS drag-and-drop staging entry count and depth ([#167](https://github.com/ThienNg65/ferry/issues/167)) ([a4aa5cb](https://github.com/ThienNg65/ferry/commit/a4aa5cb1f21b5c4e71727ef0f165da19adf0761a))
+* **fs:** preserve active OS-drop staging sessions ([#183](https://github.com/ThienNg65/ferry/issues/183)) ([4c7bbb4](https://github.com/ThienNg65/ferry/commit/4c7bbb492b30c901cf103efa3e883ce1005dc634))
+* **monitor:** calculate process RSS with remote page size ([#168](https://github.com/ThienNg65/ferry/issues/168)) ([0a701f5](https://github.com/ThienNg65/ferry/commit/0a701f564eb83424b43a0a1ce3e72385920cbf6f))
+* **security:** scope public release token to publishing steps ([#184](https://github.com/ThienNg65/ferry/issues/184)) ([f602780](https://github.com/ThienNg65/ferry/commit/f6027806206d6bb4dc147a88e41a0012d104cfbe))
+
+
+### Tests
+
+* isolate DPAPI tests from the installed user profile ([#187](https://github.com/ThienNg65/ferry/issues/187)) ([1cbf0ae](https://github.com/ThienNg65/ferry/commit/1cbf0ae0b58a470576774a9fa0f4e50c19fa380e))
+
 ## [1.3.4](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.3...ferry-v1.3.4) (2026-11-23)
 
 
