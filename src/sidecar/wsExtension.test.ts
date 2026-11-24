@@ -1,15 +1,22 @@
-import { createServer, type Server } from 'http'
-import { existsSync, readFileSync, rmSync } from 'fs'
+import { createHash } from 'crypto'
+import { createServer } from 'http'
+import { createReadStream, existsSync, readFileSync, rmSync, statSync } from 'fs'
 import * as path from 'path'
+import { Readable } from 'stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { beginStageDrop, cleanupStagedDropPath, finishStageDrop } from '../main/fs/LocalFsService'
+import {
+  abortStageDrop,
+  beginStageDrop,
+  cleanupStagedDropPath,
+  finishStageDrop
+} from '../main/fs/LocalFsService'
 import { createStageDropHttpHandler } from './wsExtension'
 
 describe('createStageDropHttpHandler', () => {
   const token = 'secret-test-token'
   const nlPort = '45123'
   const stagedRoots: string[] = []
-  let server: Server
+  let server: ReturnType<typeof createServer>
   let baseUrl: string
 
   beforeEach(async () => {
@@ -71,5 +78,58 @@ describe('createStageDropHttpHandler', () => {
     expect(readFileSync(entries[0].path)).toEqual(payload)
     expect(existsSync(entries[0].path)).toBe(true)
     await cleanupStagedDropPath(entries[0].path)
+  })
+
+  it('streams files larger than the inline staging limit without buffering the payload in memory', async () => {
+    const payloadSize = 16 * 1024 * 1024 + 1
+    const chunkSize = 64 * 1024
+    const expectedHash = createHash('sha256')
+    for (let offset = 0; offset < payloadSize; offset += chunkSize) {
+      expectedHash.update(Buffer.alloc(Math.min(chunkSize, payloadSize - offset), 0x5a))
+    }
+    const expectedDigest = expectedHash.digest('hex')
+
+    async function* createPayloadChunks(): AsyncGenerator<Buffer> {
+      for (let offset = 0; offset < payloadSize; offset += chunkSize) {
+        yield Buffer.alloc(Math.min(chunkSize, payloadSize - offset), 0x5a)
+      }
+    }
+
+    let stageId: string | undefined
+    try {
+      const stage = await beginStageDrop()
+      stageId = stage.stageId
+      const upload = await fetch(
+        `${baseUrl}/stage-drop?stageId=${encodeURIComponent(stageId)}&relativePath=over-inline-limit.bin`,
+        {
+          method: 'POST',
+          headers: {
+            Origin: `http://localhost:${nlPort}`,
+            'X-Ferry-Token': token
+          },
+          body: Readable.from(createPayloadChunks()) as unknown as NonNullable<RequestInit['body']>,
+          duplex: 'half'
+        } as RequestInit & { duplex: 'half' }
+      )
+      expect(upload.status).toBe(200)
+
+      const entries = await finishStageDrop(stageId)
+      stageId = undefined
+      expect(entries).toHaveLength(1)
+      stagedRoots.push(path.dirname(entries[0].path))
+      expect(existsSync(entries[0].path)).toBe(true)
+      expect(statSync(entries[0].path).size).toBe(payloadSize)
+
+      const actualHash = createHash('sha256')
+      for await (const chunk of createReadStream(entries[0].path)) {
+        actualHash.update(chunk)
+      }
+      expect(actualHash.digest('hex')).toBe(expectedDigest)
+      await cleanupStagedDropPath(entries[0].path)
+    } finally {
+      if (stageId) {
+        await abortStageDrop(stageId).catch(() => undefined)
+      }
+    }
   })
 })

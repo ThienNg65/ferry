@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
+import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
 import type {
   FileEntry,
   FileListResult,
@@ -235,7 +236,7 @@ export async function mkdirRecursive(dirPath: string): Promise<void> {
 }
 
 export const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
-export const MAX_STAGE_DROP_ENTRIES = 1000
+export { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES }
 const STAGE_DROP_PREFIX = 'ferry-drop-'
 const STAGE_DROP_MARKER = '.ferry-stage-owner'
 const STAGE_DROP_MARKER_CONTENT = 'ferry-stage-drop:v1\n'
@@ -252,12 +253,13 @@ interface StageDropSession {
   topLevelOrder: string[]
   topLevelMeta: Map<string, { modifiedAt?: string }>
   writtenPaths: Set<string>
+  stagedPaths: Set<string>
   streams: Set<WriteStream>
 }
 
 const activeStageSessions = new Map<string, StageDropSession>()
 
-function normalizeStageSegments(relativePath: string): string[] {
+function normalizeStageSegments(relativePath: string, isDir = false): string[] {
   const rawRel = String(relativePath ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   if (!rawRel || /^[a-zA-Z]:/.test(rawRel)) {
     logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
@@ -273,7 +275,43 @@ function normalizeStageSegments(relativePath: string): string[] {
     logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
     throw new SshError('VALIDATION', `Unsafe dropped relative path "${relativePath}"`)
   }
+  const directoryDepth = isDir ? segments.length : segments.length - 1
+  if (directoryDepth > MAX_STAGE_DROP_DEPTH) {
+    logSecurityEvent('fs.stage_drop_depth_limit', { depth: directoryDepth, max: MAX_STAGE_DROP_DEPTH })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped folder nesting exceeds the ${MAX_STAGE_DROP_DEPTH}-level staging limit. Use the Local pane for larger transfers.`
+    )
+  }
   return segments
+}
+
+function stagePathKey(segments: string[]): string {
+  const key = segments.join('/')
+  return process.platform === 'win32' ? key.toLowerCase() : key
+}
+
+/** Reserves each unique directory and file path, including parent directories implied by files. */
+function reserveStagePaths(stagedPaths: Set<string>, segments: string[], isDir: boolean): void {
+  const directoryDepth = isDir ? segments.length : segments.length - 1
+  const keys: string[] = []
+  for (let depth = 1; depth <= directoryDepth; depth++) {
+    keys.push(stagePathKey(segments.slice(0, depth)))
+  }
+  keys.push(stagePathKey(segments))
+
+  const additions = [...new Set(keys)].filter((key) => !stagedPaths.has(key))
+  const nextCount = stagedPaths.size + additions.length
+  if (nextCount > MAX_STAGE_DROP_ENTRIES) {
+    logSecurityEvent('fs.stage_drop_entry_limit', { count: nextCount, max: MAX_STAGE_DROP_ENTRIES })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped selection exceeds the ${MAX_STAGE_DROP_ENTRIES}-item staging limit. Use the Local pane for larger transfers.`
+    )
+  }
+  for (const key of additions) {
+    stagedPaths.add(key)
+  }
 }
 
 function resolveStageTarget(stageRoot: string, segments: string[]): string {
@@ -587,7 +625,18 @@ export async function cleanupAllStagedDrops(maxAgeMs = 3_600_000): Promise<void>
 export async function beginStageDrop(req?: StageDropBeginRequest): Promise<StageDropBeginResult> {
   await sweepExpiredStageSessions()
   const dirs = Array.isArray(req?.dirs) ? req.dirs : []
-  const validatedDirs = dirs.map((d) => normalizeStageSegments(d))
+  if (dirs.length > MAX_STAGE_DROP_ENTRIES) {
+    logSecurityEvent('fs.stage_drop_entry_limit', { count: dirs.length, max: MAX_STAGE_DROP_ENTRIES })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped selection exceeds the ${MAX_STAGE_DROP_ENTRIES}-item staging limit. Use the Local pane for larger transfers.`
+    )
+  }
+  const validatedDirs = dirs.map((dir) => normalizeStageSegments(dir, true))
+  const stagedPaths = new Set<string>()
+  for (const segments of validatedDirs) {
+    reserveStagePaths(stagedPaths, segments, true)
+  }
   const stageRoot = await fs.mkdtemp(path.join(os.tmpdir(), STAGE_DROP_PREFIX))
   try {
     await createStageDropOwnershipMarker(stageRoot)
@@ -606,6 +655,7 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
     topLevelOrder: [],
     topLevelMeta: new Map(),
     writtenPaths: new Set(),
+    stagedPaths,
     streams: new Set()
   }
   activeStageDirs.add(stageRoot)
@@ -649,10 +699,11 @@ export async function openStageDropWriteStream(
     throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
   }
   const segments = normalizeStageSegments(relativePath)
-  const dedupeKey = (process.platform === 'win32' ? segments.join('/').toLowerCase() : segments.join('/'))
+  const dedupeKey = stagePathKey(segments)
   if (session.writtenPaths.has(dedupeKey)) {
     throw new SshError('VALIDATION', `Duplicate staged relative path "${relativePath}"`)
   }
+  reserveStagePaths(session.stagedPaths, segments, false)
   session.lastActivityAt = Date.now()
   session.writtenPaths.add(dedupeKey)
   const targetPath = resolveStageTarget(session.root, segments)
@@ -734,8 +785,11 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
 
   let totalBytes = 0
   const normalized: Array<{ segments: string[]; isDir: boolean; data?: Uint8Array; modifiedAt?: string }> = []
+  const stagedPaths = new Set<string>()
   for (const item of entries) {
-    const segments = normalizeStageSegments(item.relativePath)
+    const isDir = Boolean(item.isDir)
+    const segments = normalizeStageSegments(item.relativePath, isDir)
+    reserveStagePaths(stagedPaths, segments, isDir)
     const bytes = item.data ? Buffer.from(item.data) : Buffer.alloc(0)
     totalBytes += bytes.length
     if (totalBytes > MAX_STAGE_DROP_BYTES) {
@@ -746,7 +800,7 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
     }
     normalized.push({
       segments,
-      isDir: Boolean(item.isDir),
+      isDir,
       data: item.isDir ? undefined : bytes,
       modifiedAt: item.modifiedAt
     })
