@@ -244,7 +244,6 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
   })
 })
 
-
 describe('RemoteFsService POSIX rename fallback', () => {
   it('commitRemoteFile falls back to backup-and-rename when the extension callback fails', async () => {
     const target = '/srv/target.txt'
@@ -270,7 +269,7 @@ describe('RemoteFsService POSIX rename fallback', () => {
     expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
     expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
     const backupPath = shell.rename.mock.calls[0][1]
-    expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+    expect(shell.rename).toHaveBeenNthCalledWith(2, `${target}.part`, target)
     expect(shell.unlink).toHaveBeenCalledWith(backupPath)
   })
 
@@ -311,7 +310,7 @@ describe('RemoteFsService POSIX rename fallback', () => {
       expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
       expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
       const backupPath = shell.rename.mock.calls[0][1]
-      expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+      expect(shell.rename).toHaveBeenNthCalledWith(2, expect.stringContaining(`${target}.ferry-tmp-`), target)
       expect(shell.unlink).toHaveBeenCalledWith(backupPath)
     } finally {
       await rm(dir, { recursive: true, force: true })
@@ -342,7 +341,7 @@ describe('RemoteFsService POSIX rename fallback', () => {
     expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
     expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
     const backupPath = shell.rename.mock.calls[0][1]
-    expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+    expect(shell.rename).toHaveBeenNthCalledWith(2, sourcePath, target)
     expect(shell.unlink).toHaveBeenCalledWith(backupPath)
   })
 
