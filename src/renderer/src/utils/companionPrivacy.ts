@@ -59,7 +59,7 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'credential',
-    pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[A-Za-z0-9._~+/=-]{4,})/gi,
+    pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[A-Za-z0-9._~+/=-]+)/gi,
     replacement: '$1 [REDACTED]'
   },
   {
