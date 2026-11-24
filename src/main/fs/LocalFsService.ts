@@ -450,7 +450,11 @@ async function sweepExpiredStageSessions(): Promise<void> {
   const expiredSessions: StageDropSession[] = []
   for (const [id, session] of activeStageSessions) {
     // A stalled open stream is inactive too; close it when the inactivity TTL elapses.
-    if (session.pendingOpens === 0 && session.lastActivityAt <= cutoff) {
+    // Keep a session alive while a stream still has buffered or in-flight data.
+    const hasPendingWrites = [...session.streams].some(
+      (stream) => stream.writableLength > 0 || stream.writableNeedDrain
+    )
+    if (session.pendingOpens === 0 && !hasPendingWrites && session.lastActivityAt <= cutoff) {
       activeStageSessions.delete(id)
       expiredSessions.push(session)
     }
