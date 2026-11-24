@@ -39,8 +39,6 @@ jobs:
       contents: read
     env:
       PUBLIC_REPO: ThienNg65/ferry-release
-      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-      PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,17 +48,18 @@ jobs:
 
       - name: Verify public publishing access
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Configure PUBLIC_RELEASE_TOKEN with Contents: Read and write on ${PUBLIC_REPO}."
+          if ! response=$(curl --fail --silent --show-error --retry 2 --retry-delay 2 --max-time 20 "https://api.github.com/repos/${PUBLIC_REPO}"); then
+            echo "::error::Unable to verify public repository access for ${PUBLIC_REPO}."
             exit 1
           fi
-          visibility=$(gh api "repos/$PUBLIC_REPO" --jq '.visibility')
-          if [ "$visibility" != "public" ]; then
-            echo "::error::$PUBLIC_REPO must be public (got $visibility)."
+          if ! printf '%s' "$response" | grep -Eq '"visibility"[[:space:]]*:[[:space:]]*"public"'; then
+            echo "::error::${PUBLIC_REPO} must be public."
             exit 1
           fi
 
       - name: Sync public README template
+        env:
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
         run: node .github/scripts/publish-public-release.mjs --sync-readme
 
   publish-assets:
@@ -72,7 +71,6 @@ jobs:
       actions: read
     env:
       PUBLIC_REPO: ThienNg65/ferry-release
-      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
     steps:
       # Manual recovery publishes the existing tag; normal pushes use Release Please output.
       - name: Resolve release target
@@ -111,13 +109,12 @@ jobs:
       - name: Verify public publishing access
         shell: bash
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Configure PUBLIC_RELEASE_TOKEN with Contents: Read and write on ${PUBLIC_REPO}."
+          if ! response=$(curl --fail --silent --show-error --retry 2 --retry-delay 2 --max-time 20 "https://api.github.com/repos/${PUBLIC_REPO}"); then
+            echo "::error::Unable to verify public repository access for ${PUBLIC_REPO}."
             exit 1
           fi
-          visibility=$(gh api "repos/$PUBLIC_REPO" --jq '.visibility')
-          if [ "$visibility" != "public" ]; then
-            echo "::error::$PUBLIC_REPO must be public (got $visibility)."
+          if ! printf '%s' "$response" | grep -Eq '"visibility"[[:space:]]*:[[:space:]]*"public"'; then
+            echo "::error::${PUBLIC_REPO} must be public."
             exit 1
           fi
 
@@ -251,6 +248,7 @@ jobs:
       - name: Publish signed-commit-backed public GitHub Release
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           TAG: ${{ steps.target.outputs.tag_name }}
           VERSION: ${{ steps.target.outputs.version }}
           VERIFIED_SHA: ${{ steps.public-release.outputs.commit_sha }}
