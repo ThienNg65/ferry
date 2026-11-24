@@ -92,6 +92,7 @@ describe('companionPrivacy', () => {
     }
     const input = [
       'my password is hunter2',
+      'password is x',
       'the API key is ' + providerTokens.openAi,
       'secret was "a long private value"',
       ...Object.values(providerTokens)
@@ -99,6 +100,8 @@ describe('companionPrivacy', () => {
 
     const out = redactSensitiveText(input)
     expect(out.text).toContain('my password is [REDACTED]')
+    expect(out.text).toContain('password is [REDACTED]')
+    expect(out.text).not.toContain('password is x')
     expect(out.text).toContain('secret was [REDACTED]')
     for (const secret of [
       'hunter2',
