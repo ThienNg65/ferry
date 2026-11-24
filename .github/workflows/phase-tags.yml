@@ -22,7 +22,7 @@ jobs:
             const source = (item.title || "") + "\n" + (item.body || "");
             const allowed = ["intake", "discovery", "implementation", "qa", "director-approval", "release"];
             const explicitTag = source.match(/\[FERRY:([A-Z-]+)\]/i);
-            const bodyPhase = source.match(/workflow phase\s*:\s*([a-z-]+)/i);
+            const bodyPhase = source.match(/workflow[_ ]phase\s*:\s*([a-z-]+)/i);
             const phase = (explicitTag ? explicitTag[1] : bodyPhase ? bodyPhase[1] : "").toLowerCase();
             const approvalMatch = source.match(/(?:approval id|tl-apr)\s*:\s*\[?(APR-[A-Z0-9-]+)\]?/i);
 
