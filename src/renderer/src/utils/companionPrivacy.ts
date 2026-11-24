@@ -44,7 +44,7 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'auth token',
-    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b|\bAIza[0-9A-Za-z_-]{30,}\b|\bxox[a-z]-[A-Za-z0-9-]{10,}\b|\bya29\.[A-Za-z0-9_-]{20,}\b|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
     replacement: '[REDACTED_TOKEN]'
   },
   {
@@ -58,13 +58,28 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
     replacement: '$1=[REDACTED]'
   },
   {
+    label: 'credential',
+    pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[A-Za-z0-9._~+/=-]{4,})/gi,
+    replacement: '$1 [REDACTED]'
+  },
+  {
     label: 'connection string',
     pattern: /\b(?:sftp|ssh|ftp|ftps|socks5?|https?):\/\/[^\s@/'"]+:[^\s@/'"]+@[^\s'"<>]+/gi,
     replacement: '[REDACTED_CONNECTION_URL]'
   },
   {
+    label: 'absolute path',
+    pattern: /(?:"[A-Za-z]:[\\/][^"\r\n]+"|'[A-Za-z]:[\\/][^'\r\n]+'|[A-Za-z]:[\\/](?:[^\\/\s"'<>|:*?]+[\\/])*[^\\/\s"'<>|:*?]+|\\\\[A-Za-z0-9._$-]+\\[^\s"'<>]+|(?<![A-Za-z0-9.:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/g,
+    replacement: '[REDACTED_PATH]'
+  },
+  {
     label: 'SSH target',
     pattern: /\b[A-Za-z0-9._-]+@(?:(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|(?:\d{1,3}\.){3}\d{1,3}|\[[^\]]+\]|localhost|[A-Za-z0-9-]{2,})(?::\d{1,5})?/g,
+    replacement: '[REDACTED_HOST]'
+  },
+  {
+    label: 'hostname',
+    pattern: /(?<![A-Za-z0-9@/:._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,63}(?![A-Za-z0-9_-])|(?<![A-Za-z0-9@/:._-])[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]*\d[A-Za-z0-9-]*(?![A-Za-z0-9_-])/g,
     replacement: '[REDACTED_HOST]'
   },
   {
@@ -77,16 +92,12 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
     pattern: /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g,
     replacement: '[REDACTED_IP]'
   },
-  {
-    label: 'local user path',
-    pattern: /(?:[A-Za-z]:[\\/]Users[\\/]|\/(?:Users|home)\/)[^\\/\s'"<>]+/gi,
-    replacement: '[REDACTED_USER_HOME]'
-  }
+
 ]
 
 /**
- * Redacts credentials, tokens, private keys, connection strings, hostnames,
- * IP addresses, and local user profile paths before showing or submitting a draft.
+ * Redacts credentials (including natural-language forms), common provider tokens,
+ * private keys, connection strings, hostnames, IP addresses, and absolute paths.
  */
 export function redactSensitiveText(input: string): RedactionResult {
   if (!input) return { text: '', redactionCount: 0, categories: [] }
