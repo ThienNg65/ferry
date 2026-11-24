@@ -229,17 +229,37 @@ export interface ProcessSnapshot {
   comm: string
   utime: number
   stime: number
-  /** RSS in pages (not yet converted to bytes — see PAGE_SIZE_BYTES). */
+  /** RSS in pages; convert using the remote host's base page size. */
   rssPages: number
 }
 
 /**
- * Assumed page size for RSS-in-pages → bytes conversion. Correct on every
- * mainstream x86_64/aarch64 Linux distro this app targets — a documented
- * simplification rather than a second per-pid /proc/[pid]/status read just
- * for VmRSS.
+ * Fallback for minimal remote systems where `getconf PAGE_SIZE` is unavailable.
+ * This preserves Ferry's previous 4 KiB assumption; non-4-KiB hosts need getconf
+ * to report their actual base page size.
  */
-export const PAGE_SIZE_BYTES = 4096
+export const DEFAULT_PAGE_SIZE_BYTES = 4096
+
+/**
+ * Parses the positive integer byte count returned by `getconf PAGE_SIZE`.
+ * Invalid or missing output returns null so callers can apply an explicit fallback.
+ */
+export function parsePageSizeBytes(text: string): number | null {
+  const value = text.trim()
+  if (!/^\d+$/.test(value)) {
+    return null
+  }
+  const pageSizeBytes = Number(value)
+  if (!Number.isSafeInteger(pageSizeBytes) || pageSizeBytes <= 0) {
+    return null
+  }
+  return pageSizeBytes
+}
+
+/** Uses the documented 4 KiB fallback when remote page-size discovery is unavailable. */
+export function resolvePageSizeBytes(text: string): number {
+  return parsePageSizeBytes(text) ?? DEFAULT_PAGE_SIZE_BYTES
+}
 
 /**
  * Parses the @P@-delimited process-stat dump into one entry per pid. Skips
@@ -296,11 +316,12 @@ export type ProcessSample = MonitorProcessSample
 export function processCpuPercentages(
   prev: Map<number, ProcessSnapshot> | null,
   curr: ProcessSnapshot[],
-  aggregateTotalDelta: number | null
+  aggregateTotalDelta: number | null,
+  pageSizeBytes: number = DEFAULT_PAGE_SIZE_BYTES
 ): ProcessSample[] {
   return curr.map((snap) => {
     const name = snap.comm
-    const rssBytes = snap.rssPages * PAGE_SIZE_BYTES
+    const rssBytes = snap.rssPages * pageSizeBytes
     const prevSnap = prev?.get(snap.pid)
     if (!prevSnap || aggregateTotalDelta === null || aggregateTotalDelta <= 0) {
       return { pid: snap.pid, name, rssBytes, cpuPct: null }
