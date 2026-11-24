@@ -38,5 +38,8 @@ test('CI and release workflows pin the same supported Node 22 release', async ()
   }
 
   assert.equal(pkg.engines?.node, '>=22.22.2')
-  assert.match(claudeMd, new RegExp(`Node v${pinnedVersion.replace(/\./g, '\\.')}\\b`))
+  assert.ok(
+    claudeMd.includes(`Node v${pinnedVersion}`),
+    `CLAUDE.md must document Node v${pinnedVersion}`
+  )
 })
