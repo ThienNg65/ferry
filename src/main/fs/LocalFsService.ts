@@ -247,6 +247,9 @@ const activeStageDirs = new Set<string>()
 interface StageDropSession {
   root: string
   createdAt: number
+  lastActivityAt: number
+  pendingOpens: number
+  pendingOpenWaiters: Set<() => void>
   topLevelOrder: string[]
   topLevelMeta: Map<string, { modifiedAt?: string }>
   writtenPaths: Set<string>
@@ -436,17 +439,71 @@ async function hasSafeStagePathParents(stageRoot: string, targetPath: string): P
   return true
 }
 
+async function closeStageDropStreams(session: StageDropSession): Promise<void> {
+  await Promise.all(
+    [...session.streams].map(
+      (stream) =>
+        new Promise<void>((resolve) => {
+          if (stream.closed) {
+            session.streams.delete(stream)
+            resolve()
+            return
+          }
+
+          const ignoreError = () => {}
+          stream.on('error', ignoreError)
+          stream.once('close', () => {
+            stream.off('error', ignoreError)
+            session.streams.delete(stream)
+            resolve()
+          })
+          if (!stream.destroyed) {
+            stream.destroy()
+          }
+        })
+    )
+  )
+}
+
+async function waitForPendingStageOpens(session: StageDropSession): Promise<void> {
+  if (session.pendingOpens === 0) {
+    return
+  }
+  await new Promise<void>((resolve) => session.pendingOpenWaiters.add(resolve))
+}
+
+function finishPendingStageOpen(session: StageDropSession): void {
+  session.pendingOpens -= 1
+  if (session.pendingOpens === 0) {
+    for (const resolve of session.pendingOpenWaiters) {
+      resolve()
+    }
+    session.pendingOpenWaiters.clear()
+  }
+  session.lastActivityAt = Date.now()
+}
+
 async function sweepExpiredStageSessions(): Promise<void> {
   const cutoff = Date.now() - STAGE_SESSION_TTL_MS
-  const expiredRoots: string[] = []
+  const expiredSessions: StageDropSession[] = []
   for (const [id, session] of activeStageSessions) {
-    if (session.createdAt <= cutoff) {
+    // A stalled open stream is inactive too; close it when the inactivity TTL elapses.
+    // Keep a session alive while a stream still has buffered or in-flight data.
+    const hasPendingWrites = [...session.streams].some(
+      (stream) => stream.writableLength > 0 || stream.writableNeedDrain
+    )
+    if (session.pendingOpens === 0 && !hasPendingWrites && session.lastActivityAt <= cutoff) {
       activeStageSessions.delete(id)
-      activeStageDirs.delete(session.root)
-      expiredRoots.push(session.root)
+      expiredSessions.push(session)
     }
   }
-  await Promise.all(expiredRoots.map((root) => removeOwnedStageRoot(root).catch(() => false)))
+
+  await Promise.all(
+    expiredSessions.map(async (session) => {
+      await closeStageDropStreams(session)
+      await removeOwnedStageRoot(session.root).catch(() => false)
+    })
+  )
 }
 
 async function findStagedRoot(targetPath: string): Promise<string | null> {
@@ -531,9 +588,15 @@ export async function cleanupStagedDropPaths(paths: string[]): Promise<void> {
 
 /** Cleans only marked Ferry staging directories, including stale roots left by a previous process. */
 export async function cleanupAllStagedDrops(maxAgeMs = 3_600_000): Promise<void> {
+  const sessions = [...activeStageSessions.values()]
   activeStageSessions.clear()
+  await Promise.all(
+    sessions.map(async (session) => {
+      await waitForPendingStageOpens(session)
+      await closeStageDropStreams(session)
+    })
+  )
   const tracked = [...activeStageDirs]
-  activeStageDirs.clear()
   await Promise.all(tracked.map((dir) => removeOwnedStageRoot(dir).catch(() => false)))
 
   const cutoff = maxAgeMs <= 0 ? Number.POSITIVE_INFINITY : Date.now() - maxAgeMs
@@ -582,9 +645,13 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
     throw err
   }
   const stageId = randomUUID()
+  const createdAt = Date.now()
   const session: StageDropSession = {
     root: stageRoot,
-    createdAt: Date.now(),
+    createdAt,
+    lastActivityAt: createdAt,
+    pendingOpens: 1,
+    pendingOpenWaiters: new Set(),
     topLevelOrder: [],
     topLevelMeta: new Map(),
     writtenPaths: new Set(),
@@ -600,13 +667,25 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
       recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments)
       await fs.mkdir(targetPath, { recursive: true })
     }
+    if (activeStageSessions.get(stageId) !== session) {
+      throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
+    }
   } catch (err) {
     activeStageSessions.delete(stageId)
-    activeStageDirs.delete(stageRoot)
     await removeOwnedStageRoot(stageRoot).catch(() => false)
     throw err
+  } finally {
+    finishPendingStageOpen(session)
   }
   return { stageId }
+}
+
+/** Records incoming bytes or other progress for an active staging session. */
+export function touchStageDropSession(stageId: string): void {
+  const session = activeStageSessions.get(stageId)
+  if (session) {
+    session.lastActivityAt = Date.now()
+  }
 }
 
 /** Opens a validated local write stream for one file inside an active staging session. */
@@ -625,13 +704,31 @@ export async function openStageDropWriteStream(
     throw new SshError('VALIDATION', `Duplicate staged relative path "${relativePath}"`)
   }
   reserveStagePaths(session.stagedPaths, segments, false)
+  session.lastActivityAt = Date.now()
   session.writtenPaths.add(dedupeKey)
   const targetPath = resolveStageTarget(session.root, segments)
-  await fs.mkdir(path.dirname(targetPath), { recursive: true })
+  session.pendingOpens += 1
+  try {
+    await fs.mkdir(path.dirname(targetPath), { recursive: true })
+    if (activeStageSessions.get(stageId) !== session) {
+      throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
+    }
+  } finally {
+    finishPendingStageOpen(session)
+  }
   recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments, modifiedAt)
   const stream = createWriteStream(targetPath, { highWaterMark: STAGE_WRITE_HIGH_WATER_MARK })
   session.streams.add(stream)
-  stream.once('close', () => session.streams.delete(stream))
+  stream.on('drain', () => {
+    session.lastActivityAt = Date.now()
+  })
+  stream.once('finish', () => {
+    session.lastActivityAt = Date.now()
+  })
+  stream.once('close', () => {
+    session.streams.delete(stream)
+    session.lastActivityAt = Date.now()
+  })
   return {
     stream,
     targetPath
@@ -644,11 +741,14 @@ export async function finishStageDrop(stageId: string): Promise<FileEntry[]> {
   if (!session) {
     throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
   }
+  if (session.pendingOpens > 0 || [...session.streams].some((stream) => !stream.writableFinished)) {
+    throw new SshError('VALIDATION', 'Cannot finalize a staging session while files are still being written')
+  }
   activeStageSessions.delete(stageId)
+  await closeStageDropStreams(session)
   try {
     return await buildStageFileEntries(session.root, session.topLevelOrder, session.topLevelMeta)
   } catch (err) {
-    activeStageDirs.delete(session.root)
     await removeOwnedStageRoot(session.root).catch(() => false)
     throw err
   }
@@ -661,21 +761,8 @@ export async function abortStageDrop(stageId: string): Promise<void> {
     return
   }
   activeStageSessions.delete(stageId)
-  activeStageDirs.delete(session.root)
-  await Promise.all(
-    [...session.streams].map(
-      (stream) =>
-        new Promise<void>((resolve) => {
-          if (stream.closed || stream.destroyed) {
-            resolve()
-            return
-          }
-          stream.on('error', () => {})
-          stream.once('close', () => resolve())
-          stream.destroy()
-        })
-    )
-  )
+  await waitForPendingStageOpens(session)
+  await closeStageDropStreams(session)
   await removeOwnedStageRoot(session.root).catch(() => false)
 }
 
