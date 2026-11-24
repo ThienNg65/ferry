@@ -17,7 +17,7 @@ Everything in Starter works completely locally with zero subscription:
 3. **Unlimited Local Snippets & Command History:** Save custom shell snippets or run built-in DevOps commands from the **Snippets** tab with deterministic risk badges (`Read-only`, `Mutating`, `Destructive`) and recent execution history.
 4. **Plain-English -> Command Cards:** Ask for a Linux/POSIX command in plain English; Companion returns risk-badged **Command Cards** with explicit **Run in Terminal** confirmation before anything is sent to your SSH PTY.
 5. **Unlimited BYO Google Gemini API Key:** Configure your own Google AI Studio Gemini API key under **Settings -> Appearance -> Ferry Companion** (defaulting to `gemini-4-hydrogen` via the zero-retention Gemini Interactions API with `store: false`). Keys are encrypted at rest via the OS secret store (`AppSettingsStore`).
-6. **Guided Issue & Feedback Reporting:** Draft Bug Reports, Feature Suggestions, or Feedback with automatic redaction (`companionPrivacy.ts`) and a mandatory **Privacy Review** preview before opening `ThienNg65/ferry-release`.
+6. **Guided Issue & Feedback Reporting:** Draft Bug Reports, Feature Suggestions, or Feedback with automatic redaction of private keys, common provider tokens, natural-language credentials, hostnames, IP addresses, and absolute paths (`companionPrivacy.ts`), followed by a mandatory **Privacy Review** preview before opening `ThienNg65/ferry-release`.
 
 ## Ferry Pro Workspace Features
 
@@ -40,6 +40,6 @@ Manage preferences from the slider button inside the Companion header or in **Se
 
 ## Privacy & Execution Safety
 
-- Before sending any prompt, log snippet, or resource summary to Gemini or Ferry Pro AI, Ferry redacts private keys, auth tokens, credentials, `user@host`, IPv4/IPv6 addresses, and local user profile paths via `companionPrivacy.ts`.
+- Before sending any prompt, log snippet, or resource summary to Gemini or Ferry Pro AI, Ferry redacts private keys, common provider tokens, credentials (including natural-language forms), hostnames, IPv4/IPv6 addresses, and absolute paths via `companionPrivacy.ts`.
 - Gemini requests explicitly set `store: false` so prompts are not retained in cloud conversation storage.
 - Every Command Card undergoes deterministic risk classification (`classifyCommandRisk`), and clicking **Run in Terminal** always requires explicit user confirmation in a modal showing the exact command and target server.
