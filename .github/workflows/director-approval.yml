@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: director-approval-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: github-work-item-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
