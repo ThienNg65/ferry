@@ -210,6 +210,45 @@ describe('LocalFsService.stageDroppedEntries', () => {
   })
 
 
+  it('keeps a session alive while a write remains buffered beyond the inactivity TTL', async () => {
+    const initialTime = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
+    try {
+      const { stageId } = await beginStageDrop()
+      const { stream, targetPath } = await openStageDropWriteStream(stageId, 'pending.txt')
+      const stageRoot = path.dirname(targetPath)
+      stagedRoots.push(stageRoot)
+      stream.on('error', () => {})
+      await new Promise<void>((resolve, reject) => {
+        stream.once('open', resolve)
+        stream.once('error', reject)
+      })
+
+      stream.cork()
+      stream.write('pending')
+      expect(stream.writableLength).toBeGreaterThan(0)
+
+      now.mockReturnValue(initialTime + 31 * 60 * 1000)
+      const nextSession = await beginStageDrop()
+      expect(existsSync(stageRoot)).toBe(true)
+      await abortStageDrop(nextSession.stageId)
+
+      const closed = new Promise<void>((resolve, reject) => {
+        stream.once('error', reject)
+        stream.once('close', resolve)
+      })
+      stream.uncork()
+      stream.end('complete')
+      await closed
+
+      const entries = await finishStageDrop(stageId)
+      expect(entries).toHaveLength(1)
+      expect(readFileSync(entries[0].path, 'utf8')).toBe('pendingcomplete')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('expires an idle open stream and closes it before removing its staging root', async () => {
     const initialTime = Date.now()
     const now = vi.spyOn(Date, 'now').mockReturnValue(initialTime)
