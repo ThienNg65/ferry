@@ -138,7 +138,7 @@ try {
         -CertStoreLocation 'Cert:\CurrentUser\My' -NotAfter (Get-Date).AddDays(1)
     $certPath = Join-Path $temp.FullName 'test.cer'
     Export-Certificate -Cert $certificate -FilePath $certPath | Out-Null
-    Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
+    Import-Certificate -FilePath $certPath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople' | Out-Null
     & $signTool sign /fd SHA256 /sha1 $certificate.Thumbprint $testPackage
     if ($LASTEXITCODE -ne 0) { throw "SignTool failed with exit code $LASTEXITCODE." }
 
@@ -168,7 +168,7 @@ try {
         Remove-FerryTestPackage $packageName
     } finally {
         if ($certificate) {
-            foreach ($store in @('Cert:\LocalMachine\TrustedPeople', 'Cert:\CurrentUser\My')) {
+            foreach ($store in @('Cert:\CurrentUser\TrustedPeople', 'Cert:\CurrentUser\My')) {
                 $entry = Join-Path $store $certificate.Thumbprint
                 if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry }
             }
