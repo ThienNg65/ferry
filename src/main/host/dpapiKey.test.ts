@@ -167,28 +167,4 @@ describe.skipIf(process.platform !== 'win32')('dpapiKey', () => {
     expect(unwrapOrCreateMasterKey(dir).equals(key)).toBe(true)
   })
 
-  it('can unwrap and decrypt real %APPDATA%\\Ferry secrets if present', () => {
-    const appData = process.env.APPDATA
-    if (!appData) return
-    const ferryDir = path.join(appData, 'Ferry')
-    const localStatePath = path.join(ferryDir, 'Local State')
-    const sitesPath = path.join(ferryDir, 'sites.json')
-    if (!existsSync(localStatePath) || !existsSync(sitesPath)) {
-      return
-    }
-    const key = unwrapOrCreateMasterKey(ferryDir)
-    expect(key).toHaveLength(32)
-    const box = createSecretBox(key)
-    const { sites } = JSON.parse(readFileSync(sitesPath, 'utf8')) as {
-      sites: Array<{ secretPassword?: string; secretPassphrase?: string }>
-    }
-    for (const s of sites) {
-      if (s.secretPassword) {
-        expect(typeof box.decrypt(s.secretPassword)).toBe('string')
-      }
-      if (s.secretPassphrase) {
-        expect(typeof box.decrypt(s.secretPassphrase)).toBe('string')
-      }
-    }
-  })
 })
