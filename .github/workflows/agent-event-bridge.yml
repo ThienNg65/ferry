@@ -1,0 +1,52 @@
+name: ThienLabs Agent Event Bridge
+
+on:
+  repository_dispatch:
+    types: [thienlabs-director-decision, thienlabs-task-request]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  forward-event:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Capture a durable event manifest
+        env:
+          EVENT_JSON: ${{ toJson(github.event) }}
+        run: |
+          mkdir -p thienlabs-event
+          printf '%s' "$EVENT_JSON" > thienlabs-event/event.json
+          node -e "const e=require('./thienlabs-event/event.json'); if(!e.client_payload || !e.client_payload.event_version) process.exit(1); console.log('Validated event:', e.action, e.client_payload.event_type || e.client_payload.decision || 'task');"
+
+      - name: Preserve the event for an agent runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: thienlabs-agent-event-${{ github.run_id }}
+          path: thienlabs-event/event.json
+          retention-days: 30
+
+      - name: Forward to the configured agent runner
+        if: vars.THIENLABS_AGENT_RUNNER_URL != ''
+        env:
+          RUNNER_URL: ${{ vars.THIENLABS_AGENT_RUNNER_URL }}
+          RUNNER_TOKEN: ${{ secrets.THIENLABS_AGENT_RUNNER_TOKEN }}
+          EVENT_JSON: ${{ toJson(github.event) }}
+        run: |
+          if [ -z "$RUNNER_TOKEN" ]; then
+            echo "::error::THIENLABS_AGENT_RUNNER_URL is configured but THIENLABS_AGENT_RUNNER_TOKEN is missing."
+            exit 1
+          fi
+          printf '%s' "$EVENT_JSON" > thienlabs-event/event.json
+          curl --fail-with-body --silent --show-error \
+            --request POST "$RUNNER_URL" \
+            --header "Authorization: Bearer $RUNNER_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data-binary @thienlabs-event/event.json
+          echo "Event forwarded to the configured agent runner."
+
+      - name: Report queued state when no runner is configured
+        if: vars.THIENLABS_AGENT_RUNNER_URL == ''
+        run: |
+          echo "No THIENLABS_AGENT_RUNNER_URL is configured. Event manifest uploaded and retained for 30 days; the event remains queued for an executor." >> "$GITHUB_STEP_SUMMARY"
