@@ -44,16 +44,34 @@ jobs:
               return;
             }
             const approvalId = marker[1].toUpperCase();
+            const phaseMatch = metadata.match(/workflow[_ ]phase\s*:\s*([a-z-]+)/i) || metadata.match(/\[FERRY:([A-Z-]+)\]/i);
+            if (!phaseMatch || phaseMatch[1].toLowerCase() !== "director-approval") {
+              core.setFailed("An approval marker requires explicit workflow phase director-approval.");
+              return;
+            }
 
             const labelsResponse = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
             const labels = new Set(labelsResponse.data.map((label) => label.name));
-            if (!labels.has("approval:required")) {
-              core.notice("Approval gate is not pending; no action taken.");
+            if (labels.has("approval:approved") || labels.has("approval:rejected")) {
+              core.notice("A Director decision has already been recorded for " + approvalId + ".");
               return;
             }
-            if (!labels.has("phase:director-approval")) {
-              core.setFailed("Approval marker exists without phase:director-approval.");
-              return;
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            await ensureLabel("phase:director-approval", "1D76DB", "Current workflow phase: director-approval.");
+            await ensureLabel("approval:required", "B60205", "Waiting for explicit Director approval.");
+            if (!labels.has("phase:director-approval") || !labels.has("approval:required")) {
+              const additions = [];
+              if (!labels.has("phase:director-approval")) additions.push("phase:director-approval");
+              if (!labels.has("approval:required")) additions.push("approval:required");
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: additions });
             }
 
             let decision = null;
@@ -94,14 +112,6 @@ jobs:
             if (labels.has(oppositeLabel)) {
               core.setFailed("Conflicting Director decision already exists for " + approvalId + ".");
               return;
-            }
-
-            async function ensureLabel(name, color, description) {
-              try {
-                await github.rest.issues.createLabel({ owner, repo, name, color, description });
-              } catch (error) {
-                if (error.status !== 422) throw error;
-              }
             }
 
             await ensureLabel("approval:approved", "0E8A16", "Director approved this exact checkpoint.");
