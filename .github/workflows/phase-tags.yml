@@ -23,12 +23,9 @@ jobs:
             const allowed = ["intake", "discovery", "implementation", "qa", "director-approval", "release"];
             const explicitTag = source.match(/\[FERRY:([A-Z-]+)\]/i);
             const bodyPhase = source.match(/workflow[_ ]phase\s*:\s*([a-z-]+)/i);
-            const phase = (explicitTag ? explicitTag[1] : bodyPhase ? bodyPhase[1] : "").toLowerCase();
+            const phase = (explicitTag ? explicitTag[1] : bodyPhase ? bodyPhase[1] : "intake").toLowerCase();
             const approvalMatch = source.match(/(?:approval id|tl-apr)\s*:\s*\[?(APR-[A-Z0-9-]+)\]?/i);
 
-            if (!phase && !approvalMatch) {
-              core.notice("No ThienLabs workflow phase metadata found; creating shared labels for future checkpoints.");
-            }
             if (phase && !allowed.includes(phase)) {
               core.setFailed("Unknown workflow phase: " + phase);
               return;
