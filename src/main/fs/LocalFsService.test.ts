@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,8 @@ import {
   finishStageDrop,
   list,
   MAX_STAGE_DROP_BYTES,
+  MAX_STAGE_DROP_DEPTH,
+  MAX_STAGE_DROP_ENTRIES,
   openStageDropWriteStream,
   rename,
   stageDroppedEntries
@@ -76,6 +78,101 @@ describe('LocalFsService.stageDroppedEntries', () => {
         entries: [{ relativePath: 'C:/Windows/win.ini', isDir: false, data: new Uint8Array([1]) }]
       })
     ).rejects.toThrow(/Invalid dropped relative path/)
+  })
+
+  it('enforces one shared streaming entry limit across explicit and implied directories and files', async () => {
+    const dirs = Array.from({ length: 499 }, (_, index) => `parent-${index}/child`)
+    dirs.push('last')
+    const { stageId } = await beginStageDrop({ dirs })
+    const { stream, targetPath } = await openStageDropWriteStream(stageId, 'last-file.txt')
+    const stageRoot = path.dirname(targetPath)
+    stream.end()
+
+    await expect(openStageDropWriteStream(stageId, 'overflow.txt')).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_ENTRIES}-item staging limit`)
+    )
+    await abortStageDrop(stageId)
+    expect(existsSync(stageRoot)).toBe(false)
+    await expect(finishStageDrop(stageId)).rejects.toThrow(/not found or expired/)
+  })
+
+  it('rejects an oversized streaming directory list before creating a staging root', async () => {
+    const stagingRoots = () => readdirSync(os.tmpdir()).filter((name) => name.startsWith('ferry-drop-')).sort()
+    const before = stagingRoots()
+    const dirs = Array.from({ length: MAX_STAGE_DROP_ENTRIES + 1 }, (_, index) => `dir-${index}`)
+
+    await expect(beginStageDrop({ dirs })).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_ENTRIES}-item staging limit`)
+    )
+    expect(stagingRoots()).toEqual(before)
+  })
+
+  it('enforces the maximum directory depth for streaming and inline staging', async () => {
+    const atLimit = Array.from({ length: MAX_STAGE_DROP_DEPTH }, () => 'd').join('/')
+    const tooDeep = `${atLimit}/overflow`
+
+    const { stageId } = await beginStageDrop({ dirs: [atLimit] })
+    await abortStageDrop(stageId)
+    await expect(beginStageDrop({ dirs: [tooDeep] })).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_DEPTH}-level staging limit`)
+    )
+
+    const fileStage = await beginStageDrop()
+    const { stream } = await openStageDropWriteStream(fileStage.stageId, `${atLimit}/f`)
+    stream.end()
+    await abortStageDrop(fileStage.stageId)
+
+    const tooDeepFileStage = await beginStageDrop()
+    await expect(openStageDropWriteStream(tooDeepFileStage.stageId, `${tooDeep}/file.txt`)).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_DEPTH}-level staging limit`)
+    )
+    await abortStageDrop(tooDeepFileStage.stageId)
+
+    await expect(
+      stageDroppedEntries({ entries: [{ relativePath: tooDeep, isDir: true }] })
+    ).rejects.toThrow(new RegExp(`${MAX_STAGE_DROP_DEPTH}-level staging limit`))
+  })
+
+  it('stages exactly MAX_STAGE_DROP_ENTRIES inline files and directories', async () => {
+    const entries = Array.from({ length: MAX_STAGE_DROP_ENTRIES / 2 }, (_, index) => [
+      { relativePath: `dir-${index}`, isDir: true },
+      { relativePath: `dir-${index}/file.txt`, isDir: false, data: new Uint8Array() }
+    ]).flat()
+    const result = await stageDroppedEntries({ entries })
+    expect(result).toHaveLength(MAX_STAGE_DROP_ENTRIES / 2)
+    expect(result[0]).toMatchObject({ name: 'dir-0', isDir: true })
+    expect(existsSync(path.join(result[0].path, 'file.txt'))).toBe(true)
+    stagedRoots.push(path.dirname(result[0].path))
+  })
+
+  it('rejects inline files whose implied directories exceed the shared entry limit', async () => {
+    const stagingRoots = () => readdirSync(os.tmpdir()).filter((name) => name.startsWith('ferry-drop-')).sort()
+    const before = stagingRoots()
+    const entries = Array.from({ length: MAX_STAGE_DROP_ENTRIES / 2 + 1 }, (_, index) => ({
+      relativePath: `dir-${index}/file.txt`,
+      isDir: false,
+      data: new Uint8Array()
+    }))
+
+    await expect(stageDroppedEntries({ entries })).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_ENTRIES}-item staging limit`)
+    )
+    expect(stagingRoots()).toEqual(before)
+  })
+
+  it('rejects oversized inline selections before creating a staging root', async () => {
+    const stagingRoots = () => readdirSync(os.tmpdir()).filter((name) => name.startsWith('ferry-drop-')).sort()
+    const before = stagingRoots()
+    const entries = Array.from({ length: MAX_STAGE_DROP_ENTRIES + 1 }, (_, index) => ({
+      relativePath: `file-${index}.txt`,
+      isDir: false,
+      data: new Uint8Array()
+    }))
+
+    await expect(stageDroppedEntries({ entries })).rejects.toThrow(
+      new RegExp(`${MAX_STAGE_DROP_ENTRIES}-item staging limit`)
+    )
+    expect(stagingRoots()).toEqual(before)
   })
 
   it('cleans up staged drop paths and removes empty ferry-drop directories after upload', async () => {

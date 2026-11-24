@@ -2,6 +2,8 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import { collectDroppedEntry, recordCollectedDropEntry } from '../../utils/osDrop'
+import type { CollectedDropEntry, DropCollectionState, MinimalFsEntry } from '../../utils/osDrop'
 import { invoke, IpcError } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -588,55 +590,6 @@ const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
 const STAGE_STREAM_CONCURRENCY = 4
 const LARGE_DROP_TOAST_BYTES = 32 * 1024 * 1024
 
-interface MinimalFsEntry {
-  isFile: boolean
-  isDirectory: boolean
-  name: string
-  file?: (success: (f: File) => void, error?: (err: unknown) => void) => void
-  createReader?: () => { readEntries: (success: (entries: MinimalFsEntry[]) => void, error?: (err: unknown) => void) => void }
-}
-
-interface CollectedDropEntry {
-  relativePath: string
-  isDir: boolean
-  file?: File
-  modifiedAt?: string
-}
-
-async function collectDroppedEntry(
-  fsEntry: MinimalFsEntry,
-  relPath: string,
-  out: CollectedDropEntry[],
-  state: { totalBytes: number }
-): Promise<void> {
-  if (fsEntry.isFile && fsEntry.file) {
-    const file = await new Promise<File>((resolve, reject) => {
-      fsEntry.file!(resolve, reject)
-    })
-    state.totalBytes += file.size
-    out.push({
-      relativePath: relPath,
-      isDir: false,
-      file,
-      modifiedAt: new Date(file.lastModified).toISOString()
-    })
-    return
-  }
-  if (fsEntry.isDirectory && fsEntry.createReader) {
-    out.push({ relativePath: relPath, isDir: true })
-    const reader = fsEntry.createReader()
-    while (true) {
-      const batch = await new Promise<MinimalFsEntry[]>((resolve, reject) => {
-        reader.readEntries(resolve, reject)
-      })
-      if (batch.length === 0) break
-      for (const child of batch) {
-        await collectDroppedEntry(child, `${relPath}/${child.name}`, out, state)
-      }
-    }
-  }
-}
-
 function dedupRelativeName(rawName: string, seen: Set<string>): string {
   const key = rawName.toLowerCase()
   if (!seen.has(key)) {
@@ -742,12 +695,13 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<Reso
 
   const collected: CollectedDropEntry[] = []
   const seenTopNames = new Set<string>()
-  const state = { totalBytes: 0 }
+  const state: DropCollectionState = { entryCount: 0, totalBytes: 0 }
   for (const { file, fsEntry } of unresolved) {
     if (fsEntry) {
       const topName = dedupRelativeName(fsEntry.name, seenTopNames)
       await collectDroppedEntry(fsEntry, topName, collected, state)
     } else {
+      recordCollectedDropEntry(state, 0)
       state.totalBytes += file.size
       collected.push({
         relativePath: dedupRelativeName(file.name, seenTopNames),
