@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { commitRemoteFile, listRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, listRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SessionManager } from '../ssh/SessionManager'
 
 vi.mock('../ssh/SessionManager', () => ({
@@ -241,5 +241,134 @@ describe('RemoteFsService.uploadForEdit stream completion', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+
+describe('RemoteFsService POSIX rename fallback', () => {
+  it('commitRemoteFile falls back to backup-and-rename when the extension callback fails', async () => {
+    const target = '/srv/target.txt'
+    const sftp = {
+      realpath: vi.fn((_path: string, callback: (error: Error | null, resolvedPath: string) => void) =>
+        callback(null, target)
+      ),
+      ext_openssh_rename: vi.fn(
+        (_from: string, _to: string, callback: (error: Error | null) => void) =>
+          callback(new Error('Unsupported extension'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => ({ mode: 0o100644 })),
+      chmod: vi.fn(async (_path: string, _mode: string) => undefined),
+      rename: vi.fn(async (_from: string, _to: string) => undefined),
+      unlink: vi.fn(async (_path: string) => undefined)
+    }
+
+    await commitRemoteFile(shell as any, `${target}.part`, target)
+
+    expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
+    expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
+    const backupPath = shell.rename.mock.calls[0][1]
+    expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+    expect(shell.unlink).toHaveBeenCalledWith(backupPath)
+  })
+
+  it('uploadForEdit falls back to backup-and-rename when the extension callback fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ferry-posix-rename-test-'))
+    const localFile = join(dir, 'edit.txt')
+    const target = '/srv/edit.txt'
+    await writeFile(localFile, 'updated contents')
+
+    const stream = new Writable({
+      autoDestroy: false,
+      write(_chunk, _encoding, callback) {
+        callback()
+      }
+    })
+    const sftp = {
+      realpath: vi.fn((_path: string, callback: (error: Error | null, resolvedPath: string) => void) =>
+        callback(null, target)
+      ),
+      createWriteStream: vi.fn(() => stream),
+      ext_openssh_rename: vi.fn(
+        (_from: string, _to: string, callback: (error: Error | null) => void) =>
+          callback(new Error('Unsupported extension'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => ({ mode: 0o100644, mtime: 0, size: 16 })),
+      chmod: vi.fn(async (_path: string, _mode: string) => undefined),
+      rename: vi.fn(async (_from: string, _to: string) => undefined),
+      unlink: vi.fn(async (_path: string) => undefined)
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    try {
+      await uploadForEdit('sess-1', localFile, target)
+
+      expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
+      expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
+      const backupPath = shell.rename.mock.calls[0][1]
+      expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+      expect(shell.unlink).toHaveBeenCalledWith(backupPath)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('renameRemote falls back to backup-and-rename when the extension callback fails', async () => {
+    const sourcePath = '/srv/source.txt'
+    const target = '/srv/target.txt'
+    const source = { isDirectory: () => false }
+    const destination = { isDirectory: () => false }
+    const sftp = {
+      ext_openssh_rename: vi.fn(
+        (_from: string, _to: string, callback: (error: Error | null) => void) =>
+          callback(new Error('Unsupported extension'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      lstat: vi.fn().mockResolvedValueOnce(destination).mockResolvedValueOnce(source),
+      rename: vi.fn(async (_from: string, _to: string) => undefined),
+      unlink: vi.fn(async (_path: string) => undefined)
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    await renameRemote('sess-1', sourcePath, target, true)
+
+    expect(sftp.ext_openssh_rename).toHaveBeenCalledTimes(1)
+    expect(shell.rename).toHaveBeenNthCalledWith(1, target, expect.stringContaining(`${target}.ferry-bak-`))
+    const backupPath = shell.rename.mock.calls[0][1]
+    expect(shell.rename).toHaveBeenNthCalledWith(2, backupPath, target)
+    expect(shell.unlink).toHaveBeenCalledWith(backupPath)
+  })
+
+  it('surfaces standard SFTP replacement errors after a POSIX rename callback failure', async () => {
+    const target = '/srv/target.txt'
+    const permissionError = new Error('Permission denied')
+    const sftp = {
+      realpath: vi.fn((_path: string, callback: (error: Error | null, resolvedPath: string) => void) =>
+        callback(null, target)
+      ),
+      ext_openssh_rename: vi.fn(
+        (_from: string, _to: string, callback: (error: Error | null) => void) =>
+          callback(new Error('Unsupported extension'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => ({ mode: 0o100644 })),
+      chmod: vi.fn(async (_path: string, _mode: string) => undefined),
+      rename: vi.fn(async (_from: string, _to: string) => {
+        throw permissionError
+      }),
+      unlink: vi.fn(async (_path: string) => undefined)
+    }
+
+    await expect(commitRemoteFile(shell as any, `${target}.part`, target)).rejects.toBe(permissionError)
+    expect(shell.rename).toHaveBeenCalledTimes(1)
   })
 })
