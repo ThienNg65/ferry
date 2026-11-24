@@ -80,4 +80,97 @@ describe('companionPrivacy', () => {
     expect(out.text).not.toContain('::1')
     expect(out.text).not.toContain('alice')
   })
+
+  it('redacts natural-language credentials and common provider token formats', () => {
+    const providerTokens = {
+      openAi: ['sk-', 'proj-', 'abcdefghijklmnopqrstuvwxyz123456'].join(''),
+      anthropic: ['sk-', 'ant-api03-', 'abcdefghijklmnopqrstuvwxyz123456'].join(''),
+      google: ['AIza', 'SyDabcdefghijklmnopqrstuvwxyz1234567890'].join(''),
+      slack: ['xoxb-', '1234567890-', '1234567890'].join(''),
+      stripe: ['sk', '_live_', '1234567890abcdefghijklmnop'].join(''),
+      googleOAuth: ['ya29.', 'abcdefghijklmnopqrstuvwxyz123456'].join('')
+    }
+    const input = [
+      'my password is hunter2',
+      'the API key is ' + providerTokens.openAi,
+      'secret was "a long private value"',
+      ...Object.values(providerTokens)
+    ].join('\n')
+
+    const out = redactSensitiveText(input)
+    expect(out.text).toContain('my password is [REDACTED]')
+    expect(out.text).toContain('secret was [REDACTED]')
+    for (const secret of [
+      'hunter2',
+      'a long private value',
+      ...Object.values(providerTokens)
+    ]) {
+      expect(out.text).not.toContain(secret)
+    }
+    expect(out.categories).toContain('credential')
+    expect(out.categories).toContain('auth token')
+  })
+
+  it('redacts bare hostnames and absolute Windows, UNC, and POSIX paths without changing ordinary prose or URLs', () => {
+    const input = [
+      'Connect to prod.internal.example.com and db-01.',
+      'Windows: D:\\Secrets\\customer-prod\\ssh_config',
+      'UNC: \\\\fileserver\\finance\\backup',
+      'POSIX: /etc/ssh/sshd_config',
+      'Ordinary prose: production database and server are healthy.',
+      'Documentation URL: https://api.github.com/docs/ssh/config'
+    ].join('\n')
+
+    const out = redactSensitiveText(input)
+    for (const sensitiveValue of [
+      'prod.internal.example.com',
+      'db-01',
+      'D:\\Secrets\\customer-prod\\ssh_config',
+      '\\\\fileserver\\finance\\backup',
+      '/etc/ssh/sshd_config'
+    ]) {
+      expect(out.text).not.toContain(sensitiveValue)
+    }
+    expect(out.text).toContain('production database')
+    expect(out.text).toContain('server are healthy')
+    expect(out.text).toContain('https://api.github.com/docs/ssh/config')
+    expect(out.categories).toContain('hostname')
+    expect(out.categories).toContain('absolute path')
+  })
+
+  it('redacts sensitive values across every public issue field and optional diagnostics', () => {
+    const providerToken = ['sk-', 'proj-', 'abcdefghijklmnopqrstuvwxyz123456'].join('')
+    const slackToken = ['xoxb-', '1234567890-', '1234567890'].join('')
+    const draft = buildGitHubIssueDraft(
+      {
+        category: 'bug',
+        title: 'Cannot connect to db-01',
+        details: 'Host prod.internal.example.com; password is hunter2; config D:\\Secrets\\customer-prod\\ssh_config',
+        expected: 'Read /etc/ssh/sshd_config',
+        actual: 'The API key is ' + providerToken,
+        includeDiagnostics: true
+      },
+      {
+        appVersion: '1.3.2',
+        platform: 'Windows',
+        lastErrorSummary: 'UNC path \\\\fileserver\\finance\\backup failed with ' + slackToken
+      }
+    )
+    const params = new URL(draft.url).searchParams
+    const serialized = [draft.title, draft.markdown, params.get('title'), params.get('body')].join('\n')
+
+    for (const sensitiveValue of [
+      'db-01',
+      'prod.internal.example.com',
+      'hunter2',
+      'D:\\Secrets\\customer-prod\\ssh_config',
+      '/etc/ssh/sshd_config',
+      providerToken,
+      '\\\\fileserver\\finance\\backup',
+      slackToken
+    ]) {
+      expect(serialized).not.toContain(sensitiveValue)
+    }
+  })
+
 })
