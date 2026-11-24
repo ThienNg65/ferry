@@ -220,7 +220,7 @@ describe('LocalFsService.stageDroppedEntries', () => {
       stagedRoots.push(stageRoot)
       stream.on('error', () => {})
       await new Promise<void>((resolve, reject) => {
-        stream.once('open', resolve)
+        stream.once('open', () => resolve())
         stream.once('error', reject)
       })
 
