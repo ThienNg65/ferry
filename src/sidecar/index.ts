@@ -11,6 +11,7 @@ process.on('unhandledRejection', (reason) => {
   const stack = reason instanceof Error ? reason.stack : undefined
   console.error('sidecar: unhandledRejection:', reason)
   logAppEvent('error', 'process.unhandled_rejection', { message, ...(stack ? { stack } : {}) })
+  process.exit(1)
 })
 
 process.on('uncaughtException', (err) => {
