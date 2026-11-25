@@ -29,15 +29,20 @@ describe('operations.ipc', () => {
   })
 
   describe('operation:cancel', () => {
-    it('forwards the operationId (stringified) to OperationRegistry.cancel', async () => {
+    it('forwards a valid operationId to OperationRegistry.cancel', async () => {
       const result = await invoke('operation:cancel', 'op-1')
       expect(operationRegistryMock.cancel).toHaveBeenCalledWith('op-1')
       expect(result).toEqual({ ok: true, data: undefined })
     })
 
-    it('coerces a non-string operationId to a string before forwarding', async () => {
-      await invoke('operation:cancel', 123)
-      expect(operationRegistryMock.cancel).toHaveBeenCalledWith('123')
+    it('rejects non-string or empty operationId with VALIDATION code', async () => {
+      const nonString = await invoke('operation:cancel', 123)
+      expect(nonString).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+      const empty = await invoke('operation:cancel', '   ')
+      expect(empty).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+      expect(operationRegistryMock.cancel).not.toHaveBeenCalled()
     })
 
     it('wraps a thrown error from cancel into an error envelope', async () => {

@@ -695,9 +695,9 @@ export class RemoteShell {
    * Recursively deletes a remote path (file or directory) via a single
    * `rm -rf` exec — one round-trip regardless of tree size, matching what a
    * user running `rm -rf` themselves over a plain SSH shell would see. Falls
-   * back to {@link deleteRecursiveSftp}'s per-entry SFTP walk only when exec
-   * isn't usable at all (e.g. an sftp-only chroot/jail account with no shell)
-   * or the shell command itself fails.
+   * back to {@link deleteRecursiveSftp}'s per-entry SFTP walk when exec is
+   * unavailable or fails for another reason. Timeouts and cancellations are
+   * propagated so a second delete path does not start after interruption.
    */
   async deleteRecursive(remotePath: string): Promise<void> {
     const trimmed = (remotePath ?? '').trim()
@@ -712,8 +712,11 @@ export class RemoteShell {
       if (result.code === 0) {
         return
       }
-    } catch {
-      // No exec capability at all — fall through to the SFTP-only path below.
+    } catch (e) {
+      if (e instanceof SshError && (e.code === 'CANCELLED' || e.code === 'SSH_TIMEOUT')) {
+        throw e
+      }
+      // Exec is unavailable or the shell command failed — use the SFTP-only fallback.
     }
     await this.deleteRecursiveSftp(remotePath)
   }

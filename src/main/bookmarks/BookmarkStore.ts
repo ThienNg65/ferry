@@ -70,7 +70,7 @@ export class BookmarkStore {
 
   /** Removes every remote bookmark belonging to a site, called when that site itself is deleted so bookmarks never outlive their site. */
   deleteForSite(siteId: string): void {
-    const bookmarks = this.store.get('bookmarks').filter((b) => b.siteId !== siteId)
+    const bookmarks = this.list().filter((b) => b.siteId !== siteId)
     this.store.set('bookmarks', bookmarks)
   }
 

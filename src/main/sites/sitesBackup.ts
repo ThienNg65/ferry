@@ -1,4 +1,5 @@
 import type { JumpHostConfig, ProxyConfig, SiteEnvironment, SiteInput } from '../../shared/contract'
+import { SshError } from '../ssh/errors'
 
 const AUTH_METHODS = ['password', 'privateKey', 'agent']
 const HOP_AUTH_METHODS = ['password', 'privateKey']
@@ -62,7 +63,7 @@ function parseProxy(raw: unknown): ProxyConfig {
   }
 }
 
-function parseSite(raw: unknown, index: number): SiteInput {
+function parseSite(raw: unknown, _index: number): SiteInput {
   if (!isObject(raw)) {
     throw new Error('not an object')
   }
@@ -93,16 +94,16 @@ export function parseSitesBackup(text: string): SiteInput[] {
   try {
     data = JSON.parse(text)
   } catch {
-    throw new Error('File is not valid JSON')
+    throw new SshError('VALIDATION', 'File is not valid JSON')
   }
   if (!isObject(data) || data.schemaVersion !== 1 || !Array.isArray(data.sites)) {
-    throw new Error('Not a Ferry sites backup (expected schemaVersion 1)')
+    throw new SshError('VALIDATION', 'Not a Ferry sites backup (expected schemaVersion 1)')
   }
   return data.sites.map((raw, index) => {
     try {
       return parseSite(raw, index)
     } catch (e) {
-      throw new Error(`Site ${index + 1}: ${e instanceof Error ? e.message : String(e)}`)
+      throw new SshError('VALIDATION', `Site ${index + 1}: ${e instanceof Error ? e.message : String(e)}`)
     }
   })
 }

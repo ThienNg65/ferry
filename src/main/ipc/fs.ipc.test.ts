@@ -22,7 +22,9 @@ vi.mock('../fs/LocalFsService', () => ({
 vi.mock('../fs/RemoteFsService', () => ({
   listRemote: vi.fn(),
   mkdirRemote: vi.fn(),
+  touchRemote: vi.fn(),
   renameRemote: vi.fn(),
+  adminRemote: vi.fn(),
   chmodRemote: vi.fn(),
   readFile: vi.fn(),
   removeRemote: vi.fn()
@@ -97,6 +99,12 @@ describe('fs.ipc', () => {
   it('fs:local:writeFile forwards the request object', async () => {
     await invoke('fs:local:writeFile', { path: '/tmp/a.txt', content: 'hello' })
     expect(LocalFs.writeFileText).toHaveBeenCalledWith('/tmp/a.txt', 'hello')
+  })
+
+  it('fs:local:writeFile allows empty string content', async () => {
+    const result = await invoke('fs:local:writeFile', { path: '/tmp/empty.txt', content: '' })
+    expect(LocalFs.writeFileText).toHaveBeenCalledWith('/tmp/empty.txt', '')
+    expect(result).toEqual({ ok: true, data: undefined })
   })
 
   it('fs:local:stage-drop forwards staged entries to LocalFsService', async () => {
@@ -188,5 +196,58 @@ describe('fs.ipc', () => {
     vi.mocked(LocalFs.list).mockRejectedValueOnce(new Error('ENOENT'))
     const result = await invoke('fs:local:list', '/missing')
     expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'ENOENT' })
+  })
+
+  describe('runtime payload validation', () => {
+    it('rejects malformed local fs payloads with VALIDATION', async () => {
+      expect(await invoke('fs:local:list', 123)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:touch', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:mkdir', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:rename', '/tmp/a', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:rename', '/tmp/a', '/tmp/b', 'yes')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:delete', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:readFile', 42)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:writeFile', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:writeFile', { path: '/tmp/a.txt', content: 123 })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('fs:local:stage-drop', { entries: 'not-array' })).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:stage-drop', { entries: [{ relativePath: '', isDir: false }] })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('fs:local:stage-drop-begin', { dirs: [123] })).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:stage-drop-finish', {})).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:stage-drop-abort', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:cleanup-staged-drop', { paths: 'bad' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(LocalFs.touch).not.toHaveBeenCalled()
+      expect(LocalFs.writeFileText).not.toHaveBeenCalled()
+    })
+
+    it('rejects malformed remote fs payloads with VALIDATION before calling services or OperationRegistry', async () => {
+      expect(await invoke('fs:remote:list', '', '/root')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:list', 'sess-1', 123)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:mkdir', 'sess-1', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:touch', '', '/root/a')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:rename', 'sess-1', '/root/a', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:delete', 'sess-1', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:deleteMany', { sessionId: 'sess-1', paths: 'bad' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('fs:remote:admin', { sessionId: '', path: '/root/a' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('fs:remote:chmod', 'sess-1', '/root/a', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:remote:readFile', '', '/root/a')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(RemoteFs.removeRemote).not.toHaveBeenCalled()
+      expect(RemoteFs.adminRemote).not.toHaveBeenCalled()
+      expect(operationRegistryMock.run).not.toHaveBeenCalled()
+    })
   })
 })

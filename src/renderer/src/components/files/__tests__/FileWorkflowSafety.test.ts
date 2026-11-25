@@ -476,6 +476,62 @@ describe('local OS drops into folders', () => {
   })
 })
 
+describe('local file editing', () => {
+  it('opens EditorDialog for local text files up to 5 MB and external editor for non-text files', async () => {
+    const textFile: FileEntry = { name: 'notes.txt', path: '/local/notes.txt', isDir: false, isSymlink: false, size: 128, modifiedAt: null }
+    const imageFile: FileEntry = { name: 'photo.png', path: '/local/photo.png', isDir: false, isSymlink: false, size: 128, modifiedAt: null }
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [textFile, imageFile] } as never
+      if (channel === INVOKE_CHANNELS.fsLocalReadFile) {
+        return { path: textFile.path, content: 'notes', truncated: false } as never
+      }
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, {
+      props: { side: 'local' },
+      global: { stubs: { ...stubs, EditorDialog: false } }
+    })
+    await vi.dynamicImportSettled()
+
+    wrapper.getComponent(FileList).vm.$emit('edit', textFile)
+    await flushPromises()
+
+    const editor = wrapper.findComponent(EditorDialog)
+    expect(editor.exists()).toBe(true)
+    expect(editor.props()).toMatchObject({
+      open: true,
+      editId: null,
+      localTempPath: '/local/notes.txt',
+      remotePath: null
+    })
+
+    wrapper.getComponent(FileList).vm.$emit('edit', imageFile)
+    await flushPromises()
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenLocal, '/local/photo.png')
+  })
+
+  it('refreshes localFs when saving a local file in EditorDialog', async () => {
+    const localFs = useLocalFsStore()
+    localFs.currentPath = '/local'
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ content: 'before', truncated: false } as never)
+      .mockResolvedValueOnce(undefined as never)
+      .mockResolvedValueOnce({ path: '/local', entries: [] } as never)
+
+    wrapper = mount(EditorDialog, {
+      props: { open: true, editId: null, localTempPath: '/local/notes.txt', remotePath: null },
+      global: { stubs }
+    })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('after')
+    await button('Save').trigger('click')
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalWriteFile, { path: '/local/notes.txt', content: 'after' })
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalList, '/local')
+  })
+})
 
 describe('archive operation refresh targets', () => {
   it('does not reload a newly selected local directory when compression finishes', async () => {
