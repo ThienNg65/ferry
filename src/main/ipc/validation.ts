@@ -8,7 +8,7 @@ const PROXY_MODES = ['inherit', 'none', 'custom'] as const
 const PROXY_TYPES = ['socks5', 'http'] as const
 const SITE_ENVIRONMENTS: readonly SiteEnvironment[] = ['prod', 'staging', 'dev']
 
-function failValidation(channel: string, message: string): never {
+export function failValidation(channel: string, message: string): never {
   logSecurityEvent('ipc.validation_rejected', { channel, message })
   throw new SshError('VALIDATION', message)
 }
