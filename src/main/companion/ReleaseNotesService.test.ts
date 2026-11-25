@@ -107,4 +107,30 @@ describe('ReleaseNotesService', () => {
     const res2 = await svc2.getReleases()
     expect(res2.releases[0].url).toBe('https://github.com/ThienNg65/ferry-release/releases')
   })
+
+  it('aborts streaming release feeds exceeding 1 MB without Content-Length', async () => {
+    const cancelMock = vi.fn().mockResolvedValue(undefined)
+    let chunksRead = 0
+    const chunk = new Uint8Array(64 * 1024).fill(97)
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: {
+        getReader: () => ({
+          read: async () => {
+            chunksRead += 1
+            if (chunksRead > 20) return { done: true, value: undefined }
+            return { done: false, value: chunk }
+          },
+          cancel: cancelMock
+        })
+      }
+    })
+    const svc = new ReleaseNotesService({ fetchImpl: fetchImpl as unknown as typeof fetch })
+    const res = await svc.getReleases()
+    expect(res.offlineFallback).toBe(true)
+    expect(res.error).toContain('exceeded size limit')
+    expect(cancelMock).toHaveBeenCalledTimes(1)
+  })
 })

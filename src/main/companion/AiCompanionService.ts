@@ -4,6 +4,7 @@ import {
   DEFAULT_GEMINI_MODEL,
   escalateCommandRisk,
   normalizeGeminiModel,
+  sanitizeCompanionCommand,
   type CompanionAiChatRequest,
   type CompanionAiChatResult,
   type CompanionAiIntent,
@@ -11,14 +12,17 @@ import {
   type CompanionCommandCard,
   type CompanionCommandRisk,
   type CompanionStructuredOutput,
-  type CompanionUiActionCard
+  type CompanionUiActionCard,
+  type CompanionWorkspaceSignal
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
+import { readJsonWithLimit } from './httpJson'
 
 export { classifyCommandRisk, DEFAULT_GEMINI_ENDPOINT, DEFAULT_GEMINI_MODEL, escalateCommandRisk }
 
 const AI_TIMEOUT_MS = 15_000
 const MAX_HISTORY_TURNS = 6
+const MAX_HISTORY_TURN_CHARS = 1_000
 const MAX_PROMPT_CHARS = 2_000
 const MAX_REPLY_CHARS = 4_000
 const MAX_AI_RESPONSE_BYTES = 256 * 1024
@@ -73,31 +77,58 @@ function sanitizeErrorMessage(err: unknown, apiKey?: string): string {
   return msg.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^\s/@]+@/g, '$1[REDACTED]@')
 }
 
-async function readJsonWithLimit(res: Response, maxBytes: number): Promise<unknown> {
-  const contentLength = Number(res.headers?.get?.('content-length') ?? 0)
-  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error('AI response exceeded size limit')
+function normalizeHistory(
+  rawHistory: CompanionAiChatRequest['history']
+): Array<{ role: 'user' | 'assistant'; text: string }> {
+  if (!Array.isArray(rawHistory)) return []
+  return rawHistory
+    .slice(-MAX_HISTORY_TURNS)
+    .filter(
+      (m): m is { role: 'user' | 'assistant'; text: string } =>
+        Boolean(
+          m &&
+            typeof m === 'object' &&
+            (m.role === 'user' || m.role === 'assistant') &&
+            typeof m.text === 'string' &&
+            m.text.trim()
+        )
+    )
+    .map((m) => ({
+      role: m.role,
+      text: m.text.trim().slice(0, MAX_HISTORY_TURN_CHARS)
+    }))
+}
+
+function normalizeWorkspaceSignal(raw: CompanionWorkspaceSignal | undefined): CompanionWorkspaceSignal | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: CompanionWorkspaceSignal = {}
+  if (typeof raw.logPath === 'string' && raw.logPath.trim()) {
+    out.logPath = raw.logPath.replace(/[\r\n]+/g, ' ').trim().slice(0, 256)
   }
-  if (!res.body || typeof res.body.getReader !== 'function') {
-    return res.json()
+  if (typeof raw.logSnippet === 'string' && raw.logSnippet.trim()) {
+    out.logSnippet = raw.logSnippet.trim().slice(0, 2500)
   }
-  const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    if (value) {
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {})
-        throw new Error('AI response exceeded size limit')
-      }
-      chunks.push(value)
-    }
+  if (typeof raw.monitorSummary === 'string' && raw.monitorSummary.trim()) {
+    out.monitorSummary = raw.monitorSummary.trim().slice(0, 1500)
   }
-  const merged = Buffer.concat(chunks)
-  return JSON.parse(merged.toString('utf8'))
+  return out.logPath || out.logSnippet || out.monitorSummary ? out : undefined
+}
+
+function buildGeminiInteractionsUrl(endpointUrl: URL): string {
+  const base = endpointUrl.toString().replace(/\/+$/, '')
+  if (base.endsWith('/interactions')) return base
+  if (base.endsWith('/v1beta')) return `${base}/interactions`
+  return `${base}/v1beta/interactions`
+}
+
+function buildTextSuccessResult(provider: CompanionAiProvider, rawText: string): CompanionAiChatResult {
+  const structured = parseStructuredCompanionResponse(rawText)
+  return {
+    ok: true,
+    provider,
+    text: structured.summary,
+    structured
+  }
 }
 
 export function validateAiEndpoint(provider: CompanionAiProvider, rawEndpoint: string): URL {
@@ -150,37 +181,27 @@ function buildSystemPrompt(ctx: CompanionAiChatRequest['context'], intent?: Comp
   ].join('\n')
 }
 
-function buildUserInput(request: CompanionAiChatRequest, prompt: string): string {
+function buildUserInput(
+  history: Array<{ role: 'user' | 'assistant'; text: string }>,
+  sig: CompanionWorkspaceSignal | undefined,
+  prompt: string
+): string {
   const sections: string[] = []
-  const history = (request.history ?? [])
-    .slice(-MAX_HISTORY_TURNS)
-    .filter(
-      (m): m is { role: 'user' | 'assistant'; text: string } =>
-        Boolean(
-          m &&
-            typeof m === 'object' &&
-            (m.role === 'user' || m.role === 'assistant') &&
-            typeof m.text === 'string' &&
-            m.text.trim()
-        )
-    )
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text.trim().slice(0, 1000)}`)
-
   if (history.length > 0) {
-    sections.push(`Recent conversation:\n${history.join('\n')}`)
+    const lines = history.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`)
+    sections.push(`Recent conversation:\n${lines.join('\n')}`)
   }
 
-  const sig = request.workspaceSignal
   if (sig) {
     const signalLines: string[] = []
-    if (typeof sig.logPath === 'string' && sig.logPath.trim()) {
-      signalLines.push(`Remote log path: ${sig.logPath.trim().slice(0, 256)}`)
+    if (sig.logPath) {
+      signalLines.push(`Remote log path: ${sig.logPath}`)
     }
-    if (typeof sig.logSnippet === 'string' && sig.logSnippet.trim()) {
-      signalLines.push(`Redacted log snippet:\n${sig.logSnippet.trim().slice(0, 2500)}`)
+    if (sig.logSnippet) {
+      signalLines.push(`Redacted log snippet:\n${sig.logSnippet}`)
     }
-    if (typeof sig.monitorSummary === 'string' && sig.monitorSummary.trim()) {
-      signalLines.push(`Resource monitor snapshot:\n${sig.monitorSummary.trim().slice(0, 1500)}`)
+    if (sig.monitorSummary) {
+      signalLines.push(`Resource monitor snapshot:\n${sig.monitorSummary}`)
     }
     if (signalLines.length > 0) {
       sections.push(signalLines.join('\n\n'))
@@ -193,15 +214,6 @@ function buildUserInput(request: CompanionAiChatRequest, prompt: string): string
 
 function sanitizeRisk(raw: unknown): CompanionCommandRisk {
   return raw === 'destructive' || raw === 'mutating' || raw === 'read_only' ? raw : 'read_only'
-}
-
-function sanitizeCommandText(raw: string): string {
-  // Strip ANSI CSI escapes and ASCII control chars so hidden newline commands cannot hide inside one card.
-  return raw
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
-    .trim()
-    .slice(0, 500)
 }
 
 export function normalizeStructuredOutput(raw: unknown): CompanionStructuredOutput | null {
@@ -221,7 +233,7 @@ export function normalizeStructuredOutput(raw: unknown): CompanionStructuredOutp
     for (const item of obj.commandCards) {
       if (!item || typeof item !== 'object' || cards.length >= MAX_CARDS) continue
       const c = item as Record<string, unknown>
-      const command = typeof c.command === 'string' ? sanitizeCommandText(c.command) : ''
+      const command = typeof c.command === 'string' ? sanitizeCompanionCommand(c.command) : ''
       const description = typeof c.description === 'string' ? c.description.trim().slice(0, 300) : ''
       if (!command) continue
       cards.push({
@@ -356,8 +368,10 @@ export class AiCompanionService {
     }
 
     const model = normalizeGeminiModel(config.model)
+    const history = normalizeHistory(request.history)
+    const workspaceSignal = normalizeWorkspaceSignal(request.workspaceSignal)
     const systemPrompt = buildSystemPrompt(request.context, request.intent)
-    const fullInput = buildUserInput(request, prompt)
+    const fullInput = buildUserInput(history, workspaceSignal, prompt)
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
@@ -367,8 +381,7 @@ export class AiCompanionService {
         if (!config.apiKey) {
           return { ok: false, provider: 'gemini', error: 'Gemini API key is required' }
         }
-        const base = endpointUrl.toString().replace(/\/+$/, '')
-        const url = base.endsWith('/interactions') ? base : `${base}/v1beta/interactions`
+        const url = buildGeminiInteractionsUrl(endpointUrl)
         const res = await this.fetchImpl(url, {
           method: 'POST',
           redirect: 'error',
@@ -391,20 +404,15 @@ export class AiCompanionService {
           })
         })
         if (!res.ok) {
+          await res.body?.cancel?.().catch(() => {})
           return { ok: false, provider: 'gemini', error: `Gemini API returned HTTP ${res.status}` }
         }
-        const data = await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)
+        const data = await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES, 'AI response exceeded size limit')
         const rawText = extractGeminiInteractionText(data)
-        if (!rawText) {
+        if (!rawText.trim()) {
           return { ok: false, provider: 'gemini', error: 'Empty response from Gemini API' }
         }
-        const structured = parseStructuredCompanionResponse(rawText)
-        return {
-          ok: true,
-          provider: 'gemini',
-          text: structured.summary,
-          structured
-        }
+        return buildTextSuccessResult('gemini', rawText)
       }
 
       // Managed Ferry Pro Proxy (no company API keys ever shipped in the desktop binary)
@@ -423,16 +431,17 @@ export class AiCompanionService {
           model,
           intent: request.intent ?? 'chat',
           prompt,
-          history: request.history ?? [],
-          workspaceSignal: request.workspaceSignal,
+          history,
+          workspaceSignal,
           context: request.context,
           schema: COMPANION_RESPONSE_SCHEMA
         })
       })
       if (!res.ok) {
+        await res.body?.cancel?.().catch(() => {})
         return { ok: false, provider: 'ferry-pro', error: `Ferry Pro AI returned HTTP ${res.status}` }
       }
-      const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES)) as Record<string, unknown>
+      const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES, 'AI response exceeded size limit')) as Record<string, unknown>
       const directStructured = normalizeStructuredOutput(data?.structured)
       if (directStructured) {
         return {
@@ -448,13 +457,7 @@ export class AiCompanionService {
       if (!rawText.trim()) {
         return { ok: false, provider: 'ferry-pro', error: 'Empty response from Ferry Pro AI' }
       }
-      const structured = parseStructuredCompanionResponse(rawText)
-      return {
-        ok: true,
-        provider: 'ferry-pro',
-        text: structured.summary,
-        structured
-      }
+      return buildTextSuccessResult('ferry-pro', rawText)
     } catch (err) {
       return {
         ok: false,

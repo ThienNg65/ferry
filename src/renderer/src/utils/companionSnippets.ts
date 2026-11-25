@@ -204,7 +204,7 @@ export function diagnoseLogSnippetOffline(logPath: string, snippet: string): Com
     rootCause = 'The service or SSH user lacks filesystem read/write/execute permissions on the target path.'
     summary = 'Permission denied while accessing a file or socket. Check ownership and POSIX permissions.'
     commandCards.push({
-      command: logPath ? `ls -la "${logPath.replace(/"/g, '')}"` : 'ls -la',
+      command: logPath ? `ls -la '${logPath.replace(/'/g, `'\\''`)}'` : 'ls -la',
       description: 'Inspect file ownership and permissions',
       risk: 'read_only'
     })

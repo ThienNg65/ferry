@@ -173,4 +173,51 @@ describe('AiCompanionService', () => {
     const parsedPlain = parseStructuredCompanionResponse('Plain fallback text')
     expect(parsedPlain).toEqual({ summary: 'Plain fallback text' })
   })
+
+  it('avoids duplicating /v1beta in Gemini endpoint and bounds history sent to Ferry Pro proxy', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ output_text: JSON.stringify({ summary: 'Ok' }) })
+    })
+    const geminiSvc = new AiCompanionService({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      getConfig: () => ({
+        provider: 'gemini',
+        endpoint: 'https://generativelanguage.googleapis.com/v1beta',
+        model: DEFAULT_GEMINI_MODEL,
+        hasApiKey: true,
+        apiKey: 'AIza-key'
+      })
+    })
+    await geminiSvc.chat({
+      prompt: 'Ping',
+      context: { appVersion: '1.4.0', isConnected: false, theme: 'dark' }
+    })
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://generativelanguage.googleapis.com/v1beta/interactions')
+
+    const proFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ structured: { summary: 'Pro ok' } })
+    })
+    const proSvc = new AiCompanionService({
+      fetchImpl: proFetch as unknown as typeof fetch,
+      getConfig: () => ({
+        provider: 'ferry-pro',
+        endpoint: 'https://proxy.ferry.example',
+        model: DEFAULT_GEMINI_MODEL,
+        hasApiKey: true,
+        apiKey: 'ferry_pro_key'
+      })
+    })
+    await proSvc.chat({
+      prompt: 'Ping',
+      history: Array.from({ length: 20 }, (_, i) => ({ role: 'user' as const, text: `turn-${i}-` + 'X'.repeat(2000) })),
+      context: { appVersion: '1.4.0', isConnected: true, theme: 'dark' }
+    })
+    const sent = JSON.parse(proFetch.mock.calls[0][1].body)
+    expect(sent.history).toHaveLength(6)
+    expect(sent.history[0].text.length).toBe(1000)
+  })
 })

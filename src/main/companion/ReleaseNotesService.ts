@@ -1,5 +1,7 @@
+import { cleanReleaseMarkdownBullet, IGNORED_RELEASE_SECTIONS } from '../../shared/companionMarkdown'
 import type { CompanionReleaseHighlight, CompanionReleasesResult } from '../../shared/contract'
 import { host } from '../host/host'
+import { readJsonWithLimit } from './httpJson'
 
 export const OFFICIAL_RELEASES_API_URL = 'https://api.github.com/repos/ThienNg65/ferry-release/releases?per_page=15'
 export const OFFICIAL_RELEASES_WEB_URL = 'https://github.com/ThienNg65/ferry-release/releases'
@@ -7,6 +9,7 @@ const ALLOWED_API_ORIGIN = 'https://api.github.com'
 const FETCH_TIMEOUT_MS = 6_000
 const CACHE_TTL_MS = 15 * 60 * 1000
 const MAX_HIGHLIGHTS_PER_RELEASE = 6
+const MAX_RELEASE_FEED_BYTES = 1024 * 1024
 
 interface GitHubReleasePayload {
   tag_name?: unknown
@@ -16,21 +19,6 @@ interface GitHubReleasePayload {
   published_at?: unknown
   draft?: unknown
   prerelease?: unknown
-}
-
-const IGNORED_SECTIONS = new Set(['tests', 'test', 'build system', 'ci', 'chores', 'chore', 'continuous integration'])
-
-function cleanMarkdownInline(text: string): string {
-  return text
-    .replace(/\s*\(\[[0-9a-f]{7,40}\]\([^)]+\)\)/gi, '')
-    .replace(/\s*\(\[#\d+\]\([^)]+\)\)/g, '')
-    .replace(/,\s*closes\s+\[#\d+\]\([^)]+\)/gi, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/^\*+|\*+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 /**
@@ -51,7 +39,7 @@ export function summarizeReleaseBody(body: string, maxItems = MAX_HIGHLIGHTS_PER
       continue
     }
 
-    if (IGNORED_SECTIONS.has(currentSection)) {
+    if (IGNORED_RELEASE_SECTIONS.has(currentSection)) {
       continue
     }
 
@@ -62,7 +50,7 @@ export function summarizeReleaseBody(body: string, maxItems = MAX_HIGHLIGHTS_PER
     const bulletMatch = line.match(/^[-*]\s+(.+)$/)
     if (!bulletMatch) continue
 
-    const cleaned = cleanMarkdownInline(bulletMatch[1])
+    const cleaned = cleanReleaseMarkdownBullet(bulletMatch[1])
     if (!cleaned || cleaned.length < 4) continue
     if (!highlights.includes(cleaned)) {
       highlights.push(cleaned)
@@ -177,6 +165,7 @@ export class ReleaseNotesService {
       })
 
       if (!res.ok) {
+        await res.body?.cancel?.().catch(() => {})
         return {
           releases: [],
           source: 'bundled',
@@ -186,11 +175,7 @@ export class ReleaseNotesService {
         }
       }
 
-      const contentLength = Number(res.headers?.get?.('content-length') ?? 0)
-      if (Number.isFinite(contentLength) && contentLength > 1024 * 1024) {
-        throw new Error('Release feed exceeded size limit')
-      }
-      const raw = (await res.json()) as unknown
+      const raw = await readJsonWithLimit(res, MAX_RELEASE_FEED_BYTES, 'Release feed exceeded size limit')
       if (!Array.isArray(raw)) {
         return {
           releases: [],

@@ -50,5 +50,8 @@ describe('companionSnippets', () => {
     expect(spikeDiag.summary).toContain('high CPU')
     expect(spikeDiag.summary).toContain('node')
     expect(spikeDiag.commandCards?.some((c) => c.command.includes('ps -p 4321'))).toBe(true)
+
+    const quotedLogDiag = diagnoseLogSnippetOffline("/var/log/$HOME/o'reilly.log", 'EACCES: permission denied')
+    expect(quotedLogDiag.commandCards?.[0].command).toBe("ls -la '/var/log/$HOME/o'\\''reilly.log'")
   })
 })

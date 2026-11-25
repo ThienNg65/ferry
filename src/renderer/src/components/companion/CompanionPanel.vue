@@ -100,7 +100,7 @@ const otherReleases = computed(() => {
 
 watch(
   () => companion.open,
-  (isOpen) => {
+  (isOpen, wasOpen) => {
     if (isOpen) {
       const active = document.activeElement
       if (
@@ -119,7 +119,7 @@ watch(
           panelRef.value?.focus()
         }
       })
-    } else {
+    } else if (wasOpen) {
       const target = previouslyFocused
       previouslyFocused = null
       if (target && target.isConnected) {

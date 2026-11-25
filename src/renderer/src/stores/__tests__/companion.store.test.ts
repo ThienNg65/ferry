@@ -186,4 +186,21 @@ describe('companion.store', () => {
       ;(window as { api?: unknown }).api = prevApi
     }
   })
+
+  it('sanitizes control sequences from snippets/history and caps message list at 100', () => {
+    const store = useCompanionStore()
+    const snippet = store.saveCustomSnippet({
+      label: 'Unsafe input',
+      command: '\u001b[31mecho hi\u001b[0m\nrm -rf /tmp/x'
+    })
+    expect(snippet?.command).toBe('echo hi rm -rf /tmp/x')
+    expect(snippet?.risk).toBe('destructive')
+
+    for (let i = 0; i < 120; i++) {
+      store.pushSystemNote(`note-${i}`)
+    }
+    expect(store.messages).toHaveLength(100)
+    expect(store.messages[0].text).toBe('note-20')
+    expect(store.messages[99].text).toBe('note-119')
+  })
 })

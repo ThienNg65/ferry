@@ -1,21 +1,8 @@
+import { cleanReleaseMarkdownBullet, IGNORED_RELEASE_SECTIONS } from '@shared/companionMarkdown'
 import type { CompanionReleaseHighlight } from '@shared/contract'
 import changelogRaw from '../../../../CHANGELOG.md?raw'
 
 export const OFFICIAL_RELEASES_URL = 'https://github.com/ThienNg65/ferry-release/releases'
-const IGNORED_SECTIONS = new Set(['tests', 'test', 'build system', 'ci', 'chores', 'chore'])
-
-function cleanBullet(raw: string): string {
-  return raw
-    .replace(/\s*\(\[[0-9a-f]{7,40}\]\([^)]+\)\)/gi, '')
-    .replace(/\s*\(\[#\d+\]\([^)]+\)\)/g, '')
-    .replace(/,\s*closes\s+\[#\d+\]\([^)]+\)/gi, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/^\*+|\*+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
 /**
  * Parses Keep-a-Changelog / release-please markdown into structured highlights
@@ -64,12 +51,12 @@ export function parseChangelogReleases(markdown: string, maxReleases = 10): Comp
       continue
     }
 
-    if (IGNORED_SECTIONS.has(currentSection)) continue
+    if (IGNORED_RELEASE_SECTIONS.has(currentSection)) continue
 
     const bulletMatch = line.match(/^[-*]\s+(.+)$/)
     if (!bulletMatch || current.highlights.length >= 6) continue
 
-    const cleaned = cleanBullet(bulletMatch[1])
+    const cleaned = cleanReleaseMarkdownBullet(bulletMatch[1])
     if (cleaned.length >= 4 && !current.highlights.includes(cleaned)) {
       current.highlights.push(cleaned)
     }

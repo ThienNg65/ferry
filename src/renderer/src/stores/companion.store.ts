@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   INVOKE_CHANNELS,
+  sanitizeCompanionCommand,
   SEND_CHANNELS,
   type CompanionAiChatRequest,
   type CompanionAiChatResult,
@@ -66,6 +67,7 @@ const TRANSFER_TIP_COOLDOWN_MS = 5 * 60 * 1_000
 const MAX_DISMISSED_VERSIONS = 20
 const MAX_CUSTOM_SNIPPETS = 100
 const MAX_CMD_HISTORY = 30
+const MAX_CHAT_MESSAGES = 100
 
 let releasesInFlight: Promise<CompanionReleaseHighlight[]> | null = null
 
@@ -162,13 +164,17 @@ function parseSnippetList(raw: string | null | undefined): CompanionSnippet[] {
               (s as CompanionSnippet).command.trim().length > 0
           )
       )
-      .map((s) => ({
-        id: s.id,
-        label: s.label.trim(),
-        command: s.command.trim(),
-        description: typeof s.description === 'string' ? s.description.trim() : '',
-        risk: classifyCommandRisk(s.command)
-      }))
+      .map((s) => {
+        const command = sanitizeCompanionCommand(s.command)
+        return {
+          id: s.id,
+          label: s.label.trim().slice(0, 80),
+          command,
+          description: typeof s.description === 'string' ? s.description.trim().slice(0, 240) : '',
+          risk: classifyCommandRisk(command)
+        }
+      })
+      .filter((s) => s.command.length > 0)
       .slice(0, MAX_CUSTOM_SNIPPETS)
   } catch {
     return []
@@ -650,7 +656,7 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     notifyTransferFailure(errorMessage: string): void {
-      const trimmed = errorMessage.trim()
+      const trimmed = errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 500)
       if (!trimmed) return
       this.lastTransferError = trimmed
 
@@ -737,16 +743,67 @@ export const useCompanionStore = defineStore('companion', {
       }
     },
 
+    pushMessage(msg: Omit<CompanionMessage, 'id' | 'createdAt'>): void {
+      this.messages.push({
+        ...msg,
+        id: nextId('msg'),
+        createdAt: new Date().toISOString()
+      })
+      if (this.messages.length > MAX_CHAT_MESSAGES) {
+        this.messages = this.messages.slice(-MAX_CHAT_MESSAGES)
+      }
+    },
+
+    async deliverAiOrLocalReply(opts: {
+      aiPrompt?: string
+      intent?: CompanionAiIntent
+      workspaceSignal?: CompanionWorkspaceSignal
+      errorPrefix: string
+      buildLocal: () => Omit<CompanionMessage, 'id' | 'createdAt' | 'role' | 'source'>
+    }): Promise<void> {
+      let aiErrorHint: string | null = null
+      if (opts.aiPrompt && this.aiConfig.provider !== 'none') {
+        const { result: aiRes, errorHint } = await this.requestAiChat(
+          opts.aiPrompt,
+          opts.intent ?? 'chat',
+          opts.workspaceSignal
+        )
+        if (aiRes) {
+          this.pushMessage({
+            role: 'assistant',
+            text: aiRes.structured?.summary ?? aiRes.text ?? '',
+            source: 'ai',
+            rootCause: aiRes.structured?.rootCause,
+            commandCards: aiRes.structured?.commandCards,
+            uiActionCards: aiRes.structured?.uiActionCards
+          })
+          this.pulseTalking()
+          return
+        }
+        aiErrorHint = errorHint
+      }
+
+      const local = opts.buildLocal()
+      const finalActions = local.actions ? [...local.actions] : []
+      if (aiErrorHint && !finalActions.some((a) => a.id === 'open-settings')) {
+        finalActions.push({ id: 'open-settings', label: 'Check AI Settings' })
+      }
+
+      this.pushMessage({
+        role: 'assistant',
+        ...local,
+        text: aiErrorHint ? `Couldn't reach your configured AI provider (${aiErrorHint}). ${opts.errorPrefix}\n\n${local.text}` : local.text,
+        source: 'local',
+        actions: finalActions.length > 0 ? finalActions : undefined
+      })
+      this.pulseTalking()
+    },
+
     async ask(input: string): Promise<void> {
       const text = input.trim()
       if (!text || this.aiBusy) return
       this.activeView = 'chat'
-      this.messages.push({
-        id: nextId('msg'),
-        role: 'user',
-        text,
-        createdAt: new Date().toISOString()
-      })
+      this.pushMessage({ role: 'user', text })
 
       if (/\b(what'?s new|whats new|changed since|changelog|release notes|new version|updated)\b/i.test(text)) {
         await this.ensureReleasesLoaded()
@@ -762,47 +819,19 @@ export const useCompanionStore = defineStore('companion', {
         lastTransferError: this.lastTransferError
       })
 
-      let aiErrorHint: string | null = null
-      if (reply.isFallback && this.aiConfig.provider !== 'none') {
-        const intent: CompanionAiIntent = reply.commandCards ? 'command' : 'chat'
-        const { result: aiRes, errorHint } = await this.requestAiChat(text, intent)
-        if (aiRes) {
-          this.messages.push({
-            id: nextId('msg'),
-            role: 'assistant',
-            text: aiRes.structured?.summary ?? aiRes.text ?? '',
-            createdAt: new Date().toISOString(),
-            source: 'ai',
-            rootCause: aiRes.structured?.rootCause,
-            commandCards: aiRes.structured?.commandCards,
-            uiActionCards: aiRes.structured?.uiActionCards
-          })
-          this.pulseTalking()
-          return
-        }
-        aiErrorHint = errorHint
-      }
-
-      const finalActions = reply.actions ? [...reply.actions] : []
-      if (aiErrorHint && !finalActions.some((a) => a.id === 'open-settings')) {
-        finalActions.push({ id: 'open-settings', label: 'Check AI Settings' })
-      }
-
-      this.messages.push({
-        id: nextId('msg'),
-        role: 'assistant',
-        text: aiErrorHint
-          ? `Couldn't reach your configured AI provider (${aiErrorHint}). Falling back to local mode:\n\n${reply.text}`
-          : reply.text,
-        createdAt: new Date().toISOString(),
-        source: 'local',
-        rootCause: reply.rootCause,
-        commandCards: reply.commandCards,
-        uiActionCards: reply.uiActionCards,
-        actions: finalActions.length > 0 ? finalActions : undefined,
-        releaseCard: reply.releaseCard
+      await this.deliverAiOrLocalReply({
+        aiPrompt: reply.isFallback ? text : undefined,
+        intent: reply.commandCards ? 'command' : 'chat',
+        errorPrefix: 'Falling back to local mode:',
+        buildLocal: () => ({
+          text: reply.text,
+          rootCause: reply.rootCause,
+          commandCards: reply.commandCards,
+          uiActionCards: reply.uiActionCards,
+          actions: reply.actions,
+          releaseCard: reply.releaseCard
+        })
       })
-      this.pulseTalking()
 
       if (reply.openReportCategory) {
         this.reportCategory = reply.openReportCategory
@@ -831,51 +860,26 @@ export const useCompanionStore = defineStore('companion', {
         redacted.redactionCount > 0
           ? ` (${redacted.redactionCount} sensitive item${redacted.redactionCount === 1 ? '' : 's'} redacted locally)`
           : ''
-      this.messages.push({
-        id: nextId('msg'),
+      this.pushMessage({
         role: 'user',
-        text: `Explain log ${lineLabel}${redactedPath || 'active stream'}${redactionNote}:\n${redactSensitiveText(input.lineText).text.slice(0, 400)}`,
-        createdAt: new Date().toISOString()
+        text: `Explain log ${lineLabel}${redactedPath || 'active stream'}${redactionNote}:\n${redactSensitiveText(input.lineText).text.slice(0, 400)}`
       })
 
-      let aiErrorHint: string | null = null
-      if (this.aiConfig.provider !== 'none') {
-        const { result: aiRes, errorHint } = await this.requestAiChat(
-          `Explain this log entry from ${redactedPath} and suggest safe diagnostic steps.`,
-          'explain-log',
-          { logPath: redactedPath, logSnippet }
-        )
-        if (aiRes) {
-          this.messages.push({
-            id: nextId('msg'),
-            role: 'assistant',
-            text: aiRes.structured?.summary ?? aiRes.text ?? '',
-            createdAt: new Date().toISOString(),
-            source: 'ai',
-            rootCause: aiRes.structured?.rootCause,
-            commandCards: aiRes.structured?.commandCards,
-            uiActionCards: aiRes.structured?.uiActionCards
-          })
-          this.pulseTalking()
-          return
+      await this.deliverAiOrLocalReply({
+        aiPrompt: `Explain this log entry from ${redactedPath} and suggest safe diagnostic steps.`,
+        intent: 'explain-log',
+        workspaceSignal: { logPath: redactedPath, logSnippet },
+        errorPrefix: 'Local log analysis:',
+        buildLocal: () => {
+          const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet)
+          return {
+            text: offline.summary,
+            rootCause: offline.rootCause,
+            commandCards: offline.commandCards,
+            uiActionCards: offline.uiActionCards
+          }
         }
-        aiErrorHint = errorHint
-      }
-
-      const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet)
-      this.messages.push({
-        id: nextId('msg'),
-        role: 'assistant',
-        text: aiErrorHint
-          ? `Couldn't reach AI provider (${aiErrorHint}). Local log analysis:\n\n${offline.summary}`
-          : offline.summary,
-        createdAt: new Date().toISOString(),
-        source: 'local',
-        rootCause: offline.rootCause,
-        commandCards: offline.commandCards,
-        uiActionCards: offline.uiActionCards
       })
-      this.pulseTalking()
     },
 
     async diagnoseMonitorSpike(sample: MonitorSample): Promise<void> {
@@ -902,63 +906,38 @@ export const useCompanionStore = defineStore('companion', {
       const monitorSummary = redactSensitiveText(rawSummary).text
 
       this.openPanel('chat')
-      this.messages.push({
-        id: nextId('msg'),
+      this.pushMessage({
         role: 'user',
-        text: `Diagnose Resource Monitor metrics (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%${diskPct !== null ? `, Disk ${diskPct}%` : ''})`,
-        createdAt: new Date().toISOString()
+        text: `Diagnose Resource Monitor metrics (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%${diskPct !== null ? `, Disk ${diskPct}%` : ''})`
       })
 
-      let aiErrorHint: string | null = null
-      if (this.aiConfig.provider !== 'none') {
-        const { result: aiRes, errorHint } = await this.requestAiChat(
-          'Triage these remote server resource metrics and propose read-only verification commands.',
-          'diagnose-spike',
-          { monitorSummary }
-        )
-        if (aiRes) {
-          this.messages.push({
-            id: nextId('msg'),
-            role: 'assistant',
-            text: aiRes.structured?.summary ?? aiRes.text ?? '',
-            createdAt: new Date().toISOString(),
-            source: 'ai',
-            rootCause: aiRes.structured?.rootCause,
-            commandCards: aiRes.structured?.commandCards,
-            uiActionCards: aiRes.structured?.uiActionCards
+      await this.deliverAiOrLocalReply({
+        aiPrompt: 'Triage these remote server resource metrics and propose read-only verification commands.',
+        intent: 'diagnose-spike',
+        workspaceSignal: { monitorSummary },
+        errorPrefix: 'Local resource triage:',
+        buildLocal: () => {
+          const offline = diagnoseMonitorSpikeOffline({
+            cpuPct,
+            memPct,
+            swapPct,
+            diskPct,
+            loadAvg: sample.loadAvg,
+            coreCount,
+            topProcesses
           })
-          this.pulseTalking()
-          return
+          return {
+            text: offline.summary,
+            rootCause: offline.rootCause,
+            commandCards: offline.commandCards
+          }
         }
-        aiErrorHint = errorHint
-      }
-
-      const offline = diagnoseMonitorSpikeOffline({
-        cpuPct,
-        memPct,
-        swapPct,
-        diskPct,
-        loadAvg: sample.loadAvg,
-        coreCount,
-        topProcesses
       })
-      this.messages.push({
-        id: nextId('msg'),
-        role: 'assistant',
-        text: aiErrorHint
-          ? `Couldn't reach AI provider (${aiErrorHint}). Local resource triage:\n\n${offline.summary}`
-          : offline.summary,
-        createdAt: new Date().toISOString(),
-        source: 'local',
-        rootCause: offline.rootCause,
-        commandCards: offline.commandCards
-      })
-      this.pulseTalking()
     },
 
     saveCustomSnippet(input: { label: string; command: string; description?: string }): CompanionSnippet | null {
       const label = input.label.trim().slice(0, 80)
-      const command = input.command.trim().slice(0, 500)
+      const command = sanitizeCompanionCommand(input.command)
       if (!label || !command) return null
       const entry: CompanionSnippet = {
         id: nextId('snip'),
@@ -980,14 +959,14 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     recordCommandHistory(command: string, risk?: CompanionCommandRisk, hostLabel?: string | null): void {
-      const trimmed = command.trim()
-      if (!trimmed) return
+      const sanitized = sanitizeCompanionCommand(command)
+      if (!sanitized) return
       const entry: CompanionCommandHistoryEntry = {
         id: nextId('cmd'),
-        command: trimmed,
-        risk: risk ?? classifyCommandRisk(trimmed),
+        command: sanitized,
+        risk: risk ?? classifyCommandRisk(sanitized),
         executedAt: new Date().toISOString(),
-        hostLabel: hostLabel ?? null
+        hostLabel: hostLabel ? hostLabel.trim().slice(0, 80) : null
       }
       this.commandHistory = [entry, ...this.commandHistory].slice(0, MAX_CMD_HISTORY)
       writeStored(CMD_HISTORY_KEY, JSON.stringify(this.commandHistory), this.dirtyPrefKeys)
@@ -1004,22 +983,27 @@ export const useCompanionStore = defineStore('companion', {
       if (sessions.status !== 'connected' || !sessionId) {
         return 'Connect to an SSH session first to run commands in Terminal.'
       }
-      const targetHost = sessions.activeTab.label || sessions.activeTab.hostLabel || 'active server'
+      const command = sanitizeCompanionCommand(card.command)
+      if (!command) {
+        return 'Command is empty.'
+      }
+      const risk = classifyCommandRisk(command) === 'destructive' ? 'destructive' : card.risk
+      const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
       const riskNote =
-        card.risk === 'destructive'
+        risk === 'destructive'
           ? 'DESTRUCTIVE command — can delete data or interrupt services.'
-          : card.risk === 'mutating'
+          : risk === 'mutating'
             ? 'MUTATING command — modifies files or service state.'
             : 'READ-ONLY command — inspects remote state without modifying files.'
 
       const confirm = useConfirm()
       const confirmed = await confirm({
         title: `Run command on ${targetHost}?`,
-        body: `Risk: ${card.risk.toUpperCase()} — ${riskNote}`,
-        items: [card.command],
+        body: `Risk: ${risk.toUpperCase()} — ${riskNote}`,
+        items: [command],
         confirmLabel: 'Run in Terminal',
-        confirmColor: card.risk === 'destructive' ? 'error' : card.risk === 'mutating' ? 'warning' : 'primary',
-        destructive: card.risk === 'destructive'
+        confirmColor: risk === 'destructive' ? 'error' : risk === 'mutating' ? 'warning' : 'primary',
+        destructive: risk === 'destructive'
       })
       if (!confirmed) {
         return 'Command execution cancelled.'
@@ -1030,10 +1014,10 @@ export const useCompanionStore = defineStore('companion', {
       if (typeof window !== 'undefined' && window.api?.send) {
         window.api.send(SEND_CHANNELS.terminalInput, {
           terminalId,
-          data: `${card.command}\r`
+          data: `${command}\r`
         })
       }
-      this.recordCommandHistory(card.command, card.risk, targetHost)
+      this.recordCommandHistory(command, risk, targetHost)
       return `Sent command to Terminal (${targetHost}).`
     },
 
@@ -1148,11 +1132,9 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     pushSystemNote(text: string): void {
-      this.messages.push({
-        id: nextId('msg'),
+      this.pushMessage({
         role: 'assistant',
-        text,
-        createdAt: new Date().toISOString()
+        text
       })
     },
 

@@ -1180,6 +1180,15 @@ export function classifyCommandRisk(command: string): CompanionCommandRisk {
   return 'read_only'
 }
 
+/** Strips ANSI CSI escapes and ASCII control chars so hidden newline/control sequences cannot hide inside one command card. */
+export function sanitizeCompanionCommand(raw: string, maxLen = 500): string {
+  return raw
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+}
+
 /** Ensures a reported risk level is never downgraded below the deterministic command classification. */
 export function escalateCommandRisk(reported: CompanionCommandRisk, command: string): CompanionCommandRisk {
   const floor = classifyCommandRisk(command)

@@ -5,7 +5,6 @@ import {
   type CompanionAiChatRequest,
   type CompanionAiChatResult,
   type CompanionAiConfigInfo,
-  type CompanionAiConfigInput,
   type CompanionAiIntent,
   type CompanionAiProvider,
   type CompanionReleasesResult,
@@ -14,10 +13,18 @@ import {
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { AiCompanionService, validateAiEndpoint } from '../companion/AiCompanionService'
 import { ReleaseNotesService } from '../companion/ReleaseNotesService'
-import { SshError } from '../ssh/errors'
 import { handle } from './envelope'
+import {
+  failValidation,
+  optionalBoolean,
+  optionalSecretString,
+  optionalString,
+  requireEnum,
+  requireNonEmptyString,
+  requireObject
+} from './validation'
 
-const VALID_PROVIDERS = new Set<CompanionAiProvider>(['none', 'gemini', 'ferry-pro'])
+const VALID_PROVIDERS: readonly CompanionAiProvider[] = ['none', 'gemini', 'ferry-pro']
 const VALID_INTENTS = new Set<CompanionAiIntent>(['chat', 'command', 'explain-log', 'diagnose-spike'])
 
 function sanitizeWorkspaceSignal(raw: unknown): CompanionWorkspaceSignal | undefined {
@@ -36,12 +43,31 @@ function sanitizeWorkspaceSignal(raw: unknown): CompanionWorkspaceSignal | undef
   return out.logPath || out.logSnippet || out.monitorSummary ? out : undefined
 }
 
+function sanitizeHistory(raw: unknown): CompanionAiChatRequest['history'] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .slice(-6)
+    .filter(
+      (m): m is { role: 'user' | 'assistant'; text: string } =>
+        Boolean(
+          m &&
+            typeof m === 'object' &&
+            ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant') &&
+            typeof (m as { text?: unknown }).text === 'string' &&
+            (m as { text: string }).text.trim()
+        )
+    )
+    .map((m) => ({ role: m.role, text: m.text.trim().slice(0, 1000) }))
+}
+
 /** Registers Ferry Companion sidecar channels (release notes & Gemini/Pro AI provider). */
 export function registerCompanionHandlers(): void {
   handle<CompanionReleasesResult>(INVOKE_CHANNELS.companionGetReleases, async (payload: unknown) => {
-    const forceRefresh = Boolean(
-      payload && typeof payload === 'object' && (payload as { forceRefresh?: unknown }).forceRefresh === true
-    )
+    let forceRefresh = false
+    if (payload !== undefined && payload !== null) {
+      const obj = requireObject(payload, INVOKE_CHANNELS.companionGetReleases)
+      forceRefresh = optionalBoolean(obj.forceRefresh, 'forceRefresh', INVOKE_CHANNELS.companionGetReleases) ?? false
+    }
     return ReleaseNotesService.getInstance().getReleases(forceRefresh)
   })
 
@@ -50,32 +76,26 @@ export function registerCompanionHandlers(): void {
   })
 
   handle<CompanionAiConfigInfo>(INVOKE_CHANNELS.companionAiSetConfig, (payload: unknown) => {
-    const raw = payload as Partial<CompanionAiConfigInput> | null | undefined
-    const provider = raw?.provider
-    if (!provider || !VALID_PROVIDERS.has(provider)) {
-      throw new SshError('VALIDATION', 'companion:ai:setConfig requires a valid provider')
-    }
-    const rawEndpoint = typeof raw?.endpoint === 'string' ? raw.endpoint.trim() : ''
+    const obj = requireObject(payload, INVOKE_CHANNELS.companionAiSetConfig)
+    const provider = requireEnum(obj.provider, VALID_PROVIDERS, 'provider', INVOKE_CHANNELS.companionAiSetConfig)
+    const rawEndpoint = optionalString(obj.endpoint, 'endpoint', INVOKE_CHANNELS.companionAiSetConfig)?.trim() ?? ''
     const endpoint = rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
-    const rawModel = typeof raw?.model === 'string' ? raw.model.trim() : ''
+    const rawModel = optionalString(obj.model, 'model', INVOKE_CHANNELS.companionAiSetConfig)?.trim() ?? ''
     const model = provider === 'none' ? '' : normalizeGeminiModel(rawModel)
     if (provider !== 'none') {
       try {
         validateAiEndpoint(provider, endpoint)
       } catch (err) {
-        throw new SshError('VALIDATION', err instanceof Error ? err.message : 'Invalid AI endpoint')
+        failValidation(INVOKE_CHANNELS.companionAiSetConfig, err instanceof Error ? err.message : 'Invalid AI endpoint')
       }
       if (!model || model.length > 120) {
-        throw new SshError('VALIDATION', 'companion:ai:setConfig requires a model name (<= 120 chars)')
+        failValidation(INVOKE_CHANNELS.companionAiSetConfig, 'companion:ai:setConfig requires a model name (<= 120 chars)')
       }
       if (endpoint.length > 512) {
-        throw new SshError('VALIDATION', 'companion:ai:setConfig endpoint exceeds 512 chars')
+        failValidation(INVOKE_CHANNELS.companionAiSetConfig, 'companion:ai:setConfig endpoint exceeds 512 chars')
       }
     }
-    if (raw?.apiKey !== undefined && typeof raw.apiKey !== 'string') {
-      throw new SshError('VALIDATION', 'companion:ai:setConfig apiKey must be a string')
-    }
-    const apiKey = raw?.apiKey
+    const apiKey = optionalSecretString(obj.apiKey, 'apiKey', INVOKE_CHANNELS.companionAiSetConfig)
     return AppSettingsStore.getInstance().setCompanionAiConfig({ provider, endpoint, model, apiKey })
   })
 
@@ -84,24 +104,29 @@ export function registerCompanionHandlers(): void {
   })
 
   handle<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiChat, async (payload: unknown) => {
-    const req = payload as Partial<CompanionAiChatRequest> | null | undefined
-    if (!req || typeof req.prompt !== 'string' || !req.prompt.trim()) {
-      throw new SshError('VALIDATION', 'companion:ai:chat requires a non-empty prompt')
-    }
+    const req = requireObject(payload, INVOKE_CHANNELS.companionAiChat)
+    const prompt = requireNonEmptyString(req.prompt, 'prompt', INVOKE_CHANNELS.companionAiChat)
     const safeSingleLine = (val: unknown, maxLen: number): string =>
       typeof val === 'string' ? val.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen) : 'unknown'
 
-    const intent = req.intent && VALID_INTENTS.has(req.intent) ? req.intent : undefined
+    const rawIntent = req.intent
+    const intent =
+      typeof rawIntent === 'string' && VALID_INTENTS.has(rawIntent as CompanionAiIntent)
+        ? (rawIntent as CompanionAiIntent)
+        : undefined
+    const ctx = req.context && typeof req.context === 'object' && !Array.isArray(req.context)
+      ? (req.context as Record<string, unknown>)
+      : undefined
 
     return AiCompanionService.getInstance().chat({
-      prompt: req.prompt,
-      history: Array.isArray(req.history) ? req.history : [],
+      prompt,
+      history: sanitizeHistory(req.history),
       intent,
       workspaceSignal: sanitizeWorkspaceSignal(req.workspaceSignal),
       context: {
-        appVersion: safeSingleLine(req.context?.appVersion, 32),
-        isConnected: Boolean(req.context?.isConnected),
-        theme: safeSingleLine(req.context?.theme, 32)
+        appVersion: safeSingleLine(ctx?.appVersion, 32),
+        isConnected: Boolean(ctx?.isConnected),
+        theme: safeSingleLine(ctx?.theme, 32)
       }
     })
   })
