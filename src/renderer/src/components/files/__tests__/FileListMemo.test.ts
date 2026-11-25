@@ -8,6 +8,14 @@ import { useUiStore } from '../../../stores/ui.store'
 import FileList from '../FileList.vue'
 import FileRow from '../FileRow.vue'
 
+vi.mock('@nuxt/ui/components/ContextMenu.vue', () => ({
+  default: {
+    name: 'ContextMenu',
+    props: ['items', 'content'],
+    template: '<div><slot /></div>'
+  }
+}))
+
 vi.mock('@tanstack/vue-virtual', () => ({
   useVirtualizer: (opts: { value: { count: number; getItemKey: (i: number) => string | number } }) =>
     computed(() => ({
