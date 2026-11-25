@@ -355,7 +355,11 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
                 renamingPath === entries[virtualRow.index].path,
                 transferIcon,
                 showTail,
-                allowExtract
+                allowExtract,
+                ui.columns.hidden.join(','),
+                ui.permissionsDisplay,
+                ui.density,
+                ui.glassUiEnabled
               ]"
               :entry="entries[virtualRow.index]"
               :row-index="virtualRow.index + 2"
