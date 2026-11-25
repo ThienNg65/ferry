@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import type { EditEvent } from '@shared/contract'
 import { onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
@@ -7,6 +7,10 @@ import { useEditSessionsStore } from './editSessions.store'
 
 vi.mock('../api', () => ({ invoke: vi.fn(), onEvent: vi.fn(() => () => {}) }))
 vi.mock('../composables/useNotify', () => ({ useNotify: vi.fn() }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 it('keeps an interrupted editor save unsaved and tells the user how to retry', () => {
   setActivePinia(createPinia())
@@ -34,4 +38,30 @@ it('keeps an interrupted editor save unsaved and tells the user how to retry', (
 
   expect(store.edits[0].dirty).toBe(false)
   expect(notify.success).toHaveBeenCalledWith('Re-uploaded', 'edit.txt')
+})
+
+it('marks an open edit dirty on remote-changed conflict and clears it on reuploaded', () => {
+  setActivePinia(createPinia())
+  const notify = { success: vi.fn(), error: vi.fn(), prompt: vi.fn() }
+  vi.mocked(useNotify).mockReturnValue(notify)
+  const store = useEditSessionsStore()
+  store.hydrated = true
+  store.ensureSubscription()
+  const onEditEvent = vi.mocked(onEvent).mock.calls[0][1]
+  const edit = { editId: 'edit-2', sessionId: 'session-1', remotePath: '/srv/conflict.txt', localTempPath: 'conflict.txt' }
+  const emit = (state: EditEvent['state']) => onEditEvent({ ...edit, state } satisfies EditEvent)
+
+  emit('opened')
+  expect(store.edits[0].dirty).toBe(false)
+
+  emit('remote-changed')
+  expect(store.edits[0].dirty).toBe(true)
+  expect(notify.prompt).toHaveBeenCalledWith(
+    'File changed on the server',
+    'conflict.txt was modified remotely since you opened it.',
+    expect.any(Array)
+  )
+
+  emit('reuploaded')
+  expect(store.edits[0].dirty).toBe(false)
 })
