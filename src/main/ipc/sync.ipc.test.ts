@@ -5,6 +5,7 @@ import type { IpcResult } from '../../shared/contract'
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
 const syncServiceMock = {
+  compareTrees: vi.fn(),
   previewSync: vi.fn(),
   runSync: vi.fn(),
   summarizeSync: vi.fn()
@@ -66,6 +67,48 @@ describe('sync.ipc', () => {
       })
       expect(result).toMatchObject({ ok: false, code: 'UNKNOWN', message: 'listing failed' })
     })
+
+    it('rejects malformed options with VALIDATION', async () => {
+      expect(await invoke('sync:preview', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:preview', {
+          sessionId: 's1',
+          localPath: 'a',
+          remotePath: 'b',
+          direction: 'sideways',
+          deleteExtras: false
+        })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:preview', {
+          sessionId: 's1',
+          localPath: 'a',
+          remotePath: 'b',
+          direction: 'push',
+          deleteExtras: 'no'
+        })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(syncServiceMock.previewSync).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('sync:compare', () => {
+    it('forwards valid compare requests to compareTrees', async () => {
+      syncServiceMock.compareTrees.mockResolvedValueOnce([])
+      const req = { sessionId: 's1', localPath: 'C:\\local', remotePath: '/remote' }
+      const result = await invoke('sync:compare', req)
+      expect(syncServiceMock.compareTrees).toHaveBeenCalledWith(req)
+      expect(result).toEqual({ ok: true, data: [] })
+    })
+
+    it('rejects malformed compare requests with VALIDATION', async () => {
+      expect(await invoke('sync:compare', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('sync:compare', { sessionId: '', localPath: 'a', remotePath: '/b' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(syncServiceMock.compareTrees).not.toHaveBeenCalled()
+    })
   })
 
   describe('sync:run', () => {
@@ -75,6 +118,24 @@ describe('sync.ipc', () => {
     it('rejects requests without approval before registering work', async () => {
       const result = await invoke('sync:run', { sessionId: 's1', deleteExtras: true })
       expect(result).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(operationRegistryMock.run).not.toHaveBeenCalled()
+    })
+
+    it('rejects malformed options or plan arrays with VALIDATION before registering work', async () => {
+      expect(
+        await invoke('sync:run', {
+          requestId,
+          approvedPlan,
+          options: { sessionId: 's1', localPath: 'a', remotePath: 'b', direction: 'invalid', deleteExtras: false }
+        })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:run', {
+          requestId,
+          approvedPlan: { toTransfer: 'not-array', toDelete: [] },
+          options: { sessionId: 's1', localPath: 'a', remotePath: 'b', direction: 'push', deleteExtras: false }
+        })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
       expect(operationRegistryMock.run).not.toHaveBeenCalled()
     })
 

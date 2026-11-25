@@ -27,6 +27,27 @@ export function requireNonEmptyString(value: unknown, field: string, channel: st
   return value
 }
 
+export function requireString(value: unknown, field: string, channel: string): string {
+  if (typeof value !== 'string') {
+    failValidation(channel, `${channel} requires "${field}" to be a string`)
+  }
+  return value
+}
+
+export function requireBoolean(value: unknown, field: string, channel: string): boolean {
+  if (typeof value !== 'boolean') {
+    failValidation(channel, `${channel} requires "${field}" to be a boolean`)
+  }
+  return value
+}
+
+export function requireArray(value: unknown, field: string, channel: string): unknown[] {
+  if (!Array.isArray(value)) {
+    failValidation(channel, `${channel} requires "${field}" to be an array`)
+  }
+  return value
+}
+
 export function optionalString(value: unknown, field: string, channel: string): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined
