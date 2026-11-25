@@ -482,10 +482,16 @@ describe('local file editing', () => {
     const imageFile: FileEntry = { name: 'photo.png', path: '/local/photo.png', isDir: false, isSymlink: false, size: 128, modifiedAt: null }
     vi.mocked(invoke).mockImplementation(async (channel) => {
       if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [textFile, imageFile] } as never
+      if (channel === INVOKE_CHANNELS.fsLocalReadFile) {
+        return { path: textFile.path, content: 'notes', truncated: false } as never
+      }
       return undefined as never
     })
 
-    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    wrapper = shallowMount(FilePane, {
+      props: { side: 'local' },
+      global: { stubs: { ...stubs, EditorDialog: false } }
+    })
     await vi.dynamicImportSettled()
 
     wrapper.getComponent(FileList).vm.$emit('edit', textFile)
