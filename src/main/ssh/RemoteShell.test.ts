@@ -178,7 +178,6 @@ describe('RemoteShell UTF-8 output', () => {
   })
 })
 
-
 describe('RemoteShell recursive delete', () => {
   it.each(['SSH_TIMEOUT', 'CANCELLED'] as const)(
     'rethrows %s without starting the SFTP fallback',
