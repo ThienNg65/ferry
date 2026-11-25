@@ -80,12 +80,12 @@ describe('window keydown fallback visibility guard', () => {
     localFs.selected = new Set([entry.path])
 
     expect(sessions.status).not.toBe('connected')
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
     await flushPromises()
     expect(confirm).not.toHaveBeenCalled()
 
     sessions.activeTab.status = 'connected'
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
     await flushPromises()
     expect(confirm).toHaveBeenCalledTimes(1)
   })
