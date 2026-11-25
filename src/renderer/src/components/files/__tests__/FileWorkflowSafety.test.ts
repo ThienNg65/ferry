@@ -725,6 +725,6 @@ describe('archive operation refresh targets', () => {
 
     expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-a', '/tab-a', true)
     expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-b', '/tab-b', false)
-    expect(remote.bySession['server-a'].entries).toEqual([archive, folder, extracted])
+    expect(remote.bySession['server-a'].entries).toEqual([folder, extracted, archive])
   })
 })
