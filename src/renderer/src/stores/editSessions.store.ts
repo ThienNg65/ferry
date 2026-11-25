@@ -108,7 +108,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
       if (!existing) {
         return
       }
-      if (evt.state === 'reuploading' || evt.state === 'upload-error') {
+      if (evt.state === 'reuploading' || evt.state === 'upload-error' || evt.state === 'remote-changed') {
         existing.dirty = true
       } else if (evt.state === 'reuploaded') {
         existing.dirty = false
