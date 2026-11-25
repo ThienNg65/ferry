@@ -1,4 +1,5 @@
 import { err, ok, type IpcResult, type IpcErrorCode, type InvokeChannel, type SendChannel } from '../../shared/contract'
+import { logAppEvent } from '../host/appLog'
 import { SshError } from '../ssh/errors'
 
 export type ChannelHandler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
@@ -7,15 +8,26 @@ export type SendChannelHandler = (event: unknown, payload: unknown) => void
 export const handlers = new Map<InvokeChannel, ChannelHandler>()
 export const sendHandlers = new Map<SendChannel, SendChannelHandler>()
 
-async function envelope<T>(run: () => Promise<T> | T): Promise<IpcResult<T>> {
+async function envelope<T>(channel: InvokeChannel, run: () => Promise<T> | T): Promise<IpcResult<T>> {
+  const startedAt = Date.now()
   try {
     return ok(await run())
   } catch (e) {
+    const durationMs = Date.now() - startedAt
     if (e instanceof SshError) {
+      logAppEvent('warn', 'ipc.failed', { channel, code: e.code, durationMs, message: e.message })
       return err(e.code, e.message, e.hostKey)
     }
     const code: IpcErrorCode = 'UNKNOWN'
-    return err(code, e instanceof Error ? e.message : String(e))
+    const message = e instanceof Error ? e.message : String(e)
+    logAppEvent('error', 'ipc.failed', {
+      channel,
+      code,
+      durationMs,
+      message,
+      ...(e instanceof Error && e.stack ? { stack: e.stack } : {})
+    })
+    return err(code, message)
   }
 }
 
@@ -32,7 +44,7 @@ export function handle<T>(
   channel: InvokeChannel,
   fn: (...args: unknown[]) => Promise<T> | T
 ): void {
-  handlers.set(channel, (_event, ...args) => envelope(() => fn(...args)))
+  handlers.set(channel, (_event, ...args) => envelope(channel, () => fn(...args)))
 }
 
 /** Registers a fire-and-forget send handler into the shared registry. */

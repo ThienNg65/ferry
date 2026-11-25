@@ -5,7 +5,7 @@ import { host } from './host'
 const MAX_LOG_BYTES = 1_048_576
 const SENSITIVE_KEY_RE = /^(password|passphrase|secret|token|privateKey|secretPassword|secretPassphrase|authorization|cookie|nlToken|nlConnectToken)$/i
 
-function redactValue(key: string, value: unknown): unknown {
+export function redactValue(key: string, value: unknown): unknown {
   if (SENSITIVE_KEY_RE.test(key)) {
     return '[REDACTED]'
   }
@@ -23,16 +23,16 @@ function redactValue(key: string, value: unknown): unknown {
 }
 
 /**
- * Appends a structured, secret-redacted security event line to `<dataDir>/security.log`,
- * rotating to `security.log.1` when the active file exceeds 1 MB. Never throws.
+ * Appends a structured, secret-redacted JSON line to `<dataDir>/<fileName>`,
+ * rotating to `<fileName>.1` when the active file exceeds `MAX_LOG_BYTES`. Never throws.
  */
-export function logSecurityEvent(event: string, details: Record<string, unknown> = {}): void {
+export function appendRotatingJsonl(fileName: string, entry: Record<string, unknown>): void {
   try {
     const dataDir = host().dataDir
     if (!dataDir) {
       return
     }
-    const logPath = path.join(dataDir, 'security.log')
+    const logPath = path.join(dataDir, fileName)
     mkdirSync(dataDir, { recursive: true })
     try {
       const st = statSync(logPath)
@@ -42,13 +42,21 @@ export function logSecurityEvent(event: string, details: Record<string, unknown>
     } catch {
       // File does not exist yet or cannot be rotated; append below will create it.
     }
-    const entry = {
-      ts: new Date().toISOString(),
-      event,
-      ...(redactValue('', details) as Record<string, unknown>)
-    }
-    appendFileSync(logPath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 })
+    const sanitized = redactValue('', entry) as Record<string, unknown>
+    appendFileSync(logPath, `${JSON.stringify(sanitized)}\n`, { encoding: 'utf8', mode: 0o600 })
   } catch {
-    // Security logging must never crash or block the caller.
+    // Logging must never crash or block the caller.
   }
+}
+
+/**
+ * Appends a structured, secret-redacted security event line to `<dataDir>/security.log`,
+ * rotating to `security.log.1` when the active file exceeds 1 MB. Never throws.
+ */
+export function logSecurityEvent(event: string, details: Record<string, unknown> = {}): void {
+  appendRotatingJsonl('security.log', {
+    ts: new Date().toISOString(),
+    event,
+    ...details
+  })
 }

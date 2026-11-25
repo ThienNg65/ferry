@@ -1,9 +1,11 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { createHash } from 'crypto'
 import { host } from '../host/host'
+import { openSafeConf } from '../host/storeHelpers'
 import type { KnownHostEntry } from '../../shared/contract'
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   /** `"host:port"` -> the OpenSSH-style `SHA256:...` fingerprint last trusted for it. */
   hosts: Record<string, string>
 }
@@ -52,7 +54,12 @@ export class KnownHostsStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'known_hosts', defaults: { hosts: {} } })
+      this._store = openSafeConf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'known_hosts',
+        schemaVersion: 1,
+        defaults: { schemaVersion: 1, hosts: {} }
+      })
     }
     return this._store
   }
