@@ -60,6 +60,33 @@ function sanitizeHistory(raw: unknown): CompanionAiChatRequest['history'] {
     .map((m) => ({ role: m.role, text: m.text.trim().slice(0, 1000) }))
 }
 
+function parseAiConfigPayload(
+  payload: unknown,
+  channel: string
+): { provider: CompanionAiProvider; endpoint: string; model: string; apiKey: string | undefined } {
+  const obj = requireObject(payload, channel)
+  const provider = requireEnum(obj.provider, VALID_PROVIDERS, 'provider', channel)
+  const rawEndpoint = optionalString(obj.endpoint, 'endpoint', channel)?.trim() ?? ''
+  const endpoint = rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
+  const rawModel = optionalString(obj.model, 'model', channel)?.trim() ?? ''
+  const model = provider === 'none' ? '' : normalizeGeminiModel(rawModel)
+  if (provider !== 'none') {
+    try {
+      validateAiEndpoint(provider, endpoint)
+    } catch (err) {
+      failValidation(channel, err instanceof Error ? err.message : 'Invalid AI endpoint')
+    }
+    if (!model || model.length > 120) {
+      failValidation(channel, `${channel} requires a model name (<= 120 chars)`)
+    }
+    if (endpoint.length > 512) {
+      failValidation(channel, `${channel} endpoint exceeds 512 chars`)
+    }
+  }
+  const apiKey = optionalSecretString(obj.apiKey, 'apiKey', channel)
+  return { provider, endpoint, model, apiKey }
+}
+
 /** Registers Ferry Companion sidecar channels (release notes & Gemini/Pro AI provider). */
 export function registerCompanionHandlers(): void {
   handle<CompanionReleasesResult>(INVOKE_CHANNELS.companionGetReleases, async (payload: unknown) => {
@@ -76,30 +103,15 @@ export function registerCompanionHandlers(): void {
   })
 
   handle<CompanionAiConfigInfo>(INVOKE_CHANNELS.companionAiSetConfig, (payload: unknown) => {
-    const obj = requireObject(payload, INVOKE_CHANNELS.companionAiSetConfig)
-    const provider = requireEnum(obj.provider, VALID_PROVIDERS, 'provider', INVOKE_CHANNELS.companionAiSetConfig)
-    const rawEndpoint = optionalString(obj.endpoint, 'endpoint', INVOKE_CHANNELS.companionAiSetConfig)?.trim() ?? ''
-    const endpoint = rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
-    const rawModel = optionalString(obj.model, 'model', INVOKE_CHANNELS.companionAiSetConfig)?.trim() ?? ''
-    const model = provider === 'none' ? '' : normalizeGeminiModel(rawModel)
-    if (provider !== 'none') {
-      try {
-        validateAiEndpoint(provider, endpoint)
-      } catch (err) {
-        failValidation(INVOKE_CHANNELS.companionAiSetConfig, err instanceof Error ? err.message : 'Invalid AI endpoint')
-      }
-      if (!model || model.length > 120) {
-        failValidation(INVOKE_CHANNELS.companionAiSetConfig, 'companion:ai:setConfig requires a model name (<= 120 chars)')
-      }
-      if (endpoint.length > 512) {
-        failValidation(INVOKE_CHANNELS.companionAiSetConfig, 'companion:ai:setConfig endpoint exceeds 512 chars')
-      }
-    }
-    const apiKey = optionalSecretString(obj.apiKey, 'apiKey', INVOKE_CHANNELS.companionAiSetConfig)
-    return AppSettingsStore.getInstance().setCompanionAiConfig({ provider, endpoint, model, apiKey })
+    const cfg = parseAiConfigPayload(payload, INVOKE_CHANNELS.companionAiSetConfig)
+    return AppSettingsStore.getInstance().setCompanionAiConfig(cfg)
   })
 
-  handle<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiTest, async () => {
+  handle<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiTest, async (payload: unknown) => {
+    if (payload !== undefined && payload !== null) {
+      const cfg = parseAiConfigPayload(payload, INVOKE_CHANNELS.companionAiTest)
+      return AiCompanionService.getInstance().testConnection(cfg)
+    }
     return AiCompanionService.getInstance().testConnection()
   })
 

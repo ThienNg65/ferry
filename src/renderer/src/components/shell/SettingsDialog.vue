@@ -176,9 +176,18 @@ async function testCompanionAi(): Promise<void> {
   aiError.value = null
   aiTestStatus.value = null
   try {
-    await saveCompanionAi(false, true)
-    if (aiError.value || aiProvider.value === 'none') return
-    const res = await companion.testAiConnection()
+    if (aiProvider.value === 'none') return
+    const endpoint =
+      aiProvider.value === 'gemini' && !aiEndpoint.value.trim()
+        ? DEFAULT_GEMINI_ENDPOINT
+        : aiEndpoint.value.trim()
+    const model = aiModel.value.trim() || DEFAULT_GEMINI_MODEL
+    const res = await companion.testAiConnection({
+      provider: aiProvider.value,
+      endpoint,
+      model,
+      apiKey: aiApiKey.value ? aiApiKey.value : undefined
+    })
     if (res.ok) {
       aiTestStatus.value = `Connected (${res.provider ?? aiProvider.value}).`
     } else {
@@ -792,8 +801,8 @@ async function saveNetwork(): Promise<void> {
                   />
                 </SettingsRow>
                 <SettingsRow
-                  label="Show Companion in dock"
-                  description="Also show the companion avatar in the bottom/right dock when connected."
+                  label="Show Companion in bottom/right dock"
+                  description="Also show the companion avatar in the connected dock (the top-bar icon remains available)."
                 >
                   <USwitch
                     :model-value="companion.showInDock"
@@ -855,7 +864,7 @@ async function saveNetwork(): Promise<void> {
                           />
                         </label>
                         <label class="flex flex-col gap-1 text-xs">
-                          <span class="text-muted">Gemini Model</span>
+                          <span class="text-muted">{{ aiProvider === 'ferry-pro' ? 'Model' : 'Gemini Model' }}</span>
                           <UInput
                             v-model="aiModel"
                             size="xs"

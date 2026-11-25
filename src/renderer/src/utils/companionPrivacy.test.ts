@@ -176,4 +176,16 @@ describe('companionPrivacy', () => {
     }
   })
 
+  it('redacts JSON-quoted secrets, special-char passwords, truncated PEMs, quoted POSIX paths without false-positive timestamps/versions', () => {
+    const out = redactSensitiveText(
+      '2026-11-25 12:34:56 ferry-v1.3.1 utf-8 sha-256 {"password": "hunter2"} my password is P@ssw0rd!123 "/Users/alice/My Documents/id_rsa"\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAb3BlbnNzaC1rZXktdjE='
+    )
+    expect(out.text).toContain('12:34:56')
+    expect(out.text).toContain('utf-8')
+    expect(out.text).toContain('sha-256')
+    expect(out.text).not.toContain('hunter2')
+    expect(out.text).not.toContain('P@ssw0rd!123')
+    expect(out.text).not.toContain('Documents/id_rsa')
+    expect(out.text).not.toContain('AAAAb3BlbnNzaC1rZXktdjE=')
+  })
 })

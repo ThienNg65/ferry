@@ -1,7 +1,6 @@
 import { ref } from 'vue'
 import { INVOKE_CHANNELS, type FileEntry } from '@shared/contract'
 import { invoke } from '../api'
-import { useCompanionStore } from '../stores/companion.store'
 import { useLocalFsStore } from '../stores/localFs.store'
 import { useMonitorStore } from '../stores/monitor.store'
 import { useRemoteFsStore } from '../stores/remoteFs.store'
@@ -30,7 +29,6 @@ export function useTransferIntents() {
   const sessions = useSessionsStore()
   const transfers = useTransferQueueStore()
   const monitor = useMonitorStore()
-  const companion = useCompanionStore()
   const notify = useNotify()
   const confirm = useConfirm()
 
@@ -87,20 +85,18 @@ export function useTransferIntents() {
 
   async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
     if (intents.length === 0) return
-    if (!companion.quietMode) {
-      const preFlight = evaluateTransferPreFlight(intents, monitor.latest?.disk)
-      if (preFlight.warnings.length > 0) {
-        const proceed = await confirm({
-          title: 'Ferry Companion — Pre-Flight Safety Check',
-          body: preFlight.warnings.join('\n\n'),
-          items: preFlight.sensitiveFiles.length > 0 ? preFlight.sensitiveFiles : undefined,
-          confirmLabel: 'Transfer anyway',
-          confirmColor: 'warning'
-        })
-        if (!proceed) {
-          cleanupUnusedStagedPaths(intents, [])
-          return
-        }
+    const preFlight = evaluateTransferPreFlight(intents, monitor.latest?.disk)
+    if (preFlight.warnings.length > 0) {
+      const proceed = await confirm({
+        title: 'Ferry Companion — Pre-Flight Safety Check',
+        body: preFlight.warnings.join('\n\n'),
+        items: preFlight.sensitiveFiles.length > 0 ? preFlight.sensitiveFiles : undefined,
+        confirmLabel: 'Transfer anyway',
+        confirmColor: 'warning'
+      })
+      if (!proceed) {
+        cleanupUnusedStagedPaths(intents, [])
+        return
       }
     }
     for (const intent of intents) {

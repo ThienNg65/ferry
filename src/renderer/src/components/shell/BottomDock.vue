@@ -354,7 +354,7 @@ watch(
         class="flex flex-col items-center gap-1.5"
         @keydown="onTablistKeydown($event, false, true)"
       >
-        <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
+        <UTooltip v-for="(panel, idx) in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
           <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
             <UButton
               :icon="panel.icon"
@@ -364,6 +364,7 @@ watch(
               role="tab"
               :aria-selected="!collapsed && tab === panel.id"
               :aria-label="panel.label"
+              :tabindex="(!collapsed && tab === panel.id) || (collapsed && idx === 0) ? 0 : -1"
               @click="openDock(panel.id)"
             />
           </UChip>
@@ -388,7 +389,7 @@ watch(
           @keydown="onTablistKeydown($event)"
           @wheel="onTabStripWheel"
         >
-          <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip">
+          <UTooltip v-for="(panel, idx) in dockTabs" :key="panel.id" :text="panel.tooltip">
             <button
               type="button"
               class="ferry-dock-tab inline-flex min-h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
@@ -403,6 +404,7 @@ watch(
               role="tab"
               :aria-selected="!collapsed && tab === panel.id"
               :aria-label="panel.label"
+              :tabindex="(!collapsed && tab === panel.id) || (collapsed && idx === 0) ? 0 : -1"
               @click="onTabClick(panel.id)"
             >
               <UIcon

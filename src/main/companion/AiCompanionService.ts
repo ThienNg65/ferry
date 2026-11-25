@@ -344,10 +344,13 @@ export class AiCompanionService {
     return AiCompanionService.instance
   }
 
-  async chat(request: CompanionAiChatRequest): Promise<CompanionAiChatResult> {
+  async chat(
+    request: CompanionAiChatRequest,
+    overrideConfig?: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']>
+  ): Promise<CompanionAiChatResult> {
     let config: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']>
     try {
-      config = this.getConfig()
+      config = overrideConfig !== undefined ? overrideConfig : this.getConfig()
     } catch (err) {
       return { ok: false, error: sanitizeErrorMessage(err) }
     }
@@ -469,13 +472,38 @@ export class AiCompanionService {
     }
   }
 
-  /** Lightweight connectivity check against the currently saved AI provider config. */
-  async testConnection(): Promise<CompanionAiChatResult> {
-    return this.chat({
-      prompt: 'Reply with a JSON summary saying OK.',
-      intent: 'chat',
-      history: [],
-      context: { appVersion: 'test', isConnected: false, theme: 'neutral' }
-    })
+  /** Lightweight connectivity check against the provided override or currently saved AI provider config. */
+  async testConnection(override?: {
+    provider: CompanionAiProvider
+    endpoint: string
+    model: string
+    apiKey?: string
+  }): Promise<CompanionAiChatResult> {
+    let overrideConfig: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']> | undefined
+    if (override) {
+      let savedKey: string | undefined
+      try {
+        savedKey = this.getConfig()?.apiKey
+      } catch {
+        savedKey = undefined
+      }
+      const key = override.apiKey !== undefined ? override.apiKey.trim() : savedKey
+      overrideConfig = {
+        provider: override.provider,
+        endpoint: override.endpoint,
+        model: override.model,
+        hasApiKey: Boolean(key),
+        apiKey: key || undefined
+      }
+    }
+    return this.chat(
+      {
+        prompt: 'Reply with a JSON summary saying OK.',
+        intent: 'chat',
+        history: [],
+        context: { appVersion: 'test', isConnected: false, theme: 'neutral' }
+      },
+      overrideConfig
+    )
   }
 }

@@ -39,7 +39,7 @@ const MAX_SAFE_URL_LENGTH = 6_000
 const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: string }> = [
   {
     label: 'private key',
-    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----|[\s\S]*)/g,
     replacement: '[REDACTED_PRIVATE_KEY]'
   },
   {
@@ -54,12 +54,12 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'credential',
-    pattern: /(?<![A-Za-z0-9])([A-Za-z0-9_]*(?:password|passwd|passphrase|secret|token|api[_-]?key|authorization))\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
-    replacement: '$1=[REDACTED]'
+    pattern: /(?<![A-Za-z0-9])(["']?[A-Za-z0-9_]*(?:password|passwd|passphrase|secret|token|api[_-]?key|authorization)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+    replacement: '$1[REDACTED]'
   },
   {
     label: 'credential',
-    pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[A-Za-z0-9._~+/=-]+)/gi,
+    pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[^\s,;]+)/gi,
     replacement: '$1 [REDACTED]'
   },
   {
@@ -69,7 +69,7 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'absolute path',
-    pattern: /(?:"[A-Za-z]:[\\/][^"\r\n]+"|'[A-Za-z]:[\\/][^'\r\n]+'|[A-Za-z]:[\\/](?:[^\\/\s"'<>|:*?]+[\\/])*[^\\/\s"'<>|:*?]+|\\\\[A-Za-z0-9._$-]+\\[^\s"'<>]+|(?<![A-Za-z0-9.:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/g,
+    pattern: /(?:"[A-Za-z]:[\\/][^"\r\n]+"|'[A-Za-z]:[\\/][^'\r\n]+'|[A-Za-z]:[\\/](?:[^\\/\s"'<>|:*?]+[\\/])*[^\\/\s"'<>|:*?]+|\\\\[A-Za-z0-9._$-]+\\[^\s"'<>]+|"(?:\/[^"\r\n]+)"|'(?:\/[^'\r\n]+)'|(?<![A-Za-z0-9.:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/g,
     replacement: '[REDACTED_PATH]'
   },
   {
@@ -79,20 +79,19 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'hostname',
-    pattern: /(?<![A-Za-z0-9@/:._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,63}(?![A-Za-z0-9_-])|(?<![A-Za-z0-9@/:._-])[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]*\d[A-Za-z0-9-]*(?![A-Za-z0-9_-])/g,
+    pattern: /(?<![A-Za-z0-9@/:._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,63}(?![A-Za-z0-9_-])|(?<![A-Za-z0-9@/:._-])(?!utf-\d+\b|sha-\d+\b|tls-\d|http-\d)[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]*\d[A-Za-z0-9-]*(?![A-Za-z0-9_-])/gi,
     replacement: '[REDACTED_HOST]'
   },
   {
     label: 'IPv6 address',
-    pattern: /(?<![0-9a-fA-F:])(?:(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*::(?:[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*)?|::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*)(?![0-9a-fA-F:])/g,
+    pattern: /(?<![0-9a-fA-F:])(?:(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*::(?:[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*)?|::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4})*)(?![0-9a-fA-F:])/g,
     replacement: '[REDACTED_IP]'
   },
   {
     label: 'IP address',
     pattern: /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g,
     replacement: '[REDACTED_IP]'
-  },
-
+  }
 ]
 
 /**

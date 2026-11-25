@@ -125,7 +125,9 @@ watch(
       if (target && target.isConnected) {
         target.focus()
       } else {
-        const fallback = document.querySelector<HTMLElement>('[data-pane] [tabindex="0"], main [tabindex="0"]')
+        const fallback = document.querySelector<HTMLElement>(
+          '[data-companion-trigger], [data-pane] [tabindex="0"], main [tabindex="0"]'
+        )
         fallback?.focus()
       }
     }
@@ -157,9 +159,6 @@ watch(
 function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !companion.open) return
   if (prefsOpen.value) {
-    e.preventDefault()
-    e.stopPropagation()
-    prefsOpen.value = false
     return
   }
   if (document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
@@ -222,7 +221,10 @@ function onCreateSnippet(): void {
     command: newSnippetCommand.value,
     description: newSnippetDescription.value
   })
-  if (!saved) return
+  if (!saved) {
+    actionFeedback.value = 'Enter a valid label and shell command.'
+    return
+  }
   newSnippetLabel.value = ''
   newSnippetCommand.value = ''
   newSnippetDescription.value = ''
@@ -386,7 +388,7 @@ function openFullNotes(url?: string): void {
           :aria-selected="companion.activeView === v.id"
           :aria-controls="`companion-panel-${v.id}`"
           :tabindex="companion.activeView === v.id ? 0 : -1"
-          class="inline-flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-1.5 py-1 text-2xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
+          class="inline-flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-1 py-1 text-2xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary"
           :class="
             companion.activeView === v.id
               ? 'bg-primary/12 text-primary'

@@ -71,8 +71,22 @@ describe('companionEngine', () => {
 
   it('classifies common SFTP/SSH error patterns into targeted checklists', () => {
     expect(diagnoseErrorText('EACCES: permission denied')).toContain('permissions')
+    expect(diagnoseErrorText('Permission denied (publickey).')).toContain('SSH key mismatch')
     expect(diagnoseErrorText('ENOSPC: no space left on device')).toContain('disk')
     expect(diagnoseErrorText('Host key fingerprint mismatch')).toContain('Trusted SSH Hosts')
+  })
+
+  it('routes transfer error queries ahead of snippet/bug/filter branches and handles sync warnings', () => {
+    const baseCtx = {
+      currentVersion: '1.3.1',
+      previousVersion: null,
+      releases: SAMPLE_RELEASES,
+      offlineFallback: false,
+      isConnected: true
+    }
+    expect(answerCompanionQuery('My transfer failed with EACCES: permission denied', baseCtx).text).toContain('permissions')
+    expect(answerCompanionQuery('My transfer failed with broken pipe', baseCtx).text).toContain('network drop')
+    expect(answerCompanionQuery('Review this folder sync pre-flight warning (push)', baseCtx).text).toContain('mirror mode')
   })
 
   it('returns risk-badged Command Cards for plain-English shell command requests', () => {

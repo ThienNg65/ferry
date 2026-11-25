@@ -58,6 +58,9 @@ export interface CompanionReply {
  */
 export function diagnoseErrorText(errorText: string): string {
   const lower = errorText.toLowerCase()
+  if (/publickey|keyboard-interactive|authentication failed|\bauth\b|\bpassphrase\b|\bssh key\b|\bprivate key\b/.test(lower)) {
+    return 'Likely cause: rejected credentials or SSH key mismatch.\n1. Verify username, password/passphrase, or private key path in Site Settings.\n2. If using an SSH agent, confirm the key is loaded.'
+  }
   if (/eacces|eperm|permission denied/.test(lower)) {
     return 'Likely cause: insufficient read/write permissions on the destination path.\n1. Check folder ownership and chmod permissions (right-click → Permissions).\n2. Verify the target directory is not read-only or mounted `ro`.\n3. Try uploading to your home directory or `/tmp` to confirm write access.'
   }
@@ -75,9 +78,6 @@ export function diagnoseErrorText(errorText: string): string {
   }
   if (/enoent|no such file|broken symlink/.test(lower)) {
     return 'Likely cause: the source or target path no longer exists (or is a broken symlink).\n1. Refresh the file pane (`Ctrl+R`) to confirm the file/folder is still present.\n2. Check whether a parent directory was moved or renamed.'
-  }
-  if (/auth|passphrase|key|publickey|keyboard-interactive/.test(lower)) {
-    return 'Likely cause: rejected credentials or SSH key mismatch.\n1. Verify username, password/passphrase, or private key path in Site Settings.\n2. If using an SSH agent, confirm the key is loaded.'
   }
   return 'General troubleshooting steps (documentation guidance — no remote commands are run):\n1. Check the Transfers tab for the exact error and retry or reconnect.\n2. Verify write permissions and free disk space on the destination.\n3. Confirm the remote path still exists and is not a broken symlink.'
 }
@@ -187,6 +187,33 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
     return buildWhatsNewReply(ctx, askDiff)
   }
 
+  if (/\b(pre-?flight|folder sync|mirror mode|deleteextras)\b/i.test(q) || /\bsync\b.*\b(warning|delete|push|pull)\b/i.test(q)) {
+    return {
+      text: 'Folder Sync Pre-Flight checks warn before mirror mode deletes destination files, uploads sensitive credential files (`.env`, private keys), or pushes to a nearly full disk.\n1. Review the **Preview** deletion list carefully — mirror deletions cannot be undone.\n2. Exclude `.env` or key files if you do not intend to deploy secrets.\n3. Check free space in the Monitor dock tab if a disk warning appears.',
+      actions: [
+        { id: 'open-dock-monitor', label: 'Open Monitor', icon: 'i-lucide-activity' },
+        { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' }
+      ]
+    }
+  }
+
+  const isErrorOrTransferQuery = /\b(transfers?|uploads?|downloads?|queue|failed|errors?|troubleshoot|permission denied|eacces|eperm|enospc|etimedout|econnreset|econnrefused|enoent|publickey|broken pipe|timeouts?|disk full|host key|refused|symlinks?)\b/.test(q)
+  if (isErrorOrTransferQuery) {
+    const combined = `${rawInput} ${ctx.lastTransferError ?? ''}`.trim()
+    const diagnosis = diagnoseErrorText(combined)
+    const errorHeader = ctx.lastTransferError
+      ? `Observed transfer error: "${ctx.lastTransferError}"\n\n`
+      : ''
+    return {
+      text: `${errorHeader}${diagnosis}`,
+      actions: [
+        { id: 'open-dock-transfers', label: 'Open Transfers', icon: 'i-lucide-arrow-up-down' },
+        { id: 'open-history', label: 'Show Transfer History', icon: 'i-lucide-history' },
+        { id: 'open-report-bug', label: 'Report a problem', icon: 'i-lucide-bug' }
+      ]
+    }
+  }
+
   if (/\b(report|bug|issue|broken|crash)\b/.test(q)) {
     return {
       text: 'I can help you draft a structured bug report with automatic secret & path redaction before you review and submit it on GitHub.',
@@ -230,22 +257,6 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
       commandCards: commandMatch.commandCards,
       uiActionCards: commandMatch.uiActionCards,
       actions: [{ id: 'open-dock-terminal', label: 'Open Terminal', icon: 'i-lucide-terminal' }]
-    }
-  }
-
-  if (/\b(transfers?|uploads?|downloads?|queue|failed|errors?|troubleshoot|permission denied|timeouts?|disk full|host key|refused|symlinks?)\b/.test(q)) {
-    const combined = `${rawInput} ${ctx.lastTransferError ?? ''}`.trim()
-    const diagnosis = diagnoseErrorText(combined)
-    const errorHeader = ctx.lastTransferError
-      ? `Observed transfer error: "${ctx.lastTransferError}"\n\n`
-      : ''
-    return {
-      text: `${errorHeader}${diagnosis}`,
-      actions: [
-        { id: 'open-dock-transfers', label: 'Open Transfers', icon: 'i-lucide-arrow-up-down' },
-        { id: 'open-history', label: 'Show Transfer History', icon: 'i-lucide-history' },
-        { id: 'open-report-bug', label: 'Report a problem', icon: 'i-lucide-bug' }
-      ]
     }
   }
 

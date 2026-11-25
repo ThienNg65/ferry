@@ -167,13 +167,18 @@ export function translatePlainEnglishCommandOffline(query: string): {
   return null
 }
 
-export function diagnoseLogSnippetOffline(logPath: string, snippet: string): CompanionStructuredOutput {
+export function diagnoseLogSnippetOffline(
+  logPath: string,
+  snippet: string,
+  actionRemotePath?: string
+): CompanionStructuredOutput {
   const lower = snippet.toLowerCase()
   const commandCards: CompanionCommandCard[] = []
   const uiActionCards: CompanionUiActionCard[] = []
+  const resolvedPath = (actionRemotePath ?? (logPath && logPath !== '[REDACTED_PATH]' ? logPath : '')).trim()
 
-  if (logPath) {
-    uiActionCards.push({ kind: 'tail-log', remotePath: logPath, label: 'Focus Log Tail' })
+  if (resolvedPath) {
+    uiActionCards.push({ kind: 'tail-log', remotePath: resolvedPath, label: 'Focus Log Tail' })
   }
 
   let rootCause = 'Inspect surrounding log lines and service journal for preceding errors.'
@@ -204,7 +209,7 @@ export function diagnoseLogSnippetOffline(logPath: string, snippet: string): Com
     rootCause = 'The service or SSH user lacks filesystem read/write/execute permissions on the target path.'
     summary = 'Permission denied while accessing a file or socket. Check ownership and POSIX permissions.'
     commandCards.push({
-      command: logPath ? `ls -la '${logPath.replace(/'/g, `'\\''`)}'` : 'ls -la',
+      command: resolvedPath ? `ls -la '${resolvedPath.replace(/'/g, `'\\''`)}'` : 'ls -la',
       description: 'Inspect file ownership and permissions',
       risk: 'read_only'
     })

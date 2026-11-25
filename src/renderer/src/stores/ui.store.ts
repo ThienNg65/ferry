@@ -252,6 +252,7 @@ function clearAccentThemeSyncTimer(): void {
 
 async function applyTheme(theme: Theme): Promise<void> {
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.style.colorScheme = theme
   if (typeof window !== 'undefined' && window.api) {
     try {
       const payload: WindowThemeSyncInput = { theme, captionColor: resolveCaptionColorRef(theme) }

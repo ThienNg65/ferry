@@ -320,12 +320,15 @@ watch(
   }
 )
 
+const promoToastActive = ref(false)
+
 watch(
   [() => settingsStore.loaded, needsLegalConsent],
   ([loaded, consentNeeded]) => {
     if (!loaded || consentNeeded || promoToastShown) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
+    promoToastActive.value = true
 
     const { id } = toast.add({
       title: 'Modern Glass UI (In Development)',
@@ -336,6 +339,7 @@ watch(
       'onUpdate:open': (open: boolean) => {
         if (!open) {
           promoToastId = null
+          promoToastActive.value = false
           ui.dismissGlassUiPromo()
         }
       },
@@ -349,6 +353,7 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
+            promoToastActive.value = false
             notify.success(
               'Modern Glass UI enabled',
               'You can switch back anytime in Settings → Appearance.'
@@ -363,6 +368,7 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
+            promoToastActive.value = false
           }
         }
       ]
@@ -372,11 +378,11 @@ watch(
   { immediate: true }
 )
 
-// Initialize Ferry Companion lifecycle after legal consent & settings hydration.
+// Initialize Ferry Companion lifecycle after legal consent, settings hydration, and any promo toast dismissal.
 watch(
-  [() => settingsStore.loaded, needsLegalConsent],
-  ([loaded, consentNeeded]) => {
-    if (!loaded || consentNeeded || companion.lifecycleInitialized) return
+  [() => settingsStore.loaded, needsLegalConsent, promoToastActive],
+  ([loaded, consentNeeded, promoActive]) => {
+    if (!loaded || consentNeeded || promoActive || companion.lifecycleInitialized) return
     const resolveAndInit = async (): Promise<void> => {
       let version = updateStore.currentVersion
       if (!version) {

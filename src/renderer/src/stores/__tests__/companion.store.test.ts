@@ -182,9 +182,36 @@ describe('companion.store', () => {
       await store.executeUiActionCard({ kind: 'apply-filter', mode: 'exclude', pattern: '*.tmp', label: 'Hide .tmp' })
       const filters = useFileFiltersStore()
       expect(filters.getFilter('host:prod-1').exclude).toContain('*.tmp')
+
+      // Escalates read_only -> mutating in runCommandCard confirmation
+      confirmMock.mockResolvedValueOnce(false)
+      await store.runCommandCard({
+        command: 'systemctl restart nginx',
+        description: 'Restart nginx',
+        risk: 'read_only'
+      })
+      expect(confirmMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining('MUTATING')
+        })
+      )
     } finally {
       ;(window as { api?: unknown }).api = prevApi
     }
+  })
+
+  it('keeps local tail-log remotePath unredacted when explainLogLine redacts logPath', async () => {
+    const store = useCompanionStore()
+    await store.explainLogLine({
+      remotePath: '/var/log/nginx/error.log',
+      lineText: 'ENOSPC: no space left on device'
+    })
+    const last = store.messages[store.messages.length - 1]
+    expect(last.uiActionCards?.[0]).toEqual({
+      kind: 'tail-log',
+      remotePath: '/var/log/nginx/error.log',
+      label: 'Focus Log Tail'
+    })
   })
 
   it('sanitizes control sequences from snippets/history and caps message list at 100', () => {

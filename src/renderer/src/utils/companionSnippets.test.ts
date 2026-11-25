@@ -25,6 +25,7 @@ describe('companionSnippets', () => {
   it('translates plain-English requests into risk-badged Command Cards offline', () => {
     const disk = translatePlainEnglishCommandOffline('Command to check disk usage')
     expect(disk?.commandCards.some((c) => c.command === 'df -h' && c.risk === 'read_only')).toBe(true)
+    expect(disk?.commandCards.every((c) => c.risk === 'read_only')).toBe(true)
 
     const ports = translatePlainEnglishCommandOffline('How do I list listening ports?')
     expect(ports?.commandCards.some((c) => c.command.includes('ss -tulpn'))).toBe(true)

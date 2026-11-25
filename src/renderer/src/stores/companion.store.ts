@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import {
+  escalateCommandRisk,
   INVOKE_CHANNELS,
   sanitizeCompanionCommand,
   SEND_CHANNELS,
@@ -197,6 +198,17 @@ function parseCommandHistory(raw: string | null | undefined): CompanionCommandHi
               typeof (h as CompanionCommandHistoryEntry).executedAt === 'string'
           )
       )
+      .map((h) => {
+        const command = sanitizeCompanionCommand(h.command)
+        const rawRisk = h.risk === 'destructive' || h.risk === 'mutating' || h.risk === 'read_only' ? h.risk : 'read_only'
+        return {
+          ...h,
+          command,
+          risk: escalateCommandRisk(rawRisk, command),
+          hostLabel: typeof h.hostLabel === 'string' ? h.hostLabel.trim().slice(0, 80) : null
+        }
+      })
+      .filter((h) => h.command.length > 0)
       .slice(0, MAX_CMD_HISTORY)
   } catch {
     return []
@@ -379,10 +391,9 @@ export const useCompanionStore = defineStore('companion', {
       if (!this.aiConfigLoaded) {
         void this.loadAiConfig()
       }
-      if (this.notice) {
-        if (this.notice.kind === 'intro') {
-          this.markOnboarded()
-        }
+      if (this.notice && this.notice.kind !== 'intro') {
+        this.notice = null
+      } else if (this.notice?.kind === 'intro') {
         this.notice = null
       }
       if (view === 'whats-new') {
@@ -411,8 +422,8 @@ export const useCompanionStore = defineStore('companion', {
       return saved
     },
 
-    async testAiConnection(): Promise<CompanionAiChatResult> {
-      return invoke<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiTest)
+    async testAiConnection(override?: CompanionAiConfigInput): Promise<CompanionAiChatResult> {
+      return invoke<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiTest, override)
     },
 
     startTour(): void {
@@ -669,8 +680,8 @@ export const useCompanionStore = defineStore('companion', {
       this.transferTipTimer = setTimeout(() => {
         this.transferTipTimer = null
         if (this.quietMode || !this.contextualTips || this.open) return
-        this.lastTransferTipAt = Date.now()
         if (this.notice === null) {
+          this.lastTransferTipAt = Date.now()
           this.notice = {
             id: nextId('notice'),
             kind: 'transfer-error',
@@ -844,7 +855,12 @@ export const useCompanionStore = defineStore('companion', {
       lineNumber?: number
       contextLines?: string[]
     }): Promise<void> {
-      if (this.aiBusy) return
+      if (this.aiBusy) {
+        this.open = true
+        this.activeView = 'chat'
+        this.pushSystemNote('Still finishing the previous AI request — please try Explain Log again in a moment.')
+        return
+      }
       const redactedPath = redactSensitiveText(input.remotePath).text
       const rawSnippet =
         input.contextLines && input.contextLines.length > 0
@@ -871,7 +887,7 @@ export const useCompanionStore = defineStore('companion', {
         workspaceSignal: { logPath: redactedPath, logSnippet },
         errorPrefix: 'Local log analysis:',
         buildLocal: () => {
-          const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet)
+          const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet, input.remotePath)
           return {
             text: offline.summary,
             rootCause: offline.rootCause,
@@ -883,7 +899,12 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     async diagnoseMonitorSpike(sample: MonitorSample): Promise<void> {
-      if (this.aiBusy) return
+      if (this.aiBusy) {
+        this.open = true
+        this.activeView = 'chat'
+        this.pushSystemNote('Still finishing the previous AI request — please try Diagnose Spike again in a moment.')
+        return
+      }
       const cpuPct = sample.cpu ? sample.cpu.aggregatePct : null
       const coreCount = sample.cpu?.coreCount ?? 1
       const memPct = sample.memory.totalBytes > 0 ? Math.round((sample.memory.usedBytes / sample.memory.totalBytes) * 100) : 0
@@ -961,12 +982,17 @@ export const useCompanionStore = defineStore('companion', {
     recordCommandHistory(command: string, risk?: CompanionCommandRisk, hostLabel?: string | null): void {
       const sanitized = sanitizeCompanionCommand(command)
       if (!sanitized) return
+      const nextHost = hostLabel ? hostLabel.trim().slice(0, 80) : null
+      const latest = this.commandHistory[0]
+      if (latest && latest.command === sanitized && (latest.hostLabel ?? null) === nextHost) {
+        return
+      }
       const entry: CompanionCommandHistoryEntry = {
         id: nextId('cmd'),
         command: sanitized,
         risk: risk ?? classifyCommandRisk(sanitized),
         executedAt: new Date().toISOString(),
-        hostLabel: hostLabel ? hostLabel.trim().slice(0, 80) : null
+        hostLabel: nextHost
       }
       this.commandHistory = [entry, ...this.commandHistory].slice(0, MAX_CMD_HISTORY)
       writeStored(CMD_HISTORY_KEY, JSON.stringify(this.commandHistory), this.dirtyPrefKeys)
@@ -987,7 +1013,7 @@ export const useCompanionStore = defineStore('companion', {
       if (!command) {
         return 'Command is empty.'
       }
-      const risk = classifyCommandRisk(command) === 'destructive' ? 'destructive' : card.risk
+      const risk = escalateCommandRisk(card.risk, command)
       const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
       const riskNote =
         risk === 'destructive'
