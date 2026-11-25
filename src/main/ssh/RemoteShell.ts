@@ -712,7 +712,10 @@ export class RemoteShell {
       if (result.code === 0) {
         return
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof SshError && (e.code === 'CANCELLED' || e.code === 'SSH_TIMEOUT')) {
+        throw e
+      }
       // No exec capability at all — fall through to the SFTP-only path below.
     }
     await this.deleteRecursiveSftp(remotePath)

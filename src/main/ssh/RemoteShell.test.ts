@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { Client, ClientChannel } from 'ssh2'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MAX_BUFFERED_LINE_BYTES, TRUNCATED_LINE_SUFFIX } from './BoundedLineBuffer'
+import { SshError } from './errors'
 import { RemoteShell } from './RemoteShell'
 
 class MockChannel extends EventEmitter {
@@ -148,7 +149,7 @@ describe('RemoteShell UTF-8 output', () => {
     buffered.channel.emit('data', incomplete)
     buffered.channel.stderr.emit('data', incomplete)
     buffered.channel.emit('close', 0)
-    await expect(bufferedExecution).resolves.toEqual({ stdout: '�', stderr: '�', code: 0 })
+    await expect(bufferedExecution).resolves.toEqual({ stdout: '', stderr: '', code: 0 })
 
     const withStdin = createHarness()
     const stdinExecution = withStdin.shell.execWithStdin('cat', Buffer.from('input'))
@@ -156,7 +157,7 @@ describe('RemoteShell UTF-8 output', () => {
     withStdin.channel.emit('close', 0)
     await expect(stdinExecution).resolves.toEqual({
       stdout: Buffer.alloc(0),
-      stderr: '�',
+      stderr: '',
       code: 0
     })
 
@@ -172,7 +173,31 @@ describe('RemoteShell UTF-8 output', () => {
     streamed.channel.stderr.emit('data', incomplete)
     streamed.channel.emit('close', 0)
     await expect(streamExecution).resolves.toBe(0)
-    expect(lines).toEqual(['�'])
-    expect(stderr.join('')).toBe('�')
+    expect(lines).toEqual([''])
+    expect(stderr.join('')).toBe('')
+  })
+})
+
+describe('RemoteShell.deleteRecursive', () => {
+  it.each(['SSH_TIMEOUT', 'CANCELLED'] as const)(
+    'rethrows %s without falling back to deleteRecursiveSftp',
+    async (code) => {
+      const { shell } = createHarness()
+      const err = new SshError(code, `exec failed with ${code}`)
+      vi.spyOn(shell, 'exec').mockRejectedValueOnce(err)
+      const sftpSpy = vi.spyOn(shell as unknown as { deleteRecursiveSftp: (p: string) => Promise<void> }, 'deleteRecursiveSftp').mockResolvedValueOnce(undefined)
+
+      await expect(shell.deleteRecursive('/var/www/tmp')).rejects.toBe(err)
+      expect(sftpSpy).not.toHaveBeenCalled()
+    }
+  )
+
+  it('falls back to deleteRecursiveSftp when exec fails with a non-timeout/non-cancel error', async () => {
+    const { shell } = createHarness()
+    vi.spyOn(shell, 'exec').mockRejectedValueOnce(new SshError('SFTP', 'exec disabled'))
+    const sftpSpy = vi.spyOn(shell as unknown as { deleteRecursiveSftp: (p: string) => Promise<void> }, 'deleteRecursiveSftp').mockResolvedValueOnce(undefined)
+
+    await expect(shell.deleteRecursive('/var/www/tmp')).resolves.toBeUndefined()
+    expect(sftpSpy).toHaveBeenCalledWith('/var/www/tmp')
   })
 })
