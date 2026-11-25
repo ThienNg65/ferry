@@ -8,13 +8,13 @@ import { useEditSessionsStore } from './editSessions.store'
 vi.mock('../api', () => ({ invoke: vi.fn(), onEvent: vi.fn(() => () => {}) }))
 vi.mock('../composables/useNotify', () => ({ useNotify: vi.fn() }))
 
-
 it('marks a remote-changed edit dirty until overwrite succeeds', () => {
   setActivePinia(createPinia())
   const notify = { success: vi.fn(), error: vi.fn(), prompt: vi.fn() }
   vi.mocked(useNotify).mockReturnValue(notify)
   const store = useEditSessionsStore()
   store.hydrated = true
+  vi.mocked(onEvent).mockClear()
   store.ensureSubscription()
   const onEditEvent = vi.mocked(onEvent).mock.calls[0][1]
   const edit = { editId: 'edit-2', sessionId: 'session-1', remotePath: '/srv/conflict.txt', localTempPath: 'conflict.txt' }
@@ -41,6 +41,7 @@ it('keeps an interrupted editor save unsaved and tells the user how to retry', (
   vi.mocked(useNotify).mockReturnValue(notify)
   const store = useEditSessionsStore()
   store.hydrated = true
+  vi.mocked(onEvent).mockClear()
   store.ensureSubscription()
   const onEditEvent = vi.mocked(onEvent).mock.calls[0][1]
   const edit = { editId: 'edit-1', sessionId: 'session-1', remotePath: '/srv/edit.txt', localTempPath: 'edit.txt' }
