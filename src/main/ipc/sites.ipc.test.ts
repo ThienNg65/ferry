@@ -1,6 +1,9 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { handlers } from './envelope'
-import type { IpcResult } from '../../shared/contract'
+import { INVOKE_CHANNELS, type IpcResult } from '../../shared/contract'
 
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
@@ -115,5 +118,40 @@ describe('sites.ipc', () => {
         jumpHosts: [expect.objectContaining({ password: '' })]
       })
     )
+  })
+
+  it('sites:importJson rejects invalid JSON and malformed site fields with VALIDATION code and specific message', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ferry-sites-backup-'))
+    try {
+      const invalidJsonPath = join(dir, 'invalid.json')
+      await writeFile(invalidJsonPath, '{not-json', 'utf-8')
+      const invalidJsonResult = await invoke(INVOKE_CHANNELS.sitesImportJson, invalidJsonPath)
+      expect(invalidJsonResult).toMatchObject({
+        ok: false,
+        code: 'VALIDATION',
+        message: 'File is not valid JSON'
+      })
+
+      const malformedSitePath = join(dir, 'malformed.json')
+      await writeFile(
+        malformedSitePath,
+        JSON.stringify({
+          schemaVersion: 1,
+          sites: [
+            { host: 'one.example.com', port: 22, username: 'alice', authMethod: 'password' },
+            { host: 'two.example.com', port: 99999, username: 'bob', authMethod: 'password' }
+          ]
+        }),
+        'utf-8'
+      )
+      const malformedResult = await invoke(INVOKE_CHANNELS.sitesImportJson, malformedSitePath)
+      expect(malformedResult).toMatchObject({
+        ok: false,
+        code: 'VALIDATION',
+        message: 'Site 2: "port" must be a port between 1 and 65535'
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
