@@ -109,7 +109,8 @@ export const useLocalFsStore = defineStore('localFs', {
       }
 
       const pathAtStart = this.currentPath
-      const requestSeqAtStart = this.requestSeq
+      // Supersede older background refreshes so out-of-order responses cannot overwrite newer listings.
+      const requestSeqAtStart = ++this.requestSeq
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, pathAtStart)
         if (this.requestSeq !== requestSeqAtStart || normalizeLocalDir(this.currentPath) !== normalizedTarget) {
