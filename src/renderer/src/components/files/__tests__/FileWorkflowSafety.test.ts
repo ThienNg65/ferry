@@ -7,7 +7,6 @@ import { invoke, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
 import { useBookmarksStore } from '../../../stores/bookmarks.store'
 import { useLocalFsStore } from '../../../stores/localFs.store'
-import { useUiStore } from '../../../stores/ui.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import CompareDialog from '../CompareDialog.vue'
@@ -477,30 +476,59 @@ describe('local OS drops into folders', () => {
   })
 })
 
-describe('window keydown fallback visibility guard', () => {
-  it('ignores window keydown events on the local pane when sessions.status !== "connected"', async () => {
-    const sessions = useSessionsStore()
-    const localFs = useLocalFsStore()
-    const ui = useUiStore()
-    const entry: FileEntry = { name: 'notes.txt', path: '/local/notes.txt', isDir: false, isSymlink: false, size: 12, modifiedAt: null }
-    vi.mocked(invoke).mockResolvedValue({ path: '/local', entries: [entry] } as never)
-    confirm.mockResolvedValue(false)
+describe('local file editing', () => {
+  it('opens EditorDialog for local text files up to 5 MB and external editor for non-text files', async () => {
+    const textFile: FileEntry = { name: 'notes.txt', path: '/local/notes.txt', isDir: false, isSymlink: false, size: 128, modifiedAt: null }
+    const imageFile: FileEntry = { name: 'photo.png', path: '/local/photo.png', isDir: false, isSymlink: false, size: 128, modifiedAt: null }
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalList) return { path: '/local', entries: [textFile, imageFile] } as never
+      if (channel === INVOKE_CHANNELS.fsLocalReadFile) {
+        return { path: textFile.path, content: 'notes', truncated: false } as never
+      }
+      return undefined as never
+    })
 
-    ui.setActivePane('local')
-    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    wrapper = shallowMount(FilePane, {
+      props: { side: 'local' },
+      global: { stubs: { ...stubs, EditorDialog: false } }
+    })
     await vi.dynamicImportSettled()
-    await flushPromises()
-    localFs.entries = [entry]
-    localFs.selected = new Set([entry.path])
 
-    expect(sessions.status).not.toBe('connected')
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    wrapper.getComponent(FileList).vm.$emit('edit', textFile)
     await flushPromises()
-    expect(confirm).not.toHaveBeenCalled()
 
-    sessions.activeTab.status = 'connected'
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    const editor = wrapper.findComponent(EditorDialog)
+    expect(editor.exists()).toBe(true)
+    expect(editor.props()).toMatchObject({
+      open: true,
+      editId: null,
+      localTempPath: '/local/notes.txt',
+      remotePath: null
+    })
+
+    wrapper.getComponent(FileList).vm.$emit('edit', imageFile)
     await flushPromises()
-    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenLocal, '/local/photo.png')
+  })
+
+  it('refreshes localFs when saving a local file in EditorDialog', async () => {
+    const localFs = useLocalFsStore()
+    localFs.currentPath = '/local'
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ content: 'before', truncated: false } as never)
+      .mockResolvedValueOnce(undefined as never)
+      .mockResolvedValueOnce({ path: '/local', entries: [] } as never)
+
+    wrapper = mount(EditorDialog, {
+      props: { open: true, editId: null, localTempPath: '/local/notes.txt', remotePath: null },
+      global: { stubs }
+    })
+    await flushPromises()
+    await wrapper.get('textarea').setValue('after')
+    await button('Save').trigger('click')
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalWriteFile, { path: '/local/notes.txt', content: 'after' })
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalList, '/local')
   })
 })
