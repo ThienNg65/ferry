@@ -24,6 +24,12 @@ vi.mock('../../../api', async (importOriginal) => ({
 vi.mock('../FileList.vue', () => ({ default: { name: 'FileList', template: '<div />' } }))
 vi.mock('../FileToolbar.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('../PathBreadcrumb.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@nuxt/ui/components/Checkbox.vue', () => ({
+  default: {
+    props: ['modelValue', 'label'],
+    template: '<input type="checkbox" :aria-label="label" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)">'
+  }
+}))
 
 const stubs = {
   UModal: true,
