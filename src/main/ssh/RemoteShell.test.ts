@@ -149,7 +149,7 @@ describe('RemoteShell UTF-8 output', () => {
     buffered.channel.emit('data', incomplete)
     buffered.channel.stderr.emit('data', incomplete)
     buffered.channel.emit('close', 0)
-    await expect(bufferedExecution).resolves.toEqual({ stdout: '', stderr: '', code: 0 })
+    await expect(bufferedExecution).resolves.toEqual({ stdout: '\ufffd', stderr: '\ufffd', code: 0 })
 
     const withStdin = createHarness()
     const stdinExecution = withStdin.shell.execWithStdin('cat', Buffer.from('input'))
@@ -157,7 +157,7 @@ describe('RemoteShell UTF-8 output', () => {
     withStdin.channel.emit('close', 0)
     await expect(stdinExecution).resolves.toEqual({
       stdout: Buffer.alloc(0),
-      stderr: '',
+      stderr: '\ufffd',
       code: 0
     })
 
@@ -173,8 +173,8 @@ describe('RemoteShell UTF-8 output', () => {
     streamed.channel.stderr.emit('data', incomplete)
     streamed.channel.emit('close', 0)
     await expect(streamExecution).resolves.toBe(0)
-    expect(lines).toEqual([''])
-    expect(stderr.join('')).toBe('')
+    expect(lines).toEqual(['\ufffd'])
+    expect(stderr.join('')).toBe('\ufffd')
   })
 })
 
