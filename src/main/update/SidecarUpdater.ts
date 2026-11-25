@@ -1,9 +1,10 @@
 import { EventEmitter } from 'events'
 import { createHash } from 'crypto'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, type WriteStream } from 'fs'
+import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, type WriteStream } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { spawn, type ChildProcess } from 'child_process'
+import { logAppEvent } from '../host/appLog'
 import { host } from '../host/host'
 import { logSecurityEvent } from '../host/securityLog'
 
@@ -24,6 +25,52 @@ export function isFerryInstallerName(fileName: string): boolean {
 
 export function isValidSha512Base64(value: string): boolean {
   return /^[A-Za-z0-9+/]{86}==$/.test(value) && Buffer.from(value, 'base64').length === 64
+}
+
+const BACKUP_FILES = ['sites.json', 'app-settings.json', 'bookmarks.json', 'known_hosts.json', 'Local State'] as const
+const MAX_UPGRADE_BACKUPS = 3
+
+/**
+ * Snapshots critical user config/key stores before launching an upgrade installer,
+ * retaining only the newest `MAX_UPGRADE_BACKUPS` directories. Best-effort, never throws.
+ */
+export function backupUserDataBeforeUpgrade(dataDir: string, currentVersion: string): string | null {
+  try {
+    if (!dataDir || !existsSync(dataDir)) {
+      return null
+    }
+    const existing = BACKUP_FILES.filter((name) => existsSync(path.join(dataDir, name)))
+    if (existing.length === 0) {
+      return null
+    }
+    const safeVer = currentVersion.replace(/[^A-Za-z0-9._-]/g, '_') || '0.0.0'
+    const backupsRoot = path.join(dataDir, 'upgrade-backups')
+    const stamp = `${Date.now()}`
+    const destDir = path.join(backupsRoot, `v${safeVer}-${stamp}`)
+    mkdirSync(destDir, { recursive: true })
+    for (const name of existing) {
+      copyFileSync(path.join(dataDir, name), path.join(destDir, name))
+    }
+    const entries = readdirSync(backupsRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => {
+        const dash = d.name.lastIndexOf('-')
+        const ts = dash >= 0 ? Number(d.name.slice(dash + 1)) : NaN
+        return { name: d.name, ts: Number.isFinite(ts) ? ts : 0 }
+      })
+      .sort((a, b) => a.ts - b.ts || a.name.localeCompare(b.name))
+    while (entries.length > MAX_UPGRADE_BACKUPS) {
+      const oldest = entries.shift()!
+      rmSync(path.join(backupsRoot, oldest.name), { recursive: true, force: true })
+    }
+    logAppEvent('info', 'updater.pre_upgrade_backup', { destDir, files: existing.length })
+    return destDir
+  } catch (err) {
+    logAppEvent('warn', 'updater.pre_upgrade_backup_failed', {
+      message: err instanceof Error ? err.message : String(err)
+    })
+    return null
+  }
 }
 
 export interface UpdateManifest {
@@ -625,6 +672,7 @@ export class SidecarUpdater extends EventEmitter {
       logSecurityEvent('updater.sha512_mismatch', { file: safeName, expected: manifest.sha512, actual: actualSha512 })
       throw new Error(`SHA-512 verification failed for ${safeName}`)
     }
+    logAppEvent('info', 'updater.verified', { file: safeName, version: manifest.version })
 
     try {
       rmSync(finalPath, { force: true })
@@ -684,6 +732,7 @@ export class SidecarUpdater extends EventEmitter {
     }
 
     const run = (async (): Promise<CheckForUpdatesResult> => {
+      logAppEvent('info', 'updater.check_start')
       this.emit('checking-for-update')
       const manifest = await this.fetchManifest()
       const currentVersion = host().appVersion ?? FALLBACK_APP_VERSION
@@ -693,6 +742,7 @@ export class SidecarUpdater extends EventEmitter {
         return { updateInfo: { version: currentVersion } }
       }
 
+      logAppEvent('info', 'updater.available', { currentVersion, nextVersion: manifest.version })
       this.clearDownloaded()
       this.emit('update-available', { version: manifest.version })
       if (!this.autoDownload) {
@@ -763,6 +813,16 @@ export class SidecarUpdater extends EventEmitter {
       })
       throw new Error(`SHA-512 verification failed before launching ${path.basename(installerPath)}`)
     }
+
+    try {
+      backupUserDataBeforeUpgrade(host().dataDir, host().appVersion ?? FALLBACK_APP_VERSION)
+    } catch {
+      // Host may not be initialized in isolated unit tests.
+    }
+    logAppEvent('info', 'updater.launch_installer', {
+      file: path.basename(installerPath),
+      version: this.downloadedVersion
+    })
 
     const args = ['--updated']
     if (isSilent) {

@@ -1,7 +1,8 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { randomUUID } from 'crypto'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
+import { openSafeConf } from '../host/storeHelpers'
 import { SshError } from '../ssh/errors'
 import type { AuthMethod, JumpHostConfig, JumpHostInfo, ProxyConfig, ProxyInfo, Site, SiteEnvironment, SiteInput } from '../../shared/contract'
 
@@ -57,7 +58,8 @@ function storedJumpHosts(s: Pick<StoredSite, 'jumpHosts' | 'jumpHost'>): StoredJ
   return s.jumpHosts ?? (s.jumpHost ? [s.jumpHost] : [])
 }
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   sites: StoredSite[]
 }
 
@@ -176,7 +178,28 @@ export class SiteStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({ cwd: host().dataDir, configName: 'sites', defaults: { sites: [] } })
+      this._store = openSafeConf<StoreSchema>({
+        cwd: host().dataDir,
+        configName: 'sites',
+        defaults: { schemaVersion: 1, sites: [] },
+        schemaVersion: 1,
+        migrate: (store) => {
+          const current = store.get('sites')
+          if (!Array.isArray(current)) return
+          let changed = false
+          const migrated = current.map((s) => {
+            if (!s.jumpHosts && s.jumpHost) {
+              changed = true
+              const { jumpHost, ...rest } = s
+              return { ...rest, jumpHosts: [jumpHost] }
+            }
+            return s
+          })
+          if (changed) {
+            store.set('sites', migrated)
+          }
+        }
+      })
     }
     return this._store
   }
@@ -201,9 +224,8 @@ export class SiteStore {
     return JSON.stringify(payload, null, 2)
   }
 
-  create(input: SiteInput): Site {
-    const now = new Date().toISOString()
-    const stored: StoredSite = {
+  private toStoredNew(input: SiteInput, now: string): StoredSite {
+    return {
       id: randomUUID(),
       name: input.name,
       host: input.host,
@@ -224,10 +246,24 @@ export class SiteStore {
       createdAt: now,
       updatedAt: now
     }
+  }
+
+  create(input: SiteInput): Site {
+    const stored = this.toStoredNew(input, new Date().toISOString())
     const sites = this.store.get('sites')
     sites.push(stored)
     this.store.set('sites', sites)
     return toPublicSite(stored)
+  }
+
+  /** Atomically appends multiple sites in a single store write. */
+  createMany(inputs: SiteInput[]): Site[] {
+    if (inputs.length === 0) return []
+    const now = new Date().toISOString()
+    const created = inputs.map((input) => this.toStoredNew(input, now))
+    const sites = this.store.get('sites')
+    this.store.set('sites', [...sites, ...created])
+    return created.map(toPublicSite)
   }
 
   update(id: string, input: SiteInput): Site {
