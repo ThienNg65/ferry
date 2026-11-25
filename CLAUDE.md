@@ -13,6 +13,8 @@ just this file) whenever you add a convention or hit a new gotcha worth remember
 
 ## Commands
 
+Requires Node.js >=22.22.2 (CI runs Node v22.23.5).
+
 ```bash
 npm install --registry=https://registry.npmjs.org   # always pass --registry explicitly on this machine
 npm run dev          # build renderer + sidecar and launch Neutralinojs (neu run)
