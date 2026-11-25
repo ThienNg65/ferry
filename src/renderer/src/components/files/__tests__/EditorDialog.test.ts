@@ -22,7 +22,7 @@ vi.mock('vue-codemirror', () => ({
   Codemirror: {
     name: 'Codemirror',
     props: ['modelValue'],
-    template: '<div data-editor-content-length>{{ modelValue.length }}</div>'
+    template: '<div data-editor-content-length>{{ (modelValue ?? \'\').length }}</div>'
   }
 }))
 
