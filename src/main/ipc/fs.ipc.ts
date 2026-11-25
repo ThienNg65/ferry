@@ -1,9 +1,15 @@
 import * as path from 'path'
 import { handle } from './envelope'
 import {
+  optionalString,
+  requireArray,
+  requireBoolean,
+  requireNonEmptyString,
+  requireObject,
+  requireString
+} from './validation'
+import {
   INVOKE_CHANNELS,
-  type CleanupStagedDropRequest,
-  type DeleteManyRequest,
   type DeleteManyResult,
   type FileEntry,
   type FileListResult,
@@ -11,8 +17,7 @@ import {
   type RemoteAdminRequest,
   type StageDropBeginRequest,
   type StageDropBeginResult,
-  type StageDropRequest,
-  type StageDropSessionRequest
+  type StageDropRequest
 } from '../../shared/contract'
 import * as LocalFs from '../fs/LocalFsService'
 import * as RemoteFs from '../fs/RemoteFsService'
@@ -31,78 +36,141 @@ export function registerFsHandlers(): void {
   // is no v-html/XSS sink in the renderer that could smuggle in a hostile path, so
   // this isn't currently exploitable. Do not "fix" this into a restricted sandbox —
   // that would break normal file-browsing.
-  handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) => LocalFs.list(dirPath as string | undefined))
-  handle<void>(INVOKE_CHANNELS.fsLocalTouch, (filePath) => LocalFs.touch(filePath as string))
-  handle<void>(INVOKE_CHANNELS.fsRemoteTouch, (sessionId, filePath) =>
-    RemoteFs.touchRemote(sessionId as string, filePath as string)
+  handle<FileListResult>(INVOKE_CHANNELS.fsLocalList, (dirPath) =>
+    LocalFs.list(optionalString(dirPath, 'dirPath', INVOKE_CHANNELS.fsLocalList))
   )
-  handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) => LocalFs.mkdir(dirPath as string))
-  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath, replace) =>
-    typeof replace === 'boolean'
-      ? LocalFs.rename(fromPath as string, toPath as string, replace)
-      : LocalFs.rename(fromPath as string, toPath as string)
+  handle<void>(INVOKE_CHANNELS.fsLocalTouch, (filePath) =>
+    LocalFs.touch(requireNonEmptyString(filePath, 'filePath', INVOKE_CHANNELS.fsLocalTouch))
   )
+  handle<void>(INVOKE_CHANNELS.fsRemoteTouch, (sessionId, filePath) => {
+    const channel = INVOKE_CHANNELS.fsRemoteTouch
+    return RemoteFs.touchRemote(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      requireNonEmptyString(filePath, 'filePath', channel)
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsLocalMkdir, (dirPath) =>
+    LocalFs.mkdir(requireNonEmptyString(dirPath, 'dirPath', INVOKE_CHANNELS.fsLocalMkdir))
+  )
+  handle<void>(INVOKE_CHANNELS.fsLocalRename, (fromPath, toPath, replace) => {
+    const channel = INVOKE_CHANNELS.fsLocalRename
+    const from = requireNonEmptyString(fromPath, 'fromPath', channel)
+    const to = requireNonEmptyString(toPath, 'toPath', channel)
+    if (replace !== undefined) {
+      return LocalFs.rename(from, to, requireBoolean(replace, 'replace', channel))
+    }
+    return LocalFs.rename(from, to)
+  })
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
-    LocalFs.remove(targetPath as string, Boolean(isDir))
+    LocalFs.remove(requireNonEmptyString(targetPath, 'targetPath', INVOKE_CHANNELS.fsLocalDelete), Boolean(isDir))
   )
-  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) =>
-    LocalFs.stageDroppedEntries(req as StageDropRequest)
-  )
-  handle<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, (req) =>
-    LocalFs.beginStageDrop(req as StageDropBeginRequest | undefined)
-  )
-  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, (req) =>
-    LocalFs.finishStageDrop((req as StageDropSessionRequest).stageId)
-  )
-  handle<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, (req) =>
-    LocalFs.abortStageDrop((req as StageDropSessionRequest).stageId)
-  )
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalStageDrop
+    const request = requireObject(req, channel)
+    const entries = requireArray(request.entries, 'entries', channel)
+    for (const entry of entries) {
+      const item = requireObject(entry, channel)
+      requireNonEmptyString(item.relativePath, 'entries.relativePath', channel)
+      requireBoolean(item.isDir, 'entries.isDir', channel)
+      optionalString(item.modifiedAt, 'entries.modifiedAt', channel)
+    }
+    return LocalFs.stageDroppedEntries(req as StageDropRequest)
+  })
+  handle<StageDropBeginResult>(INVOKE_CHANNELS.fsLocalStageDropBegin, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalStageDropBegin
+    if (req !== undefined && req !== null) {
+      const request = requireObject(req, channel)
+      if (request.dirs !== undefined) {
+        const dirs = requireArray(request.dirs, 'dirs', channel)
+        for (const dir of dirs) {
+          requireNonEmptyString(dir, 'dirs[]', channel)
+        }
+      }
+    }
+    return LocalFs.beginStageDrop(req as StageDropBeginRequest | undefined)
+  })
+  handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDropFinish, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalStageDropFinish
+    const request = requireObject(req, channel)
+    return LocalFs.finishStageDrop(requireNonEmptyString(request.stageId, 'stageId', channel))
+  })
+  handle<void>(INVOKE_CHANNELS.fsLocalStageDropAbort, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalStageDropAbort
+    const request = requireObject(req, channel)
+    return LocalFs.abortStageDrop(requireNonEmptyString(request.stageId, 'stageId', channel))
+  })
   handle<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, (req) => {
-    const paths = Array.isArray((req as CleanupStagedDropRequest)?.paths)
-      ? (req as CleanupStagedDropRequest).paths.map(String)
-      : []
+    const channel = INVOKE_CHANNELS.fsLocalCleanupStagedDrop
+    const request = requireObject(req, channel)
+    const rawPaths = requireArray(request.paths, 'paths', channel)
+    const paths = rawPaths.map((p) => requireNonEmptyString(p, 'paths[]', channel))
     return LocalFs.cleanupStagedDropPaths(paths)
   })
-  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
+  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) =>
+    LocalFs.readFileText(requireNonEmptyString(filePath, 'filePath', INVOKE_CHANNELS.fsLocalReadFile))
+  )
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
-    const request = req as { path: string; content: string }
-    return LocalFs.writeFileText(request.path, request.content)
+    const channel = INVOKE_CHANNELS.fsLocalWriteFile
+    const request = requireObject(req, channel)
+    const filePath = requireNonEmptyString(request.path, 'path', channel)
+    const content = requireString(request.content, 'content', channel)
+    return LocalFs.writeFileText(filePath, content)
   })
 
-  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath, isPrefetch) =>
-    RemoteFs.listRemote(sessionId as string, dirPath as string | undefined, Boolean(isPrefetch))
-  )
-  handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) =>
-    RemoteFs.mkdirRemote(sessionId as string, dirPath as string)
-  )
-  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath, replace) =>
-    typeof replace === 'boolean'
-      ? RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string, replace)
-      : RemoteFs.renameRemote(sessionId as string, fromPath as string, toPath as string)
-  )
+  handle<FileListResult>(INVOKE_CHANNELS.fsRemoteList, (sessionId, dirPath, isPrefetch) => {
+    const channel = INVOKE_CHANNELS.fsRemoteList
+    return RemoteFs.listRemote(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      optionalString(dirPath, 'dirPath', channel),
+      Boolean(isPrefetch)
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) => {
+    const channel = INVOKE_CHANNELS.fsRemoteMkdir
+    return RemoteFs.mkdirRemote(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      requireNonEmptyString(dirPath, 'dirPath', channel)
+    )
+  })
+  handle<void>(INVOKE_CHANNELS.fsRemoteRename, (sessionId, fromPath, toPath, replace) => {
+    const channel = INVOKE_CHANNELS.fsRemoteRename
+    const sid = requireNonEmptyString(sessionId, 'sessionId', channel)
+    const from = requireNonEmptyString(fromPath, 'fromPath', channel)
+    const to = requireNonEmptyString(toPath, 'toPath', channel)
+    if (replace !== undefined) {
+      return RemoteFs.renameRemote(sid, from, to, requireBoolean(replace, 'replace', channel))
+    }
+    return RemoteFs.renameRemote(sid, from, to)
+  })
   // Deletes are deliberately NOT cancellable: aborting the channel mid-`rm -rf`
   // doesn't stop the remote rm and would mislead the user about what survived.
-  handle<void>(INVOKE_CHANNELS.fsRemoteDelete, (sessionId, targetPath) =>
-    OperationRegistry.getInstance().run(
+  handle<void>(INVOKE_CHANNELS.fsRemoteDelete, (sessionId, targetPath) => {
+    const channel = INVOKE_CHANNELS.fsRemoteDelete
+    const sid = requireNonEmptyString(sessionId, 'sessionId', channel)
+    const target = requireNonEmptyString(targetPath, 'targetPath', channel)
+    return OperationRegistry.getInstance().run(
       {
         kind: 'delete-remote',
-        label: `Deleting ${path.posix.basename(targetPath as string)}`,
-        sessionId: sessionId as string,
+        label: `Deleting ${path.posix.basename(target)}`,
+        sessionId: sid,
         cancellable: false
       },
-      () => RemoteFs.removeRemote(sessionId as string, targetPath as string)
+      () => RemoteFs.removeRemote(sid, target)
     )
-  )
+  })
   // Batch delete as ONE logical operation (one Activity row, one listing patch)
   // instead of the renderer fanning out N parallel fs:remote:delete calls.
   handle<DeleteManyResult>(INVOKE_CHANNELS.fsRemoteDeleteMany, async (req) => {
-    const request = req as DeleteManyRequest
-    const paths = Array.isArray(request.paths) ? request.paths.map(String) : []
+    const channel = INVOKE_CHANNELS.fsRemoteDeleteMany
+    const request = requireObject(req, channel)
+    const sessionId = requireNonEmptyString(request.sessionId, 'sessionId', channel)
+    const rawPaths = requireArray(request.paths, 'paths', channel)
+    const paths = rawPaths.map((p) => requireNonEmptyString(p, 'paths[]', channel))
     return OperationRegistry.getInstance().run(
       {
         kind: 'delete-remote-batch',
         label: `Deleting ${paths.length} items`,
-        sessionId: request.sessionId,
+        sessionId,
         cancellable: false
       },
       async ({ reportProgress }) => {
@@ -111,7 +179,7 @@ export function registerFsHandlers(): void {
         // Workers catch their own failures so one bad path never stops the batch.
         await runConcurrent(paths, DELETE_CONCURRENCY, async (targetPath) => {
           try {
-            await RemoteFs.removeRemote(request.sessionId, targetPath)
+            await RemoteFs.removeRemote(sessionId, targetPath)
             result.deletedPaths.push(targetPath)
           } catch (e) {
             result.failures.push({ path: targetPath, error: e instanceof Error ? e.message : String(e) })
@@ -129,21 +197,45 @@ export function registerFsHandlers(): void {
     )
   })
   handle<void>(INVOKE_CHANNELS.fsRemoteAdmin, (req) => {
-    const request = req as RemoteAdminRequest
+    const channel = INVOKE_CHANNELS.fsRemoteAdmin
+    const obj = requireObject(req, channel)
+    const sessionId = requireNonEmptyString(obj.sessionId, 'sessionId', channel)
+    const targetPath = requireNonEmptyString(obj.path, 'path', channel)
+    const mode = optionalString(obj.mode, 'mode', channel)
+    const owner = optionalString(obj.owner, 'owner', channel)
+    const group = optionalString(obj.group, 'group', channel)
+    const recursive = obj.recursive === undefined ? undefined : requireBoolean(obj.recursive, 'recursive', channel)
+    const request: RemoteAdminRequest = {
+      sessionId,
+      path: targetPath,
+      ...(mode !== undefined ? { mode } : {}),
+      ...(owner !== undefined ? { owner } : {}),
+      ...(group !== undefined ? { group } : {}),
+      ...(recursive !== undefined ? { recursive } : {})
+    }
     return OperationRegistry.getInstance().run(
       {
         kind: 'chmod-remote',
-        label: `Changing permissions on ${path.posix.basename(request.path)}`,
-        sessionId: request.sessionId,
+        label: `Changing permissions on ${path.posix.basename(targetPath)}`,
+        sessionId,
         cancellable: false
       },
       () => RemoteFs.adminRemote(request)
     )
   })
-  handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) =>
-    RemoteFs.chmodRemote(sessionId as string, targetPath as string, mode as string)
-  )
-  handle<FileReadResult>(INVOKE_CHANNELS.fsRemoteReadFile, (sessionId, filePath) =>
-    RemoteFs.readFile(sessionId as string, filePath as string)
-  )
+  handle<void>(INVOKE_CHANNELS.fsRemoteChmod, (sessionId, targetPath, mode) => {
+    const channel = INVOKE_CHANNELS.fsRemoteChmod
+    return RemoteFs.chmodRemote(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      requireNonEmptyString(targetPath, 'targetPath', channel),
+      requireNonEmptyString(mode, 'mode', channel)
+    )
+  })
+  handle<FileReadResult>(INVOKE_CHANNELS.fsRemoteReadFile, (sessionId, filePath) => {
+    const channel = INVOKE_CHANNELS.fsRemoteReadFile
+    return RemoteFs.readFile(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      requireNonEmptyString(filePath, 'filePath', channel)
+    )
+  })
 }
