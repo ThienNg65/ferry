@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import type { Client, ClientChannel } from 'ssh2'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MAX_BUFFERED_LINE_BYTES, TRUNCATED_LINE_SUFFIX } from './BoundedLineBuffer'
+import { SshError } from './errors'
 import { RemoteShell } from './RemoteShell'
 
 class MockChannel extends EventEmitter {
@@ -174,5 +175,34 @@ describe('RemoteShell UTF-8 output', () => {
     await expect(streamExecution).resolves.toBe(0)
     expect(lines).toEqual(['�'])
     expect(stderr.join('')).toBe('�')
+  })
+})
+
+describe('RemoteShell recursive delete', () => {
+  it.each(['SSH_TIMEOUT', 'CANCELLED'] as const)(
+    'rethrows %s without starting the SFTP fallback',
+    async (code) => {
+      const { shell } = createHarness()
+      vi.spyOn(shell, 'exec').mockRejectedValue(new SshError(code, 'Command interrupted'))
+      const fallback = vi.spyOn(
+        shell as unknown as { deleteRecursiveSftp: (remotePath: string) => Promise<void> },
+        'deleteRecursiveSftp'
+      ).mockResolvedValue(undefined)
+
+      await expect(shell.deleteRecursive('/tmp/target')).rejects.toMatchObject({ code })
+      expect(fallback).not.toHaveBeenCalled()
+    }
+  )
+
+  it('falls back to SFTP when exec is unavailable', async () => {
+    const { shell } = createHarness()
+    vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
+    const fallback = vi.spyOn(
+      shell as unknown as { deleteRecursiveSftp: (remotePath: string) => Promise<void> },
+      'deleteRecursiveSftp'
+    ).mockResolvedValue(undefined)
+
+    await expect(shell.deleteRecursive('/tmp/target')).resolves.toBeUndefined()
+    expect(fallback).toHaveBeenCalledWith('/tmp/target')
   })
 })
