@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import type { FileHandle } from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import type { SFTPWrapper } from 'ssh2'
@@ -202,6 +203,58 @@ describe('sftpPipeline.transferPipelined', () => {
     expect(fake.getStats().openHandlesLeft).toBe(0)
   })
 
+  it('validates guarded local download handles before writing bytes', async () => {
+    const data = Buffer.from('guarded-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/guarded.txt', data)
+    const destination = path.join(tmpDir, '.ferry-transfer-guarded.part')
+    const beforeLocalOpen = vi.fn(async () => undefined)
+    const afterLocalOpen = vi.fn(async (handle: FileHandle) => {
+      expect((await handle.stat()).isFile()).toBe(true)
+    })
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: destination,
+      remotePath: '/remote/guarded.txt',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined,
+      beforeLocalOpen,
+      afterLocalOpen,
+      onDestinationCreated: () => undefined
+    })
+
+    expect(beforeLocalOpen).toHaveBeenCalledTimes(2)
+    expect(afterLocalOpen).toHaveBeenCalledOnce()
+    expect(await fs.readFile(destination)).toEqual(data)
+  })
+
+  it('overwrites an existing download destination when exclusive creation is not requested', async () => {
+    const data = Buffer.from('new')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/overwrite.txt', data)
+    const destination = path.join(tmpDir, 'overwrite.txt')
+    await fs.writeFile(destination, 'old-content-that-is-longer')
+
+    await transferPipelined({
+      sftp: fake.sftp,
+      kind: 'download',
+      localPath: destination,
+      remotePath: '/remote/overwrite.txt',
+      size: data.length,
+      offset: 0,
+      signal: new AbortController().signal,
+      rateLimiter: new RateLimiter(),
+      onProgress: () => undefined
+    })
+
+    expect(await fs.readFile(destination)).toEqual(data)
+  })
+
   it('handles 0-byte files and resumes from offset > 0 with r+ without truncating', async () => {
     const fake = createFakeSftp()
     const emptyLocal = path.join(tmpDir, 'empty.txt')
@@ -334,6 +387,131 @@ describe('sftpPipeline.transferPipelined', () => {
       queue.cancel(first)
       queue.cancel(second)
       queue.setBandwidthLimitKBps(null)
+    }
+  })
+
+  it('downloads a tree into ordinary nested directories through the guarded path pipeline', async () => {
+    const data = Buffer.from('normal-tree-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/tree/nested/probe.txt', data)
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [
+        { relPath: 'nested', isDir: true, size: 0 },
+        { relPath: 'nested/probe.txt', isDir: false, size: data.length, mtimeMs: 1_700_000_000_000 }
+      ],
+      sftp: async () => fake.sftp
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const root = path.join(tmpDir, 'ordinary-tree')
+    const transferId = queue.enqueueTree('session', 'download', root, '/remote/tree')
+    const terminalEvent = (): TransferEvent | undefined => events.mock.calls
+      .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+      .map(([, event]) => event as TransferEvent)
+      .find((event) => event.transferId === transferId && (event.state === 'done' || event.state === 'error'))
+    let result: TransferEvent | undefined
+
+    try {
+      await vi.waitFor(() => {
+        result = terminalEvent()
+        expect(result).toBeDefined()
+      })
+      expect(result?.state, result?.error ?? JSON.stringify(result)).toBe('done')
+      expect(await fs.readFile(path.join(root, 'nested', 'probe.txt'))).toEqual(data)
+      expect(await fs.readdir(path.join(root, 'nested'))).toEqual(['probe.txt'])
+    } finally {
+      queue.cancel(transferId)
+    }
+  })
+
+  it('rejects symlinked local parents for tree downloads before opening SFTP files', async () => {
+    const root = path.join(tmpDir, 'tree')
+    const outside = path.join(tmpDir, 'outside')
+    await fs.mkdir(root)
+    await fs.mkdir(outside)
+    const sentinel = path.join(outside, 'sentinel.txt')
+    await fs.writeFile(sentinel, 'keep-me')
+    await fs.symlink(outside, path.join(root, 'config'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    const fake = createFakeSftp()
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    const getSftp = vi.fn(async () => fake.sftp)
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [
+        { relPath: 'config', isDir: true, size: 0 },
+        { relPath: 'config/probe.txt', isDir: false, size: 10, mtimeMs: 1 }
+      ],
+      sftp: getSftp
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const transferId = queue.enqueueTree('session', 'download', root, '/remote/tree')
+    const failed = (): boolean => events.mock.calls.some(
+      ([channel, event]) => channel === EVENT_CHANNELS.transferEvent
+        && (event as TransferEvent).transferId === transferId
+        && (event as TransferEvent).state === 'error'
+    )
+
+    try {
+      await vi.waitFor(() => expect(failed()).toBe(true))
+      expect(getSftp).not.toHaveBeenCalled()
+      expect(await fs.readFile(sentinel, 'utf-8')).toBe('keep-me')
+      expect(await fs.readdir(outside)).toEqual(['sentinel.txt'])
+    } finally {
+      queue.cancel(transferId)
+    }
+  })
+
+  it('re-resolves the selected root when restarting a failed tree download', async () => {
+    const data = Buffer.from('restarted-tree-download')
+    const fake = createFakeSftp()
+    fake.files.set('/remote/tree/probe.txt', data)
+    const firstTarget = path.join(tmpDir, 'first-target')
+    const secondTarget = path.join(tmpDir, 'second-target')
+    const selectedRoot = path.join(tmpDir, 'selected-root')
+    await fs.mkdir(firstTarget)
+    await fs.mkdir(secondTarget)
+    await fs.symlink(firstTarget, selectedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+    const sessions = SessionManager.getInstance()
+    vi.spyOn(sessions, 'connectedTransferSession').mockReturnValue('session')
+    let shouldFail = true
+    vi.spyOn(sessions, 'shell').mockReturnValue({
+      readdirRecursive: async () => [{ relPath: 'probe.txt', isDir: false, size: data.length, mtimeMs: 1 }],
+      sftp: async () => {
+        if (shouldFail) {
+          shouldFail = false
+          throw new Error('transient sftp error')
+        }
+        return fake.sftp
+      }
+    } as unknown as RemoteShell)
+
+    const events = vi.spyOn(testHost, 'broadcast')
+    const queue = new TransferQueue()
+    const transferId = queue.enqueueTree('session', 'download', selectedRoot, '/remote/tree')
+    const terminalEvents = (): TransferEvent[] => events.mock.calls
+      .filter(([channel]) => channel === EVENT_CHANNELS.transferEvent)
+      .map(([, event]) => event as TransferEvent)
+      .filter((event) => event.transferId === transferId && (event.state === 'error' || event.state === 'done'))
+
+    try {
+      await vi.waitFor(() => expect(terminalEvents().at(-1)?.state).toBe('error'))
+      await fs.rm(selectedRoot, { recursive: true, force: true })
+      await fs.symlink(secondTarget, selectedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+
+      queue.retry(transferId, true)
+      await vi.waitFor(() => expect(terminalEvents().at(-1)?.state).toBe('done'))
+
+      expect(await fs.readFile(path.join(secondTarget, 'probe.txt'))).toEqual(data)
+      expect(await fs.readdir(firstTarget)).toEqual([])
+    } finally {
+      queue.cancel(transferId)
     }
   })
 

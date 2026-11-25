@@ -369,6 +369,12 @@ export interface FileReadResult {
   size: number
 }
 
+/** Maximum number of files and directories accepted in one staged OS drop. */
+export const MAX_STAGE_DROP_ENTRIES = 1000
+
+/** Maximum nested directory depth accepted in one staged OS drop. */
+export const MAX_STAGE_DROP_DEPTH = 100
+
 /** One external OS file/folder dropped onto the webview when host filesystem paths aren't exposed directly. */
 export interface StageDropEntryInput {
   relativePath: string

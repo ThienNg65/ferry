@@ -261,7 +261,20 @@ export class SessionManager {
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const requestId = randomUUID()
-      this.pendingHostKeys.set(requestId, { sessionId, resolve })
+      const timer = setTimeout(() => {
+        if (this.pendingHostKeys.delete(requestId)) {
+          logSecurityEvent('ssh.host_key_prompt_timeout', { sessionId, host, port })
+          resolve(false)
+        }
+      }, 5 * 60_000)
+      timer.unref?.()
+      this.pendingHostKeys.set(requestId, {
+        sessionId,
+        resolve: (accept) => {
+          clearTimeout(timer)
+          resolve(accept)
+        }
+      })
       const payload: HostKeyPromptEvent = {
         requestId,
         sessionId,
@@ -286,7 +299,20 @@ export class SessionManager {
     this.pauseConnectTimer(sessionId)
     return new Promise<string[]>((resolve) => {
       const requestId = randomUUID()
-      this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
+      const timer = setTimeout(() => {
+        if (this.pendingKeyboardInteractive.delete(requestId)) {
+          logSecurityEvent('ssh.kbi_prompt_timeout', { sessionId, name })
+          resolve([])
+        }
+      }, 5 * 60_000)
+      timer.unref?.()
+      this.pendingKeyboardInteractive.set(requestId, {
+        sessionId,
+        resolve: (responses) => {
+          clearTimeout(timer)
+          resolve(responses)
+        }
+      })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
       getHost().broadcast(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
     }).finally(() => this.resumeConnectTimer(sessionId))

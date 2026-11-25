@@ -3,16 +3,18 @@ import { unlink } from 'fs/promises'
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'http'
 import * as os from 'os'
 import * as path from 'path'
+import { Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import WebSocket, { WebSocketServer } from 'ws'
 import { EVENT_CHANNELS } from '../shared/contract'
-import { openStageDropWriteStream } from '../main/fs/LocalFsService'
+import { openStageDropWriteStream, touchStageDropSession } from '../main/fs/LocalFsService'
 import { setHost } from '../main/host/host'
 import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
+import { logSecurityEvent } from '../main/host/securityLog'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { SshError } from '../main/ssh/errors'
 import { createNodeHost } from './nodeHost'
-import { dispatchInvoke, dispatchSend, encodeLine } from './protocol'
+import { dispatchWebSocketMessage, encodeLine } from './protocol'
 import { initSidecarServices, registerShutdownHandler, shutdownSidecarServices } from './sidecar'
 
 export interface NeutralinoExtensionOptions {
@@ -33,13 +35,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
+function isAllowedLocalOrigin(origin: string | undefined, nlPort: string): boolean {
+  if (origin === undefined) {
+    return true
+  }
+  return origin === `http://localhost:${nlPort}` || origin === `http://127.0.0.1:${nlPort}`
+}
+
 /**
  * Builds the authenticated localhost HTTP handler for streaming external dropped
  * files directly to `%TEMP%/ferry-drop-*` without buffering in JS memory or Base64.
  */
 export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: string) {
-  const allowedOrigins = new Set([`http://localhost:${nlPort}`, `http://127.0.0.1:${nlPort}`])
-
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const remoteAddr = req.socket.remoteAddress ?? ''
     if (remoteAddr && !LOOPBACK_ADDRS.has(remoteAddr)) {
@@ -48,11 +55,12 @@ export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: str
     }
 
     const origin = req.headers.origin
+    if (!isAllowedLocalOrigin(origin, nlPort)) {
+      logSecurityEvent('http.origin_rejected', { origin })
+      sendJson(res, 403, { error: 'Origin not allowed' })
+      return
+    }
     if (origin !== undefined) {
-      if (!allowedOrigins.has(origin)) {
-        sendJson(res, 403, { error: 'Origin not allowed' })
-        return
-      }
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
       res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -98,7 +106,13 @@ export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: str
     try {
       const opened = await openStageDropWriteStream(stageId, relativePath, modifiedAt)
       targetPath = opened.targetPath
-      await pipeline(req, opened.stream)
+      const activityStream = new Transform({
+        transform(chunk, _encoding, callback) {
+          touchStageDropSession(stageId)
+          callback(null, chunk)
+        }
+      })
+      await pipeline(req, activityStream, opened.stream)
       sendJson(res, 200, { ok: true })
     } catch (err) {
       if (targetPath) {
@@ -211,6 +225,8 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
   const httpServer = createHttpServer((req, res) => {
     void stageDropHandler(req, res)
   })
+  httpServer.requestTimeout = 120_000
+  httpServer.headersTimeout = 15_000
   const directWss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 * 1024 })
   httpServer.on('listening', () => {
     const addr = httpServer.address()
@@ -236,29 +252,28 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
     } catch {
       return
     }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return
-    }
-    const msg = parsed as { event?: string; data?: Record<string, unknown> }
-    if (msg.event === 'rpc_send' && msg.data && typeof msg.data === 'object') {
-      dispatchSend(msg.data.channel, msg.data.payload)
-    } else if (msg.event === 'rpc_invoke' && msg.data && typeof msg.data === 'object') {
-      const { id, channel, args } = msg.data
-      const result = await dispatchInvoke(channel, args)
-      sendReply(id, result)
-    } else if (msg.event === 'sidecar:hello') {
-      sendReadyBroadcast()
-    } else if (msg.event === 'windowClose') {
-      void shutdown()
+
+    try {
+      await dispatchWebSocketMessage(parsed, sendReply, sendReadyBroadcast, () => {
+        void shutdown()
+      })
+    } catch {
+      console.error('sidecar: WebSocket message handling failed')
     }
   }
 
   directWss.on('connection', (client, req) => {
+    if (!isAllowedLocalOrigin(req.headers.origin, options.nlPort)) {
+      logSecurityEvent('ws.origin_rejected', { origin: req.headers.origin })
+      client.close(1008, 'Origin not allowed')
+      return
+    }
     try {
       const reqUrl = new URL(req.url || '/', 'http://127.0.0.1')
       const token = reqUrl.searchParams.get('token') ?? ''
       const tokenBuf = Buffer.from(token, 'utf8')
       if (tokenBuf.length !== expectedTokenBuf.length || !timingSafeEqual(tokenBuf, expectedTokenBuf)) {
+        logSecurityEvent('ws.auth_rejected', { reason: 'invalid_token' })
         client.close(1008, 'Unauthorized')
         return
       }
@@ -273,6 +288,15 @@ export function startNeutralinoExtension(options: NeutralinoExtensionOptions): W
       void handleMessage(raw, (id, result) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(encodeLine({ event: 'rpc_reply', data: { id, result } }))
+        } else if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            encodeLine({
+              id: randomUUID(),
+              method: 'app.broadcast',
+              accessToken: options.nlToken,
+              data: { event: 'rpc_reply', data: { id, result } }
+            })
+          )
         }
       })
     })

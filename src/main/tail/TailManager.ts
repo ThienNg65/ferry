@@ -1,4 +1,5 @@
 import { host } from '../host/host'
+import { BoundedLineBuffer } from '../ssh/BoundedLineBuffer'
 import { SessionManager } from '../ssh/SessionManager'
 import { isTransient } from '../ssh/errors'
 import { shellEscape } from '../ssh/shellEscape'
@@ -137,18 +138,15 @@ export class TailManager {
     let pidConsumed = false
     let sawLogLine = false
     const attemptStartMs = Date.now()
-    let stderrBuf = ''
-    const flushStderr = (final: boolean): void => {
-      const parts = stderrBuf.split('\n')
-      stderrBuf = final ? '' : (parts.pop() ?? '')
-      for (const raw of parts) {
-        const line = raw.replace(/\r$/, '').trim()
-        if (line.length > 0) {
-          entry.lastStderr = line
-          this.broadcastNotice(tailId, line)
-        }
+    const stderrLines = new BoundedLineBuffer()
+    const handleStderrLine = (raw: string): void => {
+      const line = raw.replace(/\r$/, '').trim()
+      if (line.length > 0) {
+        entry.lastStderr = line
+        this.broadcastNotice(tailId, line)
       }
     }
+    const flushStderr = (): void => stderrLines.flush(handleStderrLine)
     const markHealthy = (): void => {
       currentAttempt = 0
       if (!readyEmitted) {
@@ -185,14 +183,13 @@ export class TailManager {
           if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
             return
           }
-          stderrBuf += chunk
-          flushStderr(false)
+          stderrLines.push(chunk, handleStderrLine)
         }
       })
       if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
         return
       }
-      flushStderr(true)
+      flushStderr()
       if (exitCode !== null && exitCode !== 0) {
         this.finishEntry(tailId, entry, entry.lastStderr || `tail exited with code ${exitCode}`)
         return
@@ -204,7 +201,7 @@ export class TailManager {
       if (entry.ended || entry.controller.signal.aborted || this.tails.get(tailId) !== entry) {
         return
       }
-      flushStderr(true)
+      flushStderr()
       if (!isTransient(e)) {
         const msg = e instanceof Error ? e.message : String(e)
         this.finishEntry(tailId, entry, msg)

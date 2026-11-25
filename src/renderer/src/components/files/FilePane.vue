@@ -2,6 +2,8 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
 import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import { collectDroppedEntry, recordCollectedDropEntry } from '../../utils/osDrop'
+import type { CollectedDropEntry, DropCollectionState, MinimalFsEntry } from '../../utils/osDrop'
 import { invoke, IpcError } from '../../api'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useRemoteFsStore } from '../../stores/remoteFs.store'
@@ -19,6 +21,11 @@ import { registerPaneActions } from '../../composables/usePaneActions'
 import { useDockState } from '../../composables/useDockState'
 import { archiveBaseName, isArchive, isTextPreviewable } from '../../utils/fileTypes'
 import { formatBytes } from '../../utils/format'
+import {
+  combineOsDropEntries,
+  moveAndCleanupStagedDrop,
+  type ResolvedOsDropEntries
+} from '../../utils/stagedDrop'
 import {
   composePaneEntries,
   type FileVisibilityFilter
@@ -613,55 +620,6 @@ const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
 const STAGE_STREAM_CONCURRENCY = 4
 const LARGE_DROP_TOAST_BYTES = 32 * 1024 * 1024
 
-interface MinimalFsEntry {
-  isFile: boolean
-  isDirectory: boolean
-  name: string
-  file?: (success: (f: File) => void, error?: (err: unknown) => void) => void
-  createReader?: () => { readEntries: (success: (entries: MinimalFsEntry[]) => void, error?: (err: unknown) => void) => void }
-}
-
-interface CollectedDropEntry {
-  relativePath: string
-  isDir: boolean
-  file?: File
-  modifiedAt?: string
-}
-
-async function collectDroppedEntry(
-  fsEntry: MinimalFsEntry,
-  relPath: string,
-  out: CollectedDropEntry[],
-  state: { totalBytes: number }
-): Promise<void> {
-  if (fsEntry.isFile && fsEntry.file) {
-    const file = await new Promise<File>((resolve, reject) => {
-      fsEntry.file!(resolve, reject)
-    })
-    state.totalBytes += file.size
-    out.push({
-      relativePath: relPath,
-      isDir: false,
-      file,
-      modifiedAt: new Date(file.lastModified).toISOString()
-    })
-    return
-  }
-  if (fsEntry.isDirectory && fsEntry.createReader) {
-    out.push({ relativePath: relPath, isDir: true })
-    const reader = fsEntry.createReader()
-    while (true) {
-      const batch = await new Promise<MinimalFsEntry[]>((resolve, reject) => {
-        reader.readEntries(resolve, reject)
-      })
-      if (batch.length === 0) break
-      for (const child of batch) {
-        await collectDroppedEntry(child, `${relPath}/${child.name}`, out, state)
-      }
-    }
-  }
-}
-
 function dedupRelativeName(rawName: string, seen: Set<string>): string {
   const key = rawName.toLowerCase()
   if (!seen.has(key)) {
@@ -736,7 +694,7 @@ async function stageCollectedEntriesStreaming(
  * Resolves external OS drops to real local `FileEntry` items, streaming dropped
  * files/folders over authenticated localhost HTTP when WebView2 hides host paths.
  */
-async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<FileEntry[]> {
+async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<ResolvedOsDropEntries> {
   const direct: FileEntry[] = []
   const unresolved: Array<{ file: File; fsEntry: MinimalFsEntry | null }> = []
 
@@ -762,17 +720,18 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
   }
 
   if (unresolved.length === 0) {
-    return direct
+    return combineOsDropEntries(direct, [])
   }
 
   const collected: CollectedDropEntry[] = []
   const seenTopNames = new Set<string>()
-  const state = { totalBytes: 0 }
+  const state: DropCollectionState = { entryCount: 0, totalBytes: 0 }
   for (const { file, fsEntry } of unresolved) {
     if (fsEntry) {
       const topName = dedupRelativeName(fsEntry.name, seenTopNames)
       await collectDroppedEntry(fsEntry, topName, collected, state)
     } else {
+      recordCollectedDropEntry(state, 0)
       state.totalBytes += file.size
       collected.push({
         relativePath: dedupRelativeName(file.name, seenTopNames),
@@ -784,13 +743,13 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
   }
 
   if (collected.length === 0) {
-    return direct
+    return combineOsDropEntries(direct, [])
   }
 
   const streamUpload = window.api.stageDroppedFile
   if (streamUpload) {
     const staged = await stageCollectedEntriesStreaming(collected, state.totalBytes, streamUpload)
-    return [...direct, ...staged]
+    return combineOsDropEntries(direct, staged)
   }
 
   if (state.totalBytes > MAX_STAGE_DROP_BYTES) {
@@ -805,7 +764,7 @@ async function resolveOsDroppedEntries(dataTransfer: DataTransfer): Promise<File
     }))
   )
   const staged = await invoke<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, { entries: stageInputs })
-  return [...direct, ...staged]
+  return combineOsDropEntries(direct, staged)
 }
 
 /** Uploads every file/folder dropped from the OS straight into the remote pane's current directory. */
@@ -813,7 +772,7 @@ async function onOsDrop(event: DragEvent): Promise<void> {
   const sessionId = sessions.activeSessionId
   if (!sessionId || !event.dataTransfer) return
   try {
-    const entries = await resolveOsDroppedEntries(event.dataTransfer)
+    const { entries } = await resolveOsDroppedEntries(event.dataTransfer)
     const intents: TransferIntent[] = []
     for (const entry of entries) {
       const intent = buildTransferIntent('local', entry, sessionId)
@@ -860,32 +819,42 @@ async function moveInto(folder: FileEntry, fromPath: string, name: string): Prom
 async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void> {
   isDropTarget.value = false
   const sessionId = sessions.activeSessionId
+  let moved = false
+  let cleanupFailed = false
   try {
     if (isOsFileDrag(event) && event.dataTransfer) {
-      const entries = await resolveOsDroppedEntries(event.dataTransfer)
+      const { entries, stagedPaths } = await resolveOsDroppedEntries(event.dataTransfer)
       const intents: TransferIntent[] = []
-      const unusedPaths: string[] = []
-      let moved = false
+      const unusedStagedPaths: string[] = []
       for (const entry of entries) {
         if (props.side === 'local') {
-          await moveInto(folder, entry.path, entry.name)
+          const result = await moveAndCleanupStagedDrop(
+            entry.path,
+            stagedPaths,
+            () => moveInto(folder, entry.path, entry.name),
+            (stagedPath) => invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: [stagedPath] })
+          )
           moved = true
+          if (result.cleanupError !== null) cleanupFailed = true
         } else if (sessionId) {
           const intent = buildTransferIntent('local', entry, sessionId, folder.path)
           if (intent) {
             intents.push(intent)
-          } else {
-            unusedPaths.push(entry.path)
+          } else if (stagedPaths.has(entry.path)) {
+            unusedStagedPaths.push(entry.path)
           }
-        } else {
-          unusedPaths.push(entry.path)
+        } else if (stagedPaths.has(entry.path)) {
+          unusedStagedPaths.push(entry.path)
         }
       }
-      if (unusedPaths.length > 0) {
-        void invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedPaths }).catch(() => undefined)
+      if (unusedStagedPaths.length > 0) {
+        await invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedStagedPaths }).catch(() => undefined)
       }
       if (intents.length > 0) await enqueueIntents(intents)
       if (moved) await store.load(store.currentPath, { forceRefresh: true })
+      if (cleanupFailed) {
+        notify.error('Temporary drop cleanup failed', 'The item was moved, but its temporary staging folder could not be removed.')
+      }
       return
     }
     const payload = getDragPayload()
@@ -893,13 +862,20 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
     if (!payload) return
     if (payload.side === props.side) {
       await moveInto(folder, payload.entry.path, payload.entry.name)
+      moved = true
       await store.load(store.currentPath, { forceRefresh: true })
     } else if (sessionId) {
       const intent = buildTransferIntent(payload.side, payload.entry, sessionId, folder.path)
       if (intent) await enqueueIntents([intent])
     }
   } catch (e) {
+    if (moved) {
+      await store.load(store.currentPath, { forceRefresh: true }).catch(() => undefined)
+    }
     notify.error('Move failed', e instanceof Error ? e.message : String(e))
+    if (cleanupFailed) {
+      notify.error('Temporary drop cleanup failed', 'The item was moved, but its temporary staging folder could not be removed.')
+    }
   }
 }
 
@@ -1242,7 +1218,6 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @edit="onEdit"
       />
       <EditorDialog
-        v-if="side === 'remote'"
         v-model:open="editorOpen"
         :edit-id="editorState?.editId ?? null"
         :local-temp-path="editorState?.localTempPath ?? null"

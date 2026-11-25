@@ -8,9 +8,21 @@ const PROXY_MODES = ['inherit', 'none', 'custom'] as const
 const PROXY_TYPES = ['socks5', 'http'] as const
 const SITE_ENVIRONMENTS: readonly SiteEnvironment[] = ['prod', 'staging', 'dev']
 
-function failValidation(channel: string, message: string): never {
+export function failValidation(channel: string, message: string): never {
   logSecurityEvent('ipc.validation_rejected', { channel, message })
   throw new SshError('VALIDATION', message)
+}
+
+export function optionalBoolean(value: unknown, field: string, channel: string): boolean | undefined {
+  if (value === undefined) return undefined
+  return requireBoolean(value, field, channel)
+}
+
+export function requireStringArray(value: unknown, field: string, channel: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    failValidation(channel, `${channel} requires "${field}" to be a string array`)
+  }
+  return value
 }
 
 export function requireObject(value: unknown, channel: string): Record<string, unknown> {
@@ -23,6 +35,27 @@ export function requireObject(value: unknown, channel: string): Record<string, u
 export function requireNonEmptyString(value: unknown, field: string, channel: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     failValidation(channel, `${channel} requires a non-empty "${field}"`)
+  }
+  return value
+}
+
+export function requireString(value: unknown, field: string, channel: string): string {
+  if (typeof value !== 'string') {
+    failValidation(channel, `${channel} requires "${field}" to be a string`)
+  }
+  return value
+}
+
+export function requireBoolean(value: unknown, field: string, channel: string): boolean {
+  if (typeof value !== 'boolean') {
+    failValidation(channel, `${channel} requires "${field}" to be a boolean`)
+  }
+  return value
+}
+
+export function requireArray(value: unknown, field: string, channel: string): unknown[] {
+  if (!Array.isArray(value)) {
+    failValidation(channel, `${channel} requires "${field}" to be an array`)
   }
   return value
 }

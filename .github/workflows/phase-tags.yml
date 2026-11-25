@@ -1,0 +1,82 @@
+name: Phase Labels
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: github-work-item-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync-phase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Synchronize workflow phase labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const item = context.payload.issue || context.payload.pull_request;
+            const source = (item.title || "") + "\n" + (item.body || "");
+            const allowed = ["intake", "discovery", "implementation", "qa", "director-approval", "release"];
+            const explicitTag = source.match(/\[FERRY:([A-Z-]+)\]/i);
+            const bodyPhase = source.match(/workflow[_ ]phase\s*:\s*([a-z-]+)/i);
+            const phase = (explicitTag ? explicitTag[1] : bodyPhase ? bodyPhase[1] : "intake").toLowerCase();
+            const approvalMatch = source.match(/(?:approval id|tl-apr)\s*:\s*\[?(APR-[A-Z0-9-]+)\]?/i);
+
+            if (phase && !allowed.includes(phase)) {
+              core.setFailed("Unknown workflow phase: " + phase);
+              return;
+            }
+            if (approvalMatch && phase !== "director-approval") {
+              core.setFailed("Approval ID requires workflow phase 'director-approval'.");
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = item.number;
+            const phaseLabels = allowed.map((name) => "phase:" + name);
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            for (const name of phaseLabels) {
+              await ensureLabel(name, "1D76DB", "Current workflow phase: " + name.slice(6));
+            }
+            await ensureLabel("approval:required", "B60205", "Waiting for explicit Director approval.");
+            await ensureLabel("approval:approved", "0E8A16", "Director approved this exact checkpoint.");
+            await ensureLabel("approval:rejected", "D93F0B", "Director rejected this exact checkpoint.");
+            await ensureLabel("automation:queued", "FBCA04", "Queued for the ThienLabs agent runner.");
+            await ensureLabel("automation:dispatched", "0E8A16", "Dispatched to the configured ThienLabs agent runner.");
+
+            const current = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const currentNames = new Set(current.data.map((label) => label.name));
+
+            if (phase) {
+              for (const stale of phaseLabels) {
+                if (stale !== "phase:" + phase && currentNames.has(stale)) {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number, name: stale });
+                }
+              }
+              if (!currentNames.has("phase:" + phase)) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["phase:" + phase] });
+              }
+            }
+
+            if (approvalMatch && !currentNames.has("approval:approved") && !currentNames.has("approval:rejected")) {
+              if (!currentNames.has("approval:required")) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["approval:required"] });
+              }
+            }

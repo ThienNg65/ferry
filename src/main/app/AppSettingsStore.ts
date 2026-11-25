@@ -1,6 +1,7 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
+import { openSafeConf } from '../host/storeHelpers'
 import {
   DEFAULT_GEMINI_ENDPOINT,
   normalizeGeminiModel,
@@ -32,7 +33,8 @@ interface StoredCompanionAi {
   secretApiKey?: string
 }
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   openTabSiteIds: string[]
   bandwidthLimitKBps: number | null
   defaultProxy: StoredProxy | null
@@ -67,10 +69,12 @@ export class AppSettingsStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({
+      this._store = openSafeConf<StoreSchema>({
         cwd: host().dataDir,
         configName: 'app-settings',
+        schemaVersion: 1,
         defaults: {
+          schemaVersion: 1,
           openTabSiteIds: [],
           bandwidthLimitKBps: null,
           defaultProxy: null,
@@ -110,6 +114,12 @@ export class AppSettingsStore {
 
   setOpenTabSiteIds(siteIds: string[]): void {
     this.store.set('openTabSiteIds', siteIds)
+  }
+
+  removeOpenTabSiteId(siteId: string): void {
+    const current = this.store.get('openTabSiteIds')
+    if (!Array.isArray(current) || !current.includes(siteId)) return
+    this.store.set('openTabSiteIds', current.filter((id) => id !== siteId))
   }
 
   setAutoCheckUpdates(enabled: boolean): void {

@@ -44,16 +44,24 @@ FTP/FTPS/SCP.
 
 ## Installation
 
-Download the latest Windows installer from the public
-[Ferry releases](https://github.com/ThienNg65/ferry-release/releases) page and run it.
-Ferry is currently Windows-only. Development takes place in this source repository, while
-packaged releases and update metadata are published to `ferry-release` by GitHub Actions.
-Existing installations first need a bridge release published to the original `ferry` feed.
+Ferry is currently Windows-only (Windows 10/11, 64-bit). Install via any of these official channels:
 
-The installer is currently **unsigned**, so Windows SmartScreen will warn on first run — this is
-expected, not a sign of tampering. Ferry's release pipeline (`.github/workflows/release.yml`) has a
-dormant signing stage ready to go live via [SignPath](https://signpath.io)'s free open-source
-Authenticode signing program the moment that application is approved; see
+1. **Microsoft Store (Recommended):** Install from the
+   [Microsoft Store listing](https://apps.microsoft.com/detail/9PJPWK568P53) (`ms-windows-store://pdp/?productid=9PJPWK568P53`)
+   for a 1-click signed MSIX install with no Windows SmartScreen warning and automatic Store updates.
+2. **GitHub Releases (`Ferry-Setup-*.exe` or `Ferry-Portable-*-win-x64.zip`):** Download the latest
+   Windows installer or zero-install portable archive from the public
+   [Ferry releases](https://github.com/ThienNg65/ferry-release/releases) page.
+
+Development takes place in this source repository, while packaged releases and update metadata are
+published to `ferry-release` by GitHub Actions. Existing installations first need a bridge release
+published to the original `ferry` feed.
+
+The direct GitHub `.exe` installer is currently **unsigned**, so Windows SmartScreen will warn on
+first run — this is expected, not a sign of tampering (use the Microsoft Store build above if you
+prefer a signed install). Ferry's release pipeline (`.github/workflows/release.yml`) has a dormant
+signing stage ready to go live via [SignPath](https://signpath.io)'s free open-source Authenticode
+signing program the moment that application is approved; see
 `.claude/plan/ferry-smartscreen-signing-plan.md` for the full plan.
 
 ## Development
@@ -72,14 +80,20 @@ conventions, and development notes.
 
 ## Releasing
 
-CI lives in `.github/workflows/ci.yml` and runs type checking, tests, and a build on each
-push/PR to `main`. Release Please handles versioning and source release tags through
-`.github/workflows/release.yml`. Its Windows packaging job builds and (when configured with a
-scoped `PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` to
-`ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
+CI lives in `.github/workflows/ci.yml` and runs on Windows for each push/PR to `main`: typechecking,
+Vitest tests, repository automation script tests (`node --test .github/scripts/*.test.mjs`), Vite
+builds, NSIS installation/verification, Neutralino packaging (`Ferry-Setup-*.exe`,
+`Ferry-Portable-*-win-x64.zip`, `latest.yml`), canonical artifact checks, and
+`npm run smoke:neutralino`. Release Please handles versioning and source release tags through
+`.github/workflows/release.yml`, which also supports manual `workflow_dispatch` recovery for an
+existing `ferry-vX.Y.Z` tag. Its Windows packaging job verifies the exact tag commit and package
+version, runs the full test/packaging/smoke suite, and (when configured with a scoped
+`PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml`
+to `ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
 the same assets are uploaded to the legacy `ferry` release for existing installations.
+See [the CI/CD & release runbook](docs/ci-cd-release-workflow.md) for the full pipeline breakdown
+and [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 Note: `v0.23.1` Neutralino preview users must run `Ferry-Setup-0.24.0.exe` manually once (preserving `%APPDATA%\Ferry`); `v0.24.0+` Neutralino users update automatically.
-See [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 
 Signing goes through a currently-dormant SignPath stage: every step in that stage is gated on the
 `SIGNPATH_ORGANIZATION_ID` repo variable, which isn't set yet, so today it's a no-op and every
@@ -87,6 +101,10 @@ release ships unsigned. Once a SignPath OSS account is approved and that variabl
 matching secrets) are added, the workflow uploads the built installer as an artifact, submits it to
 SignPath for Authenticode signing, and regenerates `latest.yml`'s hash/size before publishing —
 without touching anything else in this flow.
+
+## Sponsor
+
+If you find Ferry useful and would like to support its development, you can sponsor me on [GitHub Sponsors](https://github.com/sponsors/ThienNg65).
 
 ## Legal, Privacy & Licenses
 

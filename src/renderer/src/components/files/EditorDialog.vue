@@ -8,7 +8,17 @@ import type { FileReadResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { useNotify } from '../../composables/useNotify'
+import { useLocalFsStore } from '../../stores/localFs.store'
 import { useUiStore } from '../../stores/ui.store'
+
+function parentLocalDir(localPath: string): string {
+  const trimmed = localPath.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (idx < 0) return ''
+  if (idx === 0) return '/'
+  if (idx === 2 && /^[A-Za-z]:/.test(trimmed)) return trimmed.slice(0, 3)
+  return trimmed.slice(0, idx)
+}
 
 const props = defineProps<{
   open: boolean
@@ -23,6 +33,7 @@ const emit = defineEmits<{
 
 const confirm = useConfirm()
 const notify = useNotify()
+const localFs = useLocalFsStore()
 const ui = useUiStore()
 
 const content = ref('')
@@ -91,12 +102,19 @@ async function onSave(): Promise<void> {
   const token = loadToken
   const path = props.localTempPath
   const submittedContent = content.value
+  const wasLocal = isLocal.value
   saving.value = true
   try {
     await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, { path, content: submittedContent })
     if (token === loadToken) {
       savedContent.value = submittedContent
-      notify.success('Saved', isLocal.value ? 'Changes saved to disk.' : 'Changes saved and uploading...')
+      notify.success('Saved', wasLocal ? 'Changes saved to disk.' : 'Changes saved and uploading...')
+    }
+    if (wasLocal) {
+      const targetDir = parentLocalDir(path)
+      if (targetDir) {
+        void localFs.refreshIfViewing(targetDir)
+      }
     }
   } catch (e) {
     notify.error('Failed to save file', e instanceof Error ? e.message : String(e))

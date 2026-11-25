@@ -42,6 +42,22 @@ describe('history.ipc', () => {
     expect(result).toEqual({ ok: true, data: [] })
   })
 
+  it('history:list rejects malformed query fields with VALIDATION code', async () => {
+    const nonObject = await invoke('history:list', 'bad-query')
+    expect(nonObject).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const badStatus = await invoke('history:list', { status: 'unknown' })
+    expect(badStatus).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const badSearch = await invoke('history:list', { search: 123 })
+    expect(badSearch).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const negativeLimit = await invoke('history:list', { limit: -5 })
+    expect(negativeLimit).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    expect(historyStoreMock.list).not.toHaveBeenCalled()
+  })
+
   it('history:clear clears the store', async () => {
     const result = await invoke('history:clear')
     expect(historyStoreMock.clear).toHaveBeenCalledOnce()

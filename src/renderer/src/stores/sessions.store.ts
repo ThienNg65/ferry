@@ -212,22 +212,22 @@ export const useSessionsStore = defineStore('sessions', {
       return state.tabs.find((t) => t.tabId === state.activeTabId) ?? state.tabs[0]
     },
     activeSessionId(): string | null {
-      return this.activeTab.sessionId
+      return this.activeTab?.sessionId ?? null
     },
     status(): SessionStatus | null {
-      return this.activeTab.status
+      return this.activeTab?.status ?? null
     },
     statusMessage(): string | null {
-      return this.activeTab.statusMessage
+      return this.activeTab?.statusMessage ?? null
     },
     connecting(): boolean {
-      return this.activeTab.connecting
+      return this.activeTab?.connecting ?? false
     },
     pendingHostKeyMismatch(): PendingHostKeyMismatch | null {
-      return this.activeTab.pendingHostKeyMismatch
+      return this.activeTab?.pendingHostKeyMismatch ?? null
     },
     pendingKeyboardPrompt(state): KeyboardInteractiveRequestEvent | null {
-      const activeSid = this.activeTab.sessionId
+      const activeSid = this.activeTab?.sessionId ?? null
       if (activeSid) {
         const match = state.pendingKeyboardPrompts.find((p) => p.sessionId === activeSid)
         if (match) return match
@@ -235,7 +235,7 @@ export const useSessionsStore = defineStore('sessions', {
       return state.pendingKeyboardPrompts[0] ?? null
     },
     pendingHostKeyPrompt(state): HostKeyPromptEvent | null {
-      const activeSid = this.activeTab.sessionId
+      const activeSid = this.activeTab?.sessionId ?? null
       if (activeSid) {
         const match = state.pendingHostKeyPrompts.find((p) => p.sessionId === activeSid)
         if (match) return match
@@ -853,13 +853,24 @@ export const useSessionsStore = defineStore('sessions', {
       this.clearPromptsForSession(sid)
       ephemeralQuickSecrets.delete(tabId)
 
-      // Update the visible tab state before awaiting IPC. All close entry points
-      // (button, middle-click, shortcut and context menu) share this guarantee.
-      this.tabs = this.tabs.filter((t) => t.tabId !== tabId)
-      if (this.tabs.length === 0) {
-        this.openNewTab()
-      } else if (this.activeTabId === tabId) {
-        this.activeTabId = this.tabs[Math.min(closedIndex, this.tabs.length - 1)].tabId
+      // Update the visible tab state without ever exposing an empty `tabs` array
+      // to synchronous watchers (e.g. CompareDialog/SyncDialog) before IPC teardown.
+      const remaining = this.tabs.filter((t) => t.tabId !== tabId)
+      if (remaining.length === 0) {
+        const replacement = freshTab()
+        this.$patch({
+          tabs: [replacement],
+          activeTabId: replacement.tabId
+        })
+      } else {
+        const nextActiveTabId =
+          this.activeTabId === tabId
+            ? remaining[Math.min(closedIndex, remaining.length - 1)].tabId
+            : this.activeTabId
+        this.$patch({
+          activeTabId: nextActiveTabId,
+          tabs: remaining
+        })
       }
       if (persist) {
         void this.persistOpenTabs()

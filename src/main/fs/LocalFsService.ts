@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
+import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
 import type {
   FileEntry,
   FileListResult,
@@ -235,8 +236,10 @@ export async function mkdirRecursive(dirPath: string): Promise<void> {
 }
 
 export const MAX_STAGE_DROP_BYTES = 16 * 1024 * 1024
-export const MAX_STAGE_DROP_ENTRIES = 1000
+export { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES }
 const STAGE_DROP_PREFIX = 'ferry-drop-'
+const STAGE_DROP_MARKER = '.ferry-stage-owner'
+const STAGE_DROP_MARKER_CONTENT = 'ferry-stage-drop:v1\n'
 const STAGE_SESSION_TTL_MS = 30 * 60 * 1000
 const STAGE_WRITE_HIGH_WATER_MARK = 256 * 1024
 const activeStageDirs = new Set<string>()
@@ -244,26 +247,71 @@ const activeStageDirs = new Set<string>()
 interface StageDropSession {
   root: string
   createdAt: number
+  lastActivityAt: number
+  pendingOpens: number
+  pendingOpenWaiters: Set<() => void>
   topLevelOrder: string[]
   topLevelMeta: Map<string, { modifiedAt?: string }>
   writtenPaths: Set<string>
+  stagedPaths: Set<string>
   streams: Set<WriteStream>
 }
 
 const activeStageSessions = new Map<string, StageDropSession>()
 
-function normalizeStageSegments(relativePath: string): string[] {
+function normalizeStageSegments(relativePath: string, isDir = false): string[] {
   const rawRel = String(relativePath ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   if (!rawRel || /^[a-zA-Z]:/.test(rawRel)) {
     logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
     throw new SshError('VALIDATION', `Invalid dropped relative path "${relativePath}"`)
   }
   const segments = rawRel.split('/').filter(Boolean)
+  const reservedMarker = segments[0]?.toLowerCase() === STAGE_DROP_MARKER.toLowerCase()
+  if (reservedMarker) {
+    logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
+    throw new SshError('VALIDATION', 'The staging ownership marker path is reserved')
+  }
   if (segments.length === 0 || segments.some((s) => s === '.' || s === '..')) {
     logSecurityEvent('fs.stage_drop_path_blocked', { relativePath })
     throw new SshError('VALIDATION', `Unsafe dropped relative path "${relativePath}"`)
   }
+  const directoryDepth = isDir ? segments.length : segments.length - 1
+  if (directoryDepth > MAX_STAGE_DROP_DEPTH) {
+    logSecurityEvent('fs.stage_drop_depth_limit', { depth: directoryDepth, max: MAX_STAGE_DROP_DEPTH })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped folder nesting exceeds the ${MAX_STAGE_DROP_DEPTH}-level staging limit. Use the Local pane for larger transfers.`
+    )
+  }
   return segments
+}
+
+function stagePathKey(segments: string[]): string {
+  const key = segments.join('/')
+  return process.platform === 'win32' ? key.toLowerCase() : key
+}
+
+/** Reserves each unique directory and file path, including parent directories implied by files. */
+function reserveStagePaths(stagedPaths: Set<string>, segments: string[], isDir: boolean): void {
+  const directoryDepth = isDir ? segments.length : segments.length - 1
+  const keys: string[] = []
+  for (let depth = 1; depth <= directoryDepth; depth++) {
+    keys.push(stagePathKey(segments.slice(0, depth)))
+  }
+  keys.push(stagePathKey(segments))
+
+  const additions = [...new Set(keys)].filter((key) => !stagedPaths.has(key))
+  const nextCount = stagedPaths.size + additions.length
+  if (nextCount > MAX_STAGE_DROP_ENTRIES) {
+    logSecurityEvent('fs.stage_drop_entry_limit', { count: nextCount, max: MAX_STAGE_DROP_ENTRIES })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped selection exceeds the ${MAX_STAGE_DROP_ENTRIES}-item staging limit. Use the Local pane for larger transfers.`
+    )
+  }
+  for (const key of additions) {
+    stagedPaths.add(key)
+  }
 }
 
 function resolveStageTarget(stageRoot: string, segments: string[]): string {
@@ -314,62 +362,221 @@ async function buildStageFileEntries(
   return out
 }
 
-async function sweepExpiredStageSessions(): Promise<void> {
-  const cutoff = Date.now() - STAGE_SESSION_TTL_MS
-  const expiredRoots: string[] = []
-  for (const [id, session] of activeStageSessions) {
-    if (session.createdAt <= cutoff) {
-      activeStageSessions.delete(id)
-      activeStageDirs.delete(session.root)
-      expiredRoots.push(session.root)
-    }
-  }
-  await Promise.all(expiredRoots.map((root) => fs.rm(root, { recursive: true, force: true }).catch(() => undefined)))
+async function createStageDropOwnershipMarker(stageRoot: string): Promise<void> {
+  await fs.writeFile(path.join(stageRoot, STAGE_DROP_MARKER), STAGE_DROP_MARKER_CONTENT, {
+    flag: 'wx',
+    mode: 0o600
+  })
 }
 
-function isStagedDropDir(dirPath: string): boolean {
-  const resolvedTmp = path.resolve(os.tmpdir())
+function isStageDropRootPath(dirPath: string): boolean {
   const resolvedDir = path.resolve(dirPath)
-  const parent = path.dirname(resolvedDir)
-  return parent === resolvedTmp && path.basename(resolvedDir).startsWith(STAGE_DROP_PREFIX)
+  return path.dirname(resolvedDir) === path.resolve(os.tmpdir())
+    && path.basename(resolvedDir).startsWith(STAGE_DROP_PREFIX)
 }
 
-function findStagedRoot(targetPath: string): string | null {
-  const resolvedTarget = path.resolve(targetPath)
-  for (const dir of activeStageDirs) {
-    if (resolvedTarget === dir || resolvedTarget.startsWith(dir + path.sep)) {
-      return dir
-    }
+/** Marker read failures, symlinks, and malformed markers are treated as not owned. */
+async function isOwnedStageRoot(dirPath: string): Promise<boolean> {
+  if (!isStageDropRootPath(dirPath)) {
+    return false
   }
-  const relToTmp = path.relative(os.tmpdir(), resolvedTarget)
-  if (relToTmp && !relToTmp.startsWith('..') && !path.isAbsolute(relToTmp)) {
-    const firstSeg = relToTmp.split(path.sep)[0]
-    if (firstSeg?.startsWith(STAGE_DROP_PREFIX)) {
-      return path.join(os.tmpdir(), firstSeg)
+
+  const resolvedDir = path.resolve(dirPath)
+  try {
+    const rootStats = await fs.lstat(resolvedDir)
+    if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+      return false
     }
+
+    const markerPath = path.join(resolvedDir, STAGE_DROP_MARKER)
+    const markerStats = await fs.lstat(markerPath)
+    if (!markerStats.isFile() || markerStats.isSymbolicLink()) {
+      return false
+    }
+
+    return (await fs.readFile(markerPath, 'utf8')) === STAGE_DROP_MARKER_CONTENT
+  } catch {
+    return false
   }
-  return null
 }
 
-/** Removes a staged drop item after upload/cancel, pruning empty parent directories up to `ferry-drop-*`. */
-export async function cleanupStagedDropPath(localPath: string): Promise<void> {
-  const stageRoot = findStagedRoot(localPath)
-  if (!stageRoot || !isStagedDropDir(stageRoot)) {
+async function removeOwnedStageRoot(stageRoot: string): Promise<boolean> {
+  const resolvedRoot = path.resolve(stageRoot)
+  if (!(await isOwnedStageRoot(resolvedRoot))) {
+    return false
+  }
+  await fs.rm(resolvedRoot, { recursive: true, force: true })
+  activeStageDirs.delete(resolvedRoot)
+  return true
+}
+
+function isPathWithin(root: string, target: string): boolean {
+  const relative = path.relative(root, target)
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  )
+}
+
+/** Reject symlinked parent components so cleanup cannot traverse outside the owned root. */
+async function hasSafeStagePathParents(stageRoot: string, targetPath: string): Promise<boolean> {
+  const relative = path.relative(stageRoot, targetPath)
+  if (!isPathWithin(stageRoot, targetPath)) {
+    return false
+  }
+
+  let current = stageRoot
+  const segments = relative.split(path.sep)
+  for (const segment of segments.slice(0, -1)) {
+    if (!segment) continue
+    current = path.join(current, segment)
+    const stats = await fs.lstat(current).catch(() => null)
+    if (!stats?.isDirectory() || stats.isSymbolicLink()) {
+      return false
+    }
+  }
+  return true
+}
+
+async function closeStageDropStreams(session: StageDropSession): Promise<void> {
+  await Promise.all(
+    [...session.streams].map(
+      (stream) =>
+        new Promise<void>((resolve) => {
+          if (stream.closed) {
+            session.streams.delete(stream)
+            resolve()
+            return
+          }
+
+          const ignoreError = () => {}
+          stream.on('error', ignoreError)
+          stream.once('close', () => {
+            stream.off('error', ignoreError)
+            session.streams.delete(stream)
+            resolve()
+          })
+          if (!stream.destroyed) {
+            stream.destroy()
+          }
+        })
+    )
+  )
+}
+
+async function waitForPendingStageOpens(session: StageDropSession): Promise<void> {
+  if (session.pendingOpens === 0) {
     return
   }
+  await new Promise<void>((resolve) => session.pendingOpenWaiters.add(resolve))
+}
+
+function finishPendingStageOpen(session: StageDropSession): void {
+  session.pendingOpens -= 1
+  if (session.pendingOpens === 0) {
+    for (const resolve of session.pendingOpenWaiters) {
+      resolve()
+    }
+    session.pendingOpenWaiters.clear()
+  }
+  session.lastActivityAt = Date.now()
+}
+
+async function sweepExpiredStageSessions(): Promise<void> {
+  const cutoff = Date.now() - STAGE_SESSION_TTL_MS
+  const expiredSessions: StageDropSession[] = []
+  for (const [id, session] of activeStageSessions) {
+    // A stalled open stream is inactive too; close it when the inactivity TTL elapses.
+    // Keep a session alive while a stream still has buffered or in-flight data.
+    const hasPendingWrites = [...session.streams].some(
+      (stream) => stream.writableLength > 0 || stream.writableNeedDrain
+    )
+    if (session.pendingOpens === 0 && !hasPendingWrites && session.lastActivityAt <= cutoff) {
+      activeStageSessions.delete(id)
+      expiredSessions.push(session)
+    }
+  }
+
+  await Promise.all(
+    expiredSessions.map(async (session) => {
+      await closeStageDropStreams(session)
+      await removeOwnedStageRoot(session.root).catch(() => false)
+    })
+  )
+}
+
+async function findStagedRoot(targetPath: string): Promise<string | null> {
+  const resolvedTarget = path.resolve(targetPath)
+  for (const dir of activeStageDirs) {
+    const resolvedDir = path.resolve(dir)
+    if (isPathWithin(resolvedDir, resolvedTarget)) {
+      return await isOwnedStageRoot(resolvedDir) ? resolvedDir : null
+    }
+  }
+
+  const tmpDir = path.resolve(os.tmpdir())
+  const relative = path.relative(tmpDir, resolvedTarget)
+  if (!relative || !isPathWithin(tmpDir, resolvedTarget)) {
+    return null
+  }
+
+  const firstSegment = relative.split(path.sep)[0]
+  if (!firstSegment?.startsWith(STAGE_DROP_PREFIX)) {
+    return null
+  }
+
+  const candidate = path.join(tmpDir, firstSegment)
+  return await isOwnedStageRoot(candidate) ? candidate : null
+}
+
+/** Removes an owned staged item after upload/cancel, pruning empty parents without following symlinks. */
+export async function cleanupStagedDropPath(localPath: string): Promise<void> {
+  const stageRoot = await findStagedRoot(localPath)
+  if (!stageRoot) {
+    return
+  }
+
   const resolvedTarget = path.resolve(localPath)
+  if (
+    path.dirname(resolvedTarget) === stageRoot &&
+    path.basename(resolvedTarget).toLowerCase() === STAGE_DROP_MARKER.toLowerCase()
+  ) {
+    return
+  }
+  if (!(await hasSafeStagePathParents(stageRoot, resolvedTarget))) {
+    return
+  }
+  if (resolvedTarget === stageRoot) {
+    await removeOwnedStageRoot(stageRoot).catch(() => false)
+    return
+  }
+
   await fs.rm(resolvedTarget, { recursive: true, force: true })
-  let current = resolvedTarget === stageRoot ? stageRoot : path.dirname(resolvedTarget)
-  while (current.startsWith(stageRoot)) {
+  let current = path.dirname(resolvedTarget)
+  while (current === stageRoot || current.startsWith(stageRoot + path.sep)) {
+    const currentStats = await fs.lstat(current).catch(() => null)
+    if (!currentStats?.isDirectory() || currentStats.isSymbolicLink()) {
+      break
+    }
+
     const remaining = await fs.readdir(current).catch(() => null)
-    if (!remaining || remaining.length > 0) {
+    if (!remaining) {
+      break
+    }
+
+    if (current === stageRoot) {
+      if (remaining.some((name) => name !== STAGE_DROP_MARKER)) {
+        break
+      }
+      await removeOwnedStageRoot(stageRoot).catch(() => false)
+      break
+    }
+
+    if (remaining.length > 0) {
       break
     }
     await fs.rm(current, { recursive: true, force: true }).catch(() => undefined)
-    if (current === stageRoot) {
-      activeStageDirs.delete(stageRoot)
-      break
-    }
     current = path.dirname(current)
   }
 }
@@ -379,24 +586,33 @@ export async function cleanupStagedDropPaths(paths: string[]): Promise<void> {
   await Promise.all(paths.map((p) => cleanupStagedDropPath(p).catch(() => undefined)))
 }
 
-/** Cleans tracked staged drop directories and sweeps stale `ferry-drop-*` folders from `os.tmpdir()`. */
+/** Cleans only marked Ferry staging directories, including stale roots left by a previous process. */
 export async function cleanupAllStagedDrops(maxAgeMs = 3_600_000): Promise<void> {
+  const sessions = [...activeStageSessions.values()]
   activeStageSessions.clear()
+  await Promise.all(
+    sessions.map(async (session) => {
+      await waitForPendingStageOpens(session)
+      await closeStageDropStreams(session)
+    })
+  )
   const tracked = [...activeStageDirs]
-  activeStageDirs.clear()
-  await Promise.all(tracked.map((dir) => fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)))
+  await Promise.all(tracked.map((dir) => removeOwnedStageRoot(dir).catch(() => false)))
 
   const cutoff = maxAgeMs <= 0 ? Number.POSITIVE_INFINITY : Date.now() - maxAgeMs
-  const tmpDir = os.tmpdir()
+  const tmpDir = path.resolve(os.tmpdir())
   const entries = await fs.readdir(tmpDir, { withFileTypes: true }).catch(() => [])
   await Promise.all(
     entries
-      .filter((e) => e.isDirectory() && e.name.startsWith(STAGE_DROP_PREFIX))
-      .map(async (e) => {
-        const full = path.join(tmpDir, e.name)
-        const stats = await fs.stat(full).catch(() => null)
-        if (!stats || stats.mtimeMs <= cutoff) {
-          await fs.rm(full, { recursive: true, force: true }).catch(() => undefined)
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(STAGE_DROP_PREFIX))
+      .map(async (entry) => {
+        const full = path.join(tmpDir, entry.name)
+        if (!(await isOwnedStageRoot(full))) {
+          return
+        }
+        const stats = await fs.lstat(full).catch(() => null)
+        if (stats?.isDirectory() && stats.mtimeMs <= cutoff) {
+          await removeOwnedStageRoot(full).catch(() => false)
         }
       })
   )
@@ -409,15 +625,37 @@ export async function cleanupAllStagedDrops(maxAgeMs = 3_600_000): Promise<void>
 export async function beginStageDrop(req?: StageDropBeginRequest): Promise<StageDropBeginResult> {
   await sweepExpiredStageSessions()
   const dirs = Array.isArray(req?.dirs) ? req.dirs : []
-  const validatedDirs = dirs.map((d) => normalizeStageSegments(d))
+  if (dirs.length > MAX_STAGE_DROP_ENTRIES) {
+    logSecurityEvent('fs.stage_drop_entry_limit', { count: dirs.length, max: MAX_STAGE_DROP_ENTRIES })
+    throw new SshError(
+      'VALIDATION',
+      `Dropped selection exceeds the ${MAX_STAGE_DROP_ENTRIES}-item staging limit. Use the Local pane for larger transfers.`
+    )
+  }
+  const validatedDirs = dirs.map((dir) => normalizeStageSegments(dir, true))
+  const stagedPaths = new Set<string>()
+  for (const segments of validatedDirs) {
+    reserveStagePaths(stagedPaths, segments, true)
+  }
   const stageRoot = await fs.mkdtemp(path.join(os.tmpdir(), STAGE_DROP_PREFIX))
+  try {
+    await createStageDropOwnershipMarker(stageRoot)
+  } catch (err) {
+    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => undefined)
+    throw err
+  }
   const stageId = randomUUID()
+  const createdAt = Date.now()
   const session: StageDropSession = {
     root: stageRoot,
-    createdAt: Date.now(),
+    createdAt,
+    lastActivityAt: createdAt,
+    pendingOpens: 1,
+    pendingOpenWaiters: new Set(),
     topLevelOrder: [],
     topLevelMeta: new Map(),
     writtenPaths: new Set(),
+    stagedPaths,
     streams: new Set()
   }
   activeStageDirs.add(stageRoot)
@@ -429,13 +667,25 @@ export async function beginStageDrop(req?: StageDropBeginRequest): Promise<Stage
       recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments)
       await fs.mkdir(targetPath, { recursive: true })
     }
+    if (activeStageSessions.get(stageId) !== session) {
+      throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
+    }
   } catch (err) {
     activeStageSessions.delete(stageId)
-    activeStageDirs.delete(stageRoot)
-    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStageRoot(stageRoot).catch(() => false)
     throw err
+  } finally {
+    finishPendingStageOpen(session)
   }
   return { stageId }
+}
+
+/** Records incoming bytes or other progress for an active staging session. */
+export function touchStageDropSession(stageId: string): void {
+  const session = activeStageSessions.get(stageId)
+  if (session) {
+    session.lastActivityAt = Date.now()
+  }
 }
 
 /** Opens a validated local write stream for one file inside an active staging session. */
@@ -449,17 +699,36 @@ export async function openStageDropWriteStream(
     throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
   }
   const segments = normalizeStageSegments(relativePath)
-  const dedupeKey = (process.platform === 'win32' ? segments.join('/').toLowerCase() : segments.join('/'))
+  const dedupeKey = stagePathKey(segments)
   if (session.writtenPaths.has(dedupeKey)) {
     throw new SshError('VALIDATION', `Duplicate staged relative path "${relativePath}"`)
   }
+  reserveStagePaths(session.stagedPaths, segments, false)
+  session.lastActivityAt = Date.now()
   session.writtenPaths.add(dedupeKey)
   const targetPath = resolveStageTarget(session.root, segments)
-  await fs.mkdir(path.dirname(targetPath), { recursive: true })
+  session.pendingOpens += 1
+  try {
+    await fs.mkdir(path.dirname(targetPath), { recursive: true })
+    if (activeStageSessions.get(stageId) !== session) {
+      throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
+    }
+  } finally {
+    finishPendingStageOpen(session)
+  }
   recordStageTopLevel(session.topLevelOrder, session.topLevelMeta, segments, modifiedAt)
   const stream = createWriteStream(targetPath, { highWaterMark: STAGE_WRITE_HIGH_WATER_MARK })
   session.streams.add(stream)
-  stream.once('close', () => session.streams.delete(stream))
+  stream.on('drain', () => {
+    session.lastActivityAt = Date.now()
+  })
+  stream.once('finish', () => {
+    session.lastActivityAt = Date.now()
+  })
+  stream.once('close', () => {
+    session.streams.delete(stream)
+    session.lastActivityAt = Date.now()
+  })
   return {
     stream,
     targetPath
@@ -472,12 +741,15 @@ export async function finishStageDrop(stageId: string): Promise<FileEntry[]> {
   if (!session) {
     throw new SshError('NOT_FOUND', `Staging session "${stageId}" not found or expired`)
   }
+  if (session.pendingOpens > 0 || [...session.streams].some((stream) => !stream.writableFinished)) {
+    throw new SshError('VALIDATION', 'Cannot finalize a staging session while files are still being written')
+  }
   activeStageSessions.delete(stageId)
+  await closeStageDropStreams(session)
   try {
     return await buildStageFileEntries(session.root, session.topLevelOrder, session.topLevelMeta)
   } catch (err) {
-    activeStageDirs.delete(session.root)
-    await fs.rm(session.root, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStageRoot(session.root).catch(() => false)
     throw err
   }
 }
@@ -489,22 +761,9 @@ export async function abortStageDrop(stageId: string): Promise<void> {
     return
   }
   activeStageSessions.delete(stageId)
-  activeStageDirs.delete(session.root)
-  await Promise.all(
-    [...session.streams].map(
-      (stream) =>
-        new Promise<void>((resolve) => {
-          if (stream.closed || stream.destroyed) {
-            resolve()
-            return
-          }
-          stream.on('error', () => {})
-          stream.once('close', () => resolve())
-          stream.destroy()
-        })
-    )
-  )
-  await fs.rm(session.root, { recursive: true, force: true }).catch(() => undefined)
+  await waitForPendingStageOpens(session)
+  await closeStageDropStreams(session)
+  await removeOwnedStageRoot(session.root).catch(() => false)
 }
 
 /**
@@ -526,8 +785,11 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
 
   let totalBytes = 0
   const normalized: Array<{ segments: string[]; isDir: boolean; data?: Uint8Array; modifiedAt?: string }> = []
+  const stagedPaths = new Set<string>()
   for (const item of entries) {
-    const segments = normalizeStageSegments(item.relativePath)
+    const isDir = Boolean(item.isDir)
+    const segments = normalizeStageSegments(item.relativePath, isDir)
+    reserveStagePaths(stagedPaths, segments, isDir)
     const bytes = item.data ? Buffer.from(item.data) : Buffer.alloc(0)
     totalBytes += bytes.length
     if (totalBytes > MAX_STAGE_DROP_BYTES) {
@@ -538,13 +800,19 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
     }
     normalized.push({
       segments,
-      isDir: Boolean(item.isDir),
+      isDir,
       data: item.isDir ? undefined : bytes,
       modifiedAt: item.modifiedAt
     })
   }
 
   const stageRoot = await fs.mkdtemp(path.join(os.tmpdir(), STAGE_DROP_PREFIX))
+  try {
+    await createStageDropOwnershipMarker(stageRoot)
+  } catch (err) {
+    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => undefined)
+    throw err
+  }
   activeStageDirs.add(stageRoot)
   const topLevelOrder: string[] = []
   const topLevelMeta = new Map<string, { modifiedAt?: string }>()
@@ -563,7 +831,7 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
     return await buildStageFileEntries(stageRoot, topLevelOrder, topLevelMeta)
   } catch (err) {
     activeStageDirs.delete(stageRoot)
-    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => undefined)
+    await removeOwnedStageRoot(stageRoot).catch(() => false)
     throw err
   }
 }

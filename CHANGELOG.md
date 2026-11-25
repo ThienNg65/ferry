@@ -28,6 +28,70 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.4.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.4...ferry-v1.4.0) (2026-11-24)
+
+
+### Features
+
+* **automation:** add phase labels and Director approval gate ([#189](https://github.com/ThienNg65/ferry/issues/189)) ([9bba303](https://github.com/ThienNg65/ferry/commit/9bba303f7788974ff9146b5d6179ae6aba13bb23))
+
+
+### Bug Fixes
+
+* bound OS drag-and-drop staging entry count and depth ([#167](https://github.com/ThienNg65/ferry/issues/167)) ([a4aa5cb](https://github.com/ThienNg65/ferry/commit/a4aa5cb1f21b5c4e71727ef0f165da19adf0761a))
+* **fs:** preserve active OS-drop staging sessions ([#183](https://github.com/ThienNg65/ferry/issues/183)) ([4c7bbb4](https://github.com/ThienNg65/ferry/commit/4c7bbb492b30c901cf103efa3e883ce1005dc634))
+* **monitor:** calculate process RSS with remote page size ([#168](https://github.com/ThienNg65/ferry/issues/168)) ([0a701f5](https://github.com/ThienNg65/ferry/commit/0a701f564eb83424b43a0a1ce3e72385920cbf6f))
+* **security:** scope public release token to publishing steps ([#184](https://github.com/ThienNg65/ferry/issues/184)) ([f602780](https://github.com/ThienNg65/ferry/commit/f6027806206d6bb4dc147a88e41a0012d104cfbe))
+
+
+### Tests
+
+* isolate DPAPI tests from the installed user profile ([#187](https://github.com/ThienNg65/ferry/issues/187)) ([1cbf0ae](https://github.com/ThienNg65/ferry/commit/1cbf0ae0b58a470576774a9fa0f4e50c19fa380e))
+
+## [1.3.4](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.3...ferry-v1.3.4) (2026-11-23)
+
+
+### Bug Fixes
+
+* contain sidecar RPC handler rejections across transports ([#150](https://github.com/ThienNg65/ferry/issues/150)) ([55b8925](https://github.com/ThienNg65/ferry/commit/55b892531ca25a0a2eed872faa86c823c08d14e0))
+* **files:** clean staged OS drops after local moves ([#182](https://github.com/ThienNg65/ferry/issues/182)) ([d6a733b](https://github.com/ThienNg65/ferry/commit/d6a733b40d818447ea9a90145d1216ded84cfb2c))
+* **security:** serialize DPAPI master-key initialization ([#181](https://github.com/ThienNg65/ferry/issues/181)) ([812f32e](https://github.com/ThienNg65/ferry/commit/812f32eb177a306c2b5e67b3b8a4ac8f8e8aba0c))
+* **sessions:** avoid empty tabs state during closeTab for sync watchers ([#185](https://github.com/ThienNg65/ferry/issues/185)) ([cea5066](https://github.com/ThienNg65/ferry/commit/cea5066d4c09a2ac088e040174c1c134f5e9964b))
+* **ssh:** bound streamed SSH line buffers ([#178](https://github.com/ThienNg65/ferry/issues/178)) ([24f3c3a](https://github.com/ThienNg65/ferry/commit/24f3c3abd69a77aafa8a17316f9d2eac078ee09e))
+* **transfer:** reject symlinked tree download destinations ([#177](https://github.com/ThienNg65/ferry/issues/177)) ([db91bde](https://github.com/ThienNg65/ferry/commit/db91bdeb03914d78e68189a755761316a7ceeb6f))
+* verify ownership before staged-drop cleanup ([#156](https://github.com/ThienNg65/ferry/issues/156)) ([3630d0f](https://github.com/ThienNg65/ferry/commit/3630d0f3c1fe1ebf163b1b28aa57b0890336d715))
+
+## [1.3.3](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.2...ferry-v1.3.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* preserve UTF-8 across SSH output chunks ([02022d0](https://github.com/ThienNg65/ferry/commit/02022d0344efb114d305b373d7e867a94738d163))
+* **ssh:** preserve UTF-8 across remote output chunks ([a8c6cfa](https://github.com/ThienNg65/ferry/commit/a8c6cfa7c6459da03c6e557b233356509ab07196))
+
+
+### Documentation
+
+* **marketing:** add marketing kit, WinGet 1.3.2 manifests, and automated public README sync ([ec29942](https://github.com/ThienNg65/ferry/commit/ec2994290f641ff2751823278822d7782fbe2aa8))
+
+
+### Tests
+
+* **ssh:** clarify UTF-8 chunk boundary coverage ([e6d9786](https://github.com/ThienNg65/ferry/commit/e6d9786ba281d97042f1893f126bc0eb10869213))
+
+## [1.3.2](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.1...ferry-v1.3.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* remediate Modern Glass UI audit regressions and UX polish ([#151](https://github.com/ThienNg65/ferry/issues/151)) ([e6e6773](https://github.com/ThienNg65/ferry/commit/e6e67734f7207bd49d218d40080614edd0a5e1d7))
+
+
+### Miscellaneous Chores
+
+* remove legacy Electron references and upgrade shims ([c12e086](https://github.com/ThienNg65/ferry/commit/c12e086a4e47cdca2fb614421271e9b3b8ba1288))
+* remove legacy Electron references and upgrade shims ([7abee66](https://github.com/ThienNg65/ferry/commit/7abee665d2cfdeeb1e5de28058d871d3ba2f33a5))
+
 ## [1.3.1](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.0...ferry-v1.3.1) (2026-11-21)
 
 
