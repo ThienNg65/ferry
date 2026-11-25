@@ -63,7 +63,9 @@ export function registerFsHandlers(): void {
       : []
     return LocalFs.cleanupStagedDropPaths(paths)
   })
-  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) => LocalFs.readFileText(filePath as string))
+  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath, maxBytes) =>
+    LocalFs.readFileText(filePath as string, maxBytes as number | undefined)
+  )
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
     const request = req as { path: string; content: string }
     return LocalFs.writeFileText(request.path, request.content)
