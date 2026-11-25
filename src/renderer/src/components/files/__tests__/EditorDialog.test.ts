@@ -77,7 +77,22 @@ describe('EditorDialog file-size handling', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
-  it('opens the external editor when the requested editor read is truncated', async () => {
+  it.each([
+    {
+      kind: 'local',
+      editId: null,
+      remotePath: null,
+      expectedChannel: INVOKE_CHANNELS.editOpenLocal,
+      expectedPayload: '/tmp/oversized.txt'
+    },
+    {
+      kind: 'remote',
+      editId: 'edit-2',
+      remotePath: '/remote/oversized.txt',
+      expectedChannel: INVOKE_CHANNELS.editOpenExternal,
+      expectedPayload: { editId: 'edit-2' }
+    }
+  ])('opens the external editor when a $kind editor read is truncated', async ({ editId, remotePath, expectedChannel, expectedPayload }) => {
     const localTempPath = '/tmp/oversized.txt'
     const result: FileReadResult = {
       path: localTempPath,
@@ -88,13 +103,13 @@ describe('EditorDialog file-size handling', () => {
     vi.mocked(invoke).mockResolvedValueOnce(result).mockResolvedValueOnce(undefined)
 
     wrapper = mount(EditorDialog, {
-      props: { open: true, editId: null, localTempPath, remotePath: null },
+      props: { open: true, editId, localTempPath, remotePath },
       global: { stubs }
     })
     await flushPromises()
 
     expect(notifyError).toHaveBeenCalledWith('File too large', expect.any(String))
-    expect(invoke).toHaveBeenNthCalledWith(2, INVOKE_CHANNELS.editOpenLocal, localTempPath)
+    expect(invoke).toHaveBeenNthCalledWith(2, expectedChannel, expectedPayload)
     expect(wrapper.emitted('update:open')).toEqual([[false]])
   })
 })
