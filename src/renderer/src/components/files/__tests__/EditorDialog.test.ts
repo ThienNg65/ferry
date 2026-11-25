@@ -62,14 +62,15 @@ describe('EditorDialog file-size handling', () => {
     const result: FileReadResult = { path: localTempPath, content, truncated: false, size: content.length }
     vi.mocked(invoke).mockResolvedValueOnce(result)
 
-    wrapper = mount(EditorDialog, {
+    const mounted = mount(EditorDialog, {
       props: { open: true, editId, localTempPath, remotePath },
       global: { stubs }
     })
+    wrapper = mounted
     await flushPromises()
 
     expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalReadFile, localTempPath, MAX_TEXT_EDITOR_BYTES)
-    expect(wrapper.get('[data-editor-content-length]').text()).toBe(String(content.length))
+    expect(mounted.get('[data-editor-content-length]').text()).toBe(String(content.length))
     expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenLocal, localTempPath)
     if (editId) {
       expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenExternal, { editId })
@@ -102,14 +103,15 @@ describe('EditorDialog file-size handling', () => {
     }
     vi.mocked(invoke).mockResolvedValueOnce(result).mockResolvedValueOnce(undefined)
 
-    wrapper = mount(EditorDialog, {
+    const mounted = mount(EditorDialog, {
       props: { open: true, editId, localTempPath, remotePath },
       global: { stubs }
     })
+    wrapper = mounted
     await flushPromises()
 
     expect(notifyError).toHaveBeenCalledWith('File too large', expect.any(String))
     expect(invoke).toHaveBeenNthCalledWith(2, expectedChannel, expectedPayload)
-    expect(wrapper.emitted('update:open')).toEqual([[false]])
+    expect(mounted.emitted('update:open')).toEqual([[false]])
   })
 })
