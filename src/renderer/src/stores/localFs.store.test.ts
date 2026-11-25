@@ -94,4 +94,59 @@ describe('localFs.store refresh', () => {
     expect(store.currentPath).toBe('/other')
     expect(store.entries).toEqual([])
   })
+
+  it('keeps the latest listing when overlapping background refreshes finish out of order', async () => {
+    const store = useLocalFsStore()
+    const existingEntry: FileEntry = {
+      name: 'notes.txt',
+      path: '/local/notes.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 10,
+      modifiedAt: null
+    }
+    const firstArchive: FileEntry = {
+      name: 'first.zip',
+      path: '/local/first.zip',
+      isDir: false,
+      isSymlink: false,
+      size: 20,
+      modifiedAt: null
+    }
+    const secondArchive: FileEntry = {
+      name: 'second.zip',
+      path: '/local/second.zip',
+      isDir: false,
+      isSymlink: false,
+      size: 30,
+      modifiedAt: null
+    }
+
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/local',
+      entries: [existingEntry]
+    } as FileListResult)
+    await store.load('/local')
+
+    let resolveFirst!: (result: FileListResult) => void
+    let resolveSecond!: (result: FileListResult) => void
+    vi.mocked(api.invoke)
+      .mockReturnValueOnce(new Promise<FileListResult>((resolve) => {
+        resolveFirst = resolve
+      }))
+      .mockReturnValueOnce(new Promise<FileListResult>((resolve) => {
+        resolveSecond = resolve
+      }))
+
+    const firstRefresh = store.refreshIfViewing('/local')
+    const secondRefresh = store.refreshIfViewing('/local')
+    expect(api.invoke).toHaveBeenCalledTimes(3)
+
+    resolveSecond({ path: '/local', entries: [existingEntry, firstArchive, secondArchive] })
+    await secondRefresh
+    resolveFirst({ path: '/local', entries: [existingEntry, firstArchive] })
+    await firstRefresh
+
+    expect(store.entries.map((entry) => entry.name)).toEqual(['notes.txt', 'first.zip', 'second.zip'])
+  })
 })
