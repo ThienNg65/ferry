@@ -122,4 +122,12 @@ describe('BookmarkStore', () => {
     const remaining = store.list()
     expect(remaining.map((b) => b.id).sort()).toEqual([local.id, otherSite.id].sort())
   })
+
+  it('deleteForSite guards against non-array bookmarks on disk without throwing', () => {
+    disks.set('bookmarks', { bookmarks: 'corrupted' })
+    const store = new BookmarkStore()
+
+    expect(() => store.deleteForSite('site-1')).not.toThrow()
+    expect(store.list()).toEqual([])
+  })
 })
