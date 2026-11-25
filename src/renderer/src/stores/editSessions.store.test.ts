@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import type { EditEvent } from '@shared/contract'
 import { onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
@@ -7,6 +7,10 @@ import { useEditSessionsStore } from './editSessions.store'
 
 vi.mock('../api', () => ({ invoke: vi.fn(), onEvent: vi.fn(() => () => {}) }))
 vi.mock('../composables/useNotify', () => ({ useNotify: vi.fn() }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 it('keeps an interrupted editor save unsaved and tells the user how to retry', () => {
   setActivePinia(createPinia())
