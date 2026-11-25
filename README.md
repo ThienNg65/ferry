@@ -80,14 +80,20 @@ conventions, and development notes.
 
 ## Releasing
 
-CI lives in `.github/workflows/ci.yml` and runs type checking, tests, and a build on each
-push/PR to `main`. Release Please handles versioning and source release tags through
-`.github/workflows/release.yml`. Its Windows packaging job builds and (when configured with a
-scoped `PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` to
-`ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
+CI lives in `.github/workflows/ci.yml` and runs on Windows for each push/PR to `main`: typechecking,
+Vitest tests, repository automation script tests (`node --test .github/scripts/*.test.mjs`), Vite
+builds, NSIS installation/verification, Neutralino packaging (`Ferry-Setup-*.exe`,
+`Ferry-Portable-*-win-x64.zip`, `latest.yml`), canonical artifact checks, and
+`npm run smoke:neutralino`. Release Please handles versioning and source release tags through
+`.github/workflows/release.yml`, which also supports manual `workflow_dispatch` recovery for an
+existing `ferry-vX.Y.Z` tag. Its Windows packaging job verifies the exact tag commit and package
+version, runs the full test/packaging/smoke suite, and (when configured with a scoped
+`PUBLIC_RELEASE_TOKEN`) uploads `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml`
+to `ThienNg65/ferry-release`, which hosts public downloads and auto-updates. During migration,
 the same assets are uploaded to the legacy `ferry` release for existing installations.
+See [the CI/CD & release runbook](docs/ci-cd-release-workflow.md) for the full pipeline breakdown
+and [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 Note: `v0.23.1` Neutralino preview users must run `Ferry-Setup-0.24.0.exe` manually once (preserving `%APPDATA%\Ferry`); `v0.24.0+` Neutralino users update automatically.
-See [repository migration instructions](docs/REPOSITORY_MIGRATION.md) before switching visibility.
 
 Signing goes through a currently-dormant SignPath stage: every step in that stage is gated on the
 `SIGNPATH_ORGANIZATION_ID` repo variable, which isn't set yet, so today it's a no-op and every
