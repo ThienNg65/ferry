@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
 import { useBookmarksStore } from '../../../stores/bookmarks.store'
+import { useLocalFsStore } from '../../../stores/localFs.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import CompareDialog from '../CompareDialog.vue'
@@ -472,5 +473,164 @@ describe('local OS drops into folders', () => {
       'The item was moved, but its temporary staging folder could not be removed.'
     )
     expect(notifyError).not.toHaveBeenCalledWith('Move failed', expect.anything())
+  })
+})
+
+
+describe('archive operation refresh targets', () => {
+  it('does not reload a newly selected local directory when compression finishes', async () => {
+    const local = useLocalFsStore()
+    const entry: FileEntry = {
+      name: 'report.txt',
+      path: 'C:\\Users\\me\\files\\report.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 12,
+      modifiedAt: null
+    }
+    Object.assign(local, { currentPath: 'C:\\Users\\me\\files', entries: [entry] })
+    const compression = deferred<void>()
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.archiveCompressLocal) return compression.promise as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('compress', entry)
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.archiveCompressLocal, {
+      sourcePath: entry.path,
+      destPath: 'C:\\Users\\me\\files\\report.txt.zip'
+    })
+
+    local.currentPath = 'C:\\Users\\me\\other'
+    compression.resolve()
+    await flushPromises()
+
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalList, 'C:\\Users\\me\\other')
+  })
+
+  it('refreshes the originating remote directory after compression when the active tab changes', async () => {
+    const sessions = useSessionsStore()
+    const firstTab = sessions.activeTab
+    Object.assign(firstTab, { sessionId: 'server-a', status: 'connected', hostLabel: 'a.example' })
+    sessions.openNewTab()
+    const secondTab = sessions.activeTab
+    Object.assign(secondTab, { sessionId: 'server-b', status: 'connected', hostLabel: 'b.example' })
+    sessions.activeTabId = firstTab.tabId
+
+    const entry: FileEntry = {
+      name: 'report.txt',
+      path: '/tab-a/report.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 12,
+      modifiedAt: null
+    }
+    const zip: FileEntry = { ...entry, name: 'report.txt.zip', path: '/tab-a/report.txt.zip' }
+    const remote = useRemoteFsStore()
+    Object.assign(remote.ensureBucket('server-a'), { currentPath: '/tab-a', entries: [entry] })
+    Object.assign(remote.ensureBucket('server-b'), { currentPath: '/tab-b', entries: [] })
+
+    const compression = deferred<void>()
+    vi.mocked(invoke).mockClear()
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.archiveCompressRemote) return compression.promise as never
+      if (channel === INVOKE_CHANNELS.fsRemoteList) return { path: '/tab-a', entries: [entry, zip] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('compress', entry)
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.archiveCompressRemote, {
+      sessionId: 'server-a',
+      sourcePath: entry.path,
+      destPath: '/tab-a/report.txt.zip'
+    })
+
+    sessions.activeTabId = secondTab.tabId
+    compression.resolve()
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-a', '/tab-a', true)
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-b', '/tab-b', false)
+    expect(remote.bySession['server-a'].entries.map((item) => item.name)).toContain('report.txt.zip')
+    expect(remote.bySession['server-b'].entries).toEqual([])
+  })
+
+  it('keeps extraction bound to its original session while the folder-conflict dialog is open', async () => {
+    const sessions = useSessionsStore()
+    const firstTab = sessions.activeTab
+    Object.assign(firstTab, { sessionId: 'server-a', status: 'connected', hostLabel: 'a.example' })
+    sessions.openNewTab()
+    const secondTab = sessions.activeTab
+    Object.assign(secondTab, { sessionId: 'server-b', status: 'connected', hostLabel: 'b.example' })
+    sessions.activeTabId = firstTab.tabId
+
+    const archive: FileEntry = {
+      name: 'logs.zip',
+      path: '/tab-a/logs.zip',
+      isDir: false,
+      isSymlink: false,
+      size: 20,
+      modifiedAt: null
+    }
+    const folder: FileEntry = {
+      name: 'logs',
+      path: '/tab-a/logs',
+      isDir: true,
+      isSymlink: false,
+      size: 0,
+      modifiedAt: null
+    }
+    const extracted: FileEntry = {
+      name: 'access.log',
+      path: '/tab-a/logs/access.log',
+      isDir: false,
+      isSymlink: false,
+      size: 10,
+      modifiedAt: null
+    }
+    const remote = useRemoteFsStore()
+    Object.assign(remote.ensureBucket('server-a'), { currentPath: '/tab-a', entries: [archive, folder] })
+    Object.assign(remote.ensureBucket('server-b'), { currentPath: '/tab-b', entries: [] })
+
+    const extraction = deferred<void>()
+    vi.mocked(invoke).mockClear()
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.unzipRun) return extraction.promise as never
+      if (channel === INVOKE_CHANNELS.fsRemoteList) return { path: '/tab-a', entries: [archive, folder, extracted] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('extract', archive)
+    await flushPromises()
+    expect(wrapper.text()).toContain('already exists here')
+
+    sessions.activeTabId = secondTab.tabId
+    const extractButton = wrapper.findAll('button').find((item) => item.text() === 'Extract Here')
+    expect(extractButton).toBeDefined()
+    await extractButton!.trigger('click')
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.unzipRun, {
+      sessionId: 'server-a',
+      archivePath: archive.path,
+      targetDir: '/tab-a/logs'
+    })
+
+    extraction.resolve()
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-a', '/tab-a', true)
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-b', '/tab-b', false)
+    expect(remote.bySession['server-a'].entries).toEqual([archive, folder, extracted])
   })
 })
