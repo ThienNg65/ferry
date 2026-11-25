@@ -563,6 +563,44 @@ describe('archive operation refresh targets', () => {
     expect(remote.bySession['server-b'].entries).toEqual([])
   })
 
+  it('invalidates the original remote cache without refreshing a newly opened directory', async () => {
+    const sessions = useSessionsStore()
+    const tab = sessions.activeTab
+    Object.assign(tab, { sessionId: 'server-a', status: 'connected', hostLabel: 'a.example' })
+
+    const entry: FileEntry = {
+      name: 'report.txt',
+      path: '/tab-a/report.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 12,
+      modifiedAt: null
+    }
+    const remote = useRemoteFsStore()
+    const bucket = remote.ensureBucket('server-a')
+    Object.assign(bucket, { currentPath: '/tab-a', entries: [entry] })
+    bucket.dirCache.set('/tab-a', { path: '/tab-a', entries: [entry], timestamp: Date.now() })
+
+    const compression = deferred<void>()
+    vi.mocked(invoke).mockClear()
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.archiveCompressRemote) return compression.promise as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    wrapper.getComponent(FileList).vm.$emit('compress', entry)
+    await flushPromises()
+
+    bucket.currentPath = '/tab-a/other'
+    compression.resolve()
+    await flushPromises()
+
+    expect(bucket.dirCache.has('/tab-a')).toBe(false)
+    expect(invoke).not.toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-a', '/tab-a/other', false)
+  })
+
   it('keeps extraction bound to its original session while the folder-conflict dialog is open', async () => {
     const sessions = useSessionsStore()
     const firstTab = sessions.activeTab
