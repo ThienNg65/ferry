@@ -54,11 +54,11 @@ describe('reliability hardening', () => {
     const migrated = openSafeConf<{ schemaVersion?: number; items: string[] }>({
       cwd: tmpDir,
       configName: 'legacy',
-      defaults: { items: [] },
-      schemaVersion: 2,
+      defaults: { schemaVersion: 1, items: [] },
+      schemaVersion: 1,
       migrate: (s) => s.set('items', [...s.get('items'), 'migrated'])
     })
-    expect(migrated.get('schemaVersion')).toBe(2)
+    expect(migrated.get('schemaVersion')).toBe(1)
     expect(migrated.get('items')).toEqual(['a', 'migrated'])
     expect(existsSync(path.join(tmpDir, 'legacy.v0.bak.json'))).toBe(true)
   })
