@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
 import { useBookmarksStore } from '../../../stores/bookmarks.store'
+import { useLocalFsStore } from '../../../stores/localFs.store'
+import { useUiStore } from '../../../stores/ui.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import CompareDialog from '../CompareDialog.vue'
@@ -472,5 +474,33 @@ describe('local OS drops into folders', () => {
       'The item was moved, but its temporary staging folder could not be removed.'
     )
     expect(notifyError).not.toHaveBeenCalledWith('Move failed', expect.anything())
+  })
+})
+
+describe('window keydown fallback visibility guard', () => {
+  it('ignores window keydown events on the local pane when sessions.status !== "connected"', async () => {
+    const sessions = useSessionsStore()
+    const localFs = useLocalFsStore()
+    const ui = useUiStore()
+    const entry: FileEntry = { name: 'notes.txt', path: '/local/notes.txt', isDir: false, isSymlink: false, size: 12, modifiedAt: null }
+    vi.mocked(invoke).mockResolvedValue({ path: '/local', entries: [entry] } as never)
+    confirm.mockResolvedValue(false)
+
+    ui.setActivePane('local')
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    localFs.entries = [entry]
+    localFs.selected = new Set([entry.path])
+
+    expect(sessions.status).not.toBe('connected')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    await flushPromises()
+    expect(confirm).not.toHaveBeenCalled()
+
+    sessions.activeTab.status = 'connected'
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledTimes(1)
   })
 })
