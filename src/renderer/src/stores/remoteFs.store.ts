@@ -295,7 +295,10 @@ export const useRemoteFsStore = defineStore('remoteFs', {
         return
       }
 
-      const seqAtStart = this.requestSeq[sessionId] ?? 0
+      // Supersede any older SWR revalidation before starting the post-operation refresh.
+      // Cache-hit revalidations run in the background without setting entry.loading.
+      const seqAtStart = (this.requestSeq[sessionId] ?? 0) + 1
+      this.requestSeq[sessionId] = seqAtStart
       const pathAtStart = entry.currentPath
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, pathAtStart, true)
