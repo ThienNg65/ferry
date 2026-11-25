@@ -499,10 +499,10 @@ async function onCompress(entry: FileEntry): Promise<void> {
   try {
     if (props.side === 'local') {
       const targetDir = localFs.currentPath
-      const sep = targetDir.includes('\\\\') ? '\\\\' : '/'
+      const sep = targetDir.includes('\\') ? '\\' : '/'
       await invoke<void>(INVOKE_CHANNELS.archiveCompressLocal, {
         sourcePath: entry.path,
-        destPath: `${targetDir.replace(/[/\\\\]+$/, '')}${sep}${zipName}`
+        destPath: `${targetDir.replace(/[/\\]+$/, '')}${sep}${zipName}`
       })
       await localFs.refreshIfViewing(targetDir)
     } else {
@@ -514,7 +514,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
       await invoke<UnzipResult>(INVOKE_CHANNELS.archiveCompressRemote, {
         sessionId,
         sourcePath: entry.path,
-        destPath: `${targetDir.replace(/\\/$/, '')}/${zipName}`
+        destPath: `${targetDir.replace(/\/$/, '')}/${zipName}`
       })
       await remoteFs.refreshSessionIfViewing(sessionId, targetDir)
     }
@@ -529,7 +529,7 @@ async function performExtract(entry: FileEntry, folderName: string, sessionId: s
     await invoke<UnzipResult>(INVOKE_CHANNELS.unzipRun, {
       sessionId,
       archivePath: entry.path,
-      targetDir: `${targetDir.replace(/\\/$/, '')}/${folderName}`
+      targetDir: `${targetDir.replace(/\/$/, '')}/${folderName}`
     })
     await remoteFs.refreshSessionIfViewing(sessionId, targetDir)
     notify.success('Extracted', `${entry.name} → ${folderName}`)
