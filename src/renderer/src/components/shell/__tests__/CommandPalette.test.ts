@@ -51,7 +51,7 @@ describe('CommandPalette selected file actions', () => {
   it('omits Selected files actions when sessions.status !== "connected" and shows them when connected', async () => {
     const sessions = useSessionsStore()
     const ui = useUiStore()
-    ui.setActivePane('local')
+    ui.activePane = 'local'
 
     let count = 1
     unregisterLocal = registerPaneActions('local', {
