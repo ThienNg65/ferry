@@ -309,9 +309,10 @@ function writeRemoteFile(sftp: SFTPWrapper, localPath: string, remotePath: strin
 }
 
 function posixRename(sftp: SFTPWrapper, from: string, to: string): Promise<boolean> {
-  return new Promise<boolean>((resolve, reject) => {
+  return new Promise<boolean>((resolve) => {
     try {
-      sftp.ext_openssh_rename(from, to, (e) => (e ? reject(e) : resolve(true)))
+      // Extension failures fall back to the standard SFTP replacement path.
+      sftp.ext_openssh_rename(from, to, (e) => resolve(!e))
     } catch {
       resolve(false)
     }
