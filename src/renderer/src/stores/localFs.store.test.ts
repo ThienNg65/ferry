@@ -147,6 +147,6 @@ describe('localFs.store refresh', () => {
     resolveFirst({ path: '/local', entries: [existingEntry, firstArchive] })
     await firstRefresh
 
-    expect(store.entries.map((entry) => entry.name)).toEqual(['notes.txt', 'first.zip', 'second.zip'])
+    expect(store.entries.map((entry) => entry.name)).toEqual(['first.zip', 'notes.txt', 'second.zip'])
   })
 })
