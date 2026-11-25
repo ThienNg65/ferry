@@ -524,6 +524,7 @@ async function onCompress(entry: FileEntry): Promise<void> {
     notify.error('Compress failed', message)
   }
 }
+
 async function performExtract(entry: FileEntry, folderName: string, sessionId: string, targetDir: string): Promise<void> {
   try {
     await invoke<UnzipResult>(INVOKE_CHANNELS.unzipRun, {
@@ -541,6 +542,7 @@ async function performExtract(entry: FileEntry, folderName: string, sessionId: s
     notify.error('Extract failed', message)
   }
 }
+
 /** Extracts into a folder named after the archive (not the current directory) — prompts if that folder already exists. */
 async function onExtract(entry: FileEntry): Promise<void> {
   const sessionId = sessions.activeSessionId
@@ -556,6 +558,7 @@ async function onExtract(entry: FileEntry): Promise<void> {
   }
   extractConflict.value = { entry, baseName, suggestedName: firstAvailableName(baseName), sessionId, targetDir }
 }
+
 async function resolveExtractConflict(choice: 'overwrite' | 'newFolder'): Promise<void> {
   const conflict = extractConflict.value
   if (!conflict) {
@@ -564,6 +567,7 @@ async function resolveExtractConflict(choice: 'overwrite' | 'newFolder'): Promis
   extractConflict.value = null
   await performExtract(conflict.entry, choice === 'overwrite' ? conflict.baseName : conflict.suggestedName, conflict.sessionId, conflict.targetDir)
 }
+
 /** True for a native OS drag (from Explorer/Finder, or from a local row's native drag — see FileRow.vue) — never for our in-app pane-to-pane drag, which only ever carries `text/plain`. */
 function isOsFileDrag(event: DragEvent): boolean {
   return Boolean(event.dataTransfer?.types.includes('Files'))
