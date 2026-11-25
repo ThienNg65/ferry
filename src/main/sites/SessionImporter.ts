@@ -26,11 +26,16 @@ async function regQuery(key: string): Promise<string | null> {
  * PuTTY never stores passwords, so there's nothing to skip there — only
  * host/port/username/key-path are ever present.
  */
-export async function scanPuttySessions(): Promise<ImportedSessionCandidate[]> {
-  if (process.platform !== 'win32') {
+export async function scanPuttySessions(
+  /** Overridable only for unit tests (see SessionImporter.test.ts) — real callers never pass this, so the win32 gate below still applies to them. */
+  queryFn?: (key: string) => Promise<string | null>,
+  defaultUser: string = os.userInfo().username
+): Promise<ImportedSessionCandidate[]> {
+  if (!queryFn && process.platform !== 'win32') {
     return []
   }
-  const listing = await regQuery(PUTTY_ROOT)
+  const query = queryFn ?? regQuery
+  const listing = await query(PUTTY_ROOT)
   if (!listing) {
     return []
   }
@@ -41,7 +46,7 @@ export async function scanPuttySessions(): Promise<ImportedSessionCandidate[]> {
     if (name === 'Default Settings') {
       continue
     }
-    const detail = await regQuery(subkey)
+    const detail = await query(subkey)
     if (!detail) {
       continue
     }
@@ -50,12 +55,13 @@ export async function scanPuttySessions(): Promise<ImportedSessionCandidate[]> {
     if (!host) {
       continue
     }
+    const rawUser = values.get('UserName')?.trim()
     candidates.push({
       source: 'putty',
       name,
       host,
       port: parseDword(values.get('PortNumber'), 22),
-      username: values.get('UserName') ?? '',
+      username: rawUser || defaultUser,
       privateKeyPath: values.get('PublicKeyFile') || undefined
     })
   }
@@ -79,7 +85,8 @@ async function walkWinScpNode(
   ancestorNames: string[],
   candidates: ImportedSessionCandidate[],
   depth: number,
-  queryFn: (key: string) => Promise<string | null>
+  queryFn: (key: string) => Promise<string | null>,
+  defaultUser: string
 ): Promise<void> {
   if (depth > MAX_WINSCP_DEPTH) {
     return
@@ -98,18 +105,21 @@ async function walkWinScpNode(
   const values = parseRegValues(detail)
   const host = values.get('HostName')
   if (host) {
+    const rawUser = values.get('UserName')?.trim()
     candidates.push({
       source: 'winscp',
       name: names.join('/'),
       host,
       port: parseDword(values.get('PortNumber'), 22),
-      username: values.get('UserName') ?? '',
+      username: rawUser || defaultUser,
       privateKeyPath: values.get('PublicKeyFile') || undefined,
       remoteInitialPath: values.get('RemoteDirectory') || undefined
     })
   }
   await Promise.all(
-    listRegSubkeyPaths(detail, subkey).map((child) => walkWinScpNode(child, names, candidates, depth + 1, queryFn))
+    listRegSubkeyPaths(detail, subkey).map((child) =>
+      walkWinScpNode(child, names, candidates, depth + 1, queryFn, defaultUser)
+    )
   )
 }
 
@@ -127,7 +137,8 @@ async function walkWinScpNode(
  */
 export async function scanWinScpSessions(
   /** Overridable only for unit tests (see SessionImporter.test.ts) — real callers never pass this, so the win32 gate below still applies to them. */
-  queryFn?: (key: string) => Promise<string | null>
+  queryFn?: (key: string) => Promise<string | null>,
+  defaultUser: string = os.userInfo().username
 ): Promise<ImportedSessionCandidate[]> {
   if (!queryFn && process.platform !== 'win32') {
     return []
@@ -139,7 +150,9 @@ export async function scanWinScpSessions(
   }
   const candidates: ImportedSessionCandidate[] = []
   await Promise.all(
-    listRegSubkeyPaths(listing, WINSCP_ROOT).map((subkey) => walkWinScpNode(subkey, [], candidates, 0, query))
+    listRegSubkeyPaths(listing, WINSCP_ROOT).map((subkey) =>
+      walkWinScpNode(subkey, [], candidates, 0, query, defaultUser)
+    )
   )
   return candidates
 }

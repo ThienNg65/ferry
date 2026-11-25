@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSshConfig, scanWinScpSessions } from './SessionImporter'
+import { parseSshConfig, scanPuttySessions, scanWinScpSessions } from './SessionImporter'
 
 // `reg query "<key>"`'s echoed header line uses whatever alias was passed
 // (the code queries the short HKCU alias for the root), but every child
@@ -103,6 +103,62 @@ describe('scanWinScpSessions', () => {
     const candidates = await scanWinScpSessions(queryFn)
 
     expect(candidates.map((c) => c.name)).toEqual(['Work/db1'])
+  })
+
+  it('falls back to defaultUser when UserName is missing or empty', async () => {
+    const tree = new Map<string, string>()
+    tree.set(QUERY_ROOT, fakeRegOutput(QUERY_ROOT, {}, ['no-user', 'blank-user'], FULL_ROOT))
+    tree.set(
+      `${FULL_ROOT}\\no-user`,
+      fakeRegOutput(`${FULL_ROOT}\\no-user`, { HostName: 'nouser.example.com' }, [])
+    )
+    tree.set(
+      `${FULL_ROOT}\\blank-user`,
+      fakeRegOutput(`${FULL_ROOT}\\blank-user`, { HostName: 'blankuser.example.com', UserName: '   ' }, [])
+    )
+    const queryFn = async (key: string): Promise<string | null> => tree.get(key) ?? null
+
+    const candidates = await scanWinScpSessions(queryFn, 'fallback-user')
+
+    expect(candidates.find((c) => c.name === 'no-user')?.username).toBe('fallback-user')
+    expect(candidates.find((c) => c.name === 'blank-user')?.username).toBe('fallback-user')
+  })
+})
+
+describe('scanPuttySessions', () => {
+  const PUTTY_QUERY_ROOT = 'HKCU\\Software\\SimonTatham\\PuTTY\\Sessions'
+  const PUTTY_FULL_ROOT = 'HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions'
+
+  it('falls back to defaultUser when UserName is missing or empty and preserves explicit UserName', async () => {
+    const tree = new Map<string, string>()
+    tree.set(
+      PUTTY_QUERY_ROOT,
+      fakeRegOutput(PUTTY_QUERY_ROOT, {}, ['Default%20Settings', 'prod', 'no-user', 'blank-user'], PUTTY_FULL_ROOT)
+    )
+    tree.set(
+      `${PUTTY_FULL_ROOT}\\Default%20Settings`,
+      fakeRegOutput(`${PUTTY_FULL_ROOT}\\Default%20Settings`, { HostName: 'ignored.example.com' }, [])
+    )
+    tree.set(
+      `${PUTTY_FULL_ROOT}\\prod`,
+      fakeRegOutput(`${PUTTY_FULL_ROOT}\\prod`, { HostName: 'prod.example.com', UserName: 'deploy' }, [])
+    )
+    tree.set(
+      `${PUTTY_FULL_ROOT}\\no-user`,
+      fakeRegOutput(`${PUTTY_FULL_ROOT}\\no-user`, { HostName: 'nouser.example.com' }, [])
+    )
+    tree.set(
+      `${PUTTY_FULL_ROOT}\\blank-user`,
+      fakeRegOutput(`${PUTTY_FULL_ROOT}\\blank-user`, { HostName: 'blankuser.example.com', UserName: '  ' }, [])
+    )
+    const queryFn = async (key: string): Promise<string | null> => tree.get(key) ?? null
+
+    const candidates = await scanPuttySessions(queryFn, 'fallback-user')
+
+    expect(candidates.map((c) => c.name)).toEqual(['prod', 'no-user', 'blank-user'])
+    expect(candidates.find((c) => c.name === 'prod')?.username).toBe('deploy')
+    expect(candidates.find((c) => c.name === 'no-user')?.username).toBe('fallback-user')
+    expect(candidates.find((c) => c.name === 'blank-user')?.username).toBe('fallback-user')
   })
 })
 
