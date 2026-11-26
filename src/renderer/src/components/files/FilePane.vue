@@ -1188,7 +1188,6 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @edit="onEdit"
       />
       <EditorDialog
-        v-if="side === 'remote'"
         v-model:open="editorOpen"
         :edit-id="editorState?.editId ?? null"
         :local-temp-path="editorState?.localTempPath ?? null"

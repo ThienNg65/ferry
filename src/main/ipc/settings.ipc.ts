@@ -1,5 +1,7 @@
+import { readdirSync, rmSync } from 'fs'
+import * as path from 'path'
 import { handle } from './envelope'
-import { validateProxyConfig } from './validation'
+import { failValidation, requireBoolean, requireNonEmptyString, requireStringArray, validateProxyConfig } from './validation'
 import {
   INVOKE_CHANNELS,
   type AppSettings,
@@ -14,9 +16,41 @@ import { HistoryStore } from '../history/HistoryStore'
 import { SiteStore } from '../sites/SiteStore'
 import { KnownHostsStore } from '../ssh/KnownHostsStore'
 import { TransferQueue } from '../transfer/TransferQueue'
-import { SshError } from '../ssh/errors'
 import { host } from '../host/host'
 import { initAutoUpdater } from '../update/AutoUpdater'
+
+const MIGRATION_BACKUP_RE = /^(?:sites|bookmarks|history|known_hosts|app-settings)\.v\d+\.bak\.json$/
+
+/** Best-effort removal of pre-upgrade snapshots and pre-migration `.bak.json` files from `dataDir`. */
+function removeLocalBackupFiles(): void {
+  let dataDir: string
+  try {
+    dataDir = host().dataDir
+  } catch {
+    // Host is not initialized in isolated IPC unit tests.
+    return
+  }
+  if (!dataDir) return
+
+  try {
+    rmSync(path.join(dataDir, 'upgrade-backups'), { recursive: true, force: true })
+  } catch {
+    // Best-effort cleanup; ignore missing or locked backup directory.
+  }
+
+  try {
+    for (const entry of readdirSync(dataDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !MIGRATION_BACKUP_RE.test(entry.name)) continue
+      try {
+        rmSync(path.join(dataDir, entry.name), { force: true })
+      } catch {
+        // Best-effort cleanup; continue removing remaining backup files.
+      }
+    }
+  } catch {
+    // Ignore when dataDir does not exist or cannot be read.
+  }
+}
 
 /** Registers handlers for small persisted app-wide settings and privacy/data controls. */
 export function registerSettingsHandlers(): void {
@@ -28,25 +62,26 @@ export function registerSettingsHandlers(): void {
   })
 
   handle<void>(INVOKE_CHANNELS.settingsSetOpenTabs, (siteIds) => {
-    if (!Array.isArray(siteIds) || siteIds.some((id) => typeof id !== 'string')) {
-      throw new SshError('VALIDATION', 'settings:setOpenTabs requires an array of string siteIds')
-    }
-    AppSettingsStore.getInstance().setOpenTabSiteIds(siteIds)
+    AppSettingsStore.getInstance().setOpenTabSiteIds(
+      requireStringArray(siteIds, 'siteIds', INVOKE_CHANNELS.settingsSetOpenTabs)
+    )
   })
 
   handle<void>(INVOKE_CHANNELS.settingsSetBandwidthLimit, (limitKBps) => {
     const limit = limitKBps as number | null
     // `null` means "unlimited" (see AppSettingsStore/SettingsDialog.vue) — only reject
     // non-null values that can't possibly represent a real cap.
-    if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) {
-      throw new SshError('VALIDATION', 'settings:setBandwidthLimit requires a positive number or null')
+    if (limit !== null && (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0)) {
+      failValidation(INVOKE_CHANNELS.settingsSetBandwidthLimit, 'settings:setBandwidthLimit requires a positive number or null')
     }
     AppSettingsStore.getInstance().setBandwidthLimitKBps(limit)
     TransferQueue.getInstance().setBandwidthLimitKBps(limit)
   })
 
   handle<void>(INVOKE_CHANNELS.settingsSetAutoCheckUpdates, (enabled) => {
-    AppSettingsStore.getInstance().setAutoCheckUpdates(Boolean(enabled))
+    AppSettingsStore.getInstance().setAutoCheckUpdates(
+      requireBoolean(enabled, 'enabled', INVOKE_CHANNELS.settingsSetAutoCheckUpdates)
+    )
   })
 
   handle<void>(INVOKE_CHANNELS.settingsSetDefaultProxy, (proxy) => {
@@ -57,17 +92,14 @@ export function registerSettingsHandlers(): void {
   handle<void>(INVOKE_CHANNELS.settingsSetHistoryRetention, (days) => {
     const value = days as number | null
     if (value !== null && (!Number.isInteger(value) || value < 1 || value > 3650)) {
-      throw new SshError('VALIDATION', 'settings:setHistoryRetention requires null or an integer between 1 and 3650')
+      failValidation(INVOKE_CHANNELS.settingsSetHistoryRetention, 'settings:setHistoryRetention requires null or an integer between 1 and 3650')
     }
     AppSettingsStore.getInstance().setHistoryRetentionDays(value)
     HistoryStore.getInstance().pruneExpired(value)
   })
 
   handle<TermsAcceptance>(INVOKE_CHANNELS.settingsAcceptTerms, (version) => {
-    const trimmed = typeof version === 'string' ? version.trim() : ''
-    if (!trimmed) {
-      throw new SshError('VALIDATION', 'settings:acceptTerms requires a non-empty policy version')
-    }
+    const trimmed = requireNonEmptyString(version, 'version', INVOKE_CHANNELS.settingsAcceptTerms).trim()
     const acceptance = AppSettingsStore.getInstance().acceptTerms(trimmed)
     try {
       if (host().isPackaged) {
@@ -83,11 +115,11 @@ export function registerSettingsHandlers(): void {
     const update = payload as Partial<UiPrefUpdate> | null | undefined
     const key = typeof update?.key === 'string' ? update.key : ''
     if (!key.startsWith('ferry:ui:') || key.length > 64) {
-      throw new SshError('VALIDATION', 'settings:setUiPref requires a valid ferry:ui:* key')
+      failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a valid ferry:ui:* key')
     }
     const value = update?.value
     if (value !== null && (typeof value !== 'string' || value.length > 4096)) {
-      throw new SshError('VALIDATION', 'settings:setUiPref requires a string value (<= 4096 chars) or null')
+      failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a string value (<= 4096 chars) or null')
     }
     AppSettingsStore.getInstance().setUiPref(key, value)
   })
@@ -97,10 +129,9 @@ export function registerSettingsHandlers(): void {
   })
 
   handle<void>(INVOKE_CHANNELS.knownHostsForget, (hostPort) => {
-    if (typeof hostPort !== 'string' || !hostPort.trim()) {
-      throw new SshError('VALIDATION', 'knownHosts:forget requires a host:port key')
-    }
-    KnownHostsStore.getInstance().forgetKey(hostPort)
+    KnownHostsStore.getInstance().forgetKey(
+      requireNonEmptyString(hostPort, 'hostPort', INVOKE_CHANNELS.knownHostsForget)
+    )
   })
 
   handle<void>(INVOKE_CHANNELS.knownHostsClear, () => {
@@ -127,5 +158,6 @@ export function registerSettingsHandlers(): void {
     KnownHostsStore.getInstance().clear()
     AppSettingsStore.getInstance().reset()
     TransferQueue.getInstance().setBandwidthLimitKBps(null)
+    removeLocalBackupFiles()
   })
 }

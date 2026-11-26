@@ -2,11 +2,12 @@ import { readFile, stat } from 'fs/promises'
 import { host } from '../host/host'
 import { handle } from './envelope'
 import { requireNonEmptyString, validateSiteInput } from './validation'
-import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site } from '../../shared/contract'
+import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
 import { SshError } from '../ssh/errors'
 import { SiteStore } from '../sites/SiteStore'
 import { scanImportCandidates } from '../sites/SessionImporter'
 import { parseSitesBackup } from '../sites/sitesBackup'
+import { AppSettingsStore } from '../app/AppSettingsStore'
 import { BookmarkStore } from '../bookmarks/BookmarkStore'
 
 /** Registers CRUD handlers for saved connection profiles. */
@@ -30,6 +31,7 @@ export function registerSitesHandlers(): void {
     const siteId = requireNonEmptyString(id, 'id', INVOKE_CHANNELS.sitesDelete)
     SiteStore.getInstance().delete(siteId)
     BookmarkStore.getInstance().deleteForSite(siteId)
+    AppSettingsStore.getInstance().removeOpenTabSiteId(siteId)
   })
 
   handle<Site>(INVOKE_CHANNELS.sitesDuplicate, (id) => {
@@ -61,16 +63,16 @@ export function registerSitesHandlers(): void {
     const store = SiteStore.getInstance()
     const key = (host: string, port: number, username: string): string => `${host.toLowerCase()}:${port}:${username.toLowerCase()}`
     const existing = new Set(store.list().map((s) => key(s.host, s.port, s.username)))
-    let imported = 0
+    const toCreate: SiteInput[] = []
     for (const input of incoming) {
       const k = key(input.host, input.port, input.username)
       if (existing.has(k)) {
         continue
       }
-      store.create(input)
       existing.add(k)
-      imported += 1
+      toCreate.push(input)
     }
-    return { imported, skipped: incoming.length - imported }
+    const created = store.createMany(toCreate)
+    return { imported: created.length, skipped: incoming.length - created.length }
   })
 }

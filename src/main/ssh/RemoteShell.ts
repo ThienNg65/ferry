@@ -388,11 +388,45 @@ export class RemoteShell {
 
   // ── SFTP ─────────────────────────────────────────────────────────────────────
 
+  private withSftpTimeout<T>(
+    label: string,
+    timeoutMs: number,
+    start: (resolve: (value: T) => void, reject: (err: unknown) => void) => void
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        reject(new SshError('SSH_TIMEOUT', `${label} timed out after ${timeoutMs}ms`, true))
+      }, timeoutMs)
+      start(
+        (value) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (err) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          reject(err)
+        }
+      )
+    })
+  }
+
   /** Lazily opens (and caches) the SFTP subsystem for this connection. */
   sftp(): Promise<SFTPWrapper> {
     if (!this.sftpPromise) {
-      const pending = new Promise<SFTPWrapper>((resolve, reject) => {
+      let timedOut = false
+      const pending = this.withSftpTimeout<SFTPWrapper>('SFTP subsystem open', DEFAULT_TIMEOUT_MS, (resolve, reject) => {
         this.client.sftp((sftpErr, sftp) => {
+          if (timedOut) {
+            sftp?.end()
+            return
+          }
           if (sftpErr) {
             if (this.sftpPromise === pending) {
               this.sftpPromise = null
@@ -409,6 +443,12 @@ export class RemoteShell {
           sftp.on('error', clear)
           resolve(sftp)
         })
+      }).catch((err) => {
+        timedOut = true
+        if (this.sftpPromise === pending) {
+          this.sftpPromise = null
+        }
+        throw err
       })
       this.sftpPromise = pending
     }
@@ -418,7 +458,7 @@ export class RemoteShell {
   /** Lists a remote directory's entries. */
   async readdir(remotePath: string): Promise<SftpEntry[]> {
     const sftp = await this.sftp()
-    return new Promise<SftpEntry[]>((resolve, reject) => {
+    return this.withSftpTimeout<SftpEntry[]>(`SFTP readdir "${remotePath}"`, 60_000, (resolve, reject) => {
       sftp.readdir(remotePath, (readErr, list) => {
         if (readErr) {
           const code = (readErr as { code?: number }).code === 2 ? 'NOT_FOUND' : 'SFTP'
@@ -443,7 +483,7 @@ export class RemoteShell {
   /** Resolves a (possibly relative) remote path to its canonical absolute form. */
   async realpath(remotePath: string): Promise<string> {
     const sftp = await this.sftp()
-    return new Promise<string>((resolve, reject) => {
+    return this.withSftpTimeout<string>(`SFTP realpath "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.realpath(remotePath, (realErr, absPath) => {
         if (realErr) {
           reject(new SshError('SFTP', `Failed to resolve "${remotePath}": ${realErr.message}`))
@@ -457,7 +497,7 @@ export class RemoteShell {
   /** Resolves a symlink's immediate target (not canonicalized — unlike `realpath`, does not follow chains). */
   async readlink(remotePath: string): Promise<string> {
     const sftp = await this.sftp()
-    return new Promise<string>((resolve, reject) => {
+    return this.withSftpTimeout<string>(`SFTP readlink "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.readlink(remotePath, (linkErr, target) => {
         if (linkErr) {
           reject(new SshError('SFTP', `Failed to read link "${remotePath}": ${linkErr.message}`))
@@ -471,7 +511,7 @@ export class RemoteShell {
   /** Stats a remote path (following symlinks). */
   async stat(remotePath: string): Promise<Stats> {
     const sftp = await this.sftp()
-    return new Promise<Stats>((resolve, reject) => {
+    return this.withSftpTimeout<Stats>(`SFTP stat "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.stat(remotePath, (statErr, stats) => {
         if (statErr) {
           reject(new SshError('NOT_FOUND', `"${remotePath}" not found: ${statErr.message}`))
@@ -485,7 +525,7 @@ export class RemoteShell {
   /** Stats a remote path without following symlinks. */
   async lstat(remotePath: string): Promise<Stats> {
     const sftp = await this.sftp()
-    return new Promise<Stats>((resolve, reject) => {
+    return this.withSftpTimeout<Stats>(`SFTP lstat "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.lstat(remotePath, (statErr, stats) => {
         if (statErr) {
           const code = (statErr as { code?: number }).code === 2 ? 'NOT_FOUND' : 'SFTP'
@@ -525,7 +565,7 @@ export class RemoteShell {
   /** Creates a remote directory. */
   async mkdir(remotePath: string): Promise<void> {
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP mkdir "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.mkdir(remotePath, (mkdirErr) => {
         if (mkdirErr) {
           reject(new SshError('SFTP', `Failed to create "${remotePath}": ${mkdirErr.message}`))
@@ -538,7 +578,7 @@ export class RemoteShell {
 
   async touch(remotePath: string): Promise<void> {
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP touch "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.open(remotePath, 'wx', (openErr, handle) => {
         if (openErr) {
           reject(new SshError('SFTP', `Failed to create "${remotePath}": ${openErr.message}`))
@@ -555,7 +595,7 @@ export class RemoteShell {
       throw new SshError('VALIDATION', `Invalid permission mode "${mode}" — expected an octal string like "755" or "0755"`)
     }
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP chmod "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.chmod(remotePath, parseInt(mode, 8), (chmodErr) => {
         if (chmodErr) {
           reject(new SshError('SFTP', `Failed to set permissions on "${remotePath}": ${chmodErr.message}`))
@@ -569,7 +609,7 @@ export class RemoteShell {
   /** Renames/moves a remote path. */
   async rename(fromPath: string, toPath: string): Promise<void> {
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP rename "${fromPath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.rename(fromPath, toPath, (renameErr) => {
         if (renameErr) {
           reject(new SshError('SFTP', `Failed to rename "${fromPath}": ${renameErr.message}`))
@@ -583,7 +623,7 @@ export class RemoteShell {
   /** Deletes a remote file. */
   async unlink(remotePath: string): Promise<void> {
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP unlink "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.unlink(remotePath, (unlinkErr) => {
         if (unlinkErr) {
           reject(new SshError('SFTP', `Failed to delete "${remotePath}": ${unlinkErr.message}`))
@@ -597,7 +637,7 @@ export class RemoteShell {
   /** Removes a remote (empty) directory. */
   async rmdir(remotePath: string): Promise<void> {
     const sftp = await this.sftp()
-    return new Promise<void>((resolve, reject) => {
+    return this.withSftpTimeout<void>(`SFTP rmdir "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.rmdir(remotePath, (rmdirErr) => {
         if (rmdirErr) {
           reject(new SshError('SFTP', `Failed to remove directory "${remotePath}": ${rmdirErr.message}`))
@@ -695,9 +735,9 @@ export class RemoteShell {
    * Recursively deletes a remote path (file or directory) via a single
    * `rm -rf` exec — one round-trip regardless of tree size, matching what a
    * user running `rm -rf` themselves over a plain SSH shell would see. Falls
-   * back to {@link deleteRecursiveSftp}'s per-entry SFTP walk only when exec
-   * isn't usable at all (e.g. an sftp-only chroot/jail account with no shell)
-   * or the shell command itself fails.
+   * back to {@link deleteRecursiveSftp}'s per-entry SFTP walk when exec is
+   * unavailable or fails for another reason. Timeouts and cancellations are
+   * propagated so a second delete path does not start after interruption.
    */
   async deleteRecursive(remotePath: string): Promise<void> {
     const trimmed = (remotePath ?? '').trim()
@@ -712,8 +752,11 @@ export class RemoteShell {
       if (result.code === 0) {
         return
       }
-    } catch {
-      // No exec capability at all — fall through to the SFTP-only path below.
+    } catch (e) {
+      if (e instanceof SshError && (e.code === 'CANCELLED' || e.code === 'SSH_TIMEOUT')) {
+        throw e
+      }
+      // Exec is unavailable or the shell command failed — use the SFTP-only fallback.
     }
     await this.deleteRecursiveSftp(remotePath)
   }

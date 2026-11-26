@@ -1,9 +1,11 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { randomUUID } from 'crypto'
 import { host } from '../host/host'
+import { openSafeConf } from '../host/storeHelpers'
 import type { Bookmark, BookmarkInput } from '../../shared/contract'
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   bookmarks: Bookmark[]
 }
 
@@ -14,10 +16,11 @@ export class BookmarkStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({
+      this._store = openSafeConf<StoreSchema>({
         cwd: host().dataDir,
         configName: 'bookmarks',
-        defaults: { bookmarks: [] }
+        schemaVersion: 1,
+        defaults: { schemaVersion: 1, bookmarks: [] }
       })
     }
     return this._store
@@ -70,7 +73,7 @@ export class BookmarkStore {
 
   /** Removes every remote bookmark belonging to a site, called when that site itself is deleted so bookmarks never outlive their site. */
   deleteForSite(siteId: string): void {
-    const bookmarks = this.store.get('bookmarks').filter((b) => b.siteId !== siteId)
+    const bookmarks = this.list().filter((b) => b.siteId !== siteId)
     this.store.set('bookmarks', bookmarks)
   }
 

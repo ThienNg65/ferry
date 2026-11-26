@@ -21,7 +21,7 @@ vi.mock('../../../api', async (importOriginal) => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => {})
 }))
-vi.mock('../FileList.vue', () => ({ default: { name: 'FileList', template: '<div />' } }))
+vi.mock('../FileList.vue', () => ({ default: { name: 'FileList', props: ['renamingPath'], template: '<div />' } }))
 vi.mock('../FileToolbar.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('../PathBreadcrumb.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@nuxt/ui/components/Checkbox.vue', () => ({
@@ -63,7 +63,7 @@ afterEach(() => {
 })
 
 describe('window keydown fallback visibility guard', () => {
-  it('ignores window keydown events on the local pane when sessions.status !== "connected"', async () => {
+  it('ignores file-pane shortcuts for picker, disconnected, and errored sessions', async () => {
     const sessions = useSessionsStore()
     const localFs = useLocalFsStore()
     const ui = useUiStore()
@@ -85,14 +85,42 @@ describe('window keydown fallback visibility guard', () => {
     localFs.entries = [entry]
     localFs.selected = new Set([entry.path])
 
-    expect(sessions.status).not.toBe('connected')
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
-    await flushPromises()
-    expect(confirm).not.toHaveBeenCalled()
+    const goUp = vi.spyOn(localFs, 'goUp').mockResolvedValue()
+    const selectAll = vi.spyOn(localFs, 'selectAll')
+    const fileList = wrapper.findComponent({ name: 'FileList' })
+    const dispatchKeydown = (key: string, options: KeyboardEventInit = {}) => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...options }))
+    }
+
+    for (const status of [null, 'disconnected', 'error'] as const) {
+      sessions.activeTab.status = status
+      dispatchKeydown('Delete')
+      dispatchKeydown('Backspace')
+      dispatchKeydown('a', { ctrlKey: true })
+      dispatchKeydown('F2')
+      await flushPromises()
+
+      expect(confirm).not.toHaveBeenCalled()
+      expect(goUp).not.toHaveBeenCalled()
+      expect(selectAll).not.toHaveBeenCalled()
+      expect(fileList.props('renamingPath')).toBeNull()
+    }
 
     sessions.activeTab.status = 'connected'
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    dispatchKeydown('Delete')
     await flushPromises()
     expect(confirm).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('Backspace')
+    await flushPromises()
+    expect(goUp).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('a', { ctrlKey: true })
+    await flushPromises()
+    expect(selectAll).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('F2')
+    await flushPromises()
+    expect(fileList.props('renamingPath')).toBe(entry.path)
   })
 })

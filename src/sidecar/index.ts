@@ -2,8 +2,26 @@ import './stdoutGuard'
 import { existsSync, readFileSync } from 'fs'
 import * as path from 'path'
 import { createInterface } from 'readline'
+import { logAppEvent } from '../main/host/appLog'
 import { startSidecar } from './sidecar'
 import { startNeutralinoExtension } from './wsExtension'
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  const stack = reason instanceof Error ? reason.stack : undefined
+  console.error('sidecar: unhandledRejection:', reason)
+  logAppEvent('error', 'process.unhandled_rejection', { message, ...(stack ? { stack } : {}) })
+  process.exit(1)
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('sidecar: uncaughtException:', err)
+  logAppEvent('error', 'process.uncaught_exception', {
+    message: err.message,
+    ...(err.stack ? { stack: err.stack } : {})
+  })
+  process.exit(1)
+})
 
 function argValue(prefix: string): string {
   const match = process.argv.find((a) => a.startsWith(prefix))

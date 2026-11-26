@@ -16,6 +16,7 @@ import {
 import * as path from 'path'
 
 const DPAPI_PREFIX = Buffer.from('DPAPI')
+const DPAPI_TIMEOUT_MS = 15_000
 const keyCache = new Map<string, Buffer>()
 
 interface StoredMasterKey {
@@ -32,7 +33,7 @@ function dpapiProtect(raw: Buffer): Buffer {
       '-Command',
       "Add-Type -AssemblyName System.Security; $b = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser'))"
     ],
-    { input: raw.toString('base64'), encoding: 'utf8', windowsHide: true }
+    { input: raw.toString('base64'), encoding: 'utf8', windowsHide: true, timeout: DPAPI_TIMEOUT_MS }
   ).trim()
   return Buffer.from(out, 'base64')
 }
@@ -46,7 +47,7 @@ function dpapiUnprotect(blob: Buffer): Buffer {
       '-Command',
       "Add-Type -AssemblyName System.Security; $b = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'CurrentUser'))"
     ],
-    { input: blob.toString('base64'), encoding: 'utf8', windowsHide: true }
+    { input: blob.toString('base64'), encoding: 'utf8', windowsHide: true, timeout: DPAPI_TIMEOUT_MS }
   ).trim()
   return Buffer.from(out, 'base64')
 }
@@ -71,7 +72,16 @@ function readMasterKey(localStatePath: string): {
   if (existsSync(localStatePath)) {
     const rawText = readFileSync(localStatePath, 'utf8').trim()
     if (rawText.length > 0) {
-      state = JSON.parse(rawText) as Record<string, unknown>
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(rawText)
+      } catch (e) {
+        throw new Error(`Corrupt Local State JSON at ${localStatePath}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`Invalid Local State root object at ${localStatePath}`)
+      }
+      state = parsed as Record<string, unknown>
     }
   }
 

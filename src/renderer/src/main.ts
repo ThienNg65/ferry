@@ -68,7 +68,16 @@ window.addEventListener('error', (event) => {
   }
 })
 
-createApp(App).use(createPinia()).use(ui).mount('#app')
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason
+  console.error('[renderer] unhandledrejection:', reason instanceof Error ? reason.message : String(reason))
+})
+
+const app = createApp(App)
+app.config.errorHandler = (err, _instance, info) => {
+  console.error(`[renderer] Vue error (${info}):`, err instanceof Error ? err.message : String(err))
+}
+app.use(createPinia()).use(ui).mount('#app')
 
 // The installed MSIX smoke test requests a renderer-to-sidecar round trip at launch.
 const neutralinoArgs = (window as Window & { NL_ARGS?: string[] }).NL_ARGS

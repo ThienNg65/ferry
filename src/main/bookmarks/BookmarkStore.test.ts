@@ -23,7 +23,8 @@ vi.mock('conf', () => {
       // delete()/deleteForSite() all read the array, mutate/rebuild it, then
       // `.set()` it back; a shared reference here would mask bugs a real
       // disk-backed store wouldn't.
-      return JSON.parse(JSON.stringify(disks.get(this.name)![key]))
+      const val = disks.get(this.name)![key]
+      return val === undefined ? undefined : JSON.parse(JSON.stringify(val))
     }
     set(key: string, value: unknown): void {
       disks.get(this.name)![key] = JSON.parse(JSON.stringify(value))
@@ -121,5 +122,13 @@ describe('BookmarkStore', () => {
 
     const remaining = store.list()
     expect(remaining.map((b) => b.id).sort()).toEqual([local.id, otherSite.id].sort())
+  })
+
+  it('deleteForSite guards against non-array bookmarks on disk without throwing', () => {
+    disks.set('bookmarks', { bookmarks: 'corrupted' })
+    const store = new BookmarkStore()
+
+    expect(() => store.deleteForSite('site-1')).not.toThrow()
+    expect(store.list()).toEqual([])
   })
 })
