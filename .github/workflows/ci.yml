@@ -37,9 +37,9 @@ jobs:
         run: |
           choco install nsis.install --version=3.12.0 --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
-          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\\makensis.exe'
           if (-not (Test-Path $compiler)) {
-            $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe'
+            $compiler = Join-Path $env:ProgramFiles 'NSIS\\makensis.exe'
           }
           if (-not (Test-Path $compiler)) { throw 'makensis.exe not found after installing NSIS' }
           & $compiler /VERSION
@@ -68,3 +68,41 @@ jobs:
 
       - name: Smoke test Neutralino package
         run: npm run smoke:neutralino
+
+  ssh-sftp-integration:
+    runs-on: ubuntu-latest
+    services:
+      sftp:
+        image: lscr.io/linuxserver/openssh-server:latest
+        ports:
+          - 2299:2222
+        env:
+          PUID: 1000
+          PGID: 1000
+          TZ: Etc/UTC
+          PASSWORD_ACCESS: "true"
+          USER_NAME: ferrytest
+          USER_PASSWORD: ferrytest123
+          SUDO_ACCESS: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node-deps
+
+      - name: Prepare SFTP test directory
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if timeout 1 bash -c '</dev/tcp/127.0.0.1/2299' 2>/dev/null; then
+              docker exec "${{ job.services.sftp.id }}" sh -c 'mkdir -p /config/ferry-test && chown ferrytest:users /config/ferry-test'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::SFTP test server did not become reachable on port 2299."
+          exit 1
+
+      - name: Run real SSH/SFTP integration tests
+        env:
+          FERRY_REQUIRE_SSH_INTEGRATION: "1"
+        run: npm test -- src/main/ssh/RemoteShell.integration.test.ts
