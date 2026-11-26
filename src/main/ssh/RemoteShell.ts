@@ -765,12 +765,9 @@ export class RemoteShell {
     remoteCwd?: string
   ): Promise<{ path: string; stats: Stats | null }> {
     const targetPath = this.resolveDeletePath(remotePath, remoteCwd)
-    const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
-      ? remoteCwd
-      : await this.realpath('.')
     const absoluteTargetPath = pathPosix.isAbsolute(targetPath)
       ? targetPath
-      : `${cwd.replace(/\/+$/, '')}/${targetPath}`
+      : `${(remoteCwd && pathPosix.isAbsolute(remoteCwd) ? remoteCwd : await this.realpath('.')).replace(/\/+$/, '')}/${targetPath}`
     const lexicalPath = pathPosix.resolve(absoluteTargetPath)
     if (lexicalPath === '/' || lexicalPath === '/*') {
       throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
