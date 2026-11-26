@@ -190,11 +190,11 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
       output += chunk.toString()
     })
     await new Promise((r) => setTimeout(r, 800))
-    stream.write('pwd; echo MARK; history\\n')
+    stream.write('pwd; echo MARK; history\n')
     await vi.waitFor(() => expect(output).toContain('MARK'), { timeout: 5000 })
     expect(output).toContain(testDir)
-    expect(output).not.toMatch(/\\bcd\\s/)
-    expect(output).not.toMatch(/\\bcd\\s/)
+    expect(output).not.toMatch(/\bcd\s/)
+    expect(output).not.toMatch(/\bcd\s/)
   })
 
   it('mkdirRecursive() creates nested missing parents in one call, and is idempotent', async () => {
