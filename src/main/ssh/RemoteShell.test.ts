@@ -258,6 +258,8 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
 
     const command = exec.mock.calls[0][0]
+    expect(command).toContain('then\ncanonical=')
+    expect(command).not.toContain('then;')
     expect(command).toContain('CDPATH= cd -P "$target"')
     expect(command).toContain('[ "$canonical" != "/" ] || exit 73')
     expect(command).toContain('rm -rf -- "$target"')
