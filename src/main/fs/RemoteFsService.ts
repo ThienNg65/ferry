@@ -15,6 +15,10 @@ import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
+  if (!entry.filename || entry.filename === '.' || entry.filename === '..' ||
+    entry.filename.includes('/') || entry.filename.includes('\\')) {
+    throw new SshError('SFTP', `Refusing to expose unsafe remote entry name "${entry.filename}" under "${basePath}"`)
+  }
   const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')
   return {
     name: entry.filename,
@@ -172,7 +176,8 @@ export async function readFile(sessionId: string, filePath: string): Promise<Fil
 
 /** Recursively deletes a remote file or directory. */
 export async function removeRemote(sessionId: string, targetPath: string): Promise<void> {
-  await SessionManager.getInstance().shell(sessionId).deleteRecursive(targetPath)
+  const manager = SessionManager.getInstance()
+  await manager.shell(sessionId).deleteRecursive(targetPath, manager.cwd(sessionId))
 }
 
 /**

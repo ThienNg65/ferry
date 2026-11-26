@@ -1,6 +1,6 @@
 import { StringDecoder } from 'node:string_decoder'
+import { posix as pathPosix } from 'node:path'
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
-import type { IpcErrorCode } from '../../shared/contract'
 import { BoundedLineBuffer } from './BoundedLineBuffer'
 import { SshError } from './errors'
 import { withRetry } from './retry'
@@ -739,16 +739,59 @@ export class RemoteShell {
    * unavailable or fails for another reason. Timeouts and cancellations are
    * propagated so a second delete path does not start after interruption.
    */
-  async deleteRecursive(remotePath: string): Promise<void> {
+  /**
+   * Resolves a delete target against the remote working directory and rejects
+   * the filesystem root. Inspect the final component with lstat before
+   * realpath so a symlink is deleted as a leaf rather than followed.
+   */
+  private async resolveDeleteTarget(
+    remotePath: string,
+    remoteCwd?: string
+  ): Promise<{ path: string; stats: Stats | null }> {
     const trimmed = (remotePath ?? '').trim()
-    if (!trimmed || trimmed === '/' || trimmed === '/*') {
-      throw new SshError(
-        'INVALID_TARGET' as unknown as IpcErrorCode,
-        `Refusing to delete remote root or empty path "${remotePath}"`
-      )
+    if (!trimmed) {
+      throw new SshError('VALIDATION', `Refusing to delete remote root or empty path "${remotePath}"`)
     }
+
+    const cwd = pathPosix.isAbsolute(trimmed)
+      ? undefined
+      : remoteCwd && pathPosix.isAbsolute(remoteCwd)
+        ? pathPosix.resolve(remoteCwd)
+        : await this.realpath('.')
+    const lexicalPath = pathPosix.isAbsolute(trimmed)
+      ? pathPosix.resolve(trimmed)
+      : pathPosix.resolve(cwd!, trimmed)
+    if (lexicalPath === '/' || lexicalPath === '/*') {
+      throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
+    }
+
+    // Preserve ".." components for remote resolution: a parent symlink can
+    // change their meaning, which lexical path normalization alone cannot see.
+    const targetPath = pathPosix.isAbsolute(trimmed)
+      ? trimmed
+      : `${cwd!.replace(/\/+$/, '')}/${trimmed}`
+    const stats = await this.lstat(targetPath).catch((error: unknown) => {
+      if (error instanceof SshError && error.code === 'NOT_FOUND') return null
+      throw error
+    })
+    if (!stats || stats.isSymbolicLink()) return { path: targetPath, stats }
+
+    const canonicalPath = await this.realpath(targetPath)
+    if (pathPosix.resolve(canonicalPath) === '/') {
+      throw new SshError('VALIDATION', `Refusing to delete remote root "${remotePath}"`)
+    }
+    return { path: pathPosix.resolve(canonicalPath), stats }
+  }
+
+  /**
+   * Recursively deletes a remote path via one rm command, falling back to
+   * an SFTP walk when shell execution is unavailable. Root validation runs
+   * before exec and is repeated inside the SFTP fallback.
+   */
+  async deleteRecursive(remotePath: string, remoteCwd?: string): Promise<void> {
+    const target = await this.resolveDeleteTarget(remotePath, remoteCwd)
     try {
-      const result = await this.exec(`rm -rf -- ${shellEscape(remotePath)}`, { timeoutMs: 5 * 60 * 1000 })
+      const result = await this.exec(`rm -rf -- ${shellEscape(target.path)}`, { timeoutMs: 5 * 60 * 1000 })
       if (result.code === 0) {
         return
       }
@@ -758,24 +801,23 @@ export class RemoteShell {
       }
       // Exec is unavailable or the shell command failed — use the SFTP-only fallback.
     }
-    await this.deleteRecursiveSftp(remotePath)
+    await this.deleteRecursiveSftp(target.path, remoteCwd)
   }
 
   /**
-   * Recursively deletes a remote path (file or directory) purely over SFTP,
-   * one entry at a time. SFTP has no native recursive rm, so directories are
-   * listed and their contents removed first. This is the fallback path for
-   * servers with no shell/exec access — {@link deleteRecursive} is the one
-   * normal callers should use.
+   * Recursively deletes a remote path purely over SFTP. Root validation is
+   * repeated here so direct or future fallback callers cannot bypass it.
    */
-  private async deleteRecursiveSftp(remotePath: string): Promise<void> {
-    const stats = await this.lstat(remotePath)
+  private async deleteRecursiveSftp(remotePath: string, remoteCwd?: string): Promise<void> {
+    const target = await this.resolveDeleteTarget(remotePath, remoteCwd)
+    const targetPath = target.path
+    const stats = target.stats ?? await this.lstat(targetPath)
     // Never follow symlinks during recursive delete — unlink the link itself.
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      await this.unlink(remotePath)
+      await this.unlink(targetPath)
       return
     }
-    const entries = await this.readdir(remotePath)
+    const entries = await this.readdir(targetPath)
     for (const entry of entries) {
       if (entry.filename === '.' || entry.filename === '..') {
         continue
@@ -783,12 +825,13 @@ export class RemoteShell {
       if (!entry.filename || entry.filename.includes('/') || entry.filename.includes('\\')) {
         throw new SshError(
           'SFTP',
-          `Refusing to delete unsafe remote entry name "${entry.filename}" under "${remotePath}"`
+          `Refusing to delete unsafe remote entry name "${entry.filename}" under "${targetPath}"`
         )
       }
-      const childPath = `${remotePath.replace(/\/$/, '')}/${entry.filename}`
-      await this.deleteRecursiveSftp(childPath)
+      const childPath = `${targetPath.replace(/\/+$/, '')}/${entry.filename}`
+      await this.deleteRecursiveSftp(childPath, remoteCwd)
     }
-    await this.rmdir(remotePath)
+    await this.rmdir(targetPath)
   }
+
 }

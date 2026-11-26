@@ -28,6 +28,31 @@ function createHarness(): { shell: RemoteShell; channel: MockChannel } {
   return { shell: new RemoteShell(client), channel }
 }
 
+function createSftpHarness() {
+  const directoryStats = {
+    isDirectory: () => true,
+    isSymbolicLink: () => false
+  }
+  const sftp = Object.assign(new EventEmitter(), {
+    lstat: vi.fn((_remotePath: string, callback: (error: Error | null, stats: unknown) => void) =>
+      callback(null, directoryStats)
+    ),
+    realpath: vi.fn((_remotePath: string, callback: (error: Error | null, resolvedPath: string) => void) =>
+      callback(null, '/tmp/target')
+    ),
+    readdir: vi.fn((_remotePath: string, callback: (error: Error | null, entries: unknown[]) => void) =>
+      callback(null, [])
+    ),
+    unlink: vi.fn((_remotePath: string, callback: (error: Error | null) => void) => callback(null)),
+    rmdir: vi.fn((_remotePath: string, callback: (error: Error | null) => void) => callback(null))
+  })
+  const client = {
+    sftp: (callback: (error: Error | null, wrapper: unknown) => void) => callback(null, sftp)
+  } as unknown as Client
+
+  return { shell: new RemoteShell(client), sftp }
+}
+
 function splitBuffer(value: string, split: number): [Buffer, Buffer] {
   const bytes = Buffer.from(value)
   return [bytes.subarray(0, split), bytes.subarray(split)]
@@ -179,30 +204,117 @@ describe('RemoteShell UTF-8 output', () => {
 })
 
 describe('RemoteShell recursive delete', () => {
+  const rootAliases = [
+    { remotePath: '/', remoteCwd: '/home/user' },
+    { remotePath: '//', remoteCwd: '/home/user' },
+    { remotePath: '///', remoteCwd: '/home/user' },
+    { remotePath: '/./', remoteCwd: '/home/user' },
+    { remotePath: '/..', remoteCwd: '/home/user' },
+    { remotePath: '/*', remoteCwd: '/home/user' },
+    { remotePath: '.', remoteCwd: '/' }
+  ]
+
+  it.each(rootAliases)(
+    'rejects root alias "$remotePath" before starting shell or SFTP deletion',
+    async ({ remotePath, remoteCwd }) => {
+      const { shell, sftp } = createSftpHarness()
+      const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+      await expect(shell.deleteRecursive(remotePath, remoteCwd)).rejects.toMatchObject({ code: 'VALIDATION' })
+
+      expect(exec).not.toHaveBeenCalled()
+      expect(sftp.lstat).not.toHaveBeenCalled()
+      expect(sftp.readdir).not.toHaveBeenCalled()
+      expect(sftp.unlink).not.toHaveBeenCalled()
+      expect(sftp.rmdir).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(rootAliases)(
+    'independently rejects root alias "$remotePath" in the SFTP fallback',
+    async ({ remotePath, remoteCwd }) => {
+      const { shell, sftp } = createSftpHarness()
+      const fallback = (shell as unknown as {
+        deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+      }).deleteRecursiveSftp
+
+      await expect(fallback.call(shell, remotePath, remoteCwd)).rejects.toMatchObject({ code: 'VALIDATION' })
+
+      expect(sftp.readdir).not.toHaveBeenCalled()
+      expect(sftp.unlink).not.toHaveBeenCalled()
+      expect(sftp.rmdir).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects a path whose parent symlink resolves to the remote root before shell execution', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const directoryStats = { isDirectory: () => true, isSymbolicLink: () => false }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, directoryStats))
+    sftp.realpath.mockImplementation((_path, callback) => callback(null, '/'))
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+    await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+    expect(sftp.lstat).toHaveBeenCalledWith('/home/user/link/..')
+    expect(sftp.realpath).toHaveBeenCalledWith('/home/user/link/..')
+    expect(exec).not.toHaveBeenCalled()
+    expect(sftp.readdir).not.toHaveBeenCalled()
+    expect(sftp.unlink).not.toHaveBeenCalled()
+    expect(sftp.rmdir).not.toHaveBeenCalled()
+  })
+
+  it('independently blocks parent-symlink root paths in the SFTP fallback', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const directoryStats = { isDirectory: () => true, isSymbolicLink: () => false }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, directoryStats))
+    sftp.realpath.mockImplementation((_path, callback) => callback(null, '/'))
+    const fallback = (shell as unknown as {
+      deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+    }).deleteRecursiveSftp
+
+    await expect(fallback.call(shell, 'link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+    expect(sftp.readdir).not.toHaveBeenCalled()
+    expect(sftp.unlink).not.toHaveBeenCalled()
+    expect(sftp.rmdir).not.toHaveBeenCalled()
+  })
+
   it.each(['SSH_TIMEOUT', 'CANCELLED'] as const)(
     'rethrows %s without starting the SFTP fallback',
     async (code) => {
-      const { shell } = createHarness()
+      const { shell } = createSftpHarness()
       vi.spyOn(shell, 'exec').mockRejectedValue(new SshError(code, 'Command interrupted'))
       const fallback = vi.spyOn(
-        shell as unknown as { deleteRecursiveSftp: (remotePath: string) => Promise<void> },
+        shell as unknown as { deleteRecursiveSftp: (remotePath: string, remoteCwd?: string) => Promise<void> },
         'deleteRecursiveSftp'
       ).mockResolvedValue(undefined)
 
-      await expect(shell.deleteRecursive('/tmp/target')).rejects.toMatchObject({ code })
+      await expect(shell.deleteRecursive('/tmp/target', '/home/user')).rejects.toMatchObject({ code })
       expect(fallback).not.toHaveBeenCalled()
     }
   )
 
   it('falls back to SFTP when exec is unavailable', async () => {
-    const { shell } = createHarness()
+    const { shell, sftp } = createSftpHarness()
     vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
-    const fallback = vi.spyOn(
-      shell as unknown as { deleteRecursiveSftp: (remotePath: string) => Promise<void> },
-      'deleteRecursiveSftp'
-    ).mockResolvedValue(undefined)
 
-    await expect(shell.deleteRecursive('/tmp/target')).resolves.toBeUndefined()
-    expect(fallback).toHaveBeenCalledWith('/tmp/target')
+    await expect(shell.deleteRecursive('/tmp/target', '/home/user')).resolves.toBeUndefined()
+
+    expect(sftp.readdir).toHaveBeenCalledWith('/tmp/target')
+    expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target')
+  })
+
+  it('deletes symlinks as leaves without resolving their targets', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const symlinkStats = { isDirectory: () => false, isSymbolicLink: () => true }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, symlinkStats))
+    vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
+
+    await expect(shell.deleteRecursive('/tmp/link', '/home/user')).resolves.toBeUndefined()
+
+    expect(sftp.realpath).not.toHaveBeenCalled()
+    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/link')
+    expect(sftp.readdir).not.toHaveBeenCalled()
+    expect(sftp.rmdir).not.toHaveBeenCalled()
   })
 })

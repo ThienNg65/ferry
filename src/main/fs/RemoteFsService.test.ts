@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { commitRemoteFile, listRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, listRemote, removeRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SessionManager } from '../ssh/SessionManager'
 
 vi.mock('../ssh/SessionManager', () => ({
@@ -92,6 +92,42 @@ describe('RemoteFsService.listRemote', () => {
 
     await listRemote('sess-1', '/var/log/nginx', true)
     expect(mockManager.setCwd).not.toHaveBeenCalled()
+  })
+  it.each(['../escape', 'nested/escape', 'nested\\escape', ''])(
+    'rejects unsafe SFTP entry name "%s" before constructing a FileEntry path',
+    async (filename) => {
+      mockShell.exec.mockResolvedValueOnce({ code: 127, stdout: '', stderr: 'exec unavailable' })
+      mockShell.realpath.mockResolvedValueOnce('/srv')
+      mockShell.readdir.mockResolvedValueOnce([{
+        filename,
+        longname: filename,
+        isDirectory: false,
+        isSymlink: false,
+        size: 1,
+        mtimeMs: 0,
+        permissions: '0644'
+      }])
+
+      await expect(listRemote('sess-1', '/srv')).rejects.toMatchObject({ code: 'SFTP' })
+      expect(mockManager.setCwd).not.toHaveBeenCalled()
+    }
+  )
+
+})
+
+describe('RemoteFsService.removeRemote', () => {
+  it('resolves relative delete targets against the active session cwd', async () => {
+    const shell = { deleteRecursive: vi.fn(async () => undefined) }
+    const manager = {
+      shell: vi.fn(() => shell),
+      cwd: vi.fn(() => '/home/user')
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue(manager as any)
+
+    await removeRemote('sess-1', '.')
+
+    expect(manager.cwd).toHaveBeenCalledWith('sess-1')
+    expect(shell.deleteRecursive).toHaveBeenCalledWith('.', '/home/user')
   })
 })
 
