@@ -744,11 +744,11 @@ export class RemoteShell {
     const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
       ? remoteCwd.replace(/\/+$/, '') || '/'
       : undefined
-    const targetPath = (pathPosix.isAbsolute(inputPath)
+    const targetPath = pathPosix.isAbsolute(inputPath)
       ? inputPath
       : cwd
         ? `${cwd.replace(/\/+$/, '')}/${inputPath}`
-        : inputPath).replace(/\/+$/, '') || '/'
+        : inputPath
     const lexicalPath = pathPosix.isAbsolute(targetPath) ? pathPosix.resolve(targetPath) : null
     if (lexicalPath === '/' || lexicalPath === '/*') {
       throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
@@ -773,15 +773,27 @@ export class RemoteShell {
       throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
     }
 
-    const stats = await this.lstat(absoluteTargetPath).catch((error: unknown) => {
+    // Inspect the final entry without trailing separators. POSIX path resolution
+    // would otherwise follow a final symlink when the caller supplied "link/".
+    const targetEntryPath = absoluteTargetPath.replace(/\/+$/, '') || '/'
+    const stats = await this.lstat(targetEntryPath).catch((error: unknown) => {
       if (error instanceof SshError && error.code === 'NOT_FOUND') return null
       throw error
     })
-    if (!stats || stats.isSymbolicLink() || !stats.isDirectory()) {
+    if (!stats) {
+      return { path: absoluteTargetPath, stats }
+    }
+    if (stats.isSymbolicLink()) {
+      return { path: targetEntryPath, stats }
+    }
+    if (!stats.isDirectory()) {
+      if (targetEntryPath !== absoluteTargetPath) {
+        throw new SshError('VALIDATION', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
+      }
       return { path: absoluteTargetPath, stats }
     }
 
-    const canonicalPath = await this.realpath(absoluteTargetPath)
+    const canonicalPath = await this.realpath(targetEntryPath)
     if (pathPosix.resolve(canonicalPath) === '/') {
       throw new SshError('VALIDATION', `Refusing to delete remote root "${remotePath}"`)
     }
@@ -797,6 +809,15 @@ export class RemoteShell {
     const commandTarget = pathPosix.isAbsolute(targetPath) ? targetPath : `./${targetPath}`
     const command = [
       `target=${shellEscape(commandTarget)}`,
+      'target_entry=$target',
+      'while [ "${target_entry%/}" != "$target_entry" ]; do target_entry=${target_entry%/}; done',
+      'if [ "$target_entry" != "$target" ]; then',
+      '  if [ -L "$target_entry" ] || [ -d "$target_entry" ]; then',
+      '    target=$target_entry',
+      '  elif [ -e "$target_entry" ]; then',
+      '    exit 75',
+      '  fi',
+      'fi',
       'if [ -L "$target" ]; then :; elif [ -d "$target" ]; then',
       'canonical=$(CDPATH= cd -P "$target" 2>/dev/null && pwd -P) || exit 74',
       '[ "$canonical" != "/" ] || exit 73',
@@ -811,6 +832,9 @@ export class RemoteShell {
       }
       if (result.code === 73) {
         throw new SshError('VALIDATION', `Refusing to delete remote root "${remotePath}"`)
+      }
+      if (result.code === 75) {
+        throw new SshError('VALIDATION', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
       }
     } catch (e) {
       if (e instanceof SshError && (
