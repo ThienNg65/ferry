@@ -68,16 +68,22 @@ const stubs = {
 }
 
 let wrapper: VueWrapper | null = null
+let storedLimitKBps: number | null = 5120
 
 describe('SettingsDialog bandwidth speed limit units', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.resetAllMocks()
-    vi.mocked(invoke).mockImplementation(async (channel) => {
+    storedLimitKBps = 5120
+    vi.mocked(invoke).mockImplementation(async (channel, arg) => {
+      if (channel === INVOKE_CHANNELS.settingsSetBandwidthLimit) {
+        storedLimitKBps = (arg as number | null) ?? null
+        return undefined as never
+      }
       if (channel === INVOKE_CHANNELS.settingsGet) {
         return {
           openTabSiteIds: [],
-          bandwidthLimitKBps: 5120,
+          bandwidthLimitKBps: storedLimitKBps,
           defaultProxy: null,
           autoCheckUpdates: true,
           historyRetentionDays: 90
@@ -123,6 +129,7 @@ describe('SettingsDialog bandwidth speed limit units', () => {
     await flushPromises()
 
     expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.settingsSetBandwidthLimit, 2560)
+    expect(settings.bandwidthLimitKBps).toBe(2560)
 
     // Setting limit to 0 clears throttling completely (null / Unlimited)
     await limitInput.setValue('0')

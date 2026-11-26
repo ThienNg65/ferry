@@ -19,10 +19,11 @@ describe('bandwidth utils', () => {
     expect(formatBandwidthCap(10240)).toBe('10 MB/s')
   })
 
-  it('splits stored KB/s values into display values and units', () => {
+  it('splits stored KB/s values into display values and units while preserving non-exact caps', () => {
     expect(splitBandwidthLimit(null)).toEqual({ value: 1, unit: 'MB/s' })
     expect(splitBandwidthLimit(512)).toEqual({ value: 512, unit: 'KB/s' })
     expect(splitBandwidthLimit(1024)).toEqual({ value: 1, unit: 'MB/s' })
+    expect(splitBandwidthLimit(1025)).toEqual({ value: 1025, unit: 'KB/s' })
     expect(splitBandwidthLimit(5120)).toEqual({ value: 5, unit: 'MB/s' })
     expect(splitBandwidthLimit(1536)).toEqual({ value: 1.5, unit: 'MB/s' })
   })

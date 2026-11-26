@@ -35,15 +35,23 @@ export function formatBandwidthCap(limitKBps: number | null | undefined): string
   return `${Math.round(limitKBps)} KB/s`
 }
 
-/** Splits a stored KB/s limit into a display value and unit (`MB/s` when >= 1 MB/s). */
+/**
+ * Splits a stored KB/s limit into a display value and unit.
+ * Uses `MB/s` only when the 2-decimal representation round-trips back to the exact KB/s cap,
+ * so custom caps like `1025 KB/s` are preserved without silent rounding on unrelated saves.
+ */
 export function splitBandwidthLimit(limitKBps: number | null | undefined): { value: number; unit: BandwidthUnit } {
   if (limitKBps === null || limitKBps === undefined || !Number.isFinite(limitKBps) || limitKBps <= 0) {
     return { value: 1, unit: 'MB/s' }
   }
-  if (limitKBps >= 1024) {
-    return { value: Number((limitKBps / 1024).toFixed(2)), unit: 'MB/s' }
+  const roundedKBps = Math.round(limitKBps)
+  if (roundedKBps >= 1024) {
+    const mb = Number((roundedKBps / 1024).toFixed(2))
+    if (Math.round(mb * 1024) === roundedKBps) {
+      return { value: mb, unit: 'MB/s' }
+    }
   }
-  return { value: Math.round(limitKBps), unit: 'KB/s' }
+  return { value: roundedKBps, unit: 'KB/s' }
 }
 
 /** Converts a numeric input value when the user toggles between `KB/s` and `MB/s`. */
