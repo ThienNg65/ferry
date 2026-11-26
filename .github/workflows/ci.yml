@@ -37,9 +37,9 @@ jobs:
         run: |
           choco install nsis.install --version=3.12.0 --yes --no-progress
           if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
-          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\\makensis.exe'
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
           if (-not (Test-Path $compiler)) {
-            $compiler = Join-Path $env:ProgramFiles 'NSIS\\makensis.exe'
+            $compiler = Join-Path $env:ProgramFiles 'NSIS\makensis.exe'
           }
           if (-not (Test-Path $compiler)) { throw 'makensis.exe not found after installing NSIS' }
           & $compiler /VERSION
