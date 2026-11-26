@@ -201,7 +201,7 @@ const groups = computed<PaletteGroup[]>(() => {
   const paneActions = getPaneActions(side)
   const count = paneActions?.selectedCount() ?? 0
   const fileItems: PaletteItem[] = []
-  if (paneActions && count > 0) {
+  if (sessions.status === 'connected' && paneActions && count > 0) {
     if (count === 1) {
       fileItems.push({ id: 'file-rename', label: 'Rename selected', icon: 'i-lucide-pencil', onSelect: () => run(paneActions.rename) })
       fileItems.push({ id: 'file-edit', label: 'Edit selected', icon: 'i-lucide-file-pen', onSelect: () => run(paneActions.edit) })
