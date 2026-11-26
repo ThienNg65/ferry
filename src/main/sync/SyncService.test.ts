@@ -131,6 +131,30 @@ describe('runSync approval and recovery', () => {
     await rm(localPath, { recursive: true, force: true })
   })
 
+  it('creates absolute remote sync roots and nested directories for push sync', async () => {
+    options.direction = 'push'
+    options.remotePath = '/srv/backups/project'
+    await mkdir(join(localPath, 'nested'))
+    await writeFile(join(localPath, 'nested', 'upload.txt'), 'payload')
+
+    const shell = new RemoteShell(new Client())
+    vi.mocked(SessionManager.getInstance().shell).mockReturnValue(shell)
+    vi.spyOn(shell, 'readdirRecursive').mockResolvedValue([])
+    const mkdirRecursive = vi.spyOn(shell, 'mkdirRecursive').mockResolvedValue(undefined)
+    vi.spyOn(TransferQueue.getInstance(), 'enqueue').mockReturnValue('upload-job')
+
+    const approved = await previewSync(options)
+    await expect(runSync(options, approved, {
+      signal: new AbortController().signal,
+      reportProgress: vi.fn()
+    })).resolves.toMatchObject({ queuedTransferIds: ['upload-job'] })
+
+    expect(mkdirRecursive.mock.calls.map(([remotePath]) => remotePath)).toEqual([
+      '/srv/backups/project',
+      '/srv/backups/project/nested'
+    ])
+  })
+
   it('requires new approval when a zero-deletion preview becomes destructive', async () => {
     const approved = await previewSync(options)
     await writeFile(join(localPath, 'new.txt'), 'keep')
