@@ -7,6 +7,7 @@ import { invoke } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
 import { useBookmarksStore } from '../../../stores/bookmarks.store'
 import { useLocalFsStore } from '../../../stores/localFs.store'
+import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
 import { useUiStore } from '../../../stores/ui.store'
 import FilePane from '../FilePane.vue'
@@ -125,5 +126,47 @@ describe('window keydown fallback visibility guard', () => {
     await flushPromises()
     expect(fileList.props('renamingPath')).toBe(entry.path)
     expect(scrollToIndex).toHaveBeenCalledWith(0)
+  })
+
+  it('ignores remote-pane shortcuts while the active session is unavailable', async () => {
+    const sessions = useSessionsStore()
+    const remoteFs = useRemoteFsStore()
+    const ui = useUiStore()
+    const entry: FileEntry = {
+      name: 'notes.txt',
+      path: '/remote/notes.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 12,
+      modifiedAt: null
+    }
+
+    ui.activePane = 'remote'
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    remoteFs.entries = [entry]
+    remoteFs.selected = new Set([entry.path])
+
+    const goUp = vi.spyOn(remoteFs, 'goUp').mockResolvedValue()
+    const selectAll = vi.spyOn(remoteFs, 'selectAll')
+    const fileList = wrapper.findComponent({ name: 'FileList' })
+    const dispatchKeydown = (key: string, options: KeyboardEventInit = {}) => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...options }))
+    }
+
+    for (const status of [null, 'disconnected', 'error'] as const) {
+      sessions.activeTab.status = status
+      dispatchKeydown('Delete')
+      dispatchKeydown('Backspace')
+      dispatchKeydown('a', { ctrlKey: true })
+      dispatchKeydown('F2')
+      await flushPromises()
+
+      expect(confirm).not.toHaveBeenCalled()
+      expect(goUp).not.toHaveBeenCalled()
+      expect(selectAll).not.toHaveBeenCalled()
+      expect(fileList.props('renamingPath')).toBeNull()
+    }
   })
 })
