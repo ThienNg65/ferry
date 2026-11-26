@@ -20,6 +20,13 @@ import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
 import { formatBytes, formatDateTime, formatSpeed } from '../../utils/format'
+import {
+  BANDWIDTH_UNIT_OPTIONS,
+  convertBandwidthValue,
+  splitBandwidthLimit,
+  toBandwidthKBps,
+  type BandwidthUnit
+} from '../../utils/bandwidth'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import { onDialogTabKeydown } from '../../composables/useDialogFocusTrap'
 
@@ -57,7 +64,8 @@ const retentionOptions = [
 ]
 
 const unlimited = ref(true)
-const limitInput = ref(1024)
+const limitInput = ref(1)
+const limitUnit = ref<BandwidthUnit>('MB/s')
 const saving = ref(false)
 const autoCheckUpdates = ref(true)
 const savingAutoCheck = ref(false)
@@ -276,6 +284,7 @@ const draftKey = computed(() =>
   JSON.stringify([
     unlimited.value,
     limitInput.value,
+    limitUnit.value,
     proxyEnabled.value,
     proxyType.value,
     proxyHost.value,
@@ -286,9 +295,22 @@ const draftKey = computed(() =>
 )
 const dirty = computed(() => draftKey.value !== snapshot.value)
 
+const resolvedLimitKBps = computed(() => {
+  if (unlimited.value) return null
+  if (typeof limitInput.value === 'string' && String(limitInput.value).trim() === '') return undefined
+  return toBandwidthKBps(Number(limitInput.value), limitUnit.value)
+})
 const limitError = computed(() =>
-  !unlimited.value && !(Number(limitInput.value) >= 1) ? 'Enter a limit of at least 1 KB/s' : ''
+  !unlimited.value && resolvedLimitKBps.value === undefined
+    ? 'Enter 0 for unlimited or a limit of at least 1 KB/s'
+    : ''
 )
+
+function onBandwidthUnitChange(nextUnit: BandwidthUnit): void {
+  if (nextUnit === limitUnit.value) return
+  limitInput.value = convertBandwidthValue(Number(limitInput.value), limitUnit.value, nextUnit)
+  limitUnit.value = nextUnit
+}
 const hostError = computed(() => (proxyEnabled.value && !proxyHost.value.trim() ? 'Host is required' : ''))
 const portError = computed(() => {
   const port = Number(proxyPort.value)
@@ -300,7 +322,9 @@ const invalid = computed(() => Boolean(limitError.value || hostError.value || po
 
 function seedNetwork(): void {
   unlimited.value = settings.bandwidthLimitKBps === null
-  limitInput.value = settings.bandwidthLimitKBps ?? 1024
+  const seeded = splitBandwidthLimit(settings.bandwidthLimitKBps)
+  limitInput.value = seeded.value
+  limitUnit.value = seeded.unit
   proxyEnabled.value = Boolean(settings.defaultProxy)
   proxyType.value = settings.defaultProxy?.type ?? 'socks5'
   proxyHost.value = settings.defaultProxy?.host ?? ''
@@ -502,7 +526,11 @@ async function saveNetwork(): Promise<void> {
   }
   saving.value = true
   try {
-    await settings.setBandwidthLimitKBps(unlimited.value ? null : Math.round(Number(limitInput.value)))
+    const nextLimitKBps = resolvedLimitKBps.value ?? null
+    await settings.setBandwidthLimitKBps(nextLimitKBps)
+    if (nextLimitKBps === null) {
+      unlimited.value = true
+    }
     const host = proxyHost.value.trim()
     await settings.setDefaultProxy(
       proxyEnabled.value && host
@@ -700,11 +728,18 @@ async function saveNetwork(): Promise<void> {
                       id="settings-limit"
                       v-model.number="limitInput"
                       type="number"
-                      :min="1"
+                      :min="0"
+                      :step="limitUnit === 'MB/s' ? 0.5 : 1"
                       :aria-invalid="Boolean(limitError)"
                       class="w-28"
                     />
-                    <span class="text-xs text-muted">KB/s</span>
+                    <USelect
+                      :model-value="limitUnit"
+                      :items="BANDWIDTH_UNIT_OPTIONS"
+                      class="w-24"
+                      aria-label="Bandwidth limit unit"
+                      @update:model-value="(v) => onBandwidthUnitChange(v as BandwidthUnit)"
+                    />
                   </div>
                   <p v-if="limitError" class="text-xs text-error" role="alert">{{ limitError }}</p>
                 </div>
