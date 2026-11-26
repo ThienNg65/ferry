@@ -88,20 +88,21 @@ function makeTestHost(dataDir: string): Host {
   }
 }
 
-describe('settings.ipc', () =>  {
+describe('settings.ipc', () => {
   const tempDirs: string[] = []
+
+  beforeEach(async () => {
+    registered.clear()
+    vi.clearAllMocks()
+    const { registerSettingsHandlers } = await import('./settings.ipc')
+    registerSettingsHandlers()
+  })
 
   afterEach(() => {
     delete (globalThis as typeof globalThis & { __ferryHost?: Host }).__ferryHost
     while (tempDirs.length > 0) {
       rmSync(tempDirs.pop()!, { recursive: true, force: true })
     }
-  })
-  beforeEach(async () => {
-    registered.clear()
-    vi.clearAllMocks()
-    const { registerSettingsHandlers } = await import('./settings.ipc')
-    registerSettingsHandlers()
   })
 
   it('settings:get returns the store snapshot and respects null historyRetentionDays', async () => {
@@ -253,7 +254,7 @@ describe('settings.ipc', () =>  {
     expect(transferQueueMock.setBandwidthLimitKBps).toHaveBeenCalledWith(null)
   })
 
-  it('privacy:deleteAllData removes upgrade-backups/ and *.v*.bak.json files from dataDir', async () => {
+  it('privacy:deleteAllData removes upgrade-backups/ and Ferry store *.v*.bak.json files while preserving unrelated files', async () => {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ferry-settings-ipc-'))
     tempDirs.push(dataDir)
     setHost(makeTestHost(dataDir))
@@ -263,18 +264,29 @@ describe('settings.ipc', () =>  {
     writeFileSync(path.join(snapshotDir, 'sites.json'), '{"sites":[]}')
     writeFileSync(path.join(snapshotDir, 'Local State'), '{"os_crypt":{}}')
 
-    const sitesBak = path.join(dataDir, 'sites.v0.bak.json')
-    const settingsBak = path.join(dataDir, 'app-settings.v1.bak.json')
+    const ferryBackups = [
+      path.join(dataDir, 'sites.v0.bak.json'),
+      path.join(dataDir, 'app-settings.v1.bak.json'),
+      path.join(dataDir, 'bookmarks.v0.bak.json'),
+      path.join(dataDir, 'history.v0.bak.json'),
+      path.join(dataDir, 'known_hosts.v0.bak.json')
+    ]
+    for (const file of ferryBackups) {
+      writeFileSync(file, '{}')
+    }
+
     const unrelatedFile = path.join(dataDir, 'unrelated.txt')
-    writeFileSync(sitesBak, '{"sites":[{"id":"1"}]}')
-    writeFileSync(settingsBak, '{"schemaVersion":1}')
+    const unrelatedBak = path.join(dataDir, 'notes.v1.bak.json')
     writeFileSync(unrelatedFile, 'keep')
+    writeFileSync(unrelatedBak, '{"note":"keep"}')
 
     expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
     expect(existsSync(path.join(dataDir, 'upgrade-backups'))).toBe(false)
-    expect(existsSync(sitesBak)).toBe(false)
-    expect(existsSync(settingsBak)).toBe(false)
+    for (const file of ferryBackups) {
+      expect(existsSync(file)).toBe(false)
+    }
     expect(existsSync(unrelatedFile)).toBe(true)
+    expect(existsSync(unrelatedBak)).toBe(true)
   })
 
   it('privacy:deleteAllData succeeds when no backup directory or *.v*.bak.json files exist', async () => {
