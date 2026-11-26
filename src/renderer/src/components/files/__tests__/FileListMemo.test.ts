@@ -116,14 +116,14 @@ describe('FileList v-memo UI preferences', () => {
     wrapper = mountFileList()
     await flushPromises()
 
-    expect(wrapper.findComponent(FileRow).classes()).toContain('py-1.5')
+    expect(wrapper.findComponent(FileRow).get('[role="row"]').classes()).toContain('py-1.5')
     ui.setDensity('compact')
     await flushPromises()
-    expect(wrapper.findComponent(FileRow).classes()).toContain('py-0.5')
+    expect(wrapper.findComponent(FileRow).get('[role="row"]').classes()).toContain('py-0.5')
 
-    expect(wrapper.findComponent(FileRow).classes()).toContain('hover:bg-elevated/60')
+    expect(wrapper.findComponent(FileRow).get('[role="row"]').classes()).toContain('hover:bg-elevated/60')
     ui.setGlassUiEnabled(true)
     await flushPromises()
-    expect(wrapper.findComponent(FileRow).classes()).toContain('hover:bg-muted/50')
+    expect(wrapper.findComponent(FileRow).get('[role="row"]').classes()).toContain('hover:bg-muted/50')
   })
 })
