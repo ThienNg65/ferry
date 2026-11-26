@@ -53,7 +53,7 @@ describe('CommandPalette selected file actions', () => {
     const ui = useUiStore()
     ui.activePane = 'local'
 
-    let count = 1
+    const count = 1
     unregisterLocal = registerPaneActions('local', {
       selectedCount: () => count,
       rename: vi.fn(),
