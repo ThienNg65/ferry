@@ -305,6 +305,15 @@ describe('RemoteShell recursive delete', () => {
     expect(exec.mock.calls[0][0]).toContain('rm -rf -- "$target"')
   })
 
+  it('rejects whitespace-only delete targets before execution', async () => {
+    const { shell } = createHarness()
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+    await expect(shell.deleteRecursive('   ', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+    expect(exec).not.toHaveBeenCalled()
+  })
+
   it('preserves trailing whitespace in valid delete target names', async () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
@@ -346,6 +355,18 @@ describe('RemoteShell recursive delete', () => {
     expect(sftp.realpath).not.toHaveBeenCalled()
     expect(sftp.readdir).not.toHaveBeenCalled()
     expect(sftp.rmdir).not.toHaveBeenCalled()
+  })
+
+  it('preserves trailing whitespace in SFTP fallback target names', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const fileStats = { isDirectory: () => false, isSymbolicLink: () => false }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, fileStats))
+    vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
+
+    await expect(shell.deleteRecursive('/tmp/report ', '/home/user')).resolves.toBeUndefined()
+
+    expect(sftp.lstat).toHaveBeenCalledWith('/tmp/report ', expect.any(Function))
+    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/report ', expect.any(Function))
   })
 
   it.each(['/tmp/link', '/tmp/link/'])(
