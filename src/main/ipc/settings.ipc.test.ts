@@ -1,5 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { handlers } from './envelope'
+import { setHost, type Host } from '../host/host'
 import type { IpcResult, KnownHostEntry } from '../../shared/contract'
 
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
@@ -72,12 +76,33 @@ async function invoke(channel: string, ...args: unknown[]): Promise<IpcResult<un
   return (await cb({}, ...args)) as IpcResult<unknown>
 }
 
+function makeTestHost(dataDir: string): Host {
+  return {
+    broadcast: vi.fn(),
+    isEncryptionAvailable: () => false,
+    encrypt: (s) => s,
+    decrypt: (s) => s,
+    dataDir,
+    openPath: vi.fn(async () => ''),
+    pickOpenFile: vi.fn(async () => null)
+  }
+}
+
 describe('settings.ipc', () => {
+  const tempDirs: string[] = []
+
   beforeEach(async () => {
     registered.clear()
     vi.clearAllMocks()
     const { registerSettingsHandlers } = await import('./settings.ipc')
     registerSettingsHandlers()
+  })
+
+  afterEach(() => {
+    delete (globalThis as typeof globalThis & { __ferryHost?: Host }).__ferryHost
+    while (tempDirs.length > 0) {
+      rmSync(tempDirs.pop()!, { recursive: true, force: true })
+    }
   })
 
   it('settings:get returns the store snapshot and respects null historyRetentionDays', async () => {
@@ -227,5 +252,58 @@ describe('settings.ipc', () => {
     expect(knownHostsStoreMock.clear).toHaveBeenCalled()
     expect(appSettingsStoreMock.reset).toHaveBeenCalled()
     expect(transferQueueMock.setBandwidthLimitKBps).toHaveBeenCalledWith(null)
+  })
+
+  it('privacy:deleteAllData removes upgrade-backups/ and Ferry store *.v*.bak.json files while preserving unrelated files', async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ferry-settings-ipc-'))
+    tempDirs.push(dataDir)
+    setHost(makeTestHost(dataDir))
+
+    const snapshotDir = path.join(dataDir, 'upgrade-backups', 'v1.4.0-1700000000000')
+    mkdirSync(snapshotDir, { recursive: true })
+    writeFileSync(path.join(snapshotDir, 'sites.json'), '{"sites":[]}')
+    writeFileSync(path.join(snapshotDir, 'Local State'), '{"os_crypt":{}}')
+
+    const ferryBackups = [
+      path.join(dataDir, 'sites.v0.bak.json'),
+      path.join(dataDir, 'app-settings.v1.bak.json'),
+      path.join(dataDir, 'bookmarks.v0.bak.json'),
+      path.join(dataDir, 'history.v0.bak.json'),
+      path.join(dataDir, 'known_hosts.v0.bak.json')
+    ]
+    for (const file of ferryBackups) {
+      writeFileSync(file, '{}')
+    }
+
+    const unrelatedFile = path.join(dataDir, 'unrelated.txt')
+    const unrelatedBak = path.join(dataDir, 'notes.v1.bak.json')
+    writeFileSync(unrelatedFile, 'keep')
+    writeFileSync(unrelatedBak, '{"note":"keep"}')
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(existsSync(path.join(dataDir, 'upgrade-backups'))).toBe(false)
+    for (const file of ferryBackups) {
+      expect(existsSync(file)).toBe(false)
+    }
+    expect(existsSync(unrelatedFile)).toBe(true)
+    expect(existsSync(unrelatedBak)).toBe(true)
+  })
+
+  it('privacy:deleteAllData succeeds when no backup directory or *.v*.bak.json files exist', async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ferry-settings-ipc-empty-'))
+    tempDirs.push(dataDir)
+    setHost(makeTestHost(dataDir))
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(siteStoreMock.clear).toHaveBeenCalled()
+    expect(appSettingsStoreMock.reset).toHaveBeenCalled()
+  })
+
+  it('privacy:deleteAllData succeeds when host dataDir does not exist on disk', async () => {
+    const missingDir = path.join(os.tmpdir(), `ferry-settings-ipc-missing-${Date.now()}`)
+    setHost(makeTestHost(missingDir))
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(siteStoreMock.clear).toHaveBeenCalled()
   })
 })
