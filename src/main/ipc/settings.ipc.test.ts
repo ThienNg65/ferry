@@ -1,5 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { handlers } from './envelope'
+import { setHost, type Host } from '../host/host'
 import type { IpcResult, KnownHostEntry } from '../../shared/contract'
 
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
@@ -72,7 +76,27 @@ async function invoke(channel: string, ...args: unknown[]): Promise<IpcResult<un
   return (await cb({}, ...args)) as IpcResult<unknown>
 }
 
-describe('settings.ipc', () => {
+function makeTestHost(dataDir: string): Host {
+  return {
+    broadcast: vi.fn(),
+    isEncryptionAvailable: () => false,
+    encrypt: (s) => s,
+    decrypt: (s) => s,
+    dataDir,
+    openPath: vi.fn(async () => ''),
+    pickOpenFile: vi.fn(async () => null)
+  }
+}
+
+describe('settings.ipc', () =>  {
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    delete (globalThis as typeof globalThis & { __ferryHost?: Host }).__ferryHost
+    while (tempDirs.length > 0) {
+      rmSync(tempDirs.pop()!, { recursive: true, force: true })
+    }
+  })
   beforeEach(async () => {
     registered.clear()
     vi.clearAllMocks()
@@ -227,5 +251,47 @@ describe('settings.ipc', () => {
     expect(knownHostsStoreMock.clear).toHaveBeenCalled()
     expect(appSettingsStoreMock.reset).toHaveBeenCalled()
     expect(transferQueueMock.setBandwidthLimitKBps).toHaveBeenCalledWith(null)
+  })
+
+  it('privacy:deleteAllData removes upgrade-backups/ and *.v*.bak.json files from dataDir', async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ferry-settings-ipc-'))
+    tempDirs.push(dataDir)
+    setHost(makeTestHost(dataDir))
+
+    const snapshotDir = path.join(dataDir, 'upgrade-backups', 'v1.4.0-1700000000000')
+    mkdirSync(snapshotDir, { recursive: true })
+    writeFileSync(path.join(snapshotDir, 'sites.json'), '{"sites":[]}')
+    writeFileSync(path.join(snapshotDir, 'Local State'), '{"os_crypt":{}}')
+
+    const sitesBak = path.join(dataDir, 'sites.v0.bak.json')
+    const settingsBak = path.join(dataDir, 'app-settings.v1.bak.json')
+    const unrelatedFile = path.join(dataDir, 'unrelated.txt')
+    writeFileSync(sitesBak, '{"sites":[{"id":"1"}]}')
+    writeFileSync(settingsBak, '{"schemaVersion":1}')
+    writeFileSync(unrelatedFile, 'keep')
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(existsSync(path.join(dataDir, 'upgrade-backups'))).toBe(false)
+    expect(existsSync(sitesBak)).toBe(false)
+    expect(existsSync(settingsBak)).toBe(false)
+    expect(existsSync(unrelatedFile)).toBe(true)
+  })
+
+  it('privacy:deleteAllData succeeds when no backup directory or *.v*.bak.json files exist', async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ferry-settings-ipc-empty-'))
+    tempDirs.push(dataDir)
+    setHost(makeTestHost(dataDir))
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(siteStoreMock.clear).toHaveBeenCalled()
+    expect(appSettingsStoreMock.reset).toHaveBeenCalled()
+  })
+
+  it('privacy:deleteAllData succeeds when host dataDir does not exist on disk', async () => {
+    const missingDir = path.join(os.tmpdir(), `ferry-settings-ipc-missing-${Date.now()}`)
+    setHost(makeTestHost(missingDir))
+
+    expect(await invoke('privacy:deleteAllData')).toEqual({ ok: true, data: undefined })
+    expect(siteStoreMock.clear).toHaveBeenCalled()
   })
 })
