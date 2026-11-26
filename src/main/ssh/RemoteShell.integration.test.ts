@@ -10,13 +10,14 @@
  *   docker exec ferry-test-sftp mkdir -p /config/ferry-test
  *   docker exec ferry-test-sftp chown ferrytest:users /config/ferry-test
  *
- * These tests connect a real ssh2.Client over TCP and exercise every
- * RemoteShell operation against real sshd/sftp-server behavior — nothing
- * here is mocked. Skips itself (with a console warning) if the server at
- * 127.0.0.1:2299 isn't reachable, rather than failing the whole suite.
+ * These tests connect a real ssh2.Client over TCP and exercise real sshd/SFTP
+ * behavior. Individual fallback tests may stub SSH exec while retaining real
+ * SFTP operations. By default the suite skips if the server is unavailable;
+ * CI sets FERRY_REQUIRE_SSH_INTEGRATION=1 so a missing server fails the job.
  */
-import { Client } from 'ssh2'
 import { randomUUID } from 'crypto'
+import { posix } from 'node:path'
+import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RemoteShell } from './RemoteShell'
 
@@ -53,10 +54,12 @@ async function probeServer(): Promise<boolean> {
 // which a check inside beforeAll (running only once tests execute) could not.
 const serverAvailable = await probeServer()
 if (!serverAvailable) {
+  const message = `No test SFTP server reachable at ${HOST}:${PORT}. See file header for the docker run command.`
+  if (process.env.FERRY_REQUIRE_SSH_INTEGRATION === '1') {
+    throw new Error(`Required SSH/SFTP integration server unavailable: ${message}`)
+  }
   // eslint-disable-next-line no-console
-  console.warn(
-    `[RemoteShell.integration.test] Skipping — no test SFTP server reachable at ${HOST}:${PORT}. See file header for the docker run command.`
-  )
+  console.warn(`[RemoteShell.integration.test] Skipping — ${message}`)
 }
 
 let client: Client
@@ -187,11 +190,11 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
       output += chunk.toString()
     })
     await new Promise((r) => setTimeout(r, 800))
-    stream.write('pwd; echo MARK; history\n')
+    stream.write('pwd; echo MARK; history\\n')
     await vi.waitFor(() => expect(output).toContain('MARK'), { timeout: 5000 })
     expect(output).toContain(testDir)
-    expect(output).not.toMatch(/cd\s/)
-    expect(output).not.toMatch(/\bcd\s/)
+    expect(output).not.toMatch(/\\bcd\\s/)
+    expect(output).not.toMatch(/\\bcd\\s/)
   })
 
   it('mkdirRecursive() creates nested missing parents in one call, and is idempotent', async () => {
@@ -200,6 +203,34 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
     expect(stats.isDirectory()).toBe(true)
     // Second call on an already-existing tree must not throw.
     await expect(shell.mkdirRecursive(`${testDir}/a/b/c`)).resolves.toBeUndefined()
+  })
+
+  it('mkdirRecursive() preserves absolute paths when SSH exec is unavailable', async () => {
+    const targetPath = `${testDir}/sftp-only/absolute/nested`
+    const execSpy = vi.spyOn(shell, 'exec').mockRejectedValue(new Error('SSH exec unavailable'))
+    try {
+      await shell.mkdirRecursive(targetPath)
+    } finally {
+      execSpy.mockRestore()
+    }
+
+    expect((await shell.stat(targetPath)).isDirectory()).toBe(true)
+    expect(await shell.realpath(targetPath)).toBe(targetPath)
+  })
+
+  it('mkdirRecursive() keeps relative paths relative when SSH exec is unavailable', async () => {
+    const targetPath = `${testDir}/sftp-only/relative/nested`
+    const workingDirectory = await shell.realpath('.')
+    const relativePath = posix.relative(workingDirectory, targetPath)
+    const execSpy = vi.spyOn(shell, 'exec').mockRejectedValue(new Error('SSH exec unavailable'))
+    try {
+      await shell.mkdirRecursive(relativePath)
+    } finally {
+      execSpy.mockRestore()
+    }
+
+    expect((await shell.stat(targetPath)).isDirectory()).toBe(true)
+    expect(await shell.realpath(relativePath)).toBe(targetPath)
   })
 
   it('mkdirRecursive() is safe against a path containing a single quote (shellEscape)', async () => {
