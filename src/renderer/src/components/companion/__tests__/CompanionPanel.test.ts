@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { useCompanionStore } from '../../../stores/companion.store'
 
@@ -36,6 +36,10 @@ describe('CompanionPanel', () => {
   beforeEach(() => {
     localStorage.clear()
     setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('renders empty state, answers a query, and toggles local-only response feedback', async () => {
@@ -149,7 +153,6 @@ describe('CompanionPanel', () => {
     expect(w.find('[role="log"]').attributes('aria-busy')).toBe('false')
     expect(w.text()).toContain('one two three four five six seven')
     expect(w.text()).toContain('Check AI Settings')
-    vi.useRealTimers()
   })
 
   it('sets listening while the focused input has text', async () => {
@@ -169,6 +172,22 @@ describe('CompanionPanel', () => {
     await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
     s.activeView = 'snippets'; await nextTick()
     expect(s.reveal).toBeNull()
-    vi.useRealTimers()
+  })
+
+  it('clears listening when the chat input goes away or the panel closes', async () => {
+    const s = useCompanionStore(); s.openPanel()
+    const w = mount(CompanionPanel, { global: { stubs } })
+    const input = w.find('input[aria-label="Ask Ferry Companion"]')
+    await input.trigger('focus'); await input.setValue('hel')
+    expect(s.listening).toBe(true)
+    s.activeView = 'snippets'; await nextTick()
+    expect(s.listening).toBe(false)
+    s.activeView = 'chat'; await nextTick()
+    expect(s.listening).toBe(false)
+    const input2 = w.find('input[aria-label="Ask Ferry Companion"]')
+    await input2.trigger('focus')
+    expect(s.listening).toBe(true)
+    s.closePanel(); await nextTick()
+    expect(s.listening).toBe(false)
   })
 })

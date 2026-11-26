@@ -189,6 +189,10 @@ function onKeydown(e: KeyboardEvent): void {
 onMounted(() => window.addEventListener('keydown', onKeydown, true))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
 
+// A removed/hidden input never fires blur, so drop focus when the chat input goes away.
+watch([() => companion.activeView, () => companion.open], ([v, o]) => {
+  if (v !== 'chat' || !o) inputFocused.value = false
+})
 watch([inputFocused, draftInput], ([f, t]) => companion.setListening(f && t.trim() !== ''))
 onBeforeUnmount(() => companion.setListening(false))
 
