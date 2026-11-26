@@ -5,6 +5,7 @@ import { SEND_CHANNELS } from '@shared/contract'
 import { OPEN_REMOTE_EDITOR_EVENT, useCompanionStore } from '../companion.store'
 import { useFileFiltersStore } from '../fileFilters.store'
 import { useSessionsStore } from '../sessions.store'
+import { useSitesStore } from '../sites.store'
 
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 vi.mock('../../composables/useConfirm', () => ({
@@ -229,5 +230,113 @@ describe('companion.store', () => {
     expect(store.messages).toHaveLength(100)
     expect(store.messages[0].text).toBe('note-20')
     expect(store.messages[99].text).toBe('note-119')
+  })
+})
+
+describe('orb state', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('defaults to idle', () => {
+    expect(useCompanionStore().effectiveAvatarState).toBe('idle')
+  })
+
+  it('applies precedence thinking > streaming > error > listening > idle', () => {
+    const s = useCompanionStore()
+    s.$patch({ listening: true })
+    expect(s.effectiveAvatarState).toBe('listening')
+    s.$patch({ aiErrorLabel: "Couldn't reach Gemini" })
+    expect(s.effectiveAvatarState).toBe('error')
+    s.$patch({ reveal: { messageId: 'm', chunks: ['a ', 'b'], shown: 1 } })
+    expect(s.effectiveAvatarState).toBe('streaming')
+    s.$patch({ aiBusy: true })
+    expect(s.effectiveAvatarState).toBe('thinking')
+    s.$patch({ aiBusy: false, releasesLoading: true })
+    expect(s.effectiveAvatarState).toBe('thinking')
+  })
+
+  it('keeps noticing as an overlay, hidden in quiet mode', () => {
+    const s = useCompanionStore()
+    s.$patch({ notice: { id: 'n', kind: 'greeting', title: 'Hi', body: '', ctaLabel: 'Open' } })
+    expect(s.hasNotice).toBe(true)
+    expect(s.effectiveAvatarState).toBe('idle')
+    s.$patch({ quietMode: true })
+    expect(s.hasNotice).toBe(false)
+  })
+
+  it('reports prod when the active tab site is production', () => {
+    const sites = useSitesStore()
+    sites.$patch({ sites: [{ id: 'site-1', name: 'prod-db-01', environment: 'prod' } as never] })
+    const sessions = useSessionsStore()
+    sessions.activeTab.siteId = 'site-1'
+    const s = useCompanionStore()
+    expect(s.isProd).toBe(true)
+    expect(s.prodSiteLabel).toBe('prod-db-01, Production')
+    sites.sites[0].environment = 'staging'
+    expect(s.isProd).toBe(false)
+  })
+
+  it('reveals a local reply in chunks, then returns to idle', async () => {
+    const s = useCompanionStore()
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    expect(s.effectiveAvatarState).toBe('streaming')
+    expect(s.reveal?.shown).toBe(1)
+    vi.advanceTimersByTime(2000)
+    expect(s.reveal).toBeNull()
+    expect(s.effectiveAvatarState).toBe('idle')
+    expect(s.messages.at(-1)?.text).toBe('one two three four five six seven')
+  })
+
+  it('a new message completes the running reveal', async () => {
+    const s = useCompanionStore()
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    s.pushMessage({ role: 'user', text: 'next' })
+    expect(s.reveal).toBeNull()
+  })
+
+  it('completes the reveal when the panel closes or the conversation clears', async () => {
+    const s = useCompanionStore()
+    s.openPanel()
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    s.closePanel()
+    expect(s.reveal).toBeNull()
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    s.clearConversation()
+    expect(s.reveal).toBeNull()
+  })
+
+  it('skips the reveal under reduced motion', async () => {
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q }) as MediaQueryList)
+    const s = useCompanionStore()
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    expect(s.reveal).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('sets error on AI failure and clears it on the next reply and on close', async () => {
+    const prevApi = (window as { api?: unknown }).api
+    ;(window as { api?: unknown }).api = { invoke: vi.fn().mockRejectedValue(new Error('boom')) }
+    const s = useCompanionStore()
+    s.aiConfig = { provider: 'gemini', endpoint: 'x', model: 'm', hasApiKey: true }
+    await s.deliverAiOrLocalReply({ aiPrompt: 'hi', errorPrefix: '', buildLocal: () => ({ text: 'local' }) })
+    expect(s.aiErrorLabel).toBe("Couldn't reach Gemini")
+    s.closePanel()
+    expect(s.aiErrorLabel).toBeNull()
+    ;(window as { api?: unknown }).api = prevApi
+  })
+
+  it('setListening toggles listening and closePanel clears it', () => {
+    const s = useCompanionStore()
+    s.setListening(true)
+    expect(s.effectiveAvatarState).toBe('listening')
+    s.closePanel()
+    expect(s.listening).toBe(false)
   })
 })

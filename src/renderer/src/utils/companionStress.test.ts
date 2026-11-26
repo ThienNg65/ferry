@@ -205,7 +205,8 @@ describe('Ferry Companion renderer stress tests', () => {
       await Promise.all([p1, p2, p3, p4])
 
       expect(store.aiBusy).toBe(false)
-      expect(store.avatarState).toBe('talking')
+      expect(store.effectiveAvatarState).toBe('streaming')
+      expect(store.aiErrorLabel).toBe("Couldn't reach Gemini")
       store.disposeTimers()
       expect(invokeSpy).toHaveBeenCalledTimes(1)
       expect(invokeSpy).toHaveBeenCalledWith(INVOKE_CHANNELS.companionAiChat, expect.any(Object))

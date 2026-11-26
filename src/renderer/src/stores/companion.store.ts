@@ -7,6 +7,7 @@ import {
   type CompanionAiChatRequest,
   type CompanionAiChatResult,
   type CompanionAiConfigInfo,
+  type CompanionAiProvider,
   type CompanionAiConfigInput,
   type CompanionAiIntent,
   type CompanionCommandCard,
@@ -40,10 +41,13 @@ import {
   type CompanionCommandHistoryEntry,
   type CompanionSnippet
 } from '../utils/companionSnippets'
+import { planReveal } from '../utils/companionReveal'
 import { COMPANION_TOUR_STEPS } from '../utils/companionTour'
 import { evaluateVersionTransition } from '../utils/companionVersion'
+import { prefersReducedMotion } from '../utils/motionTokens'
 import { resolveConnectionFilterKey, useFileFiltersStore } from './fileFilters.store'
 import { useSessionsStore } from './sessions.store'
+import { useSitesStore } from './sites.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
 import { useUiStore } from './ui.store'
@@ -72,8 +76,16 @@ const MAX_CHAT_MESSAGES = 100
 
 let releasesInFlight: Promise<CompanionReleaseHighlight[]> | null = null
 
-export type CompanionAvatarState = 'resting' | 'noticing' | 'talking' | 'helping'
+const PROVIDER_LABEL: Record<CompanionAiProvider, string> = { none: 'AI', gemini: 'Gemini', 'ferry-pro': 'Ferry Pro' }
+
+export type CompanionAvatarState = 'idle' | 'listening' | 'thinking' | 'streaming' | 'error'
 export type CompanionView = 'chat' | 'snippets' | 'whats-new' | 'report' | 'history'
+
+export interface CompanionReveal {
+  messageId: string
+  chunks: string[]
+  shown: number
+}
 
 export interface CompanionNotice {
   id: string
@@ -233,7 +245,6 @@ interface CompanionState {
   hasOpenedOnce: boolean
   activeView: CompanionView
   reportCategory: IssueCategory
-  avatarState: CompanionAvatarState
   quietMode: boolean
   showInDock: boolean
   showReleaseAnnouncements: boolean
@@ -262,7 +273,10 @@ interface CompanionState {
   dirtyPrefKeys: Set<string>
   lastTransferTipAt: number
   transferTipTimer: ReturnType<typeof setTimeout> | null
-  talkingTimer: ReturnType<typeof setTimeout> | null
+  reveal: CompanionReveal | null
+  revealTimer: ReturnType<typeof setInterval> | null
+  aiErrorLabel: string | null
+  listening: boolean
 }
 
 export const useCompanionStore = defineStore('companion', {
@@ -271,7 +285,6 @@ export const useCompanionStore = defineStore('companion', {
     hasOpenedOnce: false,
     activeView: 'chat',
     reportCategory: 'bug',
-    avatarState: 'resting',
     quietMode: parseBool(readStored(QUIET_KEY), false),
     showInDock: parseBool(readStored(SHOW_IN_DOCK_KEY), true),
     showReleaseAnnouncements: parseBool(readStored(RELEASES_PREF_KEY), true),
@@ -300,7 +313,10 @@ export const useCompanionStore = defineStore('companion', {
     dirtyPrefKeys: new Set<string>(),
     lastTransferTipAt: 0,
     transferTipTimer: null,
-    talkingTimer: null
+    reveal: null,
+    revealTimer: null,
+    aiErrorLabel: null,
+    listening: false
   }),
 
   getters: {
@@ -308,13 +324,35 @@ export const useCompanionStore = defineStore('companion', {
     unreadAnnouncementCount: (state): number => state.announcements.filter((a) => !a.read).length,
     allSnippets: (state): CompanionSnippet[] => [...state.customSnippets, ...BUILT_IN_SNIPPETS],
     effectiveAvatarState(state): CompanionAvatarState {
-      if (state.avatarState === 'helping' || state.avatarState === 'talking') {
-        return state.avatarState
+      if (state.aiBusy || state.releasesLoading) return 'thinking'
+      if (state.reveal) return 'streaming'
+      if (state.aiErrorLabel) return 'error'
+      if (state.listening) return 'listening'
+      return 'idle'
+    },
+    hasNotice: (state): boolean => state.notice !== null && !state.quietMode,
+    prodSiteLabel(): string | null {
+      const tab = useSessionsStore().activeTab
+      const site = tab?.siteId ? useSitesStore().sites.find((s) => s.id === tab.siteId) : undefined
+      if (site?.environment !== 'prod') return null
+      return `${tab.label ?? site.name}, Production`
+    },
+    isProd(): boolean {
+      return this.prodSiteLabel !== null
+    },
+    avatarLabel(): string {
+      switch (this.effectiveAvatarState) {
+        case 'listening':
+          return 'Listening'
+        case 'thinking':
+          return 'Thinking'
+        case 'streaming':
+          return 'Replying'
+        case 'error':
+          return this.aiErrorLabel ?? 'Companion'
+        default:
+          return 'Companion'
       }
-      if (state.notice && !state.quietMode) {
-        return 'noticing'
-      }
-      return 'resting'
     }
   },
 
@@ -459,9 +497,13 @@ export const useCompanionStore = defineStore('companion', {
 
     closePanel(): void {
       this.open = false
-      if (this.avatarState !== 'helping') {
-        this.avatarState = 'resting'
-      }
+      this.finishReveal()
+      this.aiErrorLabel = null
+      this.listening = false
+    },
+
+    setListening(value: boolean): void {
+      this.listening = value
     },
 
     togglePanel(): void {
@@ -634,7 +676,6 @@ export const useCompanionStore = defineStore('companion', {
       }
       const run = async (): Promise<CompanionReleaseHighlight[]> => {
         this.releasesLoading = true
-        this.avatarState = 'helping'
         try {
           const res = await invoke<CompanionReleasesResult>(INVOKE_CHANNELS.companionGetReleases, { forceRefresh })
           if (res && Array.isArray(res.releases) && res.releases.length > 0) {
@@ -647,9 +688,6 @@ export const useCompanionStore = defineStore('companion', {
           // Fall through to bundled offline changelog.
         } finally {
           this.releasesLoading = false
-          if (this.avatarState === 'helping') {
-            this.avatarState = 'resting'
-          }
         }
 
         this.releases = getBundledChangelogReleases()
@@ -699,15 +737,24 @@ export const useCompanionStore = defineStore('companion', {
       }, TRANSFER_TIP_DEBOUNCE_MS)
     },
 
-    pulseTalking(): void {
-      this.avatarState = 'talking'
-      if (this.talkingTimer) clearTimeout(this.talkingTimer)
-      this.talkingTimer = setTimeout(() => {
-        this.talkingTimer = null
-        if (this.avatarState === 'talking') {
-          this.avatarState = 'resting'
-        }
-      }, 900)
+    startReveal(messageId: string, text: string): void {
+      this.finishReveal()
+      const plan = planReveal(text, prefersReducedMotion())
+      if (!plan) return
+      this.reveal = { messageId, chunks: plan.chunks, shown: 1 }
+      this.revealTimer = setInterval(() => {
+        if (!this.reveal) return
+        this.reveal.shown += 1
+        if (this.reveal.shown >= this.reveal.chunks.length) this.finishReveal()
+      }, plan.tickMs)
+    },
+
+    finishReveal(): void {
+      if (this.revealTimer) {
+        clearInterval(this.revealTimer)
+        this.revealTimer = null
+      }
+      this.reveal = null
     },
 
     async requestAiChat(
@@ -719,7 +766,6 @@ export const useCompanionStore = defineStore('companion', {
         return { result: null, errorHint: null }
       }
       this.aiBusy = true
-      this.avatarState = 'helping'
       try {
         const sessions = useSessionsStore()
         const ui = useUiStore()
@@ -748,21 +794,21 @@ export const useCompanionStore = defineStore('companion', {
         return { result: null, errorHint: err instanceof Error ? err.message : 'connection error' }
       } finally {
         this.aiBusy = false
-        if (this.avatarState === 'helping') {
-          this.avatarState = 'resting'
-        }
       }
     },
 
-    pushMessage(msg: Omit<CompanionMessage, 'id' | 'createdAt'>): void {
+    pushMessage(msg: Omit<CompanionMessage, 'id' | 'createdAt'>): string {
+      this.finishReveal()
+      const id = nextId('msg')
       this.messages.push({
         ...msg,
-        id: nextId('msg'),
+        id,
         createdAt: new Date().toISOString()
       })
       if (this.messages.length > MAX_CHAT_MESSAGES) {
         this.messages = this.messages.slice(-MAX_CHAT_MESSAGES)
       }
+      return id
     },
 
     async deliverAiOrLocalReply(opts: {
@@ -772,6 +818,7 @@ export const useCompanionStore = defineStore('companion', {
       errorPrefix: string
       buildLocal: () => Omit<CompanionMessage, 'id' | 'createdAt' | 'role' | 'source'>
     }): Promise<void> {
+      this.aiErrorLabel = null
       let aiErrorHint: string | null = null
       if (opts.aiPrompt && this.aiConfig.provider !== 'none') {
         const { result: aiRes, errorHint } = await this.requestAiChat(
@@ -780,18 +827,22 @@ export const useCompanionStore = defineStore('companion', {
           opts.workspaceSignal
         )
         if (aiRes) {
-          this.pushMessage({
+          const text = aiRes.structured?.summary ?? aiRes.text ?? ''
+          const id = this.pushMessage({
             role: 'assistant',
-            text: aiRes.structured?.summary ?? aiRes.text ?? '',
+            text,
             source: 'ai',
             rootCause: aiRes.structured?.rootCause,
             commandCards: aiRes.structured?.commandCards,
             uiActionCards: aiRes.structured?.uiActionCards
           })
-          this.pulseTalking()
+          this.startReveal(id, text)
           return
         }
         aiErrorHint = errorHint
+        if (aiErrorHint) {
+          this.aiErrorLabel = `Couldn't reach ${PROVIDER_LABEL[this.aiConfig.provider]}`
+        }
       }
 
       const local = opts.buildLocal()
@@ -800,14 +851,17 @@ export const useCompanionStore = defineStore('companion', {
         finalActions.push({ id: 'open-settings', label: 'Check AI Settings' })
       }
 
-      this.pushMessage({
+      const text = aiErrorHint
+        ? `Couldn't reach your configured AI provider (${aiErrorHint}). ${opts.errorPrefix}\n\n${local.text}`
+        : local.text
+      const id = this.pushMessage({
         role: 'assistant',
         ...local,
-        text: aiErrorHint ? `Couldn't reach your configured AI provider (${aiErrorHint}). ${opts.errorPrefix}\n\n${local.text}` : local.text,
+        text,
         source: 'local',
         actions: finalActions.length > 0 ? finalActions : undefined
       })
-      this.pulseTalking()
+      this.startReveal(id, text)
     },
 
     async ask(input: string): Promise<void> {
@@ -1165,6 +1219,7 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     clearConversation(): void {
+      this.finishReveal()
       this.messages = []
     },
 
@@ -1173,10 +1228,7 @@ export const useCompanionStore = defineStore('companion', {
         clearTimeout(this.transferTipTimer)
         this.transferTipTimer = null
       }
-      if (this.talkingTimer) {
-        clearTimeout(this.talkingTimer)
-        this.talkingTimer = null
-      }
+      this.finishReveal()
     },
 
     reset(): void {
@@ -1186,7 +1238,8 @@ export const useCompanionStore = defineStore('companion', {
       this.hasOpenedOnce = false
       this.activeView = 'chat'
       this.reportCategory = 'bug'
-      this.avatarState = 'resting'
+      this.aiErrorLabel = null
+      this.listening = false
       this.quietMode = false
       this.showInDock = true
       this.showReleaseAnnouncements = true
