@@ -802,7 +802,7 @@ export class RemoteShell {
       '[ "$canonical" != "/" ] || exit 73',
       'fi',
       'rm -rf -- "$target"'
-    ].join('; ')
+    ].join('\n')
 
     try {
       const result = await this.exec(command, { timeoutMs: 5 * 60 * 1000 })
