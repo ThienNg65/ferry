@@ -314,6 +314,7 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('/tmp/file.txt', '/home/user')).resolves.toBeUndefined()
 
     expect(sftp.unlink).toHaveBeenCalledWith('/tmp/file.txt')
+    expect(sftp.realpath).not.toHaveBeenCalled()
     expect(sftp.readdir).not.toHaveBeenCalled()
     expect(sftp.rmdir).not.toHaveBeenCalled()
   })

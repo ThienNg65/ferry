@@ -766,7 +766,7 @@ export class RemoteShell {
       if (error instanceof SshError && error.code === 'NOT_FOUND') return null
       throw error
     })
-    if (!stats || stats.isSymbolicLink()) return { path: targetPath, stats }
+    if (!stats || stats.isSymbolicLink() || !stats.isDirectory()) return { path: targetPath, stats }
 
     const canonicalPath = await this.realpath(targetPath)
     if (pathPosix.resolve(canonicalPath) === '/') {
