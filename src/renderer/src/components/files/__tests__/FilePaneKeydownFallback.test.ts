@@ -12,6 +12,7 @@ import { useUiStore } from '../../../stores/ui.store'
 import FilePane from '../FilePane.vue'
 
 const confirm = vi.hoisted(() => vi.fn<(options: ConfirmOptions) => Promise<boolean>>())
+const scrollToIndex = vi.hoisted(() => vi.fn())
 vi.mock('../../../composables/useConfirm', () => ({ useConfirm: () => confirm }))
 vi.mock('../../../composables/useNotify', () => ({
   useNotify: () => ({ success: vi.fn(), error: vi.fn(), prompt: vi.fn() })
@@ -21,7 +22,7 @@ vi.mock('../../../api', async (importOriginal) => ({
   invoke: vi.fn(),
   onEvent: vi.fn(() => () => {})
 }))
-vi.mock('../FileList.vue', () => ({ default: { name: 'FileList', props: ['renamingPath'], template: '<div />' } }))
+vi.mock('../FileList.vue', () => ({ default: { name: 'FileList', props: ['renamingPath'], methods: { scrollToIndex }, template: '<div />' } }))
 vi.mock('../FileToolbar.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('../PathBreadcrumb.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@nuxt/ui/components/Checkbox.vue', () => ({
@@ -122,5 +123,6 @@ describe('window keydown fallback visibility guard', () => {
     dispatchKeydown('F2')
     await flushPromises()
     expect(fileList.props('renamingPath')).toBe(entry.path)
+    expect(scrollToIndex).toHaveBeenCalledWith(0)
   })
 })
