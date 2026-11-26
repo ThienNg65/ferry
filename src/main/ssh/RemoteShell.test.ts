@@ -331,8 +331,29 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('/tmp/link/', '/home/user')).resolves.toBeUndefined()
 
-    expect(exec.mock.calls[0][0]).toContain("target='/tmp/link'")
-    expect(exec.mock.calls[0][0]).toContain('[ -L "$target" ]')
+    const command = exec.mock.calls[0][0]
+    expect(command).toContain("target='/tmp/link/'")
+    expect(command).toContain('target_entry=$target')
+    expect(command).toContain('[ -L "$target_entry" ] || [ -d "$target_entry" ]')
+    expect(command).toContain('target=$target_entry')
+    expect(command).toContain('[ -L "$target" ]')
+  })
+
+  it('rejects a trailing slash on a regular file before shell deletion', async () => {
+    const { shell } = createHarness()
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 75 })
+    const fallback = vi.spyOn(
+      shell as unknown as { deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void> },
+      'deleteRecursiveSftp'
+    ).mockResolvedValue(undefined)
+
+    await expect(shell.deleteRecursive('/tmp/report/')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+    const command = exec.mock.calls[0][0]
+    expect(command).toContain("target='/tmp/report/'")
+    expect(command).toContain('elif [ -e "$target_entry" ]; then')
+    expect(command.indexOf('exit 75')).toBeLessThan(command.indexOf('rm -rf -- "$target"'))
+    expect(fallback).not.toHaveBeenCalled()
   })
 
   it('falls back to SFTP when exec is unavailable', async () => {
@@ -341,6 +362,36 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('/tmp/target', '/home/user')).resolves.toBeUndefined()
 
+    expect(sftp.readdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
+    expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
+  })
+
+  it('rejects a trailing slash on a regular file in the SFTP fallback', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const fileStats = { isDirectory: () => false, isSymbolicLink: () => false }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, fileStats))
+    const fallback = (shell as unknown as {
+      deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+    }).deleteRecursiveSftp
+
+    await expect(fallback.call(shell, '/tmp/report/')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+    expect(sftp.lstat).toHaveBeenCalledWith('/tmp/report', expect.any(Function))
+    expect(sftp.unlink).not.toHaveBeenCalled()
+    expect(sftp.readdir).not.toHaveBeenCalled()
+    expect(sftp.rmdir).not.toHaveBeenCalled()
+  })
+
+  it('normalizes trailing separators only after identifying a directory in the SFTP fallback', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const fallback = (shell as unknown as {
+      deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+    }).deleteRecursiveSftp
+
+    await expect(fallback.call(shell, '/tmp/target/')).resolves.toBeUndefined()
+
+    expect(sftp.lstat).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
+    expect(sftp.realpath).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
     expect(sftp.readdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
     expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
   })
