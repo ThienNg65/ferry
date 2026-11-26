@@ -256,8 +256,8 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
 
-    expect(sftp.lstat).toHaveBeenCalledWith('/home/user/link/..')
-    expect(sftp.realpath).toHaveBeenCalledWith('/home/user/link/..')
+    expect(sftp.lstat).toHaveBeenCalledWith('/home/user/link/..', expect.any(Function))
+    expect(sftp.realpath).toHaveBeenCalledWith('/home/user/link/..', expect.any(Function))
     expect(exec).not.toHaveBeenCalled()
     expect(sftp.readdir).not.toHaveBeenCalled()
     expect(sftp.unlink).not.toHaveBeenCalled()
@@ -301,8 +301,8 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('/tmp/target', '/home/user')).resolves.toBeUndefined()
 
-    expect(sftp.readdir).toHaveBeenCalledWith('/tmp/target')
-    expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target')
+    expect(sftp.readdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
+    expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target', expect.any(Function))
   })
 
   it('deletes regular files through the SFTP fallback', async () => {
@@ -313,7 +313,7 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('/tmp/file.txt', '/home/user')).resolves.toBeUndefined()
 
-    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/file.txt')
+    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/file.txt', expect.any(Function))
     expect(sftp.realpath).not.toHaveBeenCalled()
     expect(sftp.readdir).not.toHaveBeenCalled()
     expect(sftp.rmdir).not.toHaveBeenCalled()
@@ -329,9 +329,9 @@ describe('RemoteShell recursive delete', () => {
 
       await expect(shell.deleteRecursive(remotePath, '/home/user')).resolves.toBeUndefined()
 
-      expect(sftp.lstat).toHaveBeenCalledWith('/tmp/link')
+      expect(sftp.lstat).toHaveBeenCalledWith('/tmp/link', expect.any(Function))
       expect(sftp.realpath).not.toHaveBeenCalled()
-      expect(sftp.unlink).toHaveBeenCalledWith('/tmp/link')
+      expect(sftp.unlink).toHaveBeenCalledWith('/tmp/link', expect.any(Function))
       expect(sftp.readdir).not.toHaveBeenCalled()
       expect(sftp.rmdir).not.toHaveBeenCalled()
     }
