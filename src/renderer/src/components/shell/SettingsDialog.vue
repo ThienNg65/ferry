@@ -738,7 +738,7 @@ async function saveNetwork(): Promise<void> {
                       :items="BANDWIDTH_UNIT_OPTIONS"
                       class="w-24"
                       aria-label="Bandwidth limit unit"
-                      @update:model-value="(v) => onBandwidthUnitChange(v as BandwidthUnit)"
+                      @update:model-value="(v: string) => onBandwidthUnitChange(v as BandwidthUnit)"
                     />
                   </div>
                   <p v-if="limitError" class="text-xs text-error" role="alert">{{ limitError }}</p>
