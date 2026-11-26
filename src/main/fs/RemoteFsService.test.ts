@@ -93,6 +93,7 @@ describe('RemoteFsService.listRemote', () => {
     await listRemote('sess-1', '/var/log/nginx', true)
     expect(mockManager.setCwd).not.toHaveBeenCalled()
   })
+  
   it.each(['../escape', 'nested/escape', 'nested\\escape', ''])(
     'rejects unsafe SFTP entry name "%s" before constructing a FileEntry path',
     async (filename) => {

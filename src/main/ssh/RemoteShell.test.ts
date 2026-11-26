@@ -304,6 +304,19 @@ describe('RemoteShell recursive delete', () => {
     expect(sftp.rmdir).toHaveBeenCalledWith('/tmp/target')
   })
 
+  it('deletes regular files through the SFTP fallback', async () => {
+    const { shell, sftp } = createSftpHarness()
+    const fileStats = { isDirectory: () => false, isSymbolicLink: () => false }
+    sftp.lstat.mockImplementation((_path, callback) => callback(null, fileStats))
+    vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
+
+    await expect(shell.deleteRecursive('/tmp/file.txt', '/home/user')).resolves.toBeUndefined()
+
+    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/file.txt')
+    expect(sftp.readdir).not.toHaveBeenCalled()
+    expect(sftp.rmdir).not.toHaveBeenCalled()
+  })
+
   it('deletes symlinks as leaves without resolving their targets', async () => {
     const { shell, sftp } = createSftpHarness()
     const symlinkStats = { isDirectory: () => false, isSymbolicLink: () => true }

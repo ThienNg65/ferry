@@ -732,14 +732,6 @@ export class RemoteShell {
   }
 
   /**
-   * Recursively deletes a remote path (file or directory) via a single
-   * `rm -rf` exec — one round-trip regardless of tree size, matching what a
-   * user running `rm -rf` themselves over a plain SSH shell would see. Falls
-   * back to {@link deleteRecursiveSftp}'s per-entry SFTP walk when exec is
-   * unavailable or fails for another reason. Timeouts and cancellations are
-   * propagated so a second delete path does not start after interruption.
-   */
-  /**
    * Resolves a delete target against the remote working directory and rejects
    * the filesystem root. Inspect the final component with lstat before
    * realpath so a symlink is deleted as a leaf rather than followed.
@@ -756,7 +748,7 @@ export class RemoteShell {
     const cwd = pathPosix.isAbsolute(trimmed)
       ? undefined
       : remoteCwd && pathPosix.isAbsolute(remoteCwd)
-        ? pathPosix.resolve(remoteCwd)
+        ? remoteCwd.replace(/\/+$/, '') || '/'
         : await this.realpath('.')
     const lexicalPath = pathPosix.isAbsolute(trimmed)
       ? pathPosix.resolve(trimmed)
