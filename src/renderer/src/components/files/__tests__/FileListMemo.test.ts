@@ -16,6 +16,15 @@ vi.mock('@nuxt/ui/components/ContextMenu.vue', () => ({
   }
 }))
 
+// FileRow's toast notifications are unrelated to memo invalidation and rely on Nuxt auto-imports.
+vi.mock('../../../composables/useNotify', () => ({
+  useNotify: () => ({
+    success: vi.fn(),
+    error: vi.fn(),
+    prompt: vi.fn()
+  })
+}))
+
 vi.mock('@tanstack/vue-virtual', () => ({
   useVirtualizer: (opts: { value: { count: number; getItemKey: (i: number) => string | number } }) =>
     computed(() => ({
