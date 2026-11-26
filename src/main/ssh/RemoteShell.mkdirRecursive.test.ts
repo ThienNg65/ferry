@@ -76,6 +76,20 @@ describe('RemoteShell recursive mkdir SFTP fallback', () => {
     expect(mkdir).not.toHaveBeenCalled()
   })
 
+  it('uses SFTP when the shell mkdir command exits unsuccessfully', async () => {
+    const shell = createShell()
+    vi.mocked(shell.exec).mockResolvedValue({ stdout: '', stderr: 'permission denied', code: 1 })
+    const stat = vi.spyOn(shell, 'stat').mockResolvedValue(directoryStats)
+
+    await shell.mkdirRecursive('/srv/backups/project')
+
+    expect(stat.mock.calls.map(([remotePath]) => remotePath)).toEqual([
+      '/srv',
+      '/srv/backups',
+      '/srv/backups/project'
+    ])
+  })
+
   it('does not use SFTP when the shell mkdir succeeds', async () => {
     const shell = createShell()
     vi.mocked(shell.exec).mockResolvedValue({ stdout: '', stderr: '', code: 0 })
