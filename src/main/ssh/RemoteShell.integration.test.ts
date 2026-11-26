@@ -16,9 +16,14 @@
  * CI sets FERRY_REQUIRE_SSH_INTEGRATION=1 so a missing server fails the job.
  */
 import { randomUUID } from 'crypto'
-import { posix } from 'node:path'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, posix } from 'node:path'
 import { Client } from 'ssh2'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { previewSync, runSync } from '../sync/SyncService'
+import { TransferQueue } from '../transfer/TransferQueue'
+import { SessionManager } from './SessionManager'
 import { RemoteShell } from './RemoteShell'
 
 const HOST = '127.0.0.1'
@@ -231,6 +236,43 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
 
     expect((await shell.stat(targetPath)).isDirectory()).toBe(true)
     expect(await shell.realpath(relativePath)).toBe(targetPath)
+  })
+
+  it('push sync creates absolute remote directories when SSH exec is unavailable', async () => {
+    const localPath = await mkdtemp(join(tmpdir(), 'ferry-sync-integration-'))
+    const remotePath = `${testDir}/sync-target`
+    await mkdir(join(localPath, 'nested'))
+    await writeFile(join(localPath, 'nested', 'upload.txt'), 'payload')
+
+    const sessionShellSpy = vi.spyOn(SessionManager.getInstance(), 'shell').mockReturnValue(shell)
+    const execSpy = vi.spyOn(shell, 'exec').mockRejectedValue(new Error('SSH exec unavailable'))
+    const enqueueSpy = vi.spyOn(TransferQueue.getInstance(), 'enqueue').mockReturnValue('upload-job')
+
+    try {
+      const options = {
+        sessionId: 'sftp-only-integration',
+        localPath,
+        remotePath,
+        direction: 'push' as const,
+        deleteExtras: false
+      }
+      const approved = await previewSync(options)
+      const result = await runSync(options, approved, {
+        signal: new AbortController().signal,
+        reportProgress: vi.fn()
+      })
+
+      expect(result.queuedTransferIds).toEqual(['upload-job'])
+      expect(execSpy).toHaveBeenCalledTimes(2)
+      expect((await shell.stat(remotePath)).isDirectory()).toBe(true)
+      expect((await shell.stat(`${remotePath}/nested`)).isDirectory()).toBe(true)
+      expect(await shell.realpath(`${remotePath}/nested`)).toBe(`${remotePath}/nested`)
+    } finally {
+      execSpy.mockRestore()
+      enqueueSpy.mockRestore()
+      sessionShellSpy.mockRestore()
+      await rm(localPath, { recursive: true, force: true })
+    }
   })
 
   it('mkdirRecursive() is safe against a path containing a single quote (shellEscape)', async () => {
