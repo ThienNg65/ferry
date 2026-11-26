@@ -759,9 +759,9 @@ export class RemoteShell {
 
     // Preserve ".." components for remote resolution: a parent symlink can
     // change their meaning, which lexical path normalization alone cannot see.
-    const targetPath = pathPosix.isAbsolute(trimmed)
+    const targetPath = (pathPosix.isAbsolute(trimmed)
       ? trimmed
-      : `${cwd!.replace(/\/+$/, '')}/${trimmed}`
+      : `${cwd!.replace(/\/+$/, '')}/${trimmed}`).replace(/\/+$/, '') || '/'
     const stats = await this.lstat(targetPath).catch((error: unknown) => {
       if (error instanceof SshError && error.code === 'NOT_FOUND') return null
       throw error

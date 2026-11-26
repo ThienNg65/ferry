@@ -211,7 +211,8 @@ describe('RemoteShell recursive delete', () => {
     { remotePath: '/./', remoteCwd: '/home/user' },
     { remotePath: '/..', remoteCwd: '/home/user' },
     { remotePath: '/*', remoteCwd: '/home/user' },
-    { remotePath: '.', remoteCwd: '/' }
+    { remotePath: '.', remoteCwd: '/' },
+    { remotePath: '../..', remoteCwd: '/home/user' }
   ]
 
   it.each(rootAliases)(
@@ -317,17 +318,21 @@ describe('RemoteShell recursive delete', () => {
     expect(sftp.rmdir).not.toHaveBeenCalled()
   })
 
-  it('deletes symlinks as leaves without resolving their targets', async () => {
-    const { shell, sftp } = createSftpHarness()
-    const symlinkStats = { isDirectory: () => false, isSymbolicLink: () => true }
-    sftp.lstat.mockImplementation((_path, callback) => callback(null, symlinkStats))
-    vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
+  it.each(['/tmp/link', '/tmp/link/'])(
+    'deletes symlink path "%s" as a leaf without resolving its target',
+    async (remotePath) => {
+      const { shell, sftp } = createSftpHarness()
+      const symlinkStats = { isDirectory: () => false, isSymbolicLink: () => true }
+      sftp.lstat.mockImplementation((_path, callback) => callback(null, symlinkStats))
+      vi.spyOn(shell, 'exec').mockRejectedValue(new SshError('SSH_EXEC', 'Exec disabled'))
 
-    await expect(shell.deleteRecursive('/tmp/link', '/home/user')).resolves.toBeUndefined()
+      await expect(shell.deleteRecursive(remotePath, '/home/user')).resolves.toBeUndefined()
 
-    expect(sftp.realpath).not.toHaveBeenCalled()
-    expect(sftp.unlink).toHaveBeenCalledWith('/tmp/link')
-    expect(sftp.readdir).not.toHaveBeenCalled()
-    expect(sftp.rmdir).not.toHaveBeenCalled()
-  })
+      expect(sftp.lstat).toHaveBeenCalledWith('/tmp/link')
+      expect(sftp.realpath).not.toHaveBeenCalled()
+      expect(sftp.unlink).toHaveBeenCalledWith('/tmp/link')
+      expect(sftp.readdir).not.toHaveBeenCalled()
+      expect(sftp.rmdir).not.toHaveBeenCalled()
+    }
+  )
 })

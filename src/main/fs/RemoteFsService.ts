@@ -15,8 +15,13 @@ import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
-  if (!entry.filename || entry.filename === '.' || entry.filename === '..' ||
-    entry.filename.includes('/') || entry.filename.includes('\\')) {
+  if (
+    !entry.filename ||
+    entry.filename === '.' ||
+    entry.filename === '..' ||
+    entry.filename.includes('/') ||
+    entry.filename.includes('\\')
+  ) {
     throw new SshError('SFTP', `Refusing to expose unsafe remote entry name "${entry.filename}" under "${basePath}"`)
   }
   const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')
