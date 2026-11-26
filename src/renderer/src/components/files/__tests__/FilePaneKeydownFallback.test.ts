@@ -33,6 +33,7 @@ vi.mock('@nuxt/ui/components/Checkbox.vue', () => ({
 }))
 
 const stubs = {
+  FileList: false,
   UModal: true,
   UButton: true,
   UFormField: true,
