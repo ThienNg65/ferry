@@ -21,7 +21,15 @@ const triggerRef = ref<HTMLButtonElement | null>(null)
 const bubbleStyle = ref<Record<string, string>>({})
 
 const tooltipText = computed(() =>
-  companion.open ? 'Close Ferry Companion (Ctrl+Space)' : 'Ferry Companion (Ctrl+Space)'
+  companion.open
+    ? 'Close Ferry Companion (Ctrl+Space)'
+    : [
+        companion.effectiveAvatarState !== 'idle' ? companion.avatarLabel : null,
+        companion.prodSiteLabel,
+        'Ferry Companion (Ctrl+Space)'
+      ]
+        .filter(Boolean)
+        .join(' · ')
 )
 const tooltipSide = computed(() => (props.placement === 'dock-right-rail' ? 'left' : 'bottom'))
 
@@ -129,7 +137,12 @@ onBeforeUnmount(() => {
         :data-companion-placement="placement"
         @click="companion.togglePanel()"
       >
-        <CompanionAvatar :state="companion.effectiveAvatarState" :size="16" />
+        <CompanionAvatar
+          :state="companion.effectiveAvatarState"
+          :size="16"
+          :prod="companion.isProd"
+          :noticing="companion.hasNotice"
+        />
       </button>
     </UTooltip>
 
@@ -147,7 +160,7 @@ onBeforeUnmount(() => {
         >
           <div class="flex items-start justify-between gap-2">
             <div class="flex items-center gap-1.5 min-w-0">
-              <CompanionAvatar state="noticing" :size="16" class="text-primary" />
+              <CompanionAvatar :size="16" noticing />
               <p class="truncate text-xs font-semibold text-highlighted">
                 {{ companion.notice.title }}
               </p>

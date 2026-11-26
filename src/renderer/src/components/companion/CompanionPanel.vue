@@ -20,6 +20,22 @@ const sessions = useSessionsStore()
 const ui = useUiStore()
 
 const draftInput = ref('')
+const inputFocused = ref(false)
+
+const subtitle = computed(() => {
+  if (companion.quietMode) return 'Quiet Mode on'
+  const state = companion.effectiveAvatarState
+  if (state === 'idle' && !companion.isProd) return 'A little friend who knows your workspace'
+  return [state !== 'idle' ? companion.avatarLabel : null, companion.prodSiteLabel].filter(Boolean).join(' · ')
+})
+
+function isRevealing(msg: { id: string }): boolean {
+  return companion.reveal?.messageId === msg.id
+}
+function displayText(msg: { id: string; text: string }): string {
+  const r = companion.reveal
+  return r && r.messageId === msg.id ? r.chunks.slice(0, r.shown).join('') : msg.text
+}
 const panelRef = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLInputElement | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
@@ -153,6 +169,7 @@ watch(
     if (view === 'whats-new') {
       void companion.ensureReleasesLoaded()
     }
+    if (view !== 'chat') companion.finishReveal()
   }
 )
 
@@ -171,6 +188,9 @@ function onKeydown(e: KeyboardEvent): void {
 
 onMounted(() => window.addEventListener('keydown', onKeydown, true))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
+
+watch([inputFocused, draftInput], ([f, t]) => companion.setListening(f && t.trim() !== ''))
+onBeforeUnmount(() => companion.setListening(false))
 
 async function onSend(): Promise<void> {
   const text = draftInput.value.trim()
@@ -274,11 +294,17 @@ function openFullNotes(url?: string): void {
       <!-- Header -->
       <div class="flex items-center justify-between gap-2 border-b border-muted px-3 py-2 select-none">
         <div class="flex min-w-0 items-center gap-2">
-          <CompanionAvatar :state="companion.effectiveAvatarState" :size="20" class="text-primary" />
+          <CompanionAvatar
+            :state="companion.effectiveAvatarState"
+            :size="20"
+            :prod="companion.isProd"
+            :chunk="companion.reveal?.shown ?? 0"
+            live
+          />
           <div class="min-w-0">
             <h2 class="truncate text-xs font-semibold text-highlighted">Ferry Companion</h2>
             <p class="truncate text-3xs text-muted">
-              {{ companion.quietMode ? 'Quiet Mode on' : 'A little friend who knows your workspace' }}
+              {{ subtitle }}
             </p>
           </div>
         </div>
@@ -464,8 +490,13 @@ function openFullNotes(url?: string): void {
             v-if="companion.messages.length === 0 && !currentTourStep"
             class="my-auto flex flex-col items-center gap-3 py-4 text-center"
           >
-            <div class="rounded-full bg-primary/10 p-3 ring-1 ring-primary/20">
-              <CompanionAvatar state="resting" :size="30" class="text-primary" />
+            <div data-companion-hero>
+              <CompanionAvatar
+                :state="companion.effectiveAvatarState"
+                :size="96"
+                :prod="companion.isProd"
+                live
+              />
             </div>
             <div class="space-y-1">
               <p class="text-sm font-semibold text-highlighted">Hi! I'm your Ferry Companion.</p>
@@ -489,6 +520,7 @@ function openFullNotes(url?: string): void {
 
           <div
             role="log"
+            :aria-busy="companion.reveal !== null"
             aria-live="polite"
             aria-relevant="additions"
             class="flex flex-col gap-2.5"
@@ -508,8 +540,10 @@ function openFullNotes(url?: string): void {
                     : 'border border-default bg-muted/35 text-default'
                 "
               >
-                {{ msg.text }}
+                {{ displayText(msg) }}
               </div>
+
+              <template v-if="!isRevealing(msg)">
 
               <!-- Diagnosed Root Cause -->
               <div
@@ -651,6 +685,7 @@ function openFullNotes(url?: string): void {
                   <UIcon name="i-lucide-thumbs-down" class="size-3" />
                 </button>
               </div>
+              </template>
             </div>
             <div v-if="companion.aiBusy" class="flex items-center gap-1.5 text-xs text-muted">
               <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
@@ -959,6 +994,8 @@ function openFullNotes(url?: string): void {
           ref="inputRef"
           v-model="draftInput"
           type="text"
+          @focus="inputFocused = true"
+          @blur="inputFocused = false"
           aria-label="Ask Ferry Companion"
           placeholder="Ask what's new, how to use Ferry, or report a bug…"
           class="min-w-0 flex-1 rounded-md border border-default bg-default/70 px-2.5 py-1.5 text-xs text-default placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"

@@ -51,6 +51,8 @@ describe('CompanionPanel', () => {
     await nextTick()
 
     expect(store.messages.length).toBe(2)
+    store.finishReveal()
+    await nextTick()
     expect(wrapper.text()).toContain('File Visibility Filters')
 
     const helpfulBtn = wrapper.find('button[aria-label="Mark reply helpful"]')
@@ -103,6 +105,7 @@ describe('CompanionPanel', () => {
 
     const wrapper = mount(CompanionPanel, { global: { stubs } })
     await store.ask('Command to check disk usage')
+    store.finishReveal()
     await nextTick()
 
     expect(wrapper.find('[data-companion-command-cards]').exists()).toBe(true)
@@ -125,5 +128,47 @@ describe('CompanionPanel', () => {
     expect(store.customSnippets[0].label).toBe('Flush cache')
     expect(store.customSnippets[0].risk).toBe('destructive')
     wrapper.unmount()
+  })
+
+  it('renders the empty-state hero orb at 96px', () => {
+    const s = useCompanionStore(); s.open = true
+    const w = mount(CompanionPanel, { global: { stubs } })
+    expect(w.find('[data-companion-hero] [data-companion-state]').attributes('style')).toContain('width: 96px')
+  })
+
+  it('reveals the reply progressively and shows cards only afterwards', async () => {
+    vi.useFakeTimers()
+    const s = useCompanionStore(); s.openPanel()
+    const w = mount(CompanionPanel, { global: { stubs } })
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven', actions: [{ id: 'open-settings', label: 'Check AI Settings' }] }) })
+    await nextTick()
+    expect(w.find('[role="log"]').attributes('aria-busy')).toBe('true')
+    expect(w.text()).not.toContain('seven')
+    expect(w.text()).not.toContain('Check AI Settings')
+    vi.advanceTimersByTime(2000); await nextTick()
+    expect(w.find('[role="log"]').attributes('aria-busy')).toBe('false')
+    expect(w.text()).toContain('one two three four five six seven')
+    expect(w.text()).toContain('Check AI Settings')
+    vi.useRealTimers()
+  })
+
+  it('sets listening while the focused input has text', async () => {
+    const s = useCompanionStore(); s.openPanel()
+    const w = mount(CompanionPanel, { global: { stubs } })
+    const input = w.find('input[aria-label="Ask Ferry Companion"]')
+    await input.trigger('focus'); await input.setValue('hel')
+    expect(s.listening).toBe(true)
+    await input.trigger('blur')
+    expect(s.listening).toBe(false)
+  })
+
+  it('completes the reveal when leaving the chat view', async () => {
+    vi.useFakeTimers()
+    const s = useCompanionStore(); s.openPanel()
+    mount(CompanionPanel, { global: { stubs } })
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    s.activeView = 'snippets'; await nextTick()
+    expect(s.reveal).toBeNull()
+    vi.useRealTimers()
   })
 })
