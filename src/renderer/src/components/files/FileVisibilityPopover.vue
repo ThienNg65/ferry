@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import Popover from '@nuxt/ui/components/Popover.vue'
+import { OPEN_FILE_FILTERS_EVENT } from '../../stores/companion.store'
+import { useUiStore } from '../../stores/ui.store'
 import {
   appendUniquePattern,
   formatPatternLines,
@@ -94,9 +96,25 @@ function onClear(): void {
   sampleFilename.value = ''
   emit('clear')
 }
+
+const triggerHostRef = ref<HTMLElement | null>(null)
+const ui = useUiStore()
+
+function onOpenFiltersEvent(): void {
+  if (props.disabled) return
+  const pane = triggerHostRef.value?.closest('[data-pane]')?.getAttribute('data-pane')
+  const preferred = ui.showLocalPane ? ui.activePane : 'remote'
+  if (!pane || pane === preferred) {
+    open.value = true
+  }
+}
+
+onMounted(() => window.addEventListener(OPEN_FILE_FILTERS_EVENT, onOpenFiltersEvent))
+onBeforeUnmount(() => window.removeEventListener(OPEN_FILE_FILTERS_EVENT, onOpenFiltersEvent))
 </script>
 
 <template>
+  <span ref="triggerHostRef" class="inline-flex">
   <Popover v-model:open="open">
     <UTooltip :text="triggerTooltip">
       <UButton
@@ -223,4 +241,5 @@ function onClear(): void {
       </div>
     </template>
   </Popover>
+  </span>
 </template>

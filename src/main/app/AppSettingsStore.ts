@@ -2,7 +2,20 @@ import type Conf from 'conf'
 import { host } from '../host/host'
 import { decrypt, encrypt } from '../host/secrets'
 import { openSafeConf } from '../host/storeHelpers'
-import type { AppSettings, ProxyConfig, TermsAcceptance } from '../../shared/contract'
+import {
+  DEFAULT_GEMINI_ENDPOINT,
+  normalizeGeminiModel,
+  type AppSettings,
+  type CompanionAiConfigInfo,
+  type CompanionAiConfigInput,
+  type CompanionAiProvider,
+  type ProxyConfig,
+  type TermsAcceptance
+} from '../../shared/contract'
+
+function normalizeProvider(raw: unknown): CompanionAiProvider {
+  return raw === 'gemini' || raw === 'ferry-pro' ? raw : 'none'
+}
 
 /** On-disk shape of the app-wide default proxy — secret encrypted-at-rest, same discipline as SiteStore. */
 interface StoredProxy {
@@ -11,6 +24,13 @@ interface StoredProxy {
   port: number
   username?: string
   secretPassword?: string
+}
+
+interface StoredCompanionAi {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  secretApiKey?: string
 }
 
 type StoreSchema = {
@@ -22,6 +42,7 @@ type StoreSchema = {
   historyRetentionDays: number | null
   termsAcceptance: TermsAcceptance | null
   uiPrefs: Record<string, string>
+  companionAi: StoredCompanionAi | null
 }
 
 function sanitizeUiPrefs(raw: unknown): Record<string, string> {
@@ -60,7 +81,8 @@ export class AppSettingsStore {
           autoCheckUpdates: true,
           historyRetentionDays: 90,
           termsAcceptance: null,
-          uiPrefs: {}
+          uiPrefs: {},
+          companionAi: null
         }
       })
     }
@@ -132,6 +154,66 @@ export class AppSettingsStore {
     this.store.set('historyRetentionDays', 90)
     this.store.set('termsAcceptance', null)
     this.store.set('uiPrefs', {})
+    this.store.set('companionAi', null)
+  }
+
+  getCompanionAiConfig(): CompanionAiConfigInfo {
+    const stored = this.store.get('companionAi')
+    const provider = normalizeProvider(stored?.provider)
+    if (!stored || provider === 'none') {
+      return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
+    }
+    return {
+      provider,
+      endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(stored.model),
+      hasApiKey: Boolean(stored.secretApiKey)
+    }
+  }
+
+  setCompanionAiConfig(input: CompanionAiConfigInput): CompanionAiConfigInfo {
+    const provider = normalizeProvider(input.provider)
+    if (provider === 'none') {
+      this.store.set('companionAi', null)
+      return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
+    }
+    const existing = this.store.get('companionAi')
+    const secretApiKey =
+      input.apiKey !== undefined
+        ? input.apiKey.trim()
+          ? encrypt(input.apiKey.trim())
+          : undefined
+        : normalizeProvider(existing?.provider) === provider
+          ? existing?.secretApiKey
+          : undefined // a key belongs to its provider; never send it as another's credential
+
+    const rawEndpoint = input.endpoint.trim()
+    const next: StoredCompanionAi = {
+      provider,
+      endpoint: rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(input.model),
+      secretApiKey
+    }
+    this.store.set('companionAi', next)
+    return {
+      provider: next.provider,
+      endpoint: next.endpoint,
+      model: next.model,
+      hasApiKey: Boolean(next.secretApiKey)
+    }
+  }
+
+  getDecryptedCompanionAiConfig(): (CompanionAiConfigInfo & { apiKey?: string }) | null {
+    const stored = this.store.get('companionAi')
+    const provider = normalizeProvider(stored?.provider)
+    if (!stored || provider === 'none') return null
+    return {
+      provider,
+      endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
+      model: normalizeGeminiModel(stored.model),
+      hasApiKey: Boolean(stored.secretApiKey),
+      apiKey: stored.secretApiKey ? decrypt(stored.secretApiKey) : undefined
+    }
   }
 
   setBandwidthLimitKBps(limit: number | null): void {

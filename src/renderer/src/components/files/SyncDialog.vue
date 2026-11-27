@@ -4,9 +4,12 @@ import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { OperationEvent, SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../../api'
+import { useCompanionStore } from '../../stores/companion.store'
+import { useMonitorStore } from '../../stores/monitor.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSyncStore } from '../../stores/sync.store'
 import { useNotify } from '../../composables/useNotify'
+import { evaluateSyncPreFlight } from '../../utils/companionGuardrails'
 import { formatBytes } from '../../utils/format'
 import FileDiffModal from './FileDiffModal.vue'
 
@@ -21,6 +24,8 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const sync = useSyncStore()
 const sessions = useSessionsStore()
+const monitor = useMonitorStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 
 const localPath = ref('')
@@ -31,6 +36,11 @@ const previewing = ref(false)
 const error = ref<string | null>(null)
 const approval = shallowRef<{ options: SyncOptions; plan: SyncPlan } | null>(null)
 const plan = computed(() => approval.value?.plan)
+const preFlight = computed(() =>
+  plan.value && approval.value
+    ? evaluateSyncPreFlight(plan.value, approval.value.options, monitor.latest?.disk)
+    : null
+)
 let generation = 0
 
 const run = ref<{ requestId: string; operationId?: string; cancelling: boolean } | null>(null)
@@ -195,6 +205,14 @@ function deletionPath(relPath: string): string {
   return `${target.replace(/[/\\]+$/, '')}${separator}${relPath.split('/').join(separator)}`
 }
 
+function askCompanionAboutSync(): void {
+  if (!preFlight.value || preFlight.value.warnings.length === 0) return
+  companion.openPanel('chat')
+  void companion.ask(
+    `Review this folder sync pre-flight warning (${approval.value?.options.direction ?? 'push'}): ${preFlight.value.warnings.join(' ')}`
+  )
+}
+
 function diffPathsForEntry(relPath: string): { localPath: string; remotePath: string } | null {
   const options = approval.value?.options
   if (!options) return null
@@ -312,6 +330,26 @@ function close(): void {
             <li v-if="plan.toDelete.length > 200" class="pt-1 text-xs text-muted">
               …and {{ plan.toDelete.length - 200 }} more item(s)
             </li>
+          </ul>
+        </div>
+
+        <div
+          v-if="preFlight && preFlight.warnings.length > 0"
+          data-sync-preflight-guardrail
+          role="note"
+          class="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-default"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 font-semibold text-warning">
+              <UIcon name="i-lucide-shield-alert" class="size-4 shrink-0" />
+              <span>Companion Pre-Flight Safety Check</span>
+            </div>
+            <UButton size="xs" color="warning" variant="soft" icon="i-lucide-sparkles" @click="askCompanionAboutSync">
+              Ask Companion
+            </UButton>
+          </div>
+          <ul class="list-disc space-y-1 pl-4 text-muted">
+            <li v-for="w in preFlight.warnings" :key="w">{{ w }}</li>
           </ul>
         </div>
       </div>

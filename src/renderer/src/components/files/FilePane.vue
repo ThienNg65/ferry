@@ -12,6 +12,7 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
+import { OPEN_REMOTE_EDITOR_EVENT } from '../../stores/companion.store'
 import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
@@ -231,8 +232,37 @@ function onWindowKeydownFallback(event: KeyboardEvent): void {
   void onKeydown(event)
 }
 
-onMounted(() => window.addEventListener('keydown', onWindowKeydownFallback))
-onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydownFallback))
+async function onOpenRemoteEditorEvent(event: Event): Promise<void> {
+  if (props.side !== 'remote' || sessions.status !== 'connected') return
+  const remotePath = (event as CustomEvent<{ remotePath?: string }>).detail?.remotePath?.trim()
+  const sessionId = sessions.activeSessionId
+  if (!remotePath || !sessionId) return
+  try {
+    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, {
+      sessionId,
+      path: remotePath,
+      builtin: true,
+      viaSudo: false
+    })
+    editorState.value = { editId: res.editId, localTempPath: res.localTempPath, remotePath }
+    editorOpen.value = true
+  } catch (e) {
+    notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeydownFallback)
+  if (props.side === 'remote') {
+    window.addEventListener(OPEN_REMOTE_EDITOR_EVENT, onOpenRemoteEditorEvent)
+  }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onWindowKeydownFallback)
+  if (props.side === 'remote') {
+    window.removeEventListener(OPEN_REMOTE_EDITOR_EVENT, onOpenRemoteEditorEvent)
+  }
+})
 
 void bookmarks.ensureLoaded()
 

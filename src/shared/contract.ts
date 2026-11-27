@@ -1168,9 +1168,148 @@ export const INVOKE_CHANNELS = {
   updateCheck: 'update:check',
   updateGetStatus: 'update:getStatus',
   updateInstallNow: 'update:installNow',
+  // companion
+  companionGetReleases: 'companion:getReleases',
+  companionAiGetConfig: 'companion:ai:getConfig',
+  companionAiSetConfig: 'companion:ai:setConfig',
+  companionAiTest: 'companion:ai:test',
+  companionAiChat: 'companion:ai:chat',
   // profiling
   profileReport: 'profile:report'
 } as const
+
+export type CompanionAiProvider = 'none' | 'gemini' | 'ferry-pro'
+export type CompanionTier = 'free' | 'pro'
+export type CompanionCommandRisk = 'read_only' | 'mutating' | 'destructive'
+
+export const DEFAULT_GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com'
+export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen'
+export const GEMINI_MODEL_OPTIONS = [
+  'gemini-4-hydrogen',
+  'gemini-3.5-flash-lite',
+  'gemini-4-argon'
+] as const
+
+/** Upgrades deprecated legacy Gemini 1.5/2.0/2.5 model identifiers to current gemini-4-hydrogen. */
+export function normalizeGeminiModel(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed || /^gemini-(?:1\.5|2\.0|2\.5)-/i.test(trimmed)) {
+    return DEFAULT_GEMINI_MODEL
+  }
+  return trimmed
+}
+
+export interface CompanionCommandCard {
+  command: string
+  description: string
+  risk: CompanionCommandRisk
+}
+
+export type CompanionUiActionCard =
+  | { kind: 'open-editor'; remotePath: string; label: string }
+  | { kind: 'tail-log'; remotePath: string; label: string }
+  | { kind: 'apply-filter'; mode: 'include' | 'exclude'; pattern: string; label: string }
+
+export interface CompanionStructuredOutput {
+  summary: string
+  rootCause?: string
+  commandCards?: CompanionCommandCard[]
+  uiActionCards?: CompanionUiActionCard[]
+}
+
+const DESTRUCTIVE_COMMAND_RE =
+  /(\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\b|--recursive\b|--force\b)|\bfind\b[^\r\n]*\s-delete\b|\bshred\b|\bwipefs\b|\bmkfs(?:\.\w+)?\b|\bfdisk\b|\bparted\b|\bdd\s+if=|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\binit\s+[06]\b|\bkill\s+-9\b|\bkillall\b|\bpkill\b|\btruncate\b|\biptables\s+-F\b|\bufw\s+disable\b|\bsystemctl\s+(?:stop|disable|mask)\b|\bdocker\s+(?:rm|rmi|system\s+prune)\b|\bchmod\s+(?:-R\s+)?777\b|\b(?:curl|wget)\b[^\r\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b|>\s*\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/)|\bdrop\s+(?:table|database|schema)\b|:\(\)\s*\{)/i
+
+const MUTATING_COMMAND_RE =
+  /(\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bchgrp\b|\bln\b|\bsed\s+-i\b|\btee\b|\bcrontab\b|\buseradd\b|\busermod\b|\buserdel\b|\bpasswd\b|\bufw\b|\biptables\b|\bsysctl\s+-w\b|\bsystemctl\s+(?:restart|reload|start|enable)\b|\bservice\s+\S+\s+(?:restart|reload|start|stop)\b|\b(?:apt|apt-get|yum|dnf|apk|pacman|brew|npm|pnpm|yarn|pip)\s+(?:install|remove|purge|update|upgrade|add)\b|\bgit\s+(?:push|reset|clean|checkout|merge|rebase)\b|\bdocker\s+(?:restart|stop|start|run|exec)\b|\btar\s+-[a-zA-Z]*x|\bunzip\b)/i
+
+const RISK_ORDER: Record<CompanionCommandRisk, number> = {
+  read_only: 0,
+  mutating: 1,
+  destructive: 2
+}
+
+/** Classifies a shell command's safety risk deterministically without trusting model labels alone. */
+export function classifyCommandRisk(command: string): CompanionCommandRisk {
+  if (DESTRUCTIVE_COMMAND_RE.test(command)) return 'destructive'
+  if (MUTATING_COMMAND_RE.test(command)) return 'mutating'
+  return 'read_only'
+}
+
+/** Strips ANSI CSI escapes and ASCII control chars so hidden newline/control sequences cannot hide inside one command card. */
+export function sanitizeCompanionCommand(raw: string, maxLen = 500): string {
+  return raw
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+}
+
+/** Ensures a reported risk level is never downgraded below the deterministic command classification. */
+export function escalateCommandRisk(reported: CompanionCommandRisk, command: string): CompanionCommandRisk {
+  const floor = classifyCommandRisk(command)
+  return RISK_ORDER[floor] > RISK_ORDER[reported] ? floor : reported
+}
+
+export interface CompanionAiConfigInfo {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  hasApiKey: boolean
+}
+
+export interface CompanionAiConfigInput {
+  provider: CompanionAiProvider
+  endpoint: string
+  model: string
+  /** Omitting preserves any stored encrypted key; empty string clears it. */
+  apiKey?: string
+}
+
+export type CompanionAiIntent = 'chat' | 'command' | 'explain-log' | 'diagnose-spike'
+
+export interface CompanionWorkspaceSignal {
+  logSnippet?: string
+  logPath?: string
+  monitorSummary?: string
+}
+
+export interface CompanionAiChatRequest {
+  prompt: string
+  history?: Array<{ role: 'user' | 'assistant'; text: string }>
+  intent?: CompanionAiIntent
+  workspaceSignal?: CompanionWorkspaceSignal
+  context: {
+    appVersion: string
+    isConnected: boolean
+    theme: string
+  }
+}
+
+export interface CompanionAiChatResult {
+  ok: boolean
+  text?: string
+  structured?: CompanionStructuredOutput
+  provider?: CompanionAiProvider
+  error?: string
+}
+
+export interface CompanionReleaseHighlight {
+  version: string
+  publishedAt: string | null
+  title: string
+  highlights: string[]
+  url: string
+  source: 'github' | 'bundled'
+}
+
+export interface CompanionReleasesResult {
+  releases: CompanionReleaseHighlight[]
+  source: 'github' | 'bundled'
+  fetchedAt: string | null
+  offlineFallback: boolean
+  error?: string
+}
 
 /** Union of every valid invoke channel string. */
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[keyof typeof INVOKE_CHANNELS]

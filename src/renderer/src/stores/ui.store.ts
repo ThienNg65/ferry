@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, type WindowThemeSyncInput } from '@shared/contract'
 import { invoke } from '../api'
 import { clampColumnWidth, parseColumnPrefs, type ColumnKey, type ColumnPrefs } from '../utils/columnPrefs'
-import { generateShadeRamp } from '../utils/colorRamp'
+import { generateShadeRamp, isWarmAccent } from '../utils/colorRamp'
 import {
   DEFAULT_FONT_ID,
   DEFAULT_FONT_SIZE,
@@ -252,6 +252,7 @@ function clearAccentThemeSyncTimer(): void {
 
 async function applyTheme(theme: Theme): Promise<void> {
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.style.colorScheme = theme
   if (typeof window !== 'undefined' && window.api) {
     try {
       const payload: WindowThemeSyncInput = { theme, captionColor: resolveCaptionColorRef(theme) }
@@ -275,6 +276,11 @@ function applyAccentColor(hex: string): void {
   for (const [shade, value] of Object.entries(ramp)) {
     document.documentElement.style.setProperty(`--ui-color-primary-${shade}`, value)
   }
+  // The Companion orb follows the accent unless it is warm enough to read as production/failure.
+  document.documentElement.style.setProperty(
+    '--ferry-companion-accent',
+    isWarmAccent(hex) ? '#3a7ce8' : 'var(--ui-color-primary-500)'
+  )
 }
 
 function loadLocalPaneWidth(): number {

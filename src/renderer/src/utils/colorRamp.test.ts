@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contrastRatio, generateShadeRamp } from './colorRamp'
+import { contrastRatio, generateShadeRamp, isWarmAccent } from './colorRamp'
 
 describe('generateShadeRamp', () => {
   it('produces all 11 shade keys as valid hex colors', () => {
@@ -47,5 +47,16 @@ describe('generateShadeRamp', () => {
       expect(contrastRatio(ramp[600], '#ffffff')).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(ramp[400], '#18181b')).toBeGreaterThanOrEqual(4.5)
     }
+  })
+})
+
+describe('isWarmAccent', () => {
+  it('flags red, orange and amber accents', () => {
+    // Gold/yellow (hue 50-60) reads as warning; hue 330+ is rose/red.
+    for (const hex of ['#ef4444', '#f97316', '#f59e0b', '#e11d48', '#ffd700', '#fde047', '#ec4899']) expect(isWarmAccent(hex)).toBe(true)
+  })
+
+  it('accepts blue, purple, green, teal and greys', () => {
+    for (const hex of ['#0a84ff', '#8b5cf6', '#22c55e', '#14b8a6', '#808080', '#a3a3a3']) expect(isWarmAccent(hex)).toBe(false)
   })
 })

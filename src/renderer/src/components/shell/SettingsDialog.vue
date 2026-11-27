@@ -2,7 +2,15 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
 import USwitch from '@nuxt/ui/components/Switch.vue'
-import { INVOKE_CHANNELS, type KnownHostEntry, type ProxyType } from '@shared/contract'
+import {
+  DEFAULT_GEMINI_ENDPOINT,
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_OPTIONS,
+  INVOKE_CHANNELS,
+  type CompanionAiProvider,
+  type KnownHostEntry,
+  type ProxyType
+} from '@shared/contract'
 import privacyMarkdown from '../../../../../PRIVACY.md?raw'
 import termsMarkdown from '../../../../../TERMS.md?raw'
 import { invoke } from '../../api'
@@ -16,6 +24,7 @@ import { useSitesStore } from '../../stores/sites.store'
 import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useHistoryStore } from '../../stores/history.store'
 import { useUpdateStore } from '../../stores/update.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
@@ -40,6 +49,7 @@ const sites = useSitesStore()
 const bookmarks = useBookmarksStore()
 const historyStore = useHistoryStore()
 const update = useUpdateStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 const confirm = useConfirm()
 const ui = useUiStore()
@@ -103,6 +113,109 @@ const proxyTypeOptions: { label: string; value: ProxyType }[] = [
   { label: 'SOCKS5', value: 'socks5' },
   { label: 'HTTP CONNECT', value: 'http' }
 ]
+const aiProviderOptions: { label: string; value: CompanionAiProvider }[] = [
+  { label: 'Off (Local engine)', value: 'none' },
+  { label: 'Google Gemini (BYO Key · Free)', value: 'gemini' },
+  { label: 'Ferry Pro Managed AI', value: 'ferry-pro' }
+]
+const aiProvider = ref<CompanionAiProvider>('none')
+const aiEndpoint = ref('')
+const aiModel = ref('')
+const aiApiKey = ref('')
+const aiSaving = ref(false)
+const aiTesting = ref(false)
+const aiError = ref<string | null>(null)
+const aiTestStatus = ref<string | null>(null)
+
+watch(aiProvider, (next) => {
+  aiError.value = null
+  aiTestStatus.value = null
+  if (next === 'gemini') {
+    if (!aiEndpoint.value.trim()) aiEndpoint.value = DEFAULT_GEMINI_ENDPOINT
+    if (!aiModel.value.trim()) aiModel.value = DEFAULT_GEMINI_MODEL
+  } else if (next === 'ferry-pro') {
+    if (aiEndpoint.value.trim() === DEFAULT_GEMINI_ENDPOINT) aiEndpoint.value = ''
+    if (!aiModel.value.trim()) aiModel.value = DEFAULT_GEMINI_MODEL
+  }
+})
+
+async function syncCompanionAiForm(): Promise<void> {
+  const cfg = await companion.loadAiConfig()
+  aiProvider.value = cfg.provider
+  aiEndpoint.value = cfg.endpoint || (cfg.provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
+  aiModel.value = cfg.model || (cfg.provider !== 'none' ? DEFAULT_GEMINI_MODEL : '')
+  aiApiKey.value = ''
+  aiError.value = null
+  aiTestStatus.value = null
+}
+
+async function saveCompanionAi(clearKey = false, silent = false): Promise<void> {
+  aiSaving.value = true
+  aiError.value = null
+  aiTestStatus.value = null
+  try {
+    const endpoint =
+      aiProvider.value === 'gemini' && !aiEndpoint.value.trim()
+        ? DEFAULT_GEMINI_ENDPOINT
+        : aiEndpoint.value.trim()
+    const model =
+      aiProvider.value === 'none'
+        ? ''
+        : aiModel.value.trim() || DEFAULT_GEMINI_MODEL
+    await companion.saveAiConfig({
+      provider: aiProvider.value,
+      endpoint: aiProvider.value === 'none' ? '' : endpoint,
+      model,
+      apiKey: clearKey || aiProvider.value === 'none' ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
+    })
+    aiApiKey.value = ''
+    if (!silent) {
+      notify.success(clearKey ? 'Saved API key cleared' : 'Companion AI settings saved')
+    }
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+async function testCompanionAi(): Promise<void> {
+  aiTesting.value = true
+  aiError.value = null
+  aiTestStatus.value = null
+  try {
+    if (aiProvider.value === 'none') return
+    const endpoint =
+      aiProvider.value === 'gemini' && !aiEndpoint.value.trim()
+        ? DEFAULT_GEMINI_ENDPOINT
+        : aiEndpoint.value.trim()
+    const model = aiModel.value.trim() || DEFAULT_GEMINI_MODEL
+    const res = await companion.testAiConnection({
+      provider: aiProvider.value,
+      endpoint,
+      model,
+      apiKey: aiApiKey.value ? aiApiKey.value : undefined
+    })
+    if (res.ok) {
+      aiTestStatus.value = `Connected (${res.provider ?? aiProvider.value}).`
+    } else {
+      aiError.value = res.error || 'Connection test failed.'
+    }
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    aiTesting.value = false
+  }
+}
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (isOpen) {
+      void syncCompanionAiForm()
+    }
+  }
+)
 
 const ACCENT_PRESETS: { label: string; hex: string }[] = [
   { label: 'Blue', hex: DEFAULT_ACCENT_COLOR },
@@ -700,6 +813,139 @@ async function saveNetwork(): Promise<void> {
                   @update:model-value="(v: boolean) => ui.setShortenPath(v)"
                 />
               </SettingsRow>
+              <div class="mt-6 border-t border-muted pt-4">
+                <h3 class="text-sm font-semibold text-highlighted">Ferry Companion</h3>
+                <p class="mt-0.5 mb-2 text-xs text-muted">
+                  Optional workspace guide, release highlights, and guided issue reporting (Ctrl+Space).
+                </p>
+                <SettingsRow
+                  label="Quiet Mode"
+                  description="Mute all proactive bubbles, greetings, and tips. Companion stays available on click."
+                >
+                  <USwitch
+                    :model-value="companion.quietMode"
+                    aria-label="Companion Quiet Mode"
+                    @update:model-value="(v: boolean) => companion.setQuietMode(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Show Companion in bottom/right dock"
+                  description="Also show the companion avatar in the connected dock (the top-bar icon remains available)."
+                >
+                  <USwitch
+                    :model-value="companion.showInDock"
+                    aria-label="Show Companion in dock"
+                    @update:model-value="(v: boolean) => companion.setShowInDock(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Release announcements"
+                  description="Show a one-time What's New notice after Ferry updates to a new version."
+                >
+                  <USwitch
+                    :model-value="companion.showReleaseAnnouncements"
+                    aria-label="Companion release announcements"
+                    @update:model-value="(v: boolean) => companion.setShowReleaseAnnouncements(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Contextual tips"
+                  description="Offer non-blocking daily greetings and optional transfer-error help."
+                >
+                  <USwitch
+                    :model-value="companion.contextualTips"
+                    aria-label="Companion contextual tips"
+                    @update:model-value="(v: boolean) => companion.setContextualTips(v)"
+                  />
+                </SettingsRow>
+                <div class="mt-3 rounded-lg border border-default/80 bg-muted/20 p-3">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <p class="text-xs font-semibold text-highlighted">Google Gemini AI &amp; Companion Tiers</p>
+                        <UBadge color="success" variant="subtle" size="xs">Starter (Free)</UBadge>
+                        <UBadge color="primary" variant="subtle" size="xs">Pro</UBadge>
+                        <UBadge color="neutral" variant="outline" size="xs">Ultra · Team · Enterprise (Under Construction)</UBadge>
+                      </div>
+                      <p class="mt-1 text-2xs text-muted">
+                        Free includes local Snippets, Command History, offline commands, and unlimited BYO Google AI Studio Gemini keys. Pro adds managed proxy routing plus workspace log &amp; monitor diagnostics. Prompts are locally redacted before transit.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="mt-2.5 flex flex-col gap-2">
+                    <URadioGroup
+                      v-model="aiProvider"
+                      :items="aiProviderOptions"
+                      orientation="horizontal"
+                      :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
+                    />
+                    <template v-if="aiProvider !== 'none'">
+                      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label class="flex flex-col gap-1 text-xs">
+                          <span class="text-muted">
+                            {{ aiProvider === 'ferry-pro' ? 'Ferry Pro Proxy URL' : 'Gemini API Endpoint' }}
+                          </span>
+                          <UInput
+                            v-model="aiEndpoint"
+                            size="xs"
+                            :placeholder="aiProvider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : 'https://api.ferry.example/companion'"
+                          />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs">
+                          <span class="text-muted">{{ aiProvider === 'ferry-pro' ? 'Model' : 'Gemini Model' }}</span>
+                          <UInput
+                            v-model="aiModel"
+                            size="xs"
+                            :placeholder="DEFAULT_GEMINI_MODEL"
+                            list="ferry-gemini-models"
+                          />
+                          <datalist id="ferry-gemini-models">
+                            <option v-for="m in GEMINI_MODEL_OPTIONS" :key="m" :value="m" />
+                          </datalist>
+                        </label>
+                      </div>
+                      <label class="flex flex-col gap-1 text-xs">
+                        <span class="text-muted">
+                          {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
+                          {{ companion.aiConfig.hasApiKey ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
+                        </span>
+                        <PasswordInput
+                          v-model="aiApiKey"
+                          :placeholder="aiProvider === 'ferry-pro' ? 'ferry_pro_…' : 'AIza…'"
+                        />
+                      </label>
+                    </template>
+                    <p v-if="aiError" class="text-2xs text-error">{{ aiError }}</p>
+                    <p v-else-if="aiTestStatus" class="text-2xs text-success">{{ aiTestStatus }}</p>
+                    <div class="flex flex-wrap items-center justify-end gap-1.5">
+                      <UButton
+                        v-if="aiProvider !== 'none' && companion.aiConfig.hasApiKey"
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="aiSaving || aiTesting"
+                        @click="saveCompanionAi(true)"
+                      >
+                        Clear key
+                      </UButton>
+                      <UButton
+                        v-if="aiProvider !== 'none'"
+                        size="xs"
+                        color="neutral"
+                        variant="outline"
+                        :loading="aiTesting"
+                        :disabled="aiSaving"
+                        @click="testCompanionAi"
+                      >
+                        Test connection
+                      </UButton>
+                      <UButton size="xs" color="primary" variant="soft" :loading="aiSaving" :disabled="aiTesting" @click="saveCompanionAi(false)">
+                        Save AI settings
+                      </UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div

@@ -117,9 +117,14 @@ export function registerSettingsHandlers(): void {
     if (!key.startsWith('ferry:ui:') || key.length > 64) {
       failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a valid ferry:ui:* key')
     }
+    const maxLen =
+      key === 'ferry:ui:companionSnippets' || key === 'ferry:ui:companionCmdHistory' ? 131_072 : 4096
     const value = update?.value
-    if (value !== null && (typeof value !== 'string' || value.length > 4096)) {
-      failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a string value (<= 4096 chars) or null')
+    if (value !== null && (typeof value !== 'string' || value.length > maxLen)) {
+      failValidation(
+        INVOKE_CHANNELS.settingsSetUiPref,
+        `settings:setUiPref requires a string value (<= ${maxLen} chars) or null`
+      )
     }
     AppSettingsStore.getInstance().setUiPref(key, value)
   })

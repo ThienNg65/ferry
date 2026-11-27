@@ -184,4 +184,60 @@ describe('AppSettingsStore', () => {
     store.reset()
     expect(new AppSettingsStore().get().uiPrefs).toEqual({})
   })
+
+  it('encrypts companion AI API keys at rest, preserves on omit, normalizes legacy providers, and wipes when disabled', () => {
+    const store = new AppSettingsStore()
+    const saved = store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-2.5-flash',
+      apiKey: 'AIza-live-secret'
+    })
+    expect(saved).toEqual({
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-hydrogen',
+      hasApiKey: true
+    })
+    expect(JSON.stringify(disks.get('app-settings'))).not.toContain('AIza-live-secret')
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-live-secret')
+
+    // Omitting apiKey preserves the encrypted secret
+    store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-argon'
+    })
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-live-secret')
+    expect(store.getCompanionAiConfig().model).toBe('gemini-4-argon')
+
+    // Switching provider with the key left blank must not carry the old provider's secret over
+    const switched = store.setCompanionAiConfig({
+      provider: 'ferry-pro',
+      endpoint: 'https://proxy.ferry.example',
+      model: 'gemini-4-hydrogen'
+    })
+    expect(switched.hasApiKey).toBe(false)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBeUndefined()
+
+    // Legacy stored providers normalize safely to 'none'
+    disks.get('app-settings')!.companionAi = {
+      provider: 'ollama',
+      endpoint: 'http://localhost:11434',
+      model: 'llama3.2'
+    }
+    expect(store.getCompanionAiConfig()).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
+    expect(store.getDecryptedCompanionAiConfig()).toBeNull()
+
+    // Disabling AI wipes the stored secret completely
+    store.setCompanionAiConfig({
+      provider: 'ferry-pro',
+      endpoint: 'https://proxy.ferry.example',
+      model: 'gemini-4-hydrogen',
+      apiKey: 'ferry-pro-secret'
+    })
+    const disabled = store.setCompanionAiConfig({ provider: 'none', endpoint: '', model: '' })
+    expect(disabled).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
+    expect(store.getDecryptedCompanionAiConfig()).toBeNull()
+  })
 })

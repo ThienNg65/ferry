@@ -22,6 +22,7 @@ import { useDockState } from './composables/useDockState'
 import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
+import { useCompanionStore } from './stores/companion.store'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 import ConnectionModals from './components/sessions/ConnectionModals.vue'
 
@@ -30,6 +31,7 @@ const SettingsDialog = defineAsyncComponent(() => import('./components/shell/Set
 const HistoryDialog = defineAsyncComponent(() => import('./components/history/HistoryDialog.vue'))
 const CommandPalette = defineAsyncComponent(() => import('./components/shell/CommandPalette.vue'))
 const LegalConsentDialog = defineAsyncComponent(() => import('./components/shell/LegalConsentDialog.vue'))
+const CompanionPanel = defineAsyncComponent(() => import('./components/companion/CompanionPanel.vue'))
 
 // Only ever rendered once connected — deferring these keeps their whole
 // subtree (FileList/FileRow/FilePreviewDialog/TransferQueue/TerminalView/...)
@@ -40,6 +42,8 @@ const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomD
 const sessions = useSessionsStore()
 const settingsStore = useSettingsStore()
 const updateStore = useUpdateStore()
+const companion = useCompanionStore()
+const transferQueue = useTransferQueueStore()
 const ui = useUiStore()
 const needsLegalConsent = computed(
   () =>
@@ -64,6 +68,7 @@ window.addEventListener('resize', onWindowResize)
 let disposeWindowBounds: (() => void) | null = null
 onUnmounted(() => {
   disposeWindowBounds?.()
+  companion.disposeTimers()
   unsubscribeUpdateAvailable()
   unsubscribeUpdateDownloaded()
   window.removeEventListener('resize', onWindowResize)
@@ -196,6 +201,21 @@ function onTabShortcut(event: KeyboardEvent): void {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return
   }
+  if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.code === 'Space') {
+    const target = event.target
+    const typing =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && (target.isContentEditable || target.closest('.xterm') !== null))
+    const inCompanion =
+      companion.open && target instanceof HTMLElement && target.closest('[data-companion-panel]') !== null
+    if ((typing && !inCompanion) || document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
+      return
+    }
+    event.preventDefault()
+    companion.togglePanel()
+    return
+  }
   if (!event.shiftKey && event.code === 'Backquote') {
     if (!isConnected.value || document.querySelector('[role="dialog"]')) {
       return
@@ -300,12 +320,15 @@ watch(
   }
 )
 
+const promoToastActive = ref(false)
+
 watch(
   [() => settingsStore.loaded, needsLegalConsent],
   ([loaded, consentNeeded]) => {
     if (!loaded || consentNeeded || promoToastShown) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
+    promoToastActive.value = true
 
     const { id } = toast.add({
       title: 'Modern Glass UI (In Development)',
@@ -316,6 +339,7 @@ watch(
       'onUpdate:open': (open: boolean) => {
         if (!open) {
           promoToastId = null
+          promoToastActive.value = false
           ui.dismissGlassUiPromo()
         }
       },
@@ -329,6 +353,7 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
+            promoToastActive.value = false
             notify.success(
               'Modern Glass UI enabled',
               'You can switch back anytime in Settings → Appearance.'
@@ -343,6 +368,7 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
+            promoToastActive.value = false
           }
         }
       ]
@@ -350,6 +376,51 @@ watch(
     promoToastId = id
   },
   { immediate: true }
+)
+
+// Initialize Ferry Companion lifecycle after legal consent, settings hydration, and any promo toast dismissal.
+watch(
+  [() => settingsStore.loaded, needsLegalConsent, promoToastActive],
+  ([loaded, consentNeeded, promoActive]) => {
+    if (!loaded || consentNeeded || promoActive || companion.lifecycleInitialized) return
+    const resolveAndInit = async (): Promise<void> => {
+      let version = updateStore.currentVersion
+      if (!version) {
+        try {
+          version = await invoke<string>(INVOKE_CHANNELS.systemGetAppVersion)
+        } catch {
+          version = ''
+        }
+      }
+      if (version) {
+        companion.initLifecycle(version)
+      }
+    }
+    setTimeout(() => {
+      void resolveAndInit()
+    }, 0)
+  },
+  { immediate: true }
+)
+
+// Offer optional, rate-limited troubleshooting help when a transfer transitions into error.
+const transferStateById = new Map<string, string>()
+watch(
+  () => transferQueue.list.map((i) => `${i.transferId}\0${i.state}\0${i.error ?? ''}`),
+  () => {
+    const activeIds = new Set<string>()
+    for (const item of transferQueue.list) {
+      activeIds.add(item.transferId)
+      const prevState = transferStateById.get(item.transferId)
+      transferStateById.set(item.transferId, item.state)
+      if (item.state === 'error' && prevState !== 'error' && item.error) {
+        companion.notifyTransferFailure(item.error)
+      }
+    }
+    for (const id of transferStateById.keys()) {
+      if (!activeIds.has(id)) transferStateById.delete(id)
+    }
+  }
 )
 </script>
 
@@ -453,5 +524,6 @@ watch(
     <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
     <ConnectionModals />
+    <CompanionPanel v-if="companion.hasOpenedOnce" />
   </UApp>
 </template>

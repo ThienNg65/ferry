@@ -431,11 +431,12 @@ describe('Modern Glass UI rollout', () => {
     expect(localStorage.getItem('ferry:ui:glassUi')).toBe('true')
   })
 
-  it('main.css separates menu surface tokens and disables nested backdrop-filter over open dialogs', () => {
+  it('main.css separates menu surface tokens and disables nested backdrop-filter over dialogs and Companion panels', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8')
     expect(css).toContain('--ferry-glass-menu-bg:')
     expect(css).toContain('--ferry-glass-menu-nested-bg:')
     expect(css).toContain('html.ferry-glass [role="listbox"]')
-    expect(css).toContain('html.ferry-glass:has([role="dialog"])')
+    expect(css).toContain(':has([role="dialog"])')
+    expect(css).toContain(':has([data-companion-panel])')
   })
 })

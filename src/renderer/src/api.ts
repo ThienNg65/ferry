@@ -27,7 +27,12 @@ const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.windowSyncTheme,
   INVOKE_CHANNELS.windowGetDisplays,
   INVOKE_CHANNELS.updateGetStatus,
-  INVOKE_CHANNELS.settingsSetUiPref
+  INVOKE_CHANNELS.settingsSetUiPref,
+  INVOKE_CHANNELS.companionGetReleases,
+  INVOKE_CHANNELS.companionAiGetConfig,
+  INVOKE_CHANNELS.companionAiSetConfig,
+  INVOKE_CHANNELS.companionAiTest,
+  INVOKE_CHANNELS.companionAiChat
 ])
 
 /**
