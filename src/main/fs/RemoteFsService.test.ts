@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, readFile as readLocalFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
-import { commitRemoteFile, copyRemote, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, copyRemote, downloadForEdit, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { SessionManager } from '../ssh/SessionManager'
 
@@ -133,6 +133,157 @@ describe('RemoteFsService permission & sudo safety', () => {
       await expect(uploadForEditSudo('sess-1', localFile, '/etc/service.conf')).rejects.toThrow('Operation not permitted')
       expect(commands.some((c) => c.includes('mv -f'))).toBe(false)
       expect(commands.some((c) => c.includes('rm -f'))).toBe(true)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('RemoteFsService.downloadForEdit stream completion', () => {
+  async function fixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'ferry-download-test-'))
+    return { dir, localPath: join(dir, 'remote.txt') }
+  }
+
+  function setup(readStream: PassThrough, size: number) {
+    const sftp = { createReadStream: vi.fn(() => readStream) }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => ({ size }))
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+    return { shell, sftp }
+  }
+
+  it('writes the complete remote file and reports byte progress', async () => {
+    const { dir, localPath } = await fixture()
+    const content = 'remote file contents'
+    const stream = new PassThrough()
+    const { shell, sftp } = setup(stream, Buffer.byteLength(content))
+    const onProgress = vi.fn()
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath, onProgress)
+      stream.end(content)
+      await download
+
+      expect(await readLocalFile(localPath, 'utf8')).toBe(content)
+      expect(onProgress).toHaveBeenLastCalledWith(Buffer.byteLength(content))
+      expect(shell.stat).toHaveBeenCalledWith('/srv/remote.txt')
+      expect(sftp.createReadStream).toHaveBeenCalledWith('/srv/remote.txt')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an early remote close and removes the partial local file', async () => {
+    const { dir, localPath } = await fixture()
+    const stream = new PassThrough()
+    const { sftp } = setup(stream, 20)
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath)
+      await vi.waitFor(() => expect(sftp.createReadStream).toHaveBeenCalledTimes(1))
+      stream.write('partial')
+      stream.destroy()
+
+      await expect(download).rejects.toMatchObject({ code: 'SFTP' })
+      await expect(readLocalFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects remote stream errors and removes the partial local file', async () => {
+    const { dir, localPath } = await fixture()
+    const stream = new PassThrough()
+    const { sftp } = setup(stream, 20)
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath)
+      await vi.waitFor(() => expect(sftp.createReadStream).toHaveBeenCalledTimes(1))
+      stream.write('partial')
+      stream.destroy(new Error('channel lost'))
+
+      await expect(download).rejects.toMatchObject({ code: 'SFTP' })
+      await expect(readLocalFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an incomplete download and removes the partial local file', async () => {
+    const { dir, localPath } = await fixture()
+    const stream = new PassThrough()
+    const { sftp } = setup(stream, 20)
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath)
+      await vi.waitFor(() => expect(sftp.createReadStream).toHaveBeenCalledTimes(1))
+      stream.end('short')
+
+      await expect(download).rejects.toMatchObject({ code: 'SFTP' })
+      await expect(readLocalFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('times out an idle editor download and removes the partial local file', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { dir, localPath } = await fixture()
+    const stream = new PassThrough()
+    const { sftp } = setup(stream, 20)
+    let resolveProgress!: () => void
+    const progress = new Promise<void>((resolve) => {
+      resolveProgress = resolve
+    })
+    const onProgress = vi.fn(() => resolveProgress())
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath, onProgress, undefined, {
+        idleTimeoutMs: 50,
+        timeoutMs: 1_000
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(sftp.createReadStream).toHaveBeenCalledTimes(1)
+      stream.write('partial')
+      await progress
+      const assertion = expect(download).rejects.toMatchObject({ code: 'SSH_TIMEOUT' })
+
+      await vi.advanceTimersByTimeAsync(51)
+
+      await assertion
+      expect(stream.destroyed).toBe(true)
+      await expect(readLocalFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      vi.useRealTimers()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels an active download and removes the partial local file', async () => {
+    const { dir, localPath } = await fixture()
+    const stream = new PassThrough()
+    const { shell, sftp } = setup(stream, 20)
+    const controller = new AbortController()
+    let resolveProgress!: () => void
+    const progress = new Promise<void>((resolve) => {
+      resolveProgress = resolve
+    })
+    const onProgress = vi.fn(() => resolveProgress())
+
+    try {
+      const download = downloadForEdit('sess-1', '/srv/remote.txt', localPath, onProgress, controller.signal)
+      await vi.waitFor(() => expect(sftp.createReadStream).toHaveBeenCalledTimes(1))
+      stream.write('partial')
+      await progress
+      controller.abort()
+
+      await expect(download).rejects.toMatchObject({ code: 'CANCELLED' })
+      expect(shell.stat).toHaveBeenCalledWith('/srv/remote.txt', { signal: controller.signal })
+      await expect(readLocalFile(localPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
