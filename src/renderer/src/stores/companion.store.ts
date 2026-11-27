@@ -1221,6 +1221,7 @@ export const useCompanionStore = defineStore('companion', {
     clearConversation(): void {
       this.finishReveal()
       this.messages = []
+      this.aiErrorLabel = null
     },
 
     disposeTimers(): void {

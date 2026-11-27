@@ -16,8 +16,9 @@ describe('CompanionAvatar', () => {
     expect(w.attributes('aria-hidden')).toBe('true')
   })
 
-  it('renders no SVG filters at 16px and filters at 96px', () => {
+  it('renders no SVG filters at 16px and filters at 20px and 96px', () => {
     expect(mount(CompanionAvatar, { props: { size: 16 } }).findAll('filter')).toHaveLength(0)
+    expect(mount(CompanionAvatar, { props: { size: 20 } }).findAll('filter').length).toBeGreaterThan(0)
     expect(mount(CompanionAvatar, { props: { size: 96 } }).findAll('filter').length).toBeGreaterThan(0)
   })
 

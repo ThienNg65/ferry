@@ -147,12 +147,35 @@ describe('CompanionPanel', () => {
     await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven', actions: [{ id: 'open-settings', label: 'Check AI Settings' }] }) })
     await nextTick()
     expect(w.find('[role="log"]').attributes('aria-busy')).toBe('true')
-    expect(w.text()).not.toContain('seven')
+    expect(w.find('[role="log"] [aria-hidden="true"]').text()).not.toContain('seven')
     expect(w.text()).not.toContain('Check AI Settings')
     vi.advanceTimersByTime(2000); await nextTick()
     expect(w.find('[role="log"]').attributes('aria-busy')).toBe('false')
     expect(w.text()).toContain('one two three four five six seven')
     expect(w.text()).toContain('Check AI Settings')
+  })
+
+  it('announces the full reply to screen readers while revealing', async () => {
+    vi.useFakeTimers()
+    const s = useCompanionStore(); s.openPanel()
+    const w = mount(CompanionPanel, { global: { stubs } })
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    await nextTick()
+    expect(w.find('[role="log"] .sr-only').text()).toBe('one two three four five six seven')
+    expect(w.find('[role="log"] [aria-hidden="true"]').exists()).toBe(true)
+  })
+
+  it('scrolls again as the reveal progresses and when it ends', async () => {
+    vi.useFakeTimers()
+    const s = useCompanionStore(); s.openPanel()
+    const w = mount(CompanionPanel, { global: { stubs } })
+    const log = w.find('[role="tabpanel"]').element as HTMLElement
+    Object.defineProperty(log, 'scrollHeight', { value: 999, configurable: true })
+    await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    await nextTick()
+    log.scrollTop = 0
+    vi.advanceTimersByTime(2000); await nextTick(); await nextTick()
+    expect(log.scrollTop).toBe(999)
   })
 
   it('sets listening while the focused input has text', async () => {

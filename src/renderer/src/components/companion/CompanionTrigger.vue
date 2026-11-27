@@ -26,6 +26,7 @@ const tooltipText = computed(() =>
     : [
         companion.effectiveAvatarState !== 'idle' ? companion.avatarLabel : null,
         companion.prodSiteLabel,
+        companion.hasNotice ? companion.notice?.title : null,
         'Ferry Companion (Ctrl+Space)'
       ]
         .filter(Boolean)

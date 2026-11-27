@@ -152,7 +152,7 @@ watch(
 )
 
 watch(
-  () => companion.messages.length,
+  () => [companion.messages.length, companion.reveal?.shown, companion.reveal === null],
   () => {
     void nextTick(() => {
       const el = scrollContainerRef.value
@@ -544,7 +544,11 @@ function openFullNotes(url?: string): void {
                     : 'border border-default bg-muted/35 text-default'
                 "
               >
-                {{ displayText(msg) }}
+                <template v-if="isRevealing(msg)">
+                  <span class="sr-only">{{ msg.text }}</span>
+                  <span aria-hidden="true">{{ displayText(msg) }}</span>
+                </template>
+                <template v-else>{{ msg.text }}</template>
               </div>
 
               <template v-if="!isRevealing(msg)">

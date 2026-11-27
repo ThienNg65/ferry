@@ -25,7 +25,7 @@ const props = withDefaults(
 )
 
 const uid = useId()
-const full = computed(() => props.size >= 24)
+const full = computed(() => props.size >= 20)
 const ARC = 'M87.6,71.7 A43.4,43.4 0 0 1 12.4,71.7'
 const LIGHTS = [
   { cx: 30, cy: 34, r: 20, color: 'var(--orb-l1)', orbit: 'orb-orbit1' },
@@ -78,7 +78,7 @@ onBeforeUnmount(() => {
     :style="{ width: `${size}px`, height: `${size}px` }"
     :data-companion-state="state"
     :data-animate="running"
-    :data-orb-size="size < 24 ? 'small' : 'full'"
+    :data-orb-size="size < 20 ? 'small' : 'full'"
     :data-lifting="lifting || undefined"
     aria-hidden="true"
   >
@@ -251,7 +251,7 @@ onBeforeUnmount(() => {
 .orb-orbit2 {
   animation: orb-spin var(--orb-o2) linear infinite reverse;
 }
-.orb[data-companion-state='error'] :is(.orb-orbit1, .orb-orbit2) {
+.orb[data-companion-state='error'] :is(.orb-orbit1, .orb-orbit2, .orb-caustic) {
   animation: none;
 }
 

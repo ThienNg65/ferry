@@ -308,8 +308,10 @@ describe('orb state', () => {
     s.closePanel()
     expect(s.reveal).toBeNull()
     await s.deliverAiOrLocalReply({ errorPrefix: '', buildLocal: () => ({ text: 'one two three four five six seven' }) })
+    s.aiErrorLabel = 'AI error'
     s.clearConversation()
     expect(s.reveal).toBeNull()
+    expect(s.aiErrorLabel).toBeNull()
   })
 
   it('skips the reveal under reduced motion', async () => {
