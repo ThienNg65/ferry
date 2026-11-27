@@ -1,11 +1,18 @@
 import { randomBytes } from 'crypto'
-import { readFile as readLocalFile, writeFile as writeLocalFile } from 'fs/promises'
+import { readFile as readLocalFile, writeFile as writeLocalFile, unlink as unlinkLocalFile } from 'fs/promises'
 import * as path from 'path'
 import { shellEscape } from '../ssh/shellEscape'
 import { createReadStream, createWriteStream } from 'fs'
 import type { SFTPWrapper, Stats } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
+import {
+  DEFAULT_SFTP_EDIT_DOWNLOAD_TIMEOUT_MS,
+  DEFAULT_SFTP_READ_IDLE_TIMEOUT_MS,
+  DEFAULT_SFTP_READ_TIMEOUT_MS,
+  monitorSftpReadStream,
+  type SftpReadStreamTimeouts
+} from '../ssh/sftpReadStream'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
 import type { CopyManyResult, FileEntry, FileListResult, FileReadResult, RemoteAdminRequest } from '../../shared/contract'
 import { pickUniqueName } from '../../shared/uniqueName'
@@ -167,7 +174,10 @@ export async function chmodRemote(sessionId: string, targetPath: string, mode: s
 /** Reads a remote file's content as text, capped at MAX_TEXT_PREVIEW_BYTES. */
 export async function readFile(sessionId: string, filePath: string): Promise<FileReadResult> {
   const shell = SessionManager.getInstance().shell(sessionId)
-  const result = await shell.readFile(filePath, MAX_TEXT_PREVIEW_BYTES)
+  const result = await shell.readFile(filePath, MAX_TEXT_PREVIEW_BYTES, {
+    idleTimeoutMs: DEFAULT_SFTP_READ_IDLE_TIMEOUT_MS,
+    timeoutMs: DEFAULT_SFTP_READ_TIMEOUT_MS
+  })
   return { path: filePath, ...result }
 }
 
@@ -211,72 +221,100 @@ export async function downloadForEdit(
   remotePath: string,
   localPath: string,
   onProgress?: (bytesTransferred: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeouts: SftpReadStreamTimeouts = {}
 ): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
+  if (signal?.aborted) {
+    throw new SshError('CANCELLED', `Download of "${remotePath}" was cancelled`)
+  }
   const sftp = await shell.sftp()
-  await new Promise<void>((resolve, reject) => {
-    const readStream = sftp.createReadStream(remotePath)
-    // Restrictive mode (POSIX only — see EditSessionManager.ts's temp dir
-    // for the same reasoning): the remote file's content may be sensitive,
-    // and the default createWriteStream mode is world-readable on a typical
-    // shared-/tmp Linux/macOS setup.
-    const writeStream = createWriteStream(localPath, { mode: 0o600 })
-    
-    let settled = false
-    let finished = false
-    const onAbort = (): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(new Error('Operation cancelled'))
-    }
+  if (signal?.aborted) {
+    throw new SshError('CANCELLED', `Download of "${remotePath}" was cancelled`)
+  }
+  const stats = await shell.stat(remotePath, { signal })
+  const expectedBytes = typeof stats.size === 'number' ? stats.size : undefined
+  if (signal?.aborted) {
+    throw new SshError('CANCELLED', `Download of "${remotePath}" was cancelled`)
+  }
+
+  const readStream = sftp.createReadStream(remotePath)
+  // Restrictive mode (POSIX only — see EditSessionManager.ts's temp dir
+  // for the same reasoning): the remote file's content may be sensitive,
+  // and the default createWriteStream mode is world-readable on a typical
+  // shared-/tmp Linux/macOS setup.
+  const writeStream = createWriteStream(localPath, { mode: 0o600 })
+
+  let finished = false
+  let cancelled = false
+  const onAbort = (): void => {
+    if (cancelled) return
+    cancelled = true
+    writeStream.destroy()
+  }
+
+  const writeCompletion = new Promise<void>((resolve, reject) => {
     const cleanup = (): void => {
-      signal?.removeEventListener('abort', onAbort)
-      readStream.destroy()
-      writeStream.destroy()
+      writeStream.removeListener('error', onError)
+      writeStream.removeListener('finish', onFinish)
+      writeStream.removeListener('close', onClose)
     }
-
-    if (signal) {
-      if (signal.aborted) {
-        cleanup()
-        return reject(new Error('Operation cancelled'))
-      }
-      signal.addEventListener('abort', onAbort, { once: true })
+    const onError = (error: Error): void => {
+      cleanup()
+      reject(new SshError('UNKNOWN', `Failed to write "${localPath}": ${error.message}`))
     }
-
-    let bytesTransferred = 0
-    readStream.on('data', (chunk: Buffer) => {
-      bytesTransferred += chunk.length
-      onProgress?.(bytesTransferred)
-    })
-    readStream.on('error', (e: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(new SshError('SFTP', `Failed to download "${remotePath}": ${e.message}`))
-    })
-    writeStream.on('error', (e: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(new SshError('UNKNOWN', `Failed to write "${localPath}": ${e.message}`))
-    })
-    writeStream.on('finish', () => {
+    const onFinish = (): void => {
       finished = true
-    })
-    writeStream.on('close', () => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener('abort', onAbort)
+    }
+    const onClose = (): void => {
+      cleanup()
       if (!finished) {
         reject(new SshError('UNKNOWN', `Download stream for "${localPath}" closed before finishing`))
         return
       }
       resolve()
-    })
-    readStream.pipe(writeStream)
+    }
+    writeStream.on('error', onError)
+    writeStream.on('finish', onFinish)
+    writeStream.on('close', onClose)
   })
+
+  signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) onAbort()
+
+  const readCompletion = monitorSftpReadStream(readStream, {
+    remotePath,
+    expectedBytes,
+    signal,
+    idleTimeoutMs: timeouts.idleTimeoutMs ?? DEFAULT_SFTP_READ_IDLE_TIMEOUT_MS,
+    timeoutMs: timeouts.timeoutMs ?? DEFAULT_SFTP_EDIT_DOWNLOAD_TIMEOUT_MS,
+    onData: (_chunk, bytesTransferred) => onProgress?.(bytesTransferred)
+  })
+
+  const completion = Promise.all([readCompletion, writeCompletion])
+  try {
+    readStream.pipe(writeStream)
+    await completion
+    if (cancelled) {
+      throw new SshError('CANCELLED', `Download of "${remotePath}" was cancelled`)
+    }
+  } catch (error) {
+    readStream.unpipe(writeStream)
+    readStream.destroy()
+    if (!writeStream.closed) {
+      await new Promise<void>((resolve) => {
+        writeStream.once('close', resolve)
+        writeStream.destroy()
+      })
+    }
+    await unlinkLocalFile(localPath).catch(() => undefined)
+    if (cancelled && !(error instanceof SshError && error.code === 'CANCELLED')) {
+      throw new SshError('CANCELLED', `Download of "${remotePath}" was cancelled`)
+    }
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 export async function statRemoteForEdit(sessionId: string, remotePath: string): Promise<{ mtime: number; size: number; mode: number | null } | null> {

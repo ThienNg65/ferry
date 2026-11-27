@@ -5,6 +5,7 @@ import { BoundedLineBuffer } from './BoundedLineBuffer'
 import { SshError } from './errors'
 import { withRetry } from './retry'
 import { shellEscape } from './shellEscape'
+import { monitorSftpReadStream, type SftpReadStreamTimeouts } from './sftpReadStream'
 
 /** Result of a buffered remote command. */
 export interface ExecResult {
@@ -391,29 +392,54 @@ export class RemoteShell {
   private withSftpTimeout<T>(
     label: string,
     timeoutMs: number,
-    start: (resolve: (value: T) => void, reject: (err: unknown) => void) => void
+    start: (resolve: (value: T) => void, reject: (err: unknown) => void) => void,
+    signal?: AbortSignal
   ): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       let settled = false
-      const timer = setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+
+      const cleanup = (): void => {
+        if (timer !== undefined) clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const fail = (error: unknown): void => {
         if (settled) return
         settled = true
-        reject(new SshError('SSH_TIMEOUT', `${label} timed out after ${timeoutMs}ms`, true))
+        cleanup()
+        reject(error)
+      }
+      const onAbort = (): void => {
+        fail(new SshError('CANCELLED', `${label} cancelled`))
+      }
+
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) {
+        onAbort()
+        return
+      }
+
+      timer = setTimeout(() => {
+        fail(new SshError('SSH_TIMEOUT', `${label} timed out after ${timeoutMs}ms`, true))
       }, timeoutMs)
-      start(
-        (value) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          resolve(value)
-        },
-        (err) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          reject(err)
-        }
-      )
+
+      try {
+        start(
+          (value) => {
+            if (settled) return
+            settled = true
+            cleanup()
+            resolve(value)
+          },
+          (err) => fail(err)
+        )
+      } catch (error) {
+        fail(error)
+      }
     })
   }
 
@@ -508,8 +534,11 @@ export class RemoteShell {
     })
   }
 
-  /** Stats a remote path (following symlinks). */
-  async stat(remotePath: string): Promise<Stats> {
+  /** Stats a remote path (following symlinks); aborting the optional signal cancels the wait for its SFTP callback. */
+  async stat(remotePath: string, options: Pick<RemoteOptions, 'signal'> = {}): Promise<Stats> {
+    if (options.signal?.aborted) {
+      throw new SshError('CANCELLED', `SFTP stat "${remotePath}" cancelled`)
+    }
     const sftp = await this.sftp()
     return this.withSftpTimeout<Stats>(`SFTP stat "${remotePath}"`, DEFAULT_TIMEOUT_MS, (resolve, reject) => {
       sftp.stat(remotePath, (statErr, stats) => {
@@ -519,7 +548,7 @@ export class RemoteShell {
         }
         resolve(stats)
       })
-    })
+    }, options.signal)
   }
 
   /** Stats a remote path without following symlinks. */
@@ -541,35 +570,46 @@ export class RemoteShell {
   async readFileBuffer(
     remotePath: string,
     maxBytes: number,
-    existingStats?: Stats
+    existingStats?: Stats,
+    options: SftpReadStreamTimeouts & { signal?: AbortSignal } = {}
   ): Promise<{ buffer: Buffer; truncated: boolean; size: number }> {
+    if (options.signal?.aborted) {
+      throw new SshError('CANCELLED', `SFTP read "${remotePath}" cancelled`)
+    }
     const sftp = await this.sftp()
-    const stats = existingStats ?? (await this.stat(remotePath))
+    if (options.signal?.aborted) {
+      throw new SshError('CANCELLED', `SFTP read "${remotePath}" cancelled`)
+    }
+    const stats = existingStats ?? (await this.stat(remotePath, { signal: options.signal }))
     const size = stats.size ?? 0
     const length = Math.min(size, maxBytes)
     if (length === 0) {
       return { buffer: Buffer.alloc(0), truncated: size > length, size }
     }
-    return new Promise((resolve, reject) => {
-      const stream = sftp.createReadStream(remotePath, { start: 0, end: length - 1 })
-      const chunks: Buffer[] = []
-      stream.on('data', (chunk: Buffer) => chunks.push(chunk))
-      stream.on('error', (readErr: Error) => {
-        reject(new SshError('SFTP', `Failed to read "${remotePath}": ${readErr.message}`))
-      })
-      stream.on('close', () => {
-        resolve({
-          buffer: Buffer.concat(chunks),
-          truncated: size > maxBytes,
-          size
-        })
-      })
+
+    const stream = sftp.createReadStream(remotePath, { start: 0, end: length - 1 })
+    const chunks: Buffer[] = []
+    await monitorSftpReadStream(stream, {
+      remotePath,
+      expectedBytes: length,
+      ...options,
+      onData: (chunk) => chunks.push(chunk)
     })
+
+    return {
+      buffer: Buffer.concat(chunks),
+      truncated: size > maxBytes,
+      size
+    }
   }
 
   /** Reads a remote file's content as text, capped at `maxBytes` (huge files are truncated, not rejected). */
-  async readFile(remotePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean; size: number }> {
-    const { buffer, truncated, size } = await this.readFileBuffer(remotePath, maxBytes)
+  async readFile(
+    remotePath: string,
+    maxBytes: number,
+    options: SftpReadStreamTimeouts & { signal?: AbortSignal } = {}
+  ): Promise<{ content: string; truncated: boolean; size: number }> {
+    const { buffer, truncated, size } = await this.readFileBuffer(remotePath, maxBytes, undefined, options)
     return {
       content: buffer.toString('utf-8'),
       truncated,
