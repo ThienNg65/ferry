@@ -493,4 +493,52 @@ describe('companion.store remediation behaviors', () => {
     const last = store.messages[store.messages.length - 1]
     expect(last.rootCause).toContain('memory limit')
   })
+
+  it('isolates requestQuickCommand SSE events from chat messages and resets forceOverlay/workspace errors', async () => {
+    let streamHandler: ((evt: { requestId: string; chunk: string; done?: boolean }) => void) | null = null
+    const invokeSpy = vi.fn().mockImplementation((ch: string, payload: { requestId?: string }) => {
+      if (ch === 'companion:ai:chat') {
+        streamHandler?.({ requestId: payload.requestId!, chunk: 'partial-quick-chunk' })
+        streamHandler?.({ requestId: payload.requestId!, chunk: '', done: true })
+        return Promise.resolve({
+          ok: true,
+          text: 'Check disk usage',
+          commandCards: [{ command: 'df -h', description: 'Check disk', risk: 'read_only' }]
+        })
+      }
+      return Promise.resolve({})
+    })
+    const prevApi = (window as { api?: unknown }).api
+    ;(window as { api?: unknown }).api = {
+      invoke: invokeSpy,
+      on: vi.fn().mockImplementation((ch: string, cb: (evt: { requestId: string; chunk: string; done?: boolean }) => void) => {
+        if (ch === 'companion:ai:stream') streamHandler = cb
+        return () => {}
+      })
+    }
+
+    try {
+      const store = useCompanionStore()
+      store.aiConfig = { provider: 'gemini', endpoint: 'https://example.test', model: 'gemini-4-hydrogen', hasApiKey: true }
+
+      const res = await store.requestQuickCommand('check disk space')
+      expect(res.card?.command).toBe('df -h')
+      expect(store.messages).toHaveLength(0)
+      expect(store.streamingMessageId).toBeNull()
+
+      store.openPanel('chat', { overlay: true })
+      expect(store.forceOverlay).toBe(true)
+      store.closePanel()
+      expect(store.forceOverlay).toBe(false)
+
+      const sessions = useSessionsStore()
+      sessions.activeTab.tabId = 'tab-1'
+      store.notifyWorkspaceError({ scopeKey: 'tab-1', category: 'ssh-connect', error: 'Auth failed' })
+      expect(store.lastTransferErrorRecord?.error).toBe('Auth failed')
+      store.clearWorkspaceError('tab-1')
+      expect(store.lastTransferErrorRecord).toBeNull()
+    } finally {
+      ;(window as { api?: unknown }).api = prevApi
+    }
+  })
 })

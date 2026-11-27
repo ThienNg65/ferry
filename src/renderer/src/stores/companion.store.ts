@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import {
   escalateCommandRisk,
   EVENT_CHANNELS,
+  formatRemoteOsLabel,
   INVOKE_CHANNELS,
   sanitizeCompanionCommand,
   SEND_CHANNELS,
@@ -20,8 +21,7 @@ import {
   type CompanionUiActionCard,
   type CompanionWorkspaceSignal,
   type MonitorSample,
-  type OperationKind,
-  type RemoteHostInfo
+  type OperationKind
 } from '@shared/contract'
 import { companionAiCancel, invoke, onEvent } from '../api'
 import { openExternal } from '../bridge/neutralinoApi'
@@ -109,16 +109,6 @@ export interface CompanionTransferErrorRecord {
   label?: string
   hostLabel?: string
   occurredAt: string
-}
-
-function formatRemoteOsFromHostInfo(info: RemoteHostInfo): string {
-  const head = info.distro || info.os
-  const meta = [
-    info.distro && info.os && !info.distro.toLowerCase().includes(info.os.toLowerCase()) ? info.os : null,
-    info.arch ?? null,
-    info.initSystem && info.initSystem !== 'unknown' ? `init: ${info.initSystem}` : null
-  ].filter(Boolean)
-  return meta.length > 0 ? `${head} (${meta.join(', ')})` : head
 }
 
 export interface CompanionNotice {
@@ -276,6 +266,8 @@ function nextId(prefix: string): string {
 
 interface CompanionState {
   open: boolean
+  /** Transient overlay override (e.g. when opened from inside a modal like SyncDialog) so panel floats above backdrops. */
+  forceOverlay: boolean
   hasOpenedOnce: boolean
   activeView: CompanionView
   reportCategory: IssueCategory
@@ -303,6 +295,7 @@ interface CompanionState {
   aiBusy: boolean
   aiGeneration: number
   activeAiRequestId: string | null
+  chatStreamRequestId: string | null
   streamingMessageId: string | null
   unsubscribeAiStream: (() => void) | null
   customSnippets: CompanionSnippet[]
@@ -320,6 +313,7 @@ interface CompanionState {
 export const useCompanionStore = defineStore('companion', {
   state: (): CompanionState => ({
     open: false,
+    forceOverlay: false,
     hasOpenedOnce: false,
     activeView: 'chat',
     reportCategory: 'bug',
@@ -347,6 +341,7 @@ export const useCompanionStore = defineStore('companion', {
     aiBusy: false,
     aiGeneration: 0,
     activeAiRequestId: null,
+    chatStreamRequestId: null,
     streamingMessageId: null,
     unsubscribeAiStream: null,
     customSnippets: parseSnippetList(readStored(SNIPPETS_KEY)),
@@ -482,8 +477,11 @@ export const useCompanionStore = defineStore('companion', {
       }
     },
 
-    openPanel(view: CompanionView = 'chat'): void {
+    openPanel(view: CompanionView = 'chat', options?: { overlay?: boolean }): void {
       this.hasOpenedOnce = true
+      if (options?.overlay) {
+        this.forceOverlay = true
+      }
       this.open = true
       this.activeView = view
       if (!this.aiConfigLoaded) {
@@ -557,6 +555,7 @@ export const useCompanionStore = defineStore('companion', {
 
     closePanel(): void {
       this.open = false
+      this.forceOverlay = false
       this.finishReveal()
       this.aiErrorLabel = null
       this.listening = false
@@ -772,6 +771,14 @@ export const useCompanionStore = defineStore('companion', {
       return promise
     },
 
+    clearWorkspaceError(scopeKey: string): void {
+      if (scopeKey in this.transferErrorsBySession) {
+        const next = { ...this.transferErrorsBySession }
+        delete next[scopeKey]
+        this.transferErrorsBySession = next
+      }
+    },
+
     notifyWorkspaceError(input: {
       scopeKey?: string
       category: CompanionErrorCategory
@@ -921,7 +928,7 @@ export const useCompanionStore = defineStore('companion', {
           signal.siteEnvironment = site.environment as CompanionSiteEnvironment
         }
         if (tab?.remoteHostInfo) {
-          signal.remoteOs = formatRemoteOsFromHostInfo(tab.remoteHostInfo).slice(0, 120)
+          signal.remoteOs = formatRemoteOsLabel(tab.remoteHostInfo).slice(0, 120)
           if (tab.remoteHostInfo.shell) {
             signal.remoteShell = tab.remoteHostInfo.shell.slice(0, 80)
           }
@@ -1028,7 +1035,7 @@ export const useCompanionStore = defineStore('companion', {
       if (this.unsubscribeAiStream) return
       if (typeof window === 'undefined' || typeof window.api?.on !== 'function') return
       this.unsubscribeAiStream = onEvent<CompanionAiStreamEvent>(EVENT_CHANNELS.companionAiStream, (evt) => {
-        if (!evt || !evt.requestId || evt.requestId !== this.activeAiRequestId) return
+        if (!evt || !evt.requestId || evt.requestId !== this.chatStreamRequestId) return
         if (!evt.summaryText) return
         if (this.streamingMessageId) {
           const existing = this.messages.find((m) => m.id === this.streamingMessageId)
@@ -1051,6 +1058,7 @@ export const useCompanionStore = defineStore('companion', {
       this.aiGeneration += 1
       this.aiBusy = false
       this.activeAiRequestId = null
+      this.chatStreamRequestId = null
       this.streamingMessageId = null
       try {
         await companionAiCancel(reqId ?? undefined)
@@ -1062,16 +1070,23 @@ export const useCompanionStore = defineStore('companion', {
     async requestAiChat(
       prompt: string,
       intent: CompanionAiIntent = 'chat',
-      workspaceSignal?: CompanionWorkspaceSignal
+      workspaceSignal?: CompanionWorkspaceSignal,
+      options?: { streamToChat?: boolean }
     ): Promise<{ result: CompanionAiChatResult | null; errorHint: string | null; cancelled?: boolean }> {
       if (this.aiConfig.provider === 'none') {
         return { result: null, errorHint: null }
       }
-      this.ensureAiStreamSubscription()
+      const streamToChat = options?.streamToChat !== false
+      if (streamToChat) {
+        this.ensureAiStreamSubscription()
+      }
       const gen = ++this.aiGeneration
       const requestId = nextId('req')
       this.activeAiRequestId = requestId
-      this.streamingMessageId = null
+      this.chatStreamRequestId = streamToChat ? requestId : null
+      if (streamToChat) {
+        this.streamingMessageId = null
+      }
       this.aiBusy = true
       try {
         const sessions = useSessionsStore()
@@ -1123,6 +1138,7 @@ export const useCompanionStore = defineStore('companion', {
         if (this.aiGeneration === gen) {
           this.aiBusy = false
           this.activeAiRequestId = null
+          this.chatStreamRequestId = null
         }
       }
     },
@@ -1451,7 +1467,8 @@ export const useCompanionStore = defineStore('companion', {
         const { result, errorHint } = await this.requestAiChat(
           `Generate one concise, safe shell command for: ${trimmed}`,
           'command',
-          signal
+          signal,
+          { streamToChat: false }
         )
         const firstCard = result?.structured?.commandCards?.[0]
         if (firstCard) {
@@ -1829,6 +1846,7 @@ export const useCompanionStore = defineStore('companion', {
       this.disposeTimers()
       this.dirtyPrefKeys.clear()
       this.open = false
+      this.forceOverlay = false
       this.hasOpenedOnce = false
       this.activeView = 'chat'
       this.reportCategory = 'bug'
@@ -1853,6 +1871,7 @@ export const useCompanionStore = defineStore('companion', {
       this.aiBusy = false
       this.aiGeneration += 1
       this.activeAiRequestId = null
+      this.chatStreamRequestId = null
       this.streamingMessageId = null
       this.unsubscribeAiStream?.()
       this.unsubscribeAiStream = null

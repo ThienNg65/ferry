@@ -235,7 +235,7 @@ function askCompanionAboutSync(): void {
   if (preFlight.value.sensitiveFiles.length > 0) {
     summaryParts.push(`flaggedSecrets: ${preFlight.value.sensitiveFiles.slice(0, 10).join(', ')}`)
   }
-  companion.openPanel('chat')
+  companion.openPanel('chat', { overlay: true })
   void companion.ask(
     `Review this folder sync pre-flight check (${summaryParts.join('; ')}). Warnings: ${preFlight.value.warnings.join(' ')}`
   )

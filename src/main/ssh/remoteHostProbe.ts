@@ -1,4 +1,6 @@
-import type { RemoteHostInfo, RemoteInitSystem } from '../../shared/contract'
+import { formatRemoteOsLabel, type RemoteHostInfo, type RemoteInitSystem } from '../../shared/contract'
+
+export { formatRemoteOsLabel }
 
 const MARKER = '@@@'
 
@@ -78,15 +80,4 @@ export function parseRemoteHostInfo(stdout: string): RemoteHostInfo | null {
     ...(shell ? { shell } : {}),
     initSystem
   }
-}
-
-/** Formats a {@link RemoteHostInfo} into a concise diagnostic string for Companion AI context. */
-export function formatRemoteOsLabel(info: RemoteHostInfo): string {
-  const head = info.distro || info.os
-  const meta = [
-    info.distro && info.os && !info.distro.toLowerCase().includes(info.os.toLowerCase()) ? info.os : null,
-    info.arch ?? null,
-    info.initSystem && info.initSystem !== 'unknown' ? `init: ${info.initSystem}` : null
-  ].filter(Boolean)
-  return meta.length > 0 ? `${head} (${meta.join(', ')})` : head
 }

@@ -62,7 +62,7 @@ const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
 const effectiveCompanionMode = computed<'split' | 'overlay'>(() =>
-  ui.companionLayoutMode === 'split' && viewportWidth.value >= 1024 ? 'split' : 'overlay'
+  ui.companionLayoutMode === 'split' && viewportWidth.value >= 1024 && !companion.forceOverlay ? 'split' : 'overlay'
 )
 const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth

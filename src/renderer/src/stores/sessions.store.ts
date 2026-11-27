@@ -502,6 +502,13 @@ export const useSessionsStore = defineStore('sessions', {
         else void remoteFs.loadForSession(result.sessionId)
         tab.status = result.status
         tab.hadConnected = result.status === 'connected'
+        if (result.status === 'connected') {
+          try {
+            useCompanionStore().clearWorkspaceError(tab.tabId)
+          } catch {
+            // Non-fatal in isolated store tests.
+          }
+        }
         tab.connecting = false
         tab.preConnectSnapshot = null
         notify.success(`Connected to ${label}`)

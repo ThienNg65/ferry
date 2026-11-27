@@ -27,6 +27,7 @@ import {
 export { classifyCommandRisk, DEFAULT_GEMINI_ENDPOINT, DEFAULT_GEMINI_MODEL, escalateCommandRisk }
 
 const AI_TIMEOUT_MS = 15_000
+const MAX_STREAM_TIMEOUT_MS = 60_000
 const MAX_HISTORY_TURNS = 6
 const MAX_HISTORY_TURN_CHARS = 1_000
 const MAX_PROMPT_CHARS = 2_000
@@ -688,7 +689,8 @@ export class AiCompanionService {
   private async readSseInteractionText(
     res: Response,
     signal: AbortSignal,
-    onStreamSummary?: (summaryText: string) => void
+    onStreamSummary?: (summaryText: string) => void,
+    onChunkActivity?: () => void
   ): Promise<{ rawText: string; streamError?: string }> {
     const reader = res.body?.getReader()
     if (!reader) {
@@ -745,6 +747,7 @@ export class AiCompanionService {
         const { done, value } = await reader.read()
         if (done) break
         if (value) {
+          onChunkActivity?.()
           totalBytes += value.byteLength
           if (totalBytes > MAX_AI_RESPONSE_BYTES) {
             throw new Error('AI response exceeded size limit')
@@ -817,10 +820,20 @@ export class AiCompanionService {
       this.cancel(requestId)
     }
     this.activeRequests.set(requestId, entry)
-    const timer = setTimeout(() => {
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const armIdleTimer = (): void => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, this.timeoutMs)
+    }
+    armIdleTimer()
+    const hardCeilingMs = Math.max(this.timeoutMs, MAX_STREAM_TIMEOUT_MS)
+    const hardTimer = setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, this.timeoutMs)
+    }, hardCeilingMs)
 
     const wantStream = options?.stream !== false
 
@@ -875,7 +888,8 @@ export class AiCompanionService {
           const { rawText, streamError } = await this.readSseInteractionText(
             res,
             controller.signal,
-            options?.onStreamSummary
+            options?.onStreamSummary,
+            armIdleTimer
           )
           if (streamError) {
             return { ok: false, provider: 'gemini', error: sanitizeErrorMessage(new Error(streamError), config.apiKey) }
@@ -936,7 +950,8 @@ export class AiCompanionService {
         const { rawText, streamError } = await this.readSseInteractionText(
           res,
           controller.signal,
-          options?.onStreamSummary
+          options?.onStreamSummary,
+          armIdleTimer
         )
         if (streamError) {
           return { ok: false, provider: 'ferry-pro', error: sanitizeErrorMessage(new Error(streamError), config.apiKey) }
@@ -976,7 +991,8 @@ export class AiCompanionService {
         error: sanitizeErrorMessage(err, config.apiKey)
       }
     } finally {
-      clearTimeout(timer)
+      if (idleTimer) clearTimeout(idleTimer)
+      clearTimeout(hardTimer)
       if (this.activeRequests.get(requestId) === entry) {
         this.activeRequests.delete(requestId)
       }

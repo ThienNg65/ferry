@@ -102,10 +102,25 @@ const draftSnippetRisk = computed(() => classifyCommandRisk(newSnippetCommand.va
 
 const quickStarters = computed(() => {
   const items: Array<{ label: string; prompt: string; icon: string }> = []
-  if (companion.lastTransferError) {
+  const errRec = companion.lastTransferErrorRecord
+  if (errRec) {
+    const isConn =
+      errRec.category === 'ssh-connect' ||
+      errRec.category === 'host-key' ||
+      errRec.category === 'proxy' ||
+      errRec.category === 'bastion'
+    const isOp = errRec.category === 'operation'
     items.push({
-      label: 'Investigate failed transfer',
-      prompt: 'Help me troubleshoot the failed transfer',
+      label: isConn
+        ? 'Troubleshoot connection failure'
+        : isOp
+          ? 'Investigate failed operation'
+          : 'Investigate failed transfer',
+      prompt: isConn
+        ? 'Help me troubleshoot the SSH connection failure'
+        : isOp
+          ? 'Help me troubleshoot the failed remote operation'
+          : 'Help me troubleshoot the failed transfer',
       icon: 'i-lucide-alert-triangle'
     })
   }
