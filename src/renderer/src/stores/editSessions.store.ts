@@ -11,6 +11,7 @@ export interface OpenEdit {
   localTempPath: string
   dirty: boolean
   sessionClosed: boolean
+  conflict: boolean
 }
 
 interface EditSessionsState {
@@ -83,7 +84,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
 
     async hydrate(): Promise<void> {
       const snapshot = await invoke<OpenEditSnapshot[]>(INVOKE_CHANNELS.editList)
-      this.edits = snapshot.map((s) => ({ ...s }))
+      this.edits = snapshot.map((s) => ({ ...s, conflict: false }))
     },
 
     applyEvent(evt: EditEvent): void {
@@ -100,7 +101,8 @@ export const useEditSessionsStore = defineStore('editSessions', {
             remotePath: evt.remotePath,
             localTempPath: evt.localTempPath,
             dirty: false,
-            sessionClosed: false
+            sessionClosed: false,
+            conflict: false
           })
         }
         return
@@ -108,10 +110,14 @@ export const useEditSessionsStore = defineStore('editSessions', {
       if (!existing) {
         return
       }
-      if (evt.state === 'reuploading' || evt.state === 'upload-error' || evt.state === 'remote-changed') {
+      if (evt.state === 'remote-changed') {
+        existing.dirty = true
+        existing.conflict = true
+      } else if (evt.state === 'reuploading' || evt.state === 'upload-error') {
         existing.dirty = true
       } else if (evt.state === 'reuploaded') {
         existing.dirty = false
+        existing.conflict = false
       } else if (evt.state === 'session-closed') {
         existing.sessionClosed = true
       }

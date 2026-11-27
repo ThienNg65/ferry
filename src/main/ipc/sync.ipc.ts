@@ -1,14 +1,17 @@
 import { handle } from './envelope'
-import { requireArray, requireBoolean, requireEnum, requireNonEmptyString, requireObject } from './validation'
+import { requireArray, requireBoolean, requireEnum, requireNonEmptyString, requireObject, requireString } from './validation'
 import {
   INVOKE_CHANNELS,
   type CompareRequest,
   type CompareRow,
+  type FileDiffRequest,
+  type FileDiffResult,
   type SyncDirection,
   type SyncOptions,
   type SyncPlan,
   type SyncRunResult
 } from '../../shared/contract'
+import { diffLocalAndRemote } from '../diff/FileDiffService'
 import { compareTrees, previewSync, runSync, summarizeSync } from '../sync/SyncService'
 import { OperationRegistry } from '../operations/OperationRegistry'
 
@@ -40,6 +43,20 @@ export function registerSyncHandlers(): void {
       remotePath: requireNonEmptyString(obj.remotePath, 'remotePath', channel)
     }
     return compareTrees(request)
+  })
+
+  handle<FileDiffResult>(INVOKE_CHANNELS.syncDiffFiles, (req) => {
+    const channel = INVOKE_CHANNELS.syncDiffFiles
+    const obj = requireObject(req, channel)
+    const request: FileDiffRequest = {
+      sessionId: requireNonEmptyString(obj.sessionId, 'sessionId', channel),
+      localPath: requireNonEmptyString(obj.localPath, 'localPath', channel),
+      remotePath: requireNonEmptyString(obj.remotePath, 'remotePath', channel)
+    }
+    if (obj.localContent !== undefined) {
+      request.localContent = requireString(obj.localContent, 'localContent', channel)
+    }
+    return diffLocalAndRemote(request)
   })
 
   handle<SyncRunResult>(INVOKE_CHANNELS.syncRun, async (payload) => {

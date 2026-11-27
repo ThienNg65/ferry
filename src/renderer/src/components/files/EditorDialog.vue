@@ -8,8 +8,10 @@ import type { FileReadResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { useNotify } from '../../composables/useNotify'
+import { useEditSessionsStore } from '../../stores/editSessions.store'
 import { useLocalFsStore } from '../../stores/localFs.store'
 import { useUiStore } from '../../stores/ui.store'
+import FileDiffModal from './FileDiffModal.vue'
 
 function parentLocalDir(localPath: string): string {
   const trimmed = localPath.replace(/[/\\]+$/, '')
@@ -33,6 +35,7 @@ const emit = defineEmits<{
 
 const confirm = useConfirm()
 const notify = useNotify()
+const editSessions = useEditSessionsStore()
 const localFs = useLocalFsStore()
 const ui = useUiStore()
 
@@ -40,11 +43,16 @@ const content = ref('')
 const savedContent = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const resolvingConflict = ref(false)
+const diffOpen = ref(false)
 const fontSize = ref(14)
 let loadToken = 0
 
 const isLocal = computed(() => !props.editId)
 const isDirty = computed(() => !loading.value && content.value !== savedContent.value)
+const activeEdit = computed(() => (props.editId ? editSessions.edits.find((e) => e.editId === props.editId) ?? null : null))
+const hasConflict = computed(() => Boolean(activeEdit.value?.conflict))
+const canDiff = computed(() => Boolean(activeEdit.value?.sessionId && props.remotePath && props.localTempPath))
 const extensions = computed(() => (ui.theme === 'dark' ? [basicSetup, oneDark] : [basicSetup]))
 
 function onWheel(e: WheelEvent) {
@@ -90,6 +98,7 @@ watch(
       }
     } else {
       loading.value = false
+      diffOpen.value = false
       content.value = ''
       savedContent.value = ''
     }
@@ -169,10 +178,45 @@ async function onOpenExternal(): Promise<void> {
 
 async function onUpdateOpen(nextOpen: boolean): Promise<void> {
   if (!nextOpen) {
-    if (saving.value) return
+    if (saving.value || resolvingConflict.value) return
     if (isDirty.value && !(await confirmDiscard(false))) return
+    diffOpen.value = false
   }
   emit('update:open', nextOpen)
+}
+
+async function onOverwriteServer(): Promise<void> {
+  const editId = props.editId
+  if (!editId || loading.value || saving.value || resolvingConflict.value) return
+  resolvingConflict.value = true
+  try {
+    if (isDirty.value && props.localTempPath) {
+      const submittedContent = content.value
+      await invoke<void>(INVOKE_CHANNELS.fsLocalWriteFile, { path: props.localTempPath, content: submittedContent })
+      savedContent.value = submittedContent
+    }
+    await invoke<void>(INVOKE_CHANNELS.editForceReupload, editId)
+    diffOpen.value = false
+  } catch (e) {
+    notify.error('Overwrite failed', e instanceof Error ? e.message : String(e))
+  } finally {
+    resolvingConflict.value = false
+  }
+}
+
+async function onDiscardConflict(): Promise<void> {
+  const editId = props.editId
+  if (!editId || resolvingConflict.value) return
+  resolvingConflict.value = true
+  try {
+    await editSessions.close(editId)
+    diffOpen.value = false
+    emit('update:open', false)
+  } catch (e) {
+    notify.error('Failed to discard edit', e instanceof Error ? e.message : String(e))
+  } finally {
+    resolvingConflict.value = false
+  }
 }
 </script>
 
@@ -185,6 +229,16 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
   >
     <template #actions>
       <UBadge v-if="isDirty" color="warning" variant="subtle" size="sm">Unsaved</UBadge>
+      <UButton
+        v-if="canDiff"
+        icon="i-lucide-file-diff"
+        size="xs"
+        :color="hasConflict ? 'warning' : 'neutral'"
+        :variant="hasConflict ? 'soft' : 'ghost'"
+        title="View Diff against Server"
+        aria-label="View Diff against Server"
+        @click="diffOpen = true"
+      />
       <UButton
         icon="i-lucide-external-link"
         size="xs"
@@ -214,6 +268,20 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
         @keydown.meta.s.prevent="onSave"
         @wheel="onWheel"
       >
+        <div v-if="hasConflict" role="alert" class="flex flex-wrap items-center justify-between gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs">
+          <span class="font-medium text-warning">This file changed on the server since you opened it.</span>
+          <div class="flex items-center gap-1.5">
+            <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-file-diff" @click="diffOpen = true">
+              View Diff
+            </UButton>
+            <UButton size="xs" color="warning" :loading="resolvingConflict" @click="onOverwriteServer">
+              Overwrite server
+            </UButton>
+            <UButton size="xs" color="neutral" variant="ghost" :disabled="resolvingConflict" @click="onDiscardConflict">
+              Discard
+            </UButton>
+          </div>
+        </div>
         <div v-if="loading" role="status" aria-label="Loading file editor" class="flex h-full flex-col gap-2.5 p-4">
           <USkeleton v-for="i in 8" :key="i" class="h-3.5" :style="{ width: `${45 + ((i * 23) % 45)}%` }" />
         </div>
@@ -231,6 +299,16 @@ async function onUpdateOpen(nextOpen: boolean): Promise<void> {
       </div>
     </template>
   </UModal>
+  <FileDiffModal
+    v-if="activeEdit"
+    v-model:open="diffOpen"
+    :session-id="activeEdit.sessionId"
+    :local-path="localTempPath"
+    :remote-path="remotePath"
+    :local-content="content"
+    local-label="Your edits"
+    remote-label="Server version"
+  />
 </template>
 
 <style>

@@ -170,6 +170,28 @@ export async function readFile(sessionId: string, filePath: string): Promise<Fil
   return { path: filePath, ...result }
 }
 
+/**
+ * Stats a remote path and reads its raw bytes only if it is a regular file within `maxBytes`.
+ * Oversized files and directories return metadata without opening an SFTP read stream.
+ */
+export async function readRemoteBufferForDiff(
+  sessionId: string,
+  remotePath: string,
+  maxBytes: number
+): Promise<{ size: number; isDir: boolean; buffer?: Buffer }> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  const stats = await shell.stat(remotePath)
+  const size = stats.size ?? 0
+  if (stats.isDirectory()) {
+    return { size, isDir: true }
+  }
+  if (size > maxBytes) {
+    return { size, isDir: false }
+  }
+  const { buffer } = await shell.readFileBuffer(remotePath, maxBytes, stats)
+  return { size, isDir: false, buffer }
+}
+
 /** Recursively deletes a remote file or directory. */
 export async function removeRemote(sessionId: string, targetPath: string): Promise<void> {
   await SessionManager.getInstance().shell(sessionId).deleteRecursive(targetPath)

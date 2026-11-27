@@ -8,6 +8,7 @@ import { useTransferIntents } from '../../composables/useTransferIntents'
 import { useSessionsStore } from '../../stores/sessions.store'
 import type { ConflictChoice } from '../../utils/resolveConflicts'
 import TransferConflictDialog from './TransferConflictDialog.vue'
+import FileDiffModal from './FileDiffModal.vue'
 import { useNotify } from '../../composables/useNotify'
 import { formatBytes } from '../../utils/format'
 
@@ -34,6 +35,8 @@ const rows = computed(() => result.value?.rows ?? null)
 const checkingDestination = ref(false)
 let generation = 0
 const showSame = ref(false)
+const diffOpen = ref(false)
+const diffTarget = ref<{ sessionId: string; localPath: string; remotePath: string } | null>(null)
 
 const STATUS_LABELS: Record<CompareStatus, string> = {
   same: 'Same',
@@ -59,6 +62,8 @@ function invalidate(): void {
   loading.value = false
   checkingDestination.value = false
   error.value = null
+  diffOpen.value = false
+  diffTarget.value = null
   dismissTransferConflict()
 }
 
@@ -102,25 +107,62 @@ async function compare(): Promise<void> {
   }
 }
 
+function resolvePairPaths(request: CompareRequest, relPath: string): {
+  name: string
+  localParent: string
+  remoteParent: string
+  localPath: string
+  remotePath: string
+} | null {
+  const sep = request.localPath.includes('\\') ? '\\' : '/'
+  const segments = relPath.split('/')
+  const name = segments.pop()
+  if (!name || [...segments, name].some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+    return null
+  }
+  const relativeParent = segments.join('/')
+  const localParent = relativeParent ? join(request.localPath, relativeParent, sep) : request.localPath
+  const remoteParent = relativeParent ? join(request.remotePath, relativeParent, '/') : request.remotePath
+  return {
+    name,
+    localParent,
+    remoteParent,
+    localPath: join(localParent, name, sep),
+    remotePath: join(remoteParent, name, '/')
+  }
+}
+
+function openDiff(row: CompareRow): void {
+  const scan = result.value
+  if (!scan?.rows.includes(row)) return
+  const resolved = resolvePairPaths(scan.request, row.relPath)
+  if (!resolved) {
+    notify.error('Could not open diff', 'The scan returned an invalid relative path.')
+    return
+  }
+  diffTarget.value = {
+    sessionId: scan.request.sessionId,
+    localPath: resolved.localPath,
+    remotePath: resolved.remotePath
+  }
+  diffOpen.value = true
+}
+
 async function copy(row: CompareRow, kind: 'upload' | 'download'): Promise<void> {
   const scan = result.value
   if (!scan?.rows.includes(row) || checkingDestination.value || transferConflict.value) return
   const { request } = scan
   const { sessionId } = request
-  const sep = request.localPath.includes('\\') ? '\\' : '/'
-  const segments = row.relPath.split('/')
-  const name = segments.pop()!
-  if (!name || [...segments, name].some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+  const resolved = resolvePairPaths(request, row.relPath)
+  if (!resolved) {
     notify.error('Could not queue transfer', 'The scan returned an invalid relative path.')
     return
   }
-  const relativeParent = segments.join('/')
-  const localParent = relativeParent ? join(request.localPath, relativeParent, sep) : request.localPath
-  const remoteParent = relativeParent ? join(request.remotePath, relativeParent, '/') : request.remotePath
+  const { name, localParent, remoteParent, localPath: targetLocalPath, remotePath: targetRemotePath } = resolved
   const upload = kind === 'upload'
   const intent = buildTransferIntent(upload ? 'local' : 'remote', {
     name,
-    path: upload ? join(localParent, name, sep) : join(remoteParent, name, '/'),
+    path: upload ? targetLocalPath : targetRemotePath,
     isDir: false,
     size: upload ? row.localSize : row.remoteSize,
     modifiedAt: (upload ? row.localMtimeMs : row.remoteMtimeMs) === undefined
@@ -194,7 +236,7 @@ function sizeText(size?: number): string {
                 <th class="px-2 py-1 text-left font-medium">Path</th>
                 <th class="px-2 py-1 text-left font-medium">Remote</th>
                 <th class="px-2 py-1 text-left font-medium">Status</th>
-                <th class="w-24 px-2 py-1" />
+                <th class="w-28 px-2 py-1" />
               </tr>
             </thead>
             <tbody>
@@ -206,6 +248,9 @@ function sizeText(size?: number): string {
                   <UBadge :color="STATUS_COLORS[row.status]" variant="subtle" size="sm">{{ STATUS_LABELS[row.status] }}</UBadge>
                 </td>
                 <td class="px-2 py-1 text-right">
+                  <UTooltip v-if="row.localSize !== undefined && row.remoteSize !== undefined && row.status !== 'same'" text="View diff">
+                    <UButton icon="i-lucide-file-diff" size="xs" color="neutral" variant="ghost" aria-label="View diff" @click="openDiff(row)" />
+                  </UTooltip>
                   <UTooltip v-if="row.localSize !== undefined" text="Copy local to remote">
                     <UButton icon="i-lucide-arrow-right" size="xs" color="neutral" variant="ghost" aria-label="Copy local to remote" :disabled="checkingDestination" @click="copy(row, 'upload')" />
                   </UTooltip>
@@ -230,5 +275,11 @@ function sizeText(size?: number): string {
     :conflicts="transferConflict?.conflicts ?? []"
     @dismiss="dismissTransferConflict"
     @resolve="resolveConflict"
+  />
+  <FileDiffModal
+    v-model:open="diffOpen"
+    :session-id="diffTarget?.sessionId ?? null"
+    :local-path="diffTarget?.localPath ?? null"
+    :remote-path="diffTarget?.remotePath ?? null"
   />
 </template>

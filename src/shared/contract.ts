@@ -594,6 +594,54 @@ export interface CompareRow {
   remoteMtimeMs?: number
 }
 
+export type FileDiffLineKind = 'context' | 'add' | 'remove'
+
+export interface FileDiffLine {
+  kind: FileDiffLineKind
+  text: string
+  /** 1-based line number in the local file, or null for added lines. */
+  localLine: number | null
+  /** 1-based line number in the remote file, or null for removed lines. */
+  remoteLine: number | null
+}
+
+export interface FileDiffHunk {
+  localStart: number
+  localCount: number
+  remoteStart: number
+  remoteCount: number
+  lines: FileDiffLine[]
+}
+
+export type FileDiffSkipReason = 'binary' | 'too-large'
+
+export interface FileDiffRequest {
+  sessionId: string
+  localPath: string
+  remotePath: string
+  /** Optional in-memory local text (e.g. unsaved buffer in EditorDialog). */
+  localContent?: string
+}
+
+export interface FileDiffResult {
+  localPath: string
+  remotePath: string
+  localSize: number
+  remoteSize: number
+  maxBytes: number
+  skipped?: {
+    reason: FileDiffSkipReason
+    side: 'local' | 'remote' | 'both'
+    message: string
+  }
+  identical: boolean
+  additions: number
+  deletions: number
+  hunks: FileDiffHunk[]
+  /** True when the edit script exceeded the Myers cap and fell back to a simplified hunk. */
+  simplified?: boolean
+}
+
 export interface SyncRunRequest {
   requestId: string
   options: SyncOptions
@@ -1086,6 +1134,7 @@ export const INVOKE_CHANNELS = {
   syncPreview: 'sync:preview',
   syncRun: 'sync:run',
   syncCompare: 'sync:compare',
+  syncDiffFiles: 'sync:diffFiles',
   // native dialogs
   dialogPickFile: 'dialog:pickFile',
   dialogPickFolder: 'dialog:pickFolder',

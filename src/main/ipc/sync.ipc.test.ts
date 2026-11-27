@@ -13,6 +13,12 @@ const syncServiceMock = {
 
 vi.mock('../sync/SyncService', () => syncServiceMock)
 
+const fileDiffServiceMock = {
+  diffLocalAndRemote: vi.fn()
+}
+
+vi.mock('../diff/FileDiffService', () => fileDiffServiceMock)
+
 const operationRegistryMock = {
   run: vi.fn((_meta: unknown, fn: (ctx: unknown) => unknown) => fn({ signal: new AbortController().signal }))
 }
@@ -108,6 +114,38 @@ describe('sync.ipc', () => {
         code: 'VALIDATION'
       })
       expect(syncServiceMock.compareTrees).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('sync:diffFiles', () => {
+    it('forwards valid diff requests including empty localContent', async () => {
+      const diffResult = {
+        localPath: 'C:\\local\\a.txt',
+        remotePath: '/srv/a.txt',
+        localSize: 0,
+        remoteSize: 0,
+        maxBytes: 1_048_576,
+        identical: true,
+        additions: 0,
+        deletions: 0,
+        hunks: []
+      }
+      fileDiffServiceMock.diffLocalAndRemote.mockResolvedValueOnce(diffResult)
+      const req = { sessionId: 's1', localPath: 'C:\\local\\a.txt', remotePath: '/srv/a.txt', localContent: '' }
+      const result = await invoke('sync:diffFiles', req)
+      expect(fileDiffServiceMock.diffLocalAndRemote).toHaveBeenCalledWith(req)
+      expect(result).toEqual({ ok: true, data: diffResult })
+    })
+
+    it('rejects malformed diff requests with VALIDATION', async () => {
+      expect(await invoke('sync:diffFiles', null)).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:diffFiles', { sessionId: 's1', localPath: 'a', remotePath: '' })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:diffFiles', { sessionId: 's1', localPath: 'a', remotePath: '/b', localContent: 123 })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(fileDiffServiceMock.diffLocalAndRemote).not.toHaveBeenCalled()
     })
   })
 
