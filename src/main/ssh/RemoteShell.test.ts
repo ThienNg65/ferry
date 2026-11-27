@@ -318,6 +318,39 @@ describe('RemoteShell recursive delete', () => {
     expect(exec.mock.calls[0][0]).toContain('rm -rf -- "$target"')
   })
 
+  it.each(['.', './', '..', '../', '/home/user/.', '/home/user/..'])(
+    'rejects current or parent directory target "%s" before shell or SFTP deletion',
+    async (remotePath) => {
+      const { shell, sftp } = createSftpHarness()
+      const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+      await expect(shell.deleteRecursive(remotePath, '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+      expect(exec).not.toHaveBeenCalled()
+      expect(sftp.lstat).not.toHaveBeenCalled()
+      expect(sftp.readdir).not.toHaveBeenCalled()
+      expect(sftp.unlink).not.toHaveBeenCalled()
+      expect(sftp.rmdir).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['.', '..', '/home/user/.', '/home/user/..'])(
+    'independently rejects current or parent directory target "%s" in the SFTP fallback',
+    async (remotePath) => {
+      const { shell, sftp } = createSftpHarness()
+      const fallback = (shell as unknown as {
+        deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+      }).deleteRecursiveSftp
+
+      await expect(fallback.call(shell, remotePath, '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+
+      expect(sftp.lstat).not.toHaveBeenCalled()
+      expect(sftp.readdir).not.toHaveBeenCalled()
+      expect(sftp.unlink).not.toHaveBeenCalled()
+      expect(sftp.rmdir).not.toHaveBeenCalled()
+    }
+  )
+
   it('rejects whitespace-only delete targets before execution', async () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
