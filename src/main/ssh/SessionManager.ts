@@ -25,7 +25,6 @@ import { parseRemoteHostInfo, REMOTE_HOST_PROBE_COMMAND } from './remoteHostProb
 import {
   EVENT_CHANNELS,
   type AuthMethod,
-  type IpcErrorCode,
   type JumpHostConfig,
   type HostKeyPromptEvent,
   type KeyboardInteractiveRequestEvent,
@@ -611,7 +610,7 @@ export class SessionManager {
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
       throw new SshError(
-        'INVALID_PORT' as unknown as IpcErrorCode,
+        'INVALID_PORT',
         'Port must be an integer between 1 and 65535'
       )
     }

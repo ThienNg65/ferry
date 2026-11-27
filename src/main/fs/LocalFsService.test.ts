@@ -15,6 +15,7 @@ import {
   MAX_STAGE_DROP_DEPTH,
   MAX_STAGE_DROP_ENTRIES,
   openStageDropWriteStream,
+  remove,
   rename,
   stageDroppedEntries,
   touchStageDropSession
@@ -634,5 +635,11 @@ describe('LocalFsService.copyLocal', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('LocalFsService.remove', () => {
+  it('rejects an empty path with INVALID_TARGET', async () => {
+    await expect(remove('', true)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
   })
 })
