@@ -1,0 +1,57 @@
+name: SFTP Read Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  sftp-read-integration:
+    runs-on: ubuntu-latest
+    services:
+      sftp:
+        image: lscr.io/linuxserver/openssh-server:latest
+        ports:
+          - 2299:2222
+        env:
+          PUID: 1000
+          PGID: 1000
+          TZ: Etc/UTC
+          PASSWORD_ACCESS: "true"
+          USER_NAME: ferrytest
+          USER_PASSWORD: ferrytest123
+          SUDO_ACCESS: "false"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.5
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Prepare SFTP test directory
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if timeout 1 bash -c '</dev/tcp/127.0.0.1/2299' 2>/dev/null; then
+              docker exec "${{ job.services.sftp.id }}" sh -c 'mkdir -p /config/ferry-test && chown ferrytest:users /config/ferry-test'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::SFTP test server did not become reachable on port 2299."
+          exit 1
+
+      - name: Run real SSH/SFTP read integration tests
+        env:
+          FERRY_REQUIRE_SSH_INTEGRATION: "1"
+        run: npm test -- src/main/ssh/RemoteShell.read.integration.test.ts
