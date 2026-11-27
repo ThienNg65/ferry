@@ -208,7 +208,8 @@ describe('parseDiskUsage', () => {
     expect(disk).toEqual({
       totalBytes: 104857600 * 1024,
       usedBytes: 20971520 * 1024,
-      availableBytes: 78643200 * 1024
+      availableBytes: 78643200 * 1024,
+      mountPoint: '/'
     })
   })
 
@@ -220,7 +221,22 @@ describe('parseDiskUsage', () => {
     expect(disk).toEqual({
       totalBytes: 104857600 * 1024,
       usedBytes: 20971520 * 1024,
-      availableBytes: 78643200 * 1024
+      availableBytes: 78643200 * 1024,
+      mountPoint: '/'
+    })
+  })
+
+  it('parses optional df -Pi inode usage alongside mountPoint', () => {
+    const pk = `Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sdb1 2000 1000 1000 50% /var`
+    const pi = `Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/sdb1 10000 9600 400 96% /var`
+    expect(parseDiskUsage(pk, pi)).toEqual({
+      totalBytes: 2000 * 1024,
+      usedBytes: 1000 * 1024,
+      availableBytes: 1000 * 1024,
+      mountPoint: '/var',
+      inodesTotal: 10000,
+      inodesUsed: 9600,
+      inodesAvailable: 400
     })
   })
 

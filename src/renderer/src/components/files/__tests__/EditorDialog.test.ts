@@ -115,3 +115,4 @@ describe('EditorDialog file-size handling', () => {
     expect(mounted.emitted('update:open')).toEqual([[false]])
   })
 })
+

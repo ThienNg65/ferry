@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import '@xterm/xterm/css/xterm.css'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useSessionsStore } from '../../stores/sessions.store'
-import { useTerminalStreamsStore } from '../../stores/terminalStreams.store'
+import {
+  TERMINAL_QUICK_BAR_EVENT,
+  TERMINAL_SEARCH_EVENT,
+  useTerminalStreamsStore
+} from '../../stores/terminalStreams.store'
 import { useUiStore } from '../../stores/ui.store'
-import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
 import LogSearchBar from '../logs/LogSearchBar.vue'
+import TerminalCommandBar from './TerminalCommandBar.vue'
 
 /**
  * `active` is true only when the Terminal dock tab is the one currently
@@ -15,9 +20,49 @@ import LogSearchBar from '../logs/LogSearchBar.vue'
  */
 const props = defineProps<{ active: boolean }>()
 
+const companion = useCompanionStore()
 const sessions = useSessionsStore()
 const terminalStreams = useTerminalStreamsStore()
 const ui = useUiStore()
+
+const quickBarOpen = ref(false)
+const quickBarInitialPrompt = ref('')
+
+function openQuickBar(initialPrompt = ''): void {
+  if (!props.active || !sessions.activeSessionId) return
+  quickBarInitialPrompt.value = initialPrompt
+  quickBarOpen.value = true
+}
+
+function closeQuickBar(): void {
+  quickBarOpen.value = false
+  quickBarInitialPrompt.value = ''
+  if (sessions.activeSessionId) {
+    terminalStreams.focus(sessions.activeSessionId)
+  }
+}
+
+function onTerminalQuickBarEvent(): void {
+  if (!props.active) return
+  if (quickBarOpen.value) {
+    closeQuickBar()
+  } else {
+    openQuickBar()
+  }
+}
+
+function onFixLastCommand(): void {
+  const sid = sessions.activeSessionId
+  if (!sid) return
+  const err = terminalStreams.lastErrorBySession[sid]
+  terminalStreams.dismissLastError(sid)
+  companion.openPanel('chat')
+  void companion.ask(
+    err?.exitCode
+      ? `Fix my last terminal command (exited with code ${err.exitCode}).`
+      : 'Fix my last failed terminal command.'
+  )
+}
 
 watch(
   () => JSON.stringify(ui.terminalAppearance),
@@ -305,6 +350,7 @@ let resizeRaf = 0
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
   window.addEventListener(TERMINAL_SEARCH_EVENT, onTerminalSearchEvent)
+  window.addEventListener(TERMINAL_QUICK_BAR_EVENT, onTerminalQuickBarEvent)
   
   resizeObserver = new ResizeObserver(() => {
     if (resizeRaf) cancelAnimationFrame(resizeRaf)
@@ -322,6 +368,7 @@ onBeforeUnmount(() => {
   unmounted = true
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener(TERMINAL_SEARCH_EVENT, onTerminalSearchEvent)
+  window.removeEventListener(TERMINAL_QUICK_BAR_EVENT, onTerminalQuickBarEvent)
   resultsSub?.dispose()
   resizeObserver?.disconnect()
   if (resizeRaf) {
@@ -340,6 +387,40 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex h-full w-full flex-col">
     <div ref="containerRef" class="relative min-h-0 flex-1">
+      <div
+        v-if="
+          sessions.activeSessionId &&
+          !companion.quietMode &&
+          !quickBarOpen &&
+          terminalStreams.lastErrorBySession[sessions.activeSessionId] &&
+          !terminalStreams.exitedSessionIds.includes(sessions.activeSessionId)
+        "
+        data-fix-last-command-chip
+        class="absolute bottom-3 right-3 z-10 flex items-center gap-1 rounded-full border border-warning/40 bg-default/95 p-0.5 pl-2 shadow-md backdrop-blur-sm"
+      >
+        <UButton
+          icon="i-lucide-sparkles"
+          color="warning"
+          variant="ghost"
+          size="xs"
+          @click="onFixLastCommand"
+        >
+          Fix last command
+        </UButton>
+        <UButton
+          icon="i-lucide-x"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          aria-label="Dismiss error suggestion"
+          @click="terminalStreams.dismissLastError(sessions.activeSessionId)"
+        />
+      </div>
+      <TerminalCommandBar
+        :open="quickBarOpen"
+        :initial-prompt="quickBarInitialPrompt"
+        @close="closeQuickBar"
+      />
       <div
         v-if="sessions.activeSessionId && terminalStreams.exitedSessionIds.includes(sessions.activeSessionId)"
         class="absolute bottom-3 right-3 z-10"

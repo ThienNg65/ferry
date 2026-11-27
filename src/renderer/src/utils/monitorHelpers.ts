@@ -108,7 +108,12 @@ export function filterAndSortProcesses(
 ): MonitorProcessSample[] {
   const needle = query.trim().toLowerCase()
   const filtered = needle
-    ? processes.filter((p) => p.name.toLowerCase().includes(needle) || String(p.pid).includes(needle))
+    ? processes.filter(
+        (p) =>
+          p.name.toLowerCase().includes(needle) ||
+          String(p.pid).includes(needle) ||
+          (p.cmdline?.toLowerCase().includes(needle) ?? false)
+      )
     : processes
 
   const dir = sortDir === 'asc' ? 1 : -1

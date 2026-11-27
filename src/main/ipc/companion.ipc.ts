@@ -1,18 +1,23 @@
 import {
   DEFAULT_GEMINI_ENDPOINT,
+  EVENT_CHANNELS,
   INVOKE_CHANNELS,
   normalizeGeminiModel,
+  type CompanionAiCancelResult,
   type CompanionAiChatRequest,
   type CompanionAiChatResult,
   type CompanionAiConfigInfo,
   type CompanionAiIntent,
   type CompanionAiProvider,
+  type CompanionAiStreamEvent,
   type CompanionReleasesResult,
+  type CompanionSiteEnvironment,
   type CompanionWorkspaceSignal
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { AiCompanionService, validateAiEndpoint } from '../companion/AiCompanionService'
 import { ReleaseNotesService } from '../companion/ReleaseNotesService'
+import { host } from '../host/host'
 import { handle } from './envelope'
 import {
   failValidation,
@@ -26,21 +31,50 @@ import {
 
 const VALID_PROVIDERS: readonly CompanionAiProvider[] = ['none', 'gemini', 'ferry-pro']
 const VALID_INTENTS = new Set<CompanionAiIntent>(['chat', 'command', 'explain-log', 'diagnose-spike'])
+const VALID_ENVIRONMENTS = new Set<CompanionSiteEnvironment>(['prod', 'staging', 'dev', 'other'])
+
+function sanitizeSignalLine(val: unknown, maxLen: number): string | undefined {
+  if (typeof val !== 'string') return undefined
+  const trimmed = val.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen)
+  return trimmed || undefined
+}
+
+function sanitizeSignalBlock(val: unknown, maxLen: number): string | undefined {
+  if (typeof val !== 'string') return undefined
+  const trimmed = val.trim().slice(0, maxLen)
+  return trimmed || undefined
+}
 
 function sanitizeWorkspaceSignal(raw: unknown): CompanionWorkspaceSignal | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const obj = raw as Record<string, unknown>
   const out: CompanionWorkspaceSignal = {}
-  if (typeof obj.logPath === 'string' && obj.logPath.trim()) {
-    out.logPath = obj.logPath.replace(/[\r\n]+/g, ' ').trim().slice(0, 256)
+  const siteName = sanitizeSignalLine(obj.siteName, 120)
+  if (siteName) out.siteName = siteName
+  if (typeof obj.siteEnvironment === 'string' && VALID_ENVIRONMENTS.has(obj.siteEnvironment as CompanionSiteEnvironment)) {
+    out.siteEnvironment = obj.siteEnvironment as CompanionSiteEnvironment
   }
-  if (typeof obj.logSnippet === 'string' && obj.logSnippet.trim()) {
-    out.logSnippet = obj.logSnippet.trim().slice(0, 2500)
-  }
-  if (typeof obj.monitorSummary === 'string' && obj.monitorSummary.trim()) {
-    out.monitorSummary = obj.monitorSummary.trim().slice(0, 1500)
-  }
-  return out.logPath || out.logSnippet || out.monitorSummary ? out : undefined
+  const remoteOs = sanitizeSignalLine(obj.remoteOs, 120)
+  if (remoteOs) out.remoteOs = remoteOs
+  const remoteShell = sanitizeSignalLine(obj.remoteShell, 80)
+  if (remoteShell) out.remoteShell = remoteShell
+  const remoteCwd = sanitizeSignalLine(obj.remoteCwd, 256)
+  if (remoteCwd) out.remoteCwd = remoteCwd
+  const terminalTail = sanitizeSignalBlock(obj.terminalTail, 2500)
+  if (terminalTail) out.terminalTail = terminalTail
+  const sftpSummary = sanitizeSignalBlock(obj.sftpSummary, 1000)
+  if (sftpSummary) out.sftpSummary = sftpSummary
+  const lastTransferError = sanitizeSignalBlock(obj.lastTransferError, 500)
+  if (lastTransferError) out.lastTransferError = lastTransferError
+  const logBasename = sanitizeSignalLine(obj.logBasename, 128)
+  if (logBasename) out.logBasename = logBasename
+  const logPath = sanitizeSignalLine(obj.logPath, 256)
+  if (logPath) out.logPath = logPath
+  const logSnippet = sanitizeSignalBlock(obj.logSnippet, 2500)
+  if (logSnippet) out.logSnippet = logSnippet
+  const monitorSummary = sanitizeSignalBlock(obj.monitorSummary, 1500)
+  if (monitorSummary) out.monitorSummary = monitorSummary
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function sanitizeHistory(raw: unknown): CompanionAiChatRequest['history'] {
@@ -130,16 +164,44 @@ export function registerCompanionHandlers(): void {
       ? (req.context as Record<string, unknown>)
       : undefined
 
-    return AiCompanionService.getInstance().chat({
-      prompt,
-      history: sanitizeHistory(req.history),
-      intent,
-      workspaceSignal: sanitizeWorkspaceSignal(req.workspaceSignal),
-      context: {
-        appVersion: safeSingleLine(ctx?.appVersion, 32),
-        isConnected: Boolean(ctx?.isConnected),
-        theme: safeSingleLine(ctx?.theme, 32)
-      }
-    })
+    const requestId = sanitizeSignalLine(req.requestId, 128)
+
+    return AiCompanionService.getInstance().chat(
+      {
+        requestId,
+        prompt,
+        history: sanitizeHistory(req.history),
+        intent,
+        workspaceSignal: sanitizeWorkspaceSignal(req.workspaceSignal),
+        context: {
+          appVersion: safeSingleLine(ctx?.appVersion, 32),
+          isConnected: Boolean(ctx?.isConnected),
+          theme: safeSingleLine(ctx?.theme, 32)
+        }
+      },
+      undefined,
+      requestId
+        ? {
+            stream: true,
+            onStreamSummary: (summaryText) => {
+              try {
+                const payload: CompanionAiStreamEvent = { requestId, summaryText }
+                host().broadcast(EVENT_CHANNELS.companionAiStream, payload)
+              } catch {
+                // Non-fatal in isolated unit tests without an initialized host.
+              }
+            }
+          }
+        : undefined
+    )
+  })
+
+  handle<CompanionAiCancelResult>(INVOKE_CHANNELS.companionAiCancel, (payload: unknown) => {
+    let requestId: string | undefined
+    if (payload !== undefined && payload !== null) {
+      const obj = requireObject(payload, INVOKE_CHANNELS.companionAiCancel)
+      requestId = optionalString(obj.requestId, 'requestId', INVOKE_CHANNELS.companionAiCancel)?.trim() || undefined
+    }
+    return { cancelled: AiCompanionService.getInstance().cancel(requestId) }
   })
 }

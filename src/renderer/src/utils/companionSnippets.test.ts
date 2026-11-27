@@ -54,5 +54,21 @@ describe('companionSnippets', () => {
 
     const quotedLogDiag = diagnoseLogSnippetOffline("/var/log/$HOME/o'reilly.log", 'EACCES: permission denied')
     expect(quotedLogDiag.commandCards?.[0].command).toBe("ls -la '/var/log/$HOME/o'\\''reilly.log'")
+
+    const javaOomDiag = diagnoseLogSnippetOffline(
+      '/var/log/app.log',
+      'Exception in thread "worker-0" java.lang.OutOfMemoryError: Java heap space'
+    )
+    expect(javaOomDiag.rootCause).toContain('memory limit')
+    expect(javaOomDiag.commandCards?.some((c) => c.command.includes('free -h'))).toBe(true)
+  })
+
+  it('uses POSIX/Alpine-safe fallbacks in built-in snippets', () => {
+    const ports = BUILT_IN_SNIPPETS.find((s) => s.id === 'builtin-open-ports')
+    expect(ports?.command).toContain('netstat -tulpn')
+    const mem = BUILT_IN_SNIPPETS.find((s) => s.id === 'builtin-top-memory')
+    expect(mem?.command).toContain('|| ps aux')
+    const journal = BUILT_IN_SNIPPETS.find((s) => s.id === 'builtin-journal-errors')
+    expect(journal?.command).toContain('/var/log/syslog')
   })
 })

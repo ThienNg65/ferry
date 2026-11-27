@@ -17,7 +17,7 @@ const props = defineProps<{
   restartRequired?: boolean
 }>()
 
-const emit = defineEmits<{ cancel: []; retry: []; pause: [] }>()
+const emit = defineEmits<{ cancel: []; retry: []; pause: []; troubleshoot: [] }>()
 
 const percent = computed(() =>
   props.totalBytes > 0 ? Math.min(100, Math.round((props.bytesTransferred / props.totalBytes) * 100)) : 0
@@ -104,6 +104,17 @@ const progressRightLabel = computed(() => {
         </UTooltip>
         <UTooltip v-if="cancellable" text="Cancel transfer">
           <UButton icon="i-lucide-x" color="neutral" variant="ghost" size="xs" aria-label="Cancel transfer" @click="emit('cancel')" />
+        </UTooltip>
+        <UTooltip v-if="state === 'error'" text="Troubleshoot with Ferry Companion">
+          <UButton
+            icon="i-lucide-sparkles"
+            color="warning"
+            variant="ghost"
+            size="xs"
+            aria-label="Troubleshoot transfer"
+            data-troubleshoot-transfer
+            @click="emit('troubleshoot')"
+          />
         </UTooltip>
         <UTooltip v-if="retryable" :text="reconnectRequired ? 'Reconnect to the original server' : retryLabel">
           <UButton

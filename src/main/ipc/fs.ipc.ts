@@ -15,6 +15,8 @@ import {
   type FileEntry,
   type FileListResult,
   type FileReadResult,
+  type LocalUploadScanResult,
+  type MonitorDiskUsage,
   type RemoteAdminRequest,
   type StageDropBeginRequest,
   type StageDropBeginResult,
@@ -135,6 +137,13 @@ export function registerFsHandlers(): void {
     const paths = rawPaths.map((p) => requireNonEmptyString(p, 'paths[]', channel))
     return LocalFs.cleanupStagedDropPaths(paths)
   })
+  handle<LocalUploadScanResult>(INVOKE_CHANNELS.fsLocalScanUploadPaths, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalScanUploadPaths
+    const request = requireObject(req, channel)
+    const rawPaths = requireArray(request.paths, 'paths', channel)
+    const paths = rawPaths.slice(0, 50).map((p) => requireNonEmptyString(p, 'paths[]', channel))
+    return LocalFs.scanUploadPaths(paths)
+  })
   handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath, maxBytes) =>
     LocalFs.readFileText(
       requireNonEmptyString(filePath, 'filePath', INVOKE_CHANNELS.fsLocalReadFile),
@@ -155,6 +164,13 @@ export function registerFsHandlers(): void {
       requireNonEmptyString(sessionId, 'sessionId', channel),
       optionalString(dirPath, 'dirPath', channel),
       Boolean(isPrefetch)
+    )
+  })
+  handle<MonitorDiskUsage | null>(INVOKE_CHANNELS.fsRemoteDiskUsage, (sessionId, targetPath) => {
+    const channel = INVOKE_CHANNELS.fsRemoteDiskUsage
+    return RemoteFs.diskUsageRemote(
+      requireNonEmptyString(sessionId, 'sessionId', channel),
+      optionalString(targetPath, 'targetPath', channel) ?? '/'
     )
   })
   handle<void>(INVOKE_CHANNELS.fsRemoteMkdir, (sessionId, dirPath) => {

@@ -7,6 +7,7 @@ import {
   parseDiskUsage,
   parseLoadAvg,
   parseMeminfo,
+  parseProcessCmdlines,
   parseProcessSnapshot,
   parseProcStat,
   parseUptime,
@@ -28,13 +29,17 @@ const MAX_CONSECUTIVE_FAILURES = 3
 const TICK_TIMEOUT_MS = 10_000
 
 /** Number of @@@-delimited sections in TICK_COMMAND's output — keep in sync with splitSections() calls below. */
-const TICK_SECTION_COUNT = 6
+const TICK_SECTION_COUNT = 7
 const INITIAL_TICK_SECTION_COUNT = TICK_SECTION_COUNT + 1
+/** Number of top hot processes to enrich with cached `/proc/[pid]/cmdline`. */
+const CMDLINE_ENRICH_TOP_N = 15
+const CMDLINE_TIMEOUT_MS = 2_000
 
 const TICK_COMMAND =
   'cat /proc/stat 2>/dev/null; echo @@@; cat /proc/meminfo 2>/dev/null; echo @@@; ' +
   'cat /proc/loadavg 2>/dev/null; echo @@@; cat /proc/uptime 2>/dev/null; echo @@@; ' +
   'df -Pk / 2>/dev/null; echo @@@; ' +
+  'df -Pi / 2>/dev/null || true; echo @@@; ' +
   'for d in /proc/[0-9]*; do p=${d#/proc/}; if IFS= read -r s < "$d/stat" 2>/dev/null; then printf "@P@%s\\n%s\\n" "$p" "$s"; fi; done'
 
 const INITIAL_TICK_COMMAND = `${TICK_COMMAND}; echo @@@; getconf PAGE_SIZE 2>/dev/null || true`
@@ -56,6 +61,8 @@ interface MonitorEntry {
   prevStat: CpuTimes[] | null
   /** Rebuilt fully from every tick's process dump (not merged) — naturally sheds exited pids and gives any newly-hot pid a fresh baseline. */
   prevProcesses: Map<number, ProcessSnapshot> | null
+  /** Cached `/proc/[pid]/cmdline` per live pid (invalidated if comm changes or pid exits) so steady-state ticks do zero extra execs. */
+  cmdlineCache: Map<number, { comm: string; cmdline: string }>
   /** Resolved once per session; null means the first tick still needs discovery. */
   pageSizeBytes: number | null
   consecutiveFailures: number
@@ -94,6 +101,7 @@ export class MonitorManager {
       intervalMs: sanitizeIntervalMs(intervalMs),
       prevStat: null,
       prevProcesses: null,
+      cmdlineCache: new Map(),
       pageSizeBytes: null,
       consecutiveFailures: 0,
       timer: null,
@@ -149,7 +157,7 @@ export class MonitorManager {
         result.stdout,
         discoveringPageSize ? INITIAL_TICK_SECTION_COUNT : TICK_SECTION_COUNT
       )
-      const [statText, memText, loadText, uptimeText, diskText, procText] = sections
+      const [statText, memText, loadText, uptimeText, diskText, inodeText, procText] = sections
       if (discoveringPageSize) {
         entry.pageSizeBytes = resolvePageSizeBytes(sections[TICK_SECTION_COUNT] ?? '')
       }
@@ -173,6 +181,10 @@ export class MonitorManager {
       const cpu = entry.prevStat ? cpuPercentages(entry.prevStat, currStat) : null
       const aggregateTotalDelta = entry.prevStat ? currStat[0].total - entry.prevStat[0].total : null
       const currProcesses = parseProcessSnapshot(procText)
+      const livePids = new Set(currProcesses.map((p) => p.pid))
+      for (const cachedPid of entry.cmdlineCache.keys()) {
+        if (!livePids.has(cachedPid)) entry.cmdlineCache.delete(cachedPid)
+      }
       const processSamples = processCpuPercentages(
         entry.prevProcesses,
         currProcesses,
@@ -180,6 +192,38 @@ export class MonitorManager {
         entry.pageSizeBytes ?? DEFAULT_PAGE_SIZE_BYTES
       )
       const { processes, totalCount } = capProcesses(processSamples, mem.totalBytes)
+
+      // Enrich top hot processes with cached `/proc/[pid]/cmdline` (only queries uncached PIDs).
+      const topSlice = processes.slice(0, CMDLINE_ENRICH_TOP_N)
+      const missingPids = topSlice
+        .filter((p) => {
+          const cached = entry.cmdlineCache.get(p.pid)
+          return !cached || cached.comm !== p.name
+        })
+        .map((p) => p.pid)
+      if (missingPids.length > 0 && !entry.stopped) {
+        try {
+          const cmd = `for p in ${missingPids.join(' ')}; do if [ -r "/proc/$p/cmdline" ]; then printf '@C@%s\\t' "$p"; tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | head -c 180; printf '\\n'; fi; done`
+          const cmdRes = await shell.exec(cmd, { timeoutMs: CMDLINE_TIMEOUT_MS })
+          if (!entry.stopped && cmdRes.stdout) {
+            const parsed = parseProcessCmdlines(cmdRes.stdout)
+            for (const p of topSlice) {
+              if (missingPids.includes(p.pid)) {
+                entry.cmdlineCache.set(p.pid, { comm: p.name, cmdline: parsed.get(p.pid) ?? '' })
+              }
+            }
+          }
+        } catch {
+          // Non-fatal: kernel threads or restricted /proc hide cmdline.
+        }
+      }
+      if (entry.stopped) {
+        return
+      }
+      const enrichedProcesses = processes.map((p) => {
+        const cached = entry.cmdlineCache.get(p.pid)
+        return cached && cached.comm === p.name && cached.cmdline ? { ...p, cmdline: cached.cmdline } : p
+      })
 
       const sample: MonitorSample = {
         sessionId: entry.sessionId,
@@ -193,8 +237,8 @@ export class MonitorManager {
           cachedBytes: mem.cachedBytes
         },
         swap: mem.swap,
-        disk: parseDiskUsage(diskText),
-        processes,
+        disk: parseDiskUsage(diskText, inodeText),
+        processes: enrichedProcesses,
         processTotalCount: totalCount,
         loadAvg,
         uptimeSec

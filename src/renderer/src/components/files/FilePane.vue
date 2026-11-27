@@ -21,7 +21,7 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
-import { OPEN_REMOTE_EDITOR_EVENT } from '../../stores/companion.store'
+import { OPEN_REMOTE_EDITOR_EVENT, useCompanionStore } from '../../stores/companion.store'
 import { useFileClipboardStore } from '../../stores/fileClipboard.store'
 import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
@@ -61,6 +61,7 @@ const props = defineProps<{ side: 'local' | 'remote' }>()
 const localFs = useLocalFsStore()
 const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
+const companion = useCompanionStore()
 const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
@@ -962,6 +963,19 @@ async function moveInto(folder: FileEntry, fromPath: string, name: string): Prom
   }
 }
 
+async function queueIntoFolder(folder: FileEntry, intents: TransferIntent[], sessionId: string): Promise<void> {
+  if (intents.length === 0) return
+  try {
+    const listing =
+      props.side === 'remote'
+        ? await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, folder.path, true)
+        : await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, folder.path)
+    await checkAndQueueTransfers(intents, { entries: listing.entries })
+  } catch {
+    await enqueueIntents(intents)
+  }
+}
+
 async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void> {
   isDropTarget.value = false
   const sessionId = sessions.activeSessionId
@@ -996,7 +1010,7 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
       if (unusedStagedPaths.length > 0) {
         await invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedStagedPaths }).catch(() => undefined)
       }
-      if (intents.length > 0) await enqueueIntents(intents)
+      if (intents.length > 0 && sessionId) await queueIntoFolder(folder, intents, sessionId)
       if (moved) await store.load(store.currentPath, { forceRefresh: true })
       if (cleanupFailed) {
         notify.error('Temporary drop cleanup failed', 'The item was moved, but its temporary staging folder could not be removed.')
@@ -1012,7 +1026,7 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
       await store.load(store.currentPath, { forceRefresh: true })
     } else if (sessionId) {
       const intent = buildTransferIntent(payload.side, payload.entry, sessionId, folder.path)
-      if (intent) await enqueueIntents([intent])
+      if (intent) await queueIntoFolder(folder, [intent], sessionId)
     }
   } catch (e) {
     if (moved) {
@@ -1059,6 +1073,10 @@ async function onRename(entry: FileEntry, newName: string): Promise<void> {
       const destination = target.path.slice(0, target.path.length - target.name.length) + newName
       const replaced = await confirm({
         title: 'Replace existing item?',
+        prodWarning:
+          !local && companion.isProd
+            ? `Connected to ${companion.prodSiteLabel}. Replacing an existing file on Production cannot be undone.`
+            : undefined,
         body: 'Renaming will replace the item at this path.',
         items: [destination],
         confirmLabel: 'Replace',
@@ -1109,6 +1127,10 @@ async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
   const server = sessionId ? sessions.activeTab.hostLabel || sessions.activeTab.label : null
   await confirm({
     title: 'Delete',
+    prodWarning:
+      sessionId && companion.isProd
+        ? `Connected to ${companion.prodSiteLabel}. Double-check remote paths before deleting from Production.`
+        : undefined,
     body: single
       ? `Delete this ${single.isDir ? 'folder and everything inside it' : 'item'}${server ? ` on ${server}` : ''}? This cannot be undone.`
       : `Delete these ${targets.length} items${server ? ` on ${server}` : ''}? This cannot be undone.`,

@@ -7,7 +7,16 @@ import type { SFTPWrapper, Stats } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
-import { MAX_TEXT_PREVIEW_BYTES, type CopyManyResult, type FileEntry, type FileListResult, type FileReadResult, type RemoteAdminRequest } from '../../shared/contract'
+import { MAX_TEXT_PREVIEW_BYTES } from '../../shared/contract'
+import type {
+  CopyManyResult,
+  FileEntry,
+  FileListResult,
+  FileReadResult,
+  MonitorDiskUsage,
+  RemoteAdminRequest
+} from '../../shared/contract'
+import { parseDiskUsage, splitSections } from '../monitor/procParse'
 import { pickUniqueName } from '../../shared/uniqueName'
 import { buildChmodCommand, buildChownCommand } from './permissionCommands'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
@@ -804,4 +813,51 @@ export async function copyRemote(
     options?.onProgress?.(done, sourcePaths.length)
   }
   return result
+}
+
+const DISK_USAGE_CACHE_TTL_MS = 10_000
+const DISK_USAGE_TIMEOUT_MS = 2_500
+const diskUsageCache = new Map<string, { expiresAt: number; value: MonitorDiskUsage | null }>()
+
+/** Clears cached `df` entries for a closed/reconnected SSH session. */
+export function clearDiskUsageCache(sessionId: string): void {
+  const prefix = `${sessionId}\0`
+  for (const key of diskUsageCache.keys()) {
+    if (key.startsWith(prefix)) {
+      diskUsageCache.delete(key)
+    }
+  }
+}
+
+/**
+ * Queries on-demand remote filesystem capacity (`df -Pk` + `df -Pi`) for `targetPath`,
+ * cached briefly per session+path so pre-flight checks work even when Monitor is closed.
+ */
+export async function diskUsageRemote(sessionId: string, targetPath: string): Promise<MonitorDiskUsage | null> {
+  const cleanTarget = targetPath.trim() || '/'
+  const cacheKey = `${sessionId}\0${cleanTarget}`
+  const now = Date.now()
+  const cached = diskUsageCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.value
+  }
+
+  let shell: RemoteShell
+  try {
+    shell = SessionManager.getInstance().shell(sessionId)
+  } catch {
+    return null
+  }
+
+  try {
+    const quoted = shellEscape(cleanTarget)
+    const cmd = `df -Pk -- ${quoted} 2>/dev/null || df -Pk / 2>/dev/null; echo @@@; df -Pi -- ${quoted} 2>/dev/null || true`
+    const res = await shell.exec(cmd, { timeoutMs: DISK_USAGE_TIMEOUT_MS })
+    const [pkText, piText] = splitSections(res.stdout, 2)
+    const parsed = parseDiskUsage(pkText, piText)
+    diskUsageCache.set(cacheKey, { expiresAt: now + DISK_USAGE_CACHE_TTL_MS, value: parsed })
+    return parsed
+  } catch {
+    return null
+  }
 }

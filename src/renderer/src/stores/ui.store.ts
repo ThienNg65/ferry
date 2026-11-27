@@ -74,6 +74,7 @@ const ACCENT_KEY = 'ferry:ui:accentColor'
 const LOCAL_PANE_WIDTH_KEY = 'ferry:ui:localPaneWidth'
 const GLASS_UI_KEY = 'ferry:ui:glassUi'
 const GLASS_PROMO_DISMISSED_KEY = 'ferry:ui:glassUiPromoDismissed'
+const COMPANION_LAYOUT_KEY = 'ferry:ui:companionLayoutMode'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
 export const DEFAULT_ACCENT_COLOR = '#0a84ff'
 export const DEFAULT_LOCAL_PANE_WIDTH = 50
@@ -82,6 +83,7 @@ export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
 export type Density = 'compact' | 'comfortable'
 export type DockPosition = 'bottom' | 'right'
+export type CompanionLayoutMode = 'split' | 'overlay'
 
 /** The dock's pre-resize default (matches the old fixed `h-56`) — zero regression for existing users. */
 export const MIN_DOCK_HEIGHT = 224
@@ -149,6 +151,7 @@ interface UiState {
   localPaneWidth: number
   glassUiEnabled: boolean
   glassUiPromoDismissed: boolean
+  companionLayoutMode: CompanionLayoutMode
   terminalScheme: string
   terminalFont: string
   terminalFontCustom: string
@@ -334,6 +337,7 @@ export const useUiStore = defineStore('ui', {
     localPaneWidth: loadLocalPaneWidth(),
     glassUiEnabled: loadGlassUiEnabled(),
     glassUiPromoDismissed: loadGlassUiPromoDismissed(),
+    companionLayoutMode: readStored(COMPANION_LAYOUT_KEY) === 'overlay' ? 'overlay' : 'split',
     terminalScheme: loadTerminalScheme(),
     terminalFont: loadTerminalFont(),
     terminalFontCustom: (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
@@ -509,6 +513,7 @@ export const useUiStore = defineStore('ui', {
       this.localPaneWidth = loadLocalPaneWidth()
       this.glassUiEnabled = loadGlassUiEnabled()
       this.glassUiPromoDismissed = loadGlassUiPromoDismissed()
+      this.companionLayoutMode = readStored(COMPANION_LAYOUT_KEY) === 'overlay' ? 'overlay' : 'split'
       this.terminalScheme = loadTerminalScheme()
       this.terminalFont = loadTerminalFont()
       this.terminalFontCustom = (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60)
@@ -562,6 +567,15 @@ export const useUiStore = defineStore('ui', {
 
     saveLocalPaneWidth(): void {
       writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth), this.dirtyPrefKeys)
+    },
+
+    setCompanionLayoutMode(mode: CompanionLayoutMode): void {
+      this.companionLayoutMode = mode
+      writeStored(COMPANION_LAYOUT_KEY, mode, this.dirtyPrefKeys)
+    },
+
+    toggleCompanionLayoutMode(): void {
+      this.setCompanionLayoutMode(this.companionLayoutMode === 'split' ? 'overlay' : 'split')
     }
   }
 })

@@ -229,7 +229,13 @@ describe('AppSettingsStore', () => {
     expect(store.getCompanionAiConfig()).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
     expect(store.getDecryptedCompanionAiConfig()).toBeNull()
 
-    // Disabling AI wipes the stored secret completely
+    // Disabling AI returns none/hasApiKey:false while preserving per-provider keys across switches
+    store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-4-hydrogen',
+      apiKey: 'AIza-kept-across-switch'
+    })
     store.setCompanionAiConfig({
       provider: 'ferry-pro',
       endpoint: 'https://proxy.ferry.example',
@@ -239,5 +245,60 @@ describe('AppSettingsStore', () => {
     const disabled = store.setCompanionAiConfig({ provider: 'none', endpoint: '', model: '' })
     expect(disabled).toEqual({ provider: 'none', endpoint: '', model: '', hasApiKey: false })
     expect(store.getDecryptedCompanionAiConfig()).toBeNull()
+
+    // Re-enabling gemini restores the saved gemini key without re-entry
+    const restoredGemini = store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-4-hydrogen'
+    })
+    expect(restoredGemini.hasApiKey).toBe(true)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-kept-across-switch')
+
+    // Explicit empty string clears only the active provider's key
+    const clearedGemini = store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-4-hydrogen',
+      apiKey: ''
+    })
+    expect(clearedGemini.hasApiKey).toBe(false)
+    const restoredPro = store.setCompanionAiConfig({
+      provider: 'ferry-pro',
+      endpoint: 'https://proxy.ferry.example',
+      model: 'gemini-4-hydrogen'
+    })
+    expect(restoredPro.hasApiKey).toBe(true)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('ferry-pro-secret')
+  })
+
+  it('migrates legacy secretApiKey and reports hasApiKey: false when ciphertext cannot be decrypted', () => {
+    const store = new AppSettingsStore()
+    store.setCompanionAiConfig({
+      provider: 'gemini',
+      endpoint: '',
+      model: 'gemini-4-hydrogen',
+      apiKey: 'AIza-legacy-key'
+    })
+    const saved = disks.get('app-settings')!.companionAi as { secretApiKeys: { gemini: string } }
+    // Simulate legacy on-disk format with only `secretApiKey`
+    disks.get('app-settings')!.companionAi = {
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-hydrogen',
+      secretApiKey: saved.secretApiKeys.gemini
+    }
+    expect(store.getCompanionAiConfig().hasApiKey).toBe(true)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-legacy-key')
+
+    // Corrupt ciphertext -> must verify decryption and report hasApiKey: false
+    disks.get('app-settings')!.companionAi = {
+      provider: 'gemini',
+      endpoint: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-4-hydrogen',
+      secretApiKeys: { gemini: Buffer.from('corrupt-bytes').toString('base64') }
+    }
+    expect(store.getCompanionAiConfig().hasApiKey).toBe(false)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBeUndefined()
   })
 })

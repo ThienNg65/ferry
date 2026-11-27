@@ -52,3 +52,4 @@ describe('LocalFsService.readFileText', () => {
     await expect(readFileText(filePath, 0)).rejects.toMatchObject({ code: 'VALIDATION' })
   })
 })
+

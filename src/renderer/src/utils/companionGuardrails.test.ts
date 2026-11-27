@@ -11,6 +11,13 @@ describe('companionGuardrails', () => {
     expect(isSensitiveSecretFilename('/app/.env.production')).toBe(true)
     expect(isSensitiveSecretFilename('id_rsa')).toBe(true)
     expect(isSensitiveSecretFilename('id_ed25519')).toBe(true)
+    expect(isSensitiveSecretFilename('sample_id_ed25519')).toBe(true)
+    expect(isSensitiveSecretFilename('deploy_id_rsa')).toBe(true)
+    expect(isSensitiveSecretFilename('prod-id_ecdsa')).toBe(true)
+    expect(isSensitiveSecretFilename('legacy_id_dsa')).toBe(true)
+    expect(isSensitiveSecretFilename('deploy.ppk')).toBe(true)
+    expect(isSensitiveSecretFilename('office-vpn.ovpn')).toBe(true)
+    expect(isSensitiveSecretFilename('app_secrets.yaml')).toBe(true)
     expect(isSensitiveSecretFilename('server.pem')).toBe(true)
     expect(isSensitiveSecretFilename('credentials.json')).toBe(true)
     expect(isSensitiveSecretFilename('.npmrc')).toBe(true)
@@ -18,6 +25,7 @@ describe('companionGuardrails', () => {
     expect(isSensitiveSecretFilename('.env.example')).toBe(false)
     expect(isSensitiveSecretFilename('.env.sample')).toBe(false)
     expect(isSensitiveSecretFilename('id_ed25519.pub')).toBe(false)
+    expect(isSensitiveSecretFilename('sample_id_ed25519.pub')).toBe(false)
     expect(isSensitiveSecretFilename('README.md')).toBe(false)
   })
 
@@ -54,5 +62,35 @@ describe('companionGuardrails', () => {
     expect(syncCheck.sensitiveFiles).toEqual(['config/.env'])
     expect(syncCheck.lowDiskWarning).toContain('Upload requires')
     expect(syncCheck.warnings.length).toBe(3)
+  })
+
+  it('catches nested secrets inside uploaded folders and reports mountPoint/inode exhaustion', () => {
+    const res = evaluateTransferPreFlight(
+      [{ direction: 'upload', targetName: 'deploy-bundle', sourceSize: 0, isDir: true }],
+      {
+        totalBytes: 100 * 1024 * 1024,
+        usedBytes: 50 * 1024 * 1024,
+        availableBytes: 50 * 1024 * 1024,
+        mountPoint: '/var',
+        inodesTotal: 10_000,
+        inodesUsed: 9_600,
+        inodesAvailable: 400
+      },
+      { relativePaths: ['deploy-bundle/config/.env', 'deploy-bundle/app.js'], totalBytes: 2048 }
+    )
+    expect(res.sensitiveFiles).toEqual(['deploy-bundle/config/.env'])
+    expect(res.lowDiskWarning).toContain('/var')
+    expect(res.lowDiskWarning).toContain('inode usage is 96%')
+  })
+
+  it('warns when a nested folder pre-flight scan is truncated', () => {
+    const res = evaluateTransferPreFlight(
+      [{ direction: 'upload', targetName: 'huge-folder', sourceSize: 0, isDir: true }],
+      null,
+      { relativePaths: ['huge-folder/index.js'], totalBytes: 1024, truncated: true }
+    )
+    expect(res.sensitiveFiles).toEqual([])
+    expect(res.warnings).toHaveLength(1)
+    expect(res.warnings[0]).toContain('could not inspect every nested file')
   })
 })

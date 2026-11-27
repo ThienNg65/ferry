@@ -9,7 +9,7 @@ import WebSocket, { WebSocketServer } from 'ws'
 import { EVENT_CHANNELS } from '../shared/contract'
 import { openStageDropWriteStream, touchStageDropSession } from '../main/fs/LocalFsService'
 import { setHost } from '../main/host/host'
-import { unwrapOrCreateMasterKey } from '../main/host/dpapiKey'
+import { unwrapOrCreateMasterKey } from '../main/host/masterKey'
 import { logSecurityEvent } from '../main/host/securityLog'
 import { registerSidecarHandlers } from '../main/ipc/registerSidecar'
 import { SshError } from '../main/ssh/errors'
@@ -130,6 +130,13 @@ export function createStageDropHttpHandler(expectedTokenBuf: Buffer, nlPort: str
 }
 
 export function defaultFerryDataDir(): string {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'Ferry')
+  }
+  if (process.platform !== 'win32') {
+    const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config')
+    return path.join(xdg, 'Ferry')
+  }
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
   return path.join(appData, 'Ferry')
 }

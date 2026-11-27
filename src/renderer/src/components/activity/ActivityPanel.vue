@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useOperationsStore } from '../../stores/operations.store'
 import ActivityItem from './ActivityItem.vue'
 
 const operations = useOperationsStore()
+const companion = useCompanionStore()
 
 // One shared 1s ticker for every row's elapsed-time display, running only
 // while at least one operation is in flight.
@@ -70,6 +72,13 @@ const hasFinished = computed(() => operations.list.some((op) => op.state !== 'st
         :summary="op.summary"
         :now="now"
         @cancel="operations.cancel(op.operationId)"
+        @troubleshoot="companion.troubleshootWorkspaceError({
+          scopeKey: op.sessionId,
+          category: 'operation',
+          operationKind: op.kind,
+          label: op.label,
+          error: op.error || 'Operation failed'
+        })"
       />
     </div>
   </div>

@@ -38,7 +38,7 @@ export const BUILT_IN_SNIPPETS: readonly CompanionSnippet[] = [
   {
     id: 'builtin-dir-sizes',
     label: 'Largest folders in current path',
-    command: 'du -sh * 2>/dev/null | sort -h',
+    command: 'du -sh * 2>/dev/null | sort -h || du -sk * 2>/dev/null | sort -rn',
     description: 'Summarize disk usage for items in the current directory.',
     risk: 'read_only',
     builtIn: true
@@ -46,7 +46,7 @@ export const BUILT_IN_SNIPPETS: readonly CompanionSnippet[] = [
   {
     id: 'builtin-open-ports',
     label: 'Listening TCP/UDP ports',
-    command: 'ss -tulpn',
+    command: 'ss -tulpn 2>/dev/null || netstat -tulpn',
     description: 'List active listening sockets and owning processes.',
     risk: 'read_only',
     builtIn: true
@@ -54,7 +54,7 @@ export const BUILT_IN_SNIPPETS: readonly CompanionSnippet[] = [
   {
     id: 'builtin-top-memory',
     label: 'Top memory processes',
-    command: 'ps aux --sort=-%mem | head -n 15',
+    command: '{ ps aux --sort=-%mem 2>/dev/null || ps aux; } | head -n 15',
     description: 'Show top 15 processes sorted by memory usage.',
     risk: 'read_only',
     builtIn: true
@@ -62,16 +62,16 @@ export const BUILT_IN_SNIPPETS: readonly CompanionSnippet[] = [
   {
     id: 'builtin-journal-errors',
     label: 'Recent system errors',
-    command: 'journalctl -p err -n 50 --no-pager',
-    description: 'Inspect the latest 50 error-level systemd journal entries.',
+    command: 'journalctl -p err -n 50 --no-pager 2>/dev/null || tail -n 50 /var/log/syslog /var/log/messages 2>/dev/null',
+    description: 'Inspect the latest 50 error-level system log entries.',
     risk: 'read_only',
     builtIn: true
   },
   {
     id: 'builtin-failed-units',
-    label: 'Failed systemd units',
-    command: 'systemctl --failed --no-pager',
-    description: 'Check whether any systemd services are currently in a failed state.',
+    label: 'Failed services / units',
+    command: 'systemctl --failed --no-pager 2>/dev/null || rc-status 2>/dev/null || service --status-all 2>/dev/null',
+    description: 'Check whether any system services are currently in a failed state.',
     risk: 'read_only',
     builtIn: true
   }
@@ -87,33 +87,33 @@ const COMMAND_TRANSLATIONS: Array<{
     summary: 'Here are read-only commands to inspect filesystem space and locate large directories or files:',
     cards: [
       { command: 'df -h', description: 'Check overall mounted filesystem space' },
-      { command: 'du -sh * 2>/dev/null | sort -h | tail -n 15', description: 'Rank largest entries in current directory' },
-      { command: 'find . -maxdepth 3 -type f -size +50M -exec ls -lh {} + 2>/dev/null', description: 'Find files larger than 50 MB within 3 levels' }
+      { command: '{ du -sh * 2>/dev/null | sort -h || du -sk * 2>/dev/null | sort -rn; } | tail -n 15', description: 'Rank largest entries in current directory' },
+      { command: 'find . -maxdepth 3 -type f -size +50M -ls 2>/dev/null', description: 'Find files larger than 50 MB within 3 levels' }
     ]
   },
   {
     pattern: /\b(ports?|listening|sockets?|what('?s| is)\s*running\s*on\s*port)\b/i,
-    summary: 'Use `ss` (or `lsof`) to inspect active listening ports and their processes:',
+    summary: 'Use `ss` (with `netstat`/`lsof` fallbacks) to inspect active listening ports and their processes:',
     cards: [
-      { command: 'ss -tulpn', description: 'List all listening TCP/UDP ports and PIDs' },
-      { command: 'lsof -i -P -n | grep LISTEN', description: 'Fallback port listing via lsof' }
+      { command: 'ss -tulpn 2>/dev/null || netstat -tulpn', description: 'List all listening TCP/UDP ports and PIDs' },
+      { command: 'lsof -i -P -n 2>/dev/null | grep LISTEN', description: 'Fallback port listing via lsof' }
     ]
   },
   {
     pattern: /\b(cpu|memory|ram|swap|high\s*load|top\s*process(es)?|hogging|slow\s*server)\b/i,
     summary: 'Inspect CPU, memory, and top resource-consuming processes without modifying server state:',
     cards: [
-      { command: 'free -h', description: 'Check RAM, buffers/cache, and swap usage' },
-      { command: 'ps aux --sort=-%cpu | head -n 15', description: 'Top 15 processes by CPU usage' },
-      { command: 'ps aux --sort=-%mem | head -n 15', description: 'Top 15 processes by RAM usage' }
+      { command: 'free -h 2>/dev/null || free -m', description: 'Check RAM, buffers/cache, and swap usage' },
+      { command: '{ ps aux --sort=-%cpu 2>/dev/null || ps aux; } | head -n 15', description: 'Top 15 processes by CPU usage' },
+      { command: '{ ps aux --sort=-%mem 2>/dev/null || ps aux; } | head -n 15', description: 'Top 15 processes by RAM usage' }
     ]
   },
   {
     pattern: /\b(systemd|services?|daemon|failed\s*units?|journalctl)\b/i,
-    summary: 'Check systemd unit health and recent error logs:',
+    summary: 'Check service health and recent system error logs:',
     cards: [
-      { command: 'systemctl --failed --no-pager', description: 'List failed systemd services' },
-      { command: 'journalctl -p err -n 50 --no-pager', description: 'Show last 50 error entries in journald' }
+      { command: 'systemctl --failed --no-pager 2>/dev/null || rc-status 2>/dev/null || service --status-all 2>/dev/null', description: 'List failed or active services' },
+      { command: 'journalctl -p err -n 50 --no-pager 2>/dev/null || tail -n 50 /var/log/syslog /var/log/messages 2>/dev/null', description: 'Show last 50 system error entries' }
     ]
   },
   {
@@ -129,7 +129,7 @@ const COMMAND_TRANSLATIONS: Array<{
     summary: 'Inspect file permissions and ownership before making changes:',
     cards: [
       { command: 'ls -la', description: 'Show permissions, owner, group, and sizes in current folder' },
-      { command: 'namei -l "$(pwd)"', description: 'Inspect directory permissions along the full path' }
+      { command: 'namei -l . 2>/dev/null || ls -ld .', description: 'Inspect directory permissions along the full path' }
     ]
   },
   {
@@ -189,21 +189,21 @@ export function diagnoseLogSnippetOffline(
     summary = 'This log indicates disk exhaustion (ENOSPC). Free space or rotate oversized logs before retrying writes.'
     commandCards.push(
       { command: 'df -h && df -i', description: 'Check available disk blocks and inodes', risk: 'read_only' },
-      { command: 'du -sh /var/log/* 2>/dev/null | sort -h | tail -n 10', description: 'Find largest files under /var/log', risk: 'read_only' }
+      { command: '{ du -sh /var/log/* 2>/dev/null | sort -h || du -sk /var/log/* 2>/dev/null | sort -rn; } | tail -n 10', description: 'Find largest files under /var/log', risk: 'read_only' }
     )
   } else if (/out of memory|oom-killer|killed process|java\.lang\.outofmemoryerror|heap out of memory/.test(lower)) {
     rootCause = 'Process memory limit exceeded or kernel OOM killer terminated a worker.'
     summary = 'The log shows an Out-Of-Memory event. Verify system RAM, swap, and which process allocated the most memory.'
     commandCards.push(
-      { command: 'free -h', description: 'Check available RAM and swap space', risk: 'read_only' },
-      { command: 'dmesg -T | grep -i -E "oom|killed process" | tail -n 20', description: 'Inspect kernel OOM killer records', risk: 'read_only' }
+      { command: 'free -h 2>/dev/null || free -m', description: 'Check available RAM and swap space', risk: 'read_only' },
+      { command: '{ dmesg -T 2>/dev/null || dmesg 2>/dev/null; } | grep -i -E "oom|killed process" | tail -n 20', description: 'Inspect kernel OOM killer records', risk: 'read_only' }
     )
   } else if (/econnrefused|connection refused|upstream.*failed|502 bad gateway|504 gateway/.test(lower)) {
     rootCause = 'Reverse proxy or client could not connect to the upstream backend socket/port.'
     summary = 'Upstream connection failed or timed out. Verify the backend service is running and listening on the expected port.'
     commandCards.push(
-      { command: 'ss -tulpn', description: 'Confirm which services are listening on ports', risk: 'read_only' },
-      { command: 'systemctl --failed --no-pager', description: 'Check for crashed or failed systemd units', risk: 'read_only' }
+      { command: 'ss -tulpn 2>/dev/null || netstat -tulpn', description: 'Confirm which services are listening on ports', risk: 'read_only' },
+      { command: 'systemctl --failed --no-pager 2>/dev/null || rc-status 2>/dev/null || service --status-all 2>/dev/null', description: 'Check for crashed or failed services', risk: 'read_only' }
     )
   } else if (/eacces|eperm|permission denied/.test(lower)) {
     rootCause = 'The service or SSH user lacks filesystem read/write/execute permissions on the target path.'
@@ -217,13 +217,13 @@ export function diagnoseLogSnippetOffline(
     rootCause = 'TLS handshake or certificate validation failed (expired, mismatched hostname, or missing chain).'
     summary = 'Detected a TLS/certificate error in the log. Check certificate dates and proxy config.'
     commandCards.push({
-      command: 'journalctl -p err -n 40 --no-pager',
+      command: 'journalctl -p err -n 40 --no-pager 2>/dev/null || tail -n 40 /var/log/syslog /var/log/messages 2>/dev/null',
       description: 'Review recent service TLS/startup errors',
       risk: 'read_only'
     })
   } else {
     commandCards.push({
-      command: 'journalctl -p err -n 40 --no-pager',
+      command: 'journalctl -p err -n 40 --no-pager 2>/dev/null || tail -n 40 /var/log/syslog /var/log/messages 2>/dev/null',
       description: 'Check correlated system error logs',
       risk: 'read_only'
     })
@@ -274,28 +274,28 @@ export function diagnoseMonitorSpikeOffline(input: MonitorSpikeSummaryInput): Co
 
   if (top) {
     commandCards.push({
-      command: `ps -p ${top.pid} -o pid,ppid,user,%cpu,%mem,etime,cmd`,
+      command: `ps -p ${top.pid} -o pid,ppid,user,%cpu,%mem,etime,cmd 2>/dev/null || ps aux | grep -E "PID|${top.pid}"`,
       description: `Inspect full command line and runtime of ${top.name} (PID ${top.pid})`,
       risk: 'read_only'
     })
   }
   if (input.diskPct !== null && input.diskPct >= 90) {
     commandCards.push({
-      command: 'df -h && du -sh /var/log/* /tmp/* 2>/dev/null | sort -h | tail -n 15',
+      command: 'df -h && { du -sh /var/log/* /tmp/* 2>/dev/null | sort -h || du -sk /var/log/* /tmp/* 2>/dev/null | sort -rn; } | tail -n 15',
       description: 'Locate directories consuming disk space on /',
       risk: 'read_only'
     })
   }
   if (input.memPct >= 85 || input.swapPct >= 50) {
     commandCards.push({
-      command: 'free -h && ps aux --sort=-%mem | head -n 15',
+      command: '{ free -h 2>/dev/null || free -m; } && { ps aux --sort=-%mem 2>/dev/null || ps aux; } | head -n 15',
       description: 'Inspect memory/swap pressure and top RSS consumers',
       risk: 'read_only'
     })
   }
   if (commandCards.length === 0) {
     commandCards.push({
-      command: 'vmstat 1 3 && ps aux --sort=-%cpu | head -n 12',
+      command: '{ vmstat 1 3 2>/dev/null || uptime; } && { ps aux --sort=-%cpu 2>/dev/null || ps aux; } | head -n 12',
       description: 'Sample CPU wait/context switches and top processes',
       risk: 'read_only'
     })
