@@ -762,8 +762,11 @@ export class RemoteShell {
    */
   private resolveDeletePath(remotePath: string, remoteCwd?: string): string {
     const inputPath = remotePath ?? ''
-    if (!inputPath || !inputPath.trim() || inputPath.includes('\0') || remoteCwd?.includes('\0')) {
-      throw new SshError('VALIDATION', `Refusing to delete remote root, empty path, or path containing a null byte "${remotePath}"`)
+    if (!inputPath || !inputPath.trim()) {
+      throw new SshError('VALIDATION', `Refusing to delete remote root or empty path "${remotePath}"`)
+    }
+    if (inputPath.includes('\0') || remoteCwd?.includes('\0')) {
+      throw new SshError('VALIDATION', 'Refusing to delete a path containing a null byte')
     }
 
     const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
