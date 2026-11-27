@@ -66,7 +66,7 @@ async function submitKeyboardAnswers(): Promise<void> {
         />
         <p class="break-words [overflow-wrap:anywhere] text-sm text-default">{{ sessions.pendingHostKeyMismatch?.message }}</p>
         <p class="text-xs text-muted">
-          Only continue if you're certain the change is legitimate — e.g. the server was reinstalled or its key was
+          Only continue if you're certain the change is legitimate, for example if the server was reinstalled or its key was
           deliberately rotated.
         </p>
       </div>

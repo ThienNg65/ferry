@@ -1449,7 +1449,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           <UButton color="neutral" variant="outline" @click="resolveExtractConflict('newFolder')">
             Use "{{ extractConflict?.suggestedName }}"
           </UButton>
-          <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
+          <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract here</UButton>
         </template>
       </UModal>
       <TransferConflictDialog

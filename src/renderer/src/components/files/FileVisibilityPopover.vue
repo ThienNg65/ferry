@@ -182,7 +182,7 @@ onBeforeUnmount(() => window.removeEventListener(OPEN_FILE_FILTERS_EVENT, onOpen
                   size="xs"
                   color="neutral"
                   variant="soft"
-                  :aria-label="`+ Include ${item.pattern}`"
+                  :aria-label="`Include ${item.pattern}`"
                   @click="addSuggestedPattern('include', item.pattern)"
                 >
                   + Include
@@ -192,7 +192,7 @@ onBeforeUnmount(() => window.removeEventListener(OPEN_FILE_FILTERS_EVENT, onOpen
                   size="xs"
                   color="neutral"
                   variant="soft"
-                  :aria-label="`+ Exclude ${item.pattern}`"
+                  :aria-label="`Exclude ${item.pattern}`"
                   @click="addSuggestedPattern('exclude', item.pattern)"
                 >
                   + Exclude

@@ -1,30 +1,30 @@
-# 02 — Styling, CSS Tokens & Theme Recipes
+# 02: Styling, CSS tokens, and theme recipes
 
-- **Parent Entrypoint:** [DESIGN.md](../../DESIGN.md)
-- **Design Spec:** [2026-11-18-glassmorphism-ui-research-design.md](../superpowers/specs/2026-11-18-glassmorphism-ui-research-design.md)
-- **Related Docs:** [01 — Visual Direction](./01-visual-direction.md) · [03 — Typography System](./03-typography-system.md) · [04 — Design Patterns & Rollout](./04-design-patterns-and-rollout.md) · [Motion System](../motion-system.md)
+- Parent entrypoint: [DESIGN.md](../../DESIGN.md)
+- Design spec: [2026-11-18-glassmorphism-ui-research-design.md](../superpowers/specs/2026-11-18-glassmorphism-ui-research-design.md)
+- Related docs: [01: Visual direction](./01-visual-direction.md) · [03: Typography system](./03-typography-system.md) · [04: Design patterns and rollout](./04-design-patterns-and-rollout.md) · [Motion system](../motion-system.md)
 
 ---
 
-## 1. Activation & Scoping Architecture (`html.ferry-glass`)
+## 1. Activation and scoping (`html.ferry-glass`)
 
-Because the Glassmorphism UI redesign ships behind an opt-in feature switch (`glassUiEnabled`, default `false`), **every CSS token override, backdrop blur, and surface utility must be scoped under `html.ferry-glass`** (and `html.dark.ferry-glass` for dark mode) in [`src/renderer/src/assets/main.css`](../../src/renderer/src/assets/main.css).
+Because the Glassmorphism UI redesign ships behind an opt-in feature switch (`glassUiEnabled`, default `false`), every CSS token override, backdrop blur, and surface utility must be scoped under `html.ferry-glass` (and `html.dark.ferry-glass` for dark mode) in [`src/renderer/src/assets/main.css`](../../src/renderer/src/assets/main.css).
 
-- **When `glassUiEnabled === false` (`<html>` without `.ferry-glass`):**
+- When `glassUiEnabled === false` (`<html>` without `.ferry-glass`):
   - Ferry renders 100% of its existing classic opaque palette, system font stack, and solid borders with zero visual diff.
-- **When `glassUiEnabled === true` (`<html class="ferry-glass">` or `<html class="dark ferry-glass">`):**
-  - `document.documentElement.classList.toggle('ferry-glass', enabled)` activates all `--ferry-glass-*` tokens, the `.ferry-ambient-canvas` backdrop, Nuxt UI semantic variable remappings, and the `Plus Jakarta Sans` typography stack instantaneously without unmounting a single Vue component.
+- When `glassUiEnabled === true` (`<html class="ferry-glass">` or `<html class="dark ferry-glass">`):
+  - `document.documentElement.classList.toggle('ferry-glass', enabled)` activates all `--ferry-glass-*` tokens, the `.ferry-ambient-canvas` backdrop, Nuxt UI semantic variable remappings, and the `Plus Jakarta Sans` typography stack without unmounting a single Vue component.
 
 ---
 
-## 2. Complete Token Reference Table & CSS Block
+## 2. Token reference and CSS block
 
-### Token Reference Matrix
+### Token reference
 
-| CSS Custom Property | Light Mode (`html.ferry-glass`) | Dark Mode (`html.dark.ferry-glass`) | Purpose & Consumers |
+| CSS custom property | Light Mode (`html.ferry-glass`) | Dark Mode (`html.dark.ferry-glass`) | Purpose and consumers |
 | :--- | :--- | :--- | :--- |
 | `--ferry-canvas-base` | `#f4f6fb` | `#090d16` | Solid base floor beneath `.ferry-ambient-canvas`. |
-| `--ferry-caption-bg` | `color-mix(in srgb, var(--ui-color-primary-500) 6%, #f4f6fb)` | `color-mix(in srgb, var(--ui-color-primary-500) 8%, #090d16)` | **100% opaque (`alpha === 255`)** color read by `resolveCaptionColorRef()` in `ui.store.ts` to sync the Windows 11 native DWM titlebar. |
+| `--ferry-caption-bg` | `color-mix(in srgb, var(--ui-color-primary-500) 6%, #f4f6fb)` | `color-mix(in srgb, var(--ui-color-primary-500) 8%, #090d16)` | 100% opaque (`alpha === 255`) color read by `resolveCaptionColorRef()` in `ui.store.ts` to sync the Windows 11 native DWM titlebar. |
 | `--ferry-glass-chrome-bg` | `rgba(248, 250, 252, 0.68)` | `rgba(13, 18, 30, 0.62)` | Tier 1 surface tint (`SiteTabBar`, `FileToolbar`, `PathBreadcrumb`, `BottomDock` bar). |
 | `--ferry-glass-chrome-blur` | `blur(18px) saturate(180%)` | `blur(18px) saturate(180%)` | Tier 1 `backdrop-filter` value. |
 | `--ferry-glass-chrome-border` | `rgba(15, 23, 42, 0.08)` | `rgba(255, 255, 255, 0.09)` | Hairline structural divider between chrome and content wells. |
@@ -43,7 +43,7 @@ Because the Glassmorphism UI redesign ships behind an opt-in feature switch (`gl
 
 ---
 
-### Canonical CSS Specification (`src/renderer/src/assets/main.css`)
+### CSS specification (`src/renderer/src/assets/main.css`)
 
 ```css
 /* ============================================================================
@@ -191,15 +191,15 @@ html.ferry-glass .ferry-glass-overlay {
 
 ---
 
-## 3. Nuxt UI v4 Semantic Variable Overrides
+## 3. Nuxt UI v4 semantic variable overrides
 
 Nuxt UI v4 components (`UCard`, `UModal`, `UPopover`, `UDropdownMenu`, `UContextMenu`, `UInput`, `USelect`, `UToaster`) compile their structural colors to CSS variables (`--ui-bg`, `--ui-bg-elevated`, `--ui-bg-muted`, `--ui-border`, `--ui-border-muted`).
 
-Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single component, we combine three clean rules under `html.ferry-glass`:
-1. **Portal Overlays (`[role="dialog"]`, Menus/Popovers/Selects, and `UToast` — Excluding `UTooltip`):**
+Instead of deep `:deep(...)` selectors in every component, we use three rules under `html.ferry-glass`:
+1. Portal overlays (`[role="dialog"]`, menus, popovers, selects, and `UToast`, excluding `UTooltip`):
    - Nuxt UI v4 (built on Reka UI) teleports modals, popovers, dropdowns, context menus, and tooltips to `<body>`.
-   - **Important:** `UTooltip` also renders inside `[data-reka-popper-content-wrapper]`, whereas `UToast` (`ToastRoot` inside `UToaster`) renders as an `<li role="status">` / `[data-slot="root"]` toast item rather than a Reka popper.
-   - Therefore, we target `[role="dialog"]`, `[role="menu"]`, `[role="listbox"]`, and `UToaster` toast roots (`[data-slot="viewport"] > li`) for Tier 3 refractive glass while explicitly excluding `[role="tooltip"]` so small 24px tooltips stay lightweight, and using an opaque surface (`--ferry-glass-menu-nested-bg`) when a menu/select opens over an already-filtered `[role="dialog"]` to avoid Blink nested-`backdrop-filter` text bleed-through:
+   - `UTooltip` also renders inside `[data-reka-popper-content-wrapper]`, whereas `UToast` (`ToastRoot` inside `UToaster`) renders as an `<li role="status">` / `[data-slot="root"]` toast item rather than a Reka popper.
+   - So we target `[role="dialog"]`, `[role="menu"]`, `[role="listbox"]`, and `UToaster` toast roots (`[data-slot="viewport"] > li`) for Tier 3 refractive glass while explicitly excluding `[role="tooltip"]` so small 24px tooltips stay lightweight, and using an opaque surface (`--ferry-glass-menu-nested-bg`) when a menu/select opens over an already-filtered `[role="dialog"]` to avoid Blink nested-`backdrop-filter` text bleed-through:
    ```css
    html.ferry-glass [role="dialog"],
    html.ferry-glass [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
@@ -232,8 +232,8 @@ Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single co
      -webkit-backdrop-filter: none;
    }
    ```
-2. **Form Inputs Inside Glass Cards & Overlays (`UInput`, `USelect`):**
-   - Inside `.ferry-glass-card` and `.ferry-glass-overlay`, text inputs and selects use a recessed semi-transparent well (`--ferry-surface-subtle`) with `1px solid var(--ferry-glass-chrome-border)` and **no** nested `backdrop-filter`:
+2. Form inputs inside glass cards and overlays (`UInput`, `USelect`):
+   - Inside `.ferry-glass-card` and `.ferry-glass-overlay`, text inputs and selects use a recessed semi-transparent well (`--ferry-surface-subtle`) with `1px solid var(--ferry-glass-chrome-border)` and no nested `backdrop-filter`:
    ```css
    html.ferry-glass .ferry-glass-card input,
    html.ferry-glass .ferry-glass-overlay input,
@@ -243,16 +243,16 @@ Rather than fighting Nuxt UI with deep `:deep(...)` selectors in every single co
      border-color: var(--ferry-glass-chrome-border);
    }
    ```
-3. **Remapping `--ui-bg*` Tokens for Inner Containers:**
+3. Remapping `--ui-bg*` tokens for inner containers:
    - Because `--ui-bg` maps to `var(--ferry-glass-well-bg)` and `--ui-bg-muted` maps to `var(--ferry-glass-chrome-bg)` under `html.ferry-glass`, inner containers that use `bg-default` or `bg-muted` (such as `LogTailViewer.vue:737,818`, `FilePane.vue:838`, and `EditorDialog.vue:140`) automatically inherit translucent glass-well tints without requiring manual overrides on every internal `<div>`.
 
 ---
 
-## 4. The Chromium / WebView2 `backdrop-filter` Nesting Rule
+## 4. The Chromium / WebView2 `backdrop-filter` nesting rule
 
 > [!WARNING]
-> **Critical Chromium / WebView2 Compositor Pitfall (Review Focus #1):**
-> In Blink/Chromium (WebView2), any element with `backdrop-filter` (or `opacity < 1`, `filter`, or `mask`) establishes a **Backdrop Root**. If a child element inside that parent also declares `backdrop-filter: blur(...)`, the child can **only** sample the parent's already-rendered pixels—it cannot sample `.ferry-ambient-canvas` behind the parent, and stacking multiple backdrop roots causes severe frame drops.
+> Chromium / WebView2 compositor pitfall (Review Focus #1):
+> In Blink/Chromium (WebView2), any element with `backdrop-filter` (or `opacity < 1`, `filter`, or `mask`) establishes a Backdrop Root. If a child element inside that parent also declares `backdrop-filter: blur(...)`, the child can only sample the parent's already-rendered pixels. It cannot sample `.ferry-ambient-canvas` behind the parent, and stacking multiple backdrop roots causes severe frame drops.
 
 ```mermaid
 flowchart TD
@@ -276,16 +276,16 @@ flowchart TD
     end
 ```
 
-### Mandatory Structural Rules
-1. **Never put `backdrop-filter` on `<main>` or the root flex column in `App.vue`:** Keep layout wrappers transparent (`bg-transparent`) without `backdrop-filter`, `opacity < 1`, or `will-change: transform` at rest.
-2. **Apply `backdrop-filter` only at the leaf container level:** `SiteTabBar`, `FileToolbar`, `PathBreadcrumb`, `SessionManagerView`'s `UCard`s, `BottomDock` header, and `<body>`-teleported overlays.
-3. **Never apply `backdrop-filter` inside virtualized scroll containers:** `FileRow.vue`, `TransferQueue.vue` rows, and `LogTailViewer.vue` lines use solid/semi-transparent `background-color` hover/selection tints (`bg-primary/15`) inside their `.ferry-glass-well` parent.
+### Structural rules
+1. Never put `backdrop-filter` on `<main>` or the root flex column in `App.vue`: Keep layout wrappers transparent (`bg-transparent`) without `backdrop-filter`, `opacity < 1`, or `will-change: transform` at rest.
+2. Apply `backdrop-filter` only at the leaf container level: `SiteTabBar`, `FileToolbar`, `PathBreadcrumb`, `SessionManagerView`'s `UCard`s, `BottomDock` header, and `<body>`-teleported overlays.
+3. Never apply `backdrop-filter` inside virtualized scroll containers: `FileRow.vue`, `TransferQueue.vue` rows, and `LogTailViewer.vue` lines use solid/semi-transparent `background-color` hover/selection tints (`bg-primary/15`) inside their `.ferry-glass-well` parent.
 
 ---
 
-## 5. Accessibility Fallbacks & WCAG 2.2 AA Contrast Matrix
+## 5. Accessibility fallbacks and WCAG 2.2 AA contrast
 
-### `@media (prefers-reduced-transparency: reduce)` Fallback (Review Focus #5)
+### `@media (prefers-reduced-transparency: reduce)` fallback (Review Focus #5)
 
 Users who enable "Reduce transparency" (Windows 11 *Settings → Accessibility → Visual effects → Transparency effects: Off*) must automatically receive opaque surfaces while retaining the new `Plus Jakarta Sans` typography, rounded geometry (`--ui-radius: 0.625rem`), and specular border polish:
 
@@ -313,24 +313,24 @@ Users who enable "Reduce transparency" (Windows 11 *Settings → Accessibility �
 }
 ```
 
-### Verified Contrast Ratio Matrix (Worst-Case Over Primary Ambient Orb)
+### Verified contrast ratios (worst case over the primary ambient orb)
 
 Ferry configures Nuxt UI with `neutral: 'zinc'` (`vite.renderer.config.mts:20`) and overrides `--ui-text-muted` / `--ui-text-dimmed` in `main.css:42-52` to `var(--ui-color-neutral-600)` (`#52525b`) in Light mode and `var(--ui-color-neutral-400)` (`#a1a1aa`) in Dark mode. Because `.ferry-ambient-canvas` caps its radial orb opacity at `22%` in Light mode and `20%` in Dark mode, the worst-case composite background luminance beneath every glass tier passes WCAG 2.2 AA/AAA:
 
 | Nuxt UI v4 Text Token | Foreground Color (`zinc` Light / Dark) | Over Tier 1 Chrome (`0.75` / `0.68`) | Over Tier 2A Card (`0.72` / `0.64`) | Over Tier 2B Content Well (`0.88` / `0.84`) | WCAG 2.2 Target |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `--ui-text-highlighted` | `#18181b` (`zinc-900`) / `#fafafa` (`zinc-50`) | **14.5:1** / **15.2:1** | **14.1:1** / **14.6:1** | **15.8:1** / **16.7:1** | Passes AAA (>= 7.0:1) |
-| `--ui-text` | `#3f3f46` (`zinc-700`) / `#e4e4e7` (`zinc-200`) | **8.9:1** / **11.8:1** | **8.6:1** / **11.3:1** | **9.7:1** / **12.9:1** | Passes AAA (>= 7.0:1) |
-| `--ui-text-muted` | `#52525b` (`zinc-600`) / `#a1a1aa` (`zinc-400`) | **6.3:1** / **6.4:1** | **6.1:1** / **6.1:1** | **6.9:1** / **7.1:1** | Passes AA (>= 4.5:1) |
-| Interactive Borders / Icons | `#71717a` (`zinc-500`) / `#71717a` (`zinc-500`) | **4.1:1** / **3.6:1** | **4.0:1** / **3.5:1** | **4.4:1** / **4.0:1** | Passes Non-Text AA (>= 3.0:1) |
+| `--ui-text-highlighted` | `#18181b` (`zinc-900`) / `#fafafa` (`zinc-50`) | 14.5:1 / 15.2:1 | 14.1:1 / 14.6:1 | 15.8:1 / 16.7:1 | Passes AAA (>= 7.0:1) |
+| `--ui-text` | `#3f3f46` (`zinc-700`) / `#e4e4e7` (`zinc-200`) | 8.9:1 / 11.8:1 | 8.6:1 / 11.3:1 | 9.7:1 / 12.9:1 | Passes AAA (>= 7.0:1) |
+| `--ui-text-muted` | `#52525b` (`zinc-600`) / `#a1a1aa` (`zinc-400`) | 6.3:1 / 6.4:1 | 6.1:1 / 6.1:1 | 6.9:1 / 7.1:1 | Passes AA (>= 4.5:1) |
+| Interactive Borders / Icons | `#71717a` (`zinc-500`) / `#71717a` (`zinc-500`) | 4.1:1 / 3.6:1 | 4.0:1 / 3.5:1 | 4.4:1 / 4.0:1 | Passes Non-Text AA (>= 3.0:1) |
 
 ---
 
-## 6. Motion, Concentric Radius & Focus Modality Tokens (Arc UI Alignment)
+## 6. Motion, concentric radius, and focus modality tokens (Arc UI alignment)
 
-### 6.1 Canonical Motion & Spring CSS Tokens (`:root`)
+### 6.1 Motion and spring CSS tokens (`:root`)
 
-All interactive transitions in [`src/renderer/src/assets/main.css`](../../src/renderer/src/assets/main.css) share a unified set of duration and easing tokens combining Ferry's desktop baseline with Arc UI's critically damped `linear()` spring and faster-exit timing model (see [Motion System](../motion-system.md) for behavioral rules):
+All interactive transitions in [`src/renderer/src/assets/main.css`](../../src/renderer/src/assets/main.css) share one set of duration and easing tokens that combine Ferry's desktop baseline with Arc UI's critically damped `linear()` spring and faster-exit timing model (see [Motion system](../motion-system.md) for behavioral rules):
 
 | CSS Token | Value | Purpose |
 | :--- | :--- | :--- |
@@ -373,22 +373,22 @@ All interactive transitions in [`src/renderer/src/assets/main.css`](../../src/re
 }
 ```
 
-### 6.2 Concentric Corner Radius Scale
+### 6.2 Concentric corner radius scale
 
 Nested containers obey the geometric rule $R_{\text{inner}} = \max(0\text{px}, R_{\text{outer}} - \text{Padding})$ so inner controls and outer frosted frames share the same curvature center:
 
 | Surface Layer | Outer Radius | Typical Container Padding | Nested Inner Radius |
 | :--- | :--- | :--- | :--- |
-| **Tier 2A Card / Tier 3 Overlay** | `0.75rem` (`12px`) / `var(--ui-radius)` (`10px`) | `4px`–`6px` | `0.5rem` (`8px`) / `0.375rem` (`6px`) |
-| **Grouped Control / Segmented Shell** | `0.5rem` (`8px`) | `2px`–`3px` | `0.375rem` (`6px`) / `0.3125rem` (`5px`) |
-| **Compact Badge / Tag / `<kbd>`** | `0.375rem` (`6px`) | `2px` | `0.25rem` (`4px`) |
+| Tier 2A Card / Tier 3 Overlay | `0.75rem` (`12px`) / `var(--ui-radius)` (`10px`) | `4px` to `6px` | `0.5rem` (`8px`) / `0.375rem` (`6px`) |
+| Grouped Control / Segmented Shell | `0.5rem` (`8px`) | `2px` to `3px` | `0.375rem` (`6px`) / `0.3125rem` (`5px`) |
+| Compact Badge / Tag / `<kbd>` | `0.375rem` (`6px`) | `2px` | `0.25rem` (`4px`) |
 
-### 6.3 Pointer vs. Keyboard Focus Ring & `aria-busy` Discipline
+### 6.3 Pointer and keyboard focus rings, and `aria-busy`
 
-- **Modality-Clean Focus Rings:** Pointer interactions (`:focus:not(:focus-visible)`) draw zero focus outline so clicking buttons, site rows, or tabs never leaves a lingering ring. Keyboard navigation (`:focus-visible`) applies a crisp `2px solid var(--ui-primary)` outline with `outline-offset: 2px`.
-- **Focus Preservation During Async Operations:** Loading buttons (e.g., `"Connecting..."`, `"Saving..."`) emit `aria-busy="true"` while pending (using `:aria-busy="flag || undefined"` so idle buttons stay clean). Note that Nuxt UI `<UButton :loading="true">` sets native `disabled` on the underlying `<button>` automatically; custom non-`<UButton>` triggers should pair `aria-busy="true"` with `aria-disabled="true"` rather than raw HTML `disabled` whenever focus must remain pinned.
+- Focus rings by modality: Pointer interactions (`:focus:not(:focus-visible)`) draw zero focus outline so clicking buttons, site rows, or tabs never leaves a lingering ring. Keyboard navigation (`:focus-visible`) applies a `2px solid var(--ui-primary)` outline with `outline-offset: 2px`.
+- Focus during async operations: Loading buttons (e.g., `"Connecting..."`, `"Saving..."`) emit `aria-busy="true"` while pending (using `:aria-busy="flag || undefined"` so idle buttons stay clean). Note that Nuxt UI `<UButton :loading="true">` sets native `disabled` on the underlying `<button>` automatically; custom non-`<UButton>` triggers should pair `aria-busy="true"` with `aria-disabled="true"` rather than raw HTML `disabled` whenever focus must remain pinned.
 
-### 6.4 Popup-Anchor Press Guard & Pointer-Fine Hover Guard CSS Recipes
+### 6.4 Popup-anchor press guard and pointer-fine hover guard recipes
 
 ```css
 /* Suppress active scale when a button is disabled or anchors an open/popup overlay */

@@ -1,6 +1,6 @@
 # Ferry Design System & UI Architecture (`DESIGN.md`)
 
-> **Master Entrypoint for AI Agents & Engineers:** Read this file before modifying any Vue component, CSS token, typography rule, or appearance setting in Ferry. It indexes the complete **Modern Minimalist Glassmorphism** design system and establishes non-negotiable architectural guardrails.
+> **Entry point for AI agents and engineers:** Read this file before modifying any Vue component, CSS token, typography rule, or appearance setting in Ferry. It indexes the Modern Minimalist Glassmorphism design system and lists the architectural guardrails.
 
 ---
 
@@ -11,10 +11,10 @@ Ferry is a lightweight, high-precision SFTP, SSH, and live remote log-tailing de
 Ferry supports a dual-mode visual architecture controlled by a live user preference (`ui.glassUiEnabled` in [`src/renderer/src/stores/ui.store.ts`](src/renderer/src/stores/ui.store.ts)):
 1. **Classic UI Mode (`glassUiEnabled: false`, Default):**
    - Solid opaque surfaces, system UI font stack (`Segoe UI Variable`), and 1px solid borders.
-2. **Modern Glass UI Mode (`glassUiEnabled: true`, `html.ferry-glass` — *In Development Preview*):**
-   - **Visual Philosophy:** Minimalist Glassmorphism inspired by [Mikołaj Gałęziowski's Dribbble explorations](https://dribbble.com/galeziowski)—combining multi-layered frosted glass (`backdrop-filter: blur() saturate()`), `1px` specular edge highlights, soft ambient shadows, and a static, accent-reactive **Ambient Mesh Canvas** (`.ferry-ambient-canvas`) with high-legibility **Content Wells** (`0.82–0.92` alpha) for dense data views.
-   - **Motion & Interaction Philosophy:** Adapted from **[Arc UI (`uiarc.dev`)](https://uiarc.dev/docs/introduction)** for Ferry's Vue 3.5, Nuxt UI v4.9, and Glassmorphism architecture without altering our frosted-glass visual identity—establishing **cause-and-effect motion physics, critically damped spring transitions (`bounce: 0` on state), faster exits (`140ms`), concentric surface geometry, container-first responsive slots (`@container` / `ResizeObserver`), and pointer/keyboard modality discipline**.
-   - **Typography:** **Plus Jakarta Sans Variable** (UI & Display) paired with **Cascadia Code / JetBrains Mono Variable** (Monospace), selected from [Figma's *33 Modern Fonts To Elevate Your Designs*](https://www.figma.com/resource-library/modern-fonts/) and bundled locally for 100% offline reliability.
+2. **Modern Glass UI Mode (`glassUiEnabled: true`, `html.ferry-glass`, *In Development Preview*):**
+   - **Visual Philosophy:** Minimalist Glassmorphism inspired by [Mikołaj Gałęziowski's Dribbble explorations](https://dribbble.com/galeziowski), combining multi-layered frosted glass (`backdrop-filter: blur() saturate()`), `1px` specular edge highlights, soft ambient shadows, and a static, accent-reactive **Ambient Mesh Canvas** (`.ferry-ambient-canvas`) with high-legibility **Content Wells** (`0.82–0.92` alpha) for dense data views.
+   - **Motion & Interaction Philosophy:** Adapted from **[Arc UI (`uiarc.dev`)](https://uiarc.dev/docs/introduction)** for Ferry's Vue 3.5, Nuxt UI v4.9, and Glassmorphism architecture without altering our frosted-glass visual identity. It sets cause-and-effect motion physics, critically damped spring transitions (`bounce: 0` on state), faster exits (`140ms`), concentric surface geometry, container-first responsive slots (`@container` / `ResizeObserver`), and pointer/keyboard modality discipline.
+   - **Typography:** **Plus Jakarta Sans Variable** (UI & Display) paired with **Cascadia Code / JetBrains Mono Variable** (Monospace), selected from [Figma's *33 Modern Fonts To Elevate Your Designs*](https://www.figma.com/resource-library/modern-fonts/) and bundled locally so they work offline.
 
 ---
 
@@ -44,7 +44,7 @@ Always load the specific sub-document that matches your task rather than guessin
 3. **Zero Per-Row Blur on Virtualized Lists (`FileRow.vue`, `TransferQueue.vue`):**
    - Never apply `backdrop-filter`, `filter`, or `box-shadow` to individual virtualized rows. Dense lists sit inside a Tier 2B `.ferry-glass-well` container (`0.82` Light / `0.78` Dark alpha) and use lightweight `bg-primary/14` / `hover:bg-muted/50` row states to maintain 60fps scrolling.
 4. **Never Unmount `TerminalView.vue` or Break WebGL (`xterm.js`):**
-   - Toggling `ui.glassUiEnabled` must only toggle `html.ferry-glass` and reactive classes—never re-key or unmount `BottomDock.vue` or `TerminalView.vue`. Keep `.xterm` free of `backdrop-filter`.
+   - Toggling `ui.glassUiEnabled` must only toggle `html.ferry-glass` and reactive classes. Never re-key or unmount `BottomDock.vue` or `TerminalView.vue`. Keep `.xterm` free of `backdrop-filter`.
 5. **Static Ambient Mesh Backdrop at Rest:**
    - `.ferry-ambient-canvas` must remain strictly static at rest (updating only on `theme` or `accentColor` changes). Never add infinite `@keyframes` animations behind `backdrop-filter` layers.
 6. **Opaque `--ferry-caption-bg` for Windows 11 Native Titlebar Sync:**

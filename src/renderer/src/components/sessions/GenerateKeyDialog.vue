@@ -128,7 +128,7 @@ function close(): void {
           <UButton color="neutral" variant="outline" aria-label="Browse key save path" @click="browseSavePath">Browse</UButton>
         </div>
       </UFormField>
-      <UFormField label="Passphrase" hint="Optional — requires system ssh-keygen">
+      <UFormField label="Passphrase" hint="Optional. Requires system ssh-keygen">
         <PasswordInput
           v-model="passphrase"
           label="passphrase"

@@ -12,7 +12,7 @@ Use one of these title forms:
 - `refactor(scope): describe an internal refactor`
 - `docs:`, `test:`, `ci:`, `chore:`, `build:` for maintenance changes
 
-A PR-title workflow checks the title when a PR is opened or edited. It must be made a **required** status check; without branch protection, it only reports failures.
+A PR-title workflow checks the title when a PR is opened or edited. Make it a **required** status check. Without branch protection, it only reports failures.
 
 ## Merge settings (owner action in GitHub)
 
@@ -37,7 +37,7 @@ GitHub repository settings and branch protection must be configured by an owner 
 The release workflow uses `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN`.
 If `RELEASE_TOKEN` is not configured, Release Please creates version PRs using GitHub's built-in token. GitHub then holds PR-triggered CI workflows for approval; the resulting checks may show as failed or action-required **without running any jobs**.
 
-To make the mandatory title/CI checks work smoothly for automated version PRs, configure a **separate** fine-grained personal access token in the **private source repository**:
+For the required title and CI checks to run on automated version PRs, configure a **separate** fine-grained personal access token in the **private source repository**:
 
 1. Restrict repository access to `ThienNg65/ferry` only.
 2. Grant **Contents: Read and write**, **Pull requests: Read and write** (Metadata read is automatic).

@@ -26,7 +26,7 @@ const edits = computed(() => editSessions.edits)
         :key="edit.editId"
         class="flex items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-xs"
       >
-        <UTooltip :text="edit.sessionClosed ? 'Session closed — further changes will not upload' : edit.dirty ? 'Unsaved changes' : 'Synced'">
+        <UTooltip :text="edit.sessionClosed ? 'Session closed. Further changes will not upload' : edit.dirty ? 'Unsaved changes' : 'Synced'">
           <span
             class="size-1.5 shrink-0 rounded-full"
             :class="edit.sessionClosed ? 'bg-error' : edit.dirty ? 'bg-warning' : 'bg-success'"
@@ -51,7 +51,7 @@ const edits = computed(() => editSessions.edits)
         <UIcon name="i-lucide-file-pen-line" class="size-5 text-muted" />
       </div>
       <p class="text-xs font-medium text-default">No open edits</p>
-      <p class="max-w-sm text-2xs text-muted">Files opened for editing appear here — the dot shows sync status.</p>
+      <p class="max-w-sm text-2xs text-muted">Files opened for editing appear here. The dot shows sync status.</p>
     </div>
   </div>
 </template>

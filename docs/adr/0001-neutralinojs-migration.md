@@ -1,6 +1,6 @@
 # ADR-0001: Neutralinojs + Node.js Sidecar Host Migration
 
-- **Status:** Accepted (`GO` — PR #45 / Issue #37)
+- **Status:** Accepted (`GO`, PR #45 / Issue #37)
 - **Date:** 2026-11-13
 - **Issue:** [#37 — Migrate Ferry from Electron to Neutralinojs](https://github.com/ThienNg65/ferry/issues/37)
 
@@ -12,7 +12,7 @@ Ferry originally embedded a full Electron/Chromium runtime (~89.92 MB NSIS insta
 
 Migrate Ferry's desktop shell to **Neutralinojs (`WebView2`)** paired with a **bundled Node.js v22 sidecar extension (`js.ferry.sidecar`)**, while keeping the Vue 3 + TypeScript renderer and `src/main` backend unified behind a runtime-agnostic `Host` abstraction (`nodeHost`). As of `v0.24.0` (#49), Neutralinojs + Node sidecar is the exclusive desktop runtime; Electron binaries, dependencies, and fallback code are removed.
 
-### Key Architectural Choices
+### Architectural choices
 
 1. **Runtime-Agnostic `Host` Abstraction (`src/main/host/host.ts`):**
    - Decouples services, stores, and IPC handlers from host APIs behind `createNodeHost` (`src/sidecar/nodeHost.ts`).
@@ -21,7 +21,7 @@ Migrate Ferry's desktop shell to **Neutralinojs (`WebView2`)** paired with a **b
    - Routes `12` shell-owned invoke channels directly to Neutralino (`dialog:*`, `window:*`, `system:*`, `profile:report`) and forwards all `65` backend invoke channels (including `update:*` and `fs:local:stage-drop`) + `3` send channels + `18` event channels to the Node sidecar over Neutralino's one-time-token WebSocket extension protocol.
    - Enforces `readyTimeoutMs` (`15_000 ms`), `rpcTimeoutMs` (`120_000 ms`), and immediate pending-call rejection on `extClientDisconnect` / `serverOffline`.
 3. **Least-Privilege Native Permissions (`neutralino.config.json`):**
-   - Eliminates wildcard namespaces (`os.*`, `filesystem.*`, `app.*`) and restricts `nativeAllowList` strictly to the `15` explicit methods used by Ferry (`app.broadcast`, `app.exit`, `window.minimize`, `window.maximize`, `window.unmaximize`, `window.isMaximized`, `window.move`, `os.showOpenDialog`, `os.showFolderDialog`, `os.showSaveDialog`, `os.getPath`, `clipboard.readText`, `extensions.dispatch`, `extensions.getStats`, `debug.log`), blocking `os.execCommand`, `os.spawnProcess`, and `filesystem.*`.
+   - Removes wildcard namespaces (`os.*`, `filesystem.*`, `app.*`) and limits `nativeAllowList` to the `15` explicit methods Ferry uses (`app.broadcast`, `app.exit`, `window.minimize`, `window.maximize`, `window.unmaximize`, `window.isMaximized`, `window.move`, `os.showOpenDialog`, `os.showFolderDialog`, `os.showSaveDialog`, `os.getPath`, `clipboard.readText`, `extensions.dispatch`, `extensions.getStats`, `debug.log`), blocking `os.execCommand`, `os.spawnProcess`, and `filesystem.*`.
 4. **Native Addon Build Strategy (`vite.sidecar.config.mts`):**
    - Externalizes `.node` native addons (including `ssh2/lib/protocol/crypto/build/Release/sshcrypto.node` and optional `cpu-features`) prior to CommonJS bundling, allowing `ssh2`'s built-in `try/catch` JS fallback using Node's native OpenSSL `crypto` module without compiling native C++ addons.
 5. **Existing-User Credential & Data Continuity (`dpapiKey.ts`, `secretBox.ts`, `neutralino-installer.nsi`):**
@@ -47,5 +47,5 @@ Migrate Ferry's desktop shell to **Neutralinojs (`WebView2`)** paired with a **b
 ## Consequences
 
 - CI (`windows-latest`) executes `typecheck`, `test`, `build`, `package`, and `smoke:neutralino` (which verifies PE icon/version branding, exercises NSIS transactional silent upgrade over a simulated Electron install directory, verifies DPAPI/sidecar RPC channels, and runs a live in-process `ssh2` SSH/SFTP/Transfer/Tail/PTY end-to-end flow against the installed binaries). Release workflow `.github/workflows/release.yml` publishes `Ferry-Setup-*.exe`, `Ferry-Portable-*-win-x64.zip`, and `latest.yml` exclusively (with temporary `PUBLISH_LEGACY_FERRY` feed compatibility so installed Electron clients can auto-migrate to Neutralino).
-- OS-level *drag-out* from inside the app (`system:startDrag` -> OS Explorer/Finder) is an accepted WebView2 platform limitation and intentionally a no-op under Neutralino (`neutralinoApi.ts`); users download files via in-app Remote -> Local pane drag, the Download toolbar action, or the Local pane's Explorer integration. In-app Local <-> Remote drag and external OS drag-*in* (`fs:local:stage-drop`, up to `16 MB`) are both supported.
+- OS-level *drag-out* from inside the app (`system:startDrag` -> OS Explorer/Finder) is a WebView2 platform limitation, accepted and left as a no-op under Neutralino (`neutralinoApi.ts`). Users download files via in-app Remote -> Local pane drag, the Download toolbar action, or the Local pane's Explorer integration. In-app Local <-> Remote drag and external OS drag-*in* (`fs:local:stage-drop`, up to `16 MB`) are both supported.
 - Windows-specific DPAPI secret protection assumes Windows x64 as the primary distribution target; non-Windows keychain adapters remain future work if macOS/Linux builds are added.

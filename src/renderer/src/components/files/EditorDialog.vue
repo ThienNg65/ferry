@@ -89,7 +89,7 @@ watch(
         savedContent.value = res.content
       } catch (e) {
         if (token !== loadToken) return
-        notify.error('Failed to load file', e instanceof Error ? e.message : String(e))
+        notify.error('Could not load file', e instanceof Error ? e.message : String(e))
         emit('update:open', false)
       } finally {
         if (token === loadToken) {
@@ -126,7 +126,7 @@ async function onSave(): Promise<void> {
       }
     }
   } catch (e) {
-    notify.error('Failed to save file', e instanceof Error ? e.message : String(e))
+    notify.error('Could not save file', e instanceof Error ? e.message : String(e))
   } finally {
     saving.value = false
   }
@@ -150,7 +150,7 @@ async function openExternalNow(): Promise<void> {
     }
   } catch (e) {
     if (token === loadToken) {
-      notify.error('Failed to open external editor', e instanceof Error ? e.message : String(e))
+      notify.error('Could not open external editor', e instanceof Error ? e.message : String(e))
     }
   }
 }
@@ -163,7 +163,7 @@ async function confirmDiscard(external: boolean): Promise<boolean> {
     title: 'Discard unsaved changes?',
     body: external
       ? 'Opening in an external editor will discard your unsaved changes in this window.'
-      : 'You have unsaved edits that have not been saved yet.',
+      : 'You have unsaved changes.',
     confirmLabel: external ? 'Discard & Open' : 'Discard',
     confirmColor: 'warning'
   })
@@ -213,7 +213,7 @@ async function onDiscardConflict(): Promise<void> {
     diffOpen.value = false
     emit('update:open', false)
   } catch (e) {
-    notify.error('Failed to discard edit', e instanceof Error ? e.message : String(e))
+    notify.error('Could not discard edit', e instanceof Error ? e.message : String(e))
   } finally {
     resolvingConflict.value = false
   }
@@ -235,8 +235,8 @@ async function onDiscardConflict(): Promise<void> {
         size="xs"
         :color="hasConflict ? 'warning' : 'neutral'"
         :variant="hasConflict ? 'soft' : 'ghost'"
-        title="View Diff against Server"
-        aria-label="View Diff against Server"
+        title="View diff against server"
+        aria-label="View diff against server"
         @click="diffOpen = true"
       />
       <UButton
@@ -244,8 +244,8 @@ async function onDiscardConflict(): Promise<void> {
         size="xs"
         color="neutral"
         variant="ghost"
-        title="Open in External Editor"
-        aria-label="Open in External Editor"
+        title="Open in external editor"
+        aria-label="Open in external editor"
         @click="onOpenExternal"
       />
       <UButton

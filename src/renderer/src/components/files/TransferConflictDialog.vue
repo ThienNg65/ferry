@@ -11,7 +11,7 @@ const emit = defineEmits<{ dismiss: []; resolve: [choice: ConflictChoice] }>()
 <template>
   <UModal
     :open="conflicts.length > 0"
-    title="File Conflict"
+    title="File conflict"
     :ui="{ content: 'sm:max-w-xl', footer: 'flex-nowrap justify-end gap-1.5 overflow-x-auto' }"
     @update:open="(v: boolean) => { if (!v) emit('dismiss') }"
   >
