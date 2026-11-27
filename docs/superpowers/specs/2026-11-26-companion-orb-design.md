@@ -42,8 +42,8 @@ palette and design system (`DESIGN.md`).
 
 | Topic | Decision |
 |---|---|
-| Look | Aurora gloss sphere: deep radial body, blurred inner light drifting, bottom refraction ("caustic"), vignette, soft + sharp specular highlight, 1px rim light, breathing outer glow. |
-| Colour | **Fixed brand blue**, not the user's accent. Keeps red/amber unambiguous with Red/Orange accents. Violet is the same hue as the glass ambient canvas secondary orb. Pink from the reference is dropped. |
+| Look | **Frosted lens** (revised 2026-11-27 after in-app review: the gloss sphere read as a Dribbble showpiece next to Ferry's flat line icons and frosted glass). A translucent disc in Ferry's own glass material: light frosted body tinted with the accent, a miniature of the ambient canvas inside (accent + violet blurred lights drifting), a 1px specular edge plus a hairline keyline, faint accent halo. No specular dot, vignette or caustic. At 16px a line glyph matching the toolbar's Lucide icons. |
+| Colour | **Follows the accent** (`--ui-color-primary-500`), like the ambient canvas. When the accent is warm (red, orange or amber hue), the orb falls back to brand blue `#3a7ce8` so it cannot read as production or failure. Violet is the canvas's secondary orb hue. |
 | Streaming | **S1 Lift**: each revealed chunk lifts the inner light ~9 units (of 100) and brightens the glow, then it settles. |
 | Production | **P1 Lower rim light**: thin `error`-red light along the bottom arc plus a ~26% warm tint of the body. Silhouette unchanged. |
 | AI failure | `warning` amber, never red, so it cannot read as production. |
@@ -54,14 +54,15 @@ palette and design system (`DESIGN.md`).
 
 | Role | Value |
 |---|---|
-| Body gradient (light to dark) | `#a9e6ff`, `#3a7ce8`, `#2a2f9c`, `#140f5c` |
-| Inner light 1 (cyan) | `#5ee7ff` |
-| Inner light 2 (violet) | `oklch(0.62 0.18 295)` |
-| Inner light 3 (highlight) | `#c9ecff` |
-| Glow | `#6f8cff` |
+| Orb accent | `var(--ui-color-primary-500)`; `#3a7ce8` when the accent hue is warm |
+| Body, light theme | accent mixed 6% → 20% into white (frosted quartz) |
+| Body, dark theme | accent mixed 22% → 10% into slate `#1e293b` → `#0b1220` (smoked obsidian) |
+| Inner lights | orb accent; violet `oklch(0.68 0.16 295)` |
+| Edge | 1px white specular edge (light .9 / dark .22 at the top) + 1px keyline (light `rgb(15 23 42 / .1)`, dark none) |
+| Glow | orb accent, faint |
 | Production rim | `var(--ui-error)` |
-| Failure glow | `var(--ui-warning)` |
-| Failure body | Tailwind zinc `#d4d4d8`, `#71717a`, `#3f3f46`, `#18181b` |
+| Failure glow / 16px stroke | `var(--ui-warning)` |
+| Failure body | Tailwind zinc, light `#f4f4f5` → `#d4d4d8`, dark `#3f3f46` → `#27272a` |
 
 ## 4. States
 
@@ -78,7 +79,7 @@ Primary state (exactly one at a time) plus two overlays that combine with any st
 | Overlay | Visual | Label |
 |---|---|---|
 | `prod` | P1 lower rim light + warm tint; idle-style motion of the primary state continues | "<site name>, Production" |
-| `noticing` | Small brand-blue dot at top-right (same as the current avatar's dot) | the notice title |
+| `noticing` | Small dot in the orb accent at top-right | the notice title |
 
 Transitions between states crossfade glow and inner-light parameters with existing motion tokens
 (`--ferry-motion-standard` 170ms in, `--ferry-motion-exit` 140ms out, `--ferry-motion-ease-spring`, no overshoot).
@@ -87,9 +88,9 @@ Transitions between states crossfade glow and inner-light parameters with existi
 
 | Size | Where | Rendering |
 |---|---|---|
-| 96px | Empty chat state in `CompanionPanel.vue` (currently 30px) | Full: blurred inner light, caustic, all motion |
-| 20px | Panel header | Full layers, motion only while the panel is open |
-| 16px | `CompanionTrigger.vue` top bar | No SVG blur filters, no inner motion. State shown by glow colour/strength, the prod rim arc (thicker stroke) and the noticing dot. Completely still in `idle` and `prod`. |
+| 96px | Empty chat state in `CompanionPanel.vue` (currently 30px) | Full lens: blurred inner light, all motion |
+| 20px | Panel header | Full lens, motion only while the panel is open |
+| 16px | `CompanionTrigger.vue` top bar | Line glyph like the neighbouring Lucide icons: 1.33px ring (Lucide weight at 16px) in `currentColor` with a small centre dot. No gradients or filters. State shows in stroke colour: primary dot while listening/streaming, a thicker rotating primary arc segment over a faded ring while thinking, warning-amber ring on error, red bottom arc for prod, noticing dot. Completely still unless thinking. |
 
 ### Static at rest
 
@@ -99,7 +100,7 @@ visible **and** (the panel is open **or** the state is `thinking` / `streaming`)
 
 ### Reduced motion and transparency
 
-- `prefers-reduced-motion: reduce`: no orbit, no lift, no caustic shimmer. Glow opacity still changes per state
+- `prefers-reduced-motion: reduce`: no orbit, no lift; the 16px busy arc stays as a static quarter arc. Glow opacity still changes per state
   (instant or short crossfade). The chunked reveal is skipped (full text at once).
 - `prefers-reduced-transparency: reduce`: no change needed (the orb is opaque), but the glow drops to half strength.
 - Classic UI (no `html.ferry-glass`): same orb; it is opaque and does not depend on the ambient canvas.
@@ -174,7 +175,7 @@ or no streaming state (drops a chosen state).
 
 ## 9. Calls made without explicit sign-off
 
-- `noticing` kept as a small brand-blue dot overlay.
+- `noticing` kept as a small dot overlay in the orb accent.
 - `error` clears on the next question or when the panel closes.
 - Hero size 96px in the empty chat state (was 30px).
 - The chunked reveal applies to local (non-AI) replies too, so the orb behaves the same with AI off.

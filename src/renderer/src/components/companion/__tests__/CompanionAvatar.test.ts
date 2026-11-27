@@ -22,6 +22,21 @@ describe('CompanionAvatar', () => {
     expect(mount(CompanionAvatar, { props: { size: 96 } }).findAll('filter').length).toBeGreaterThan(0)
   })
 
+  it('renders the 16px orb as a line glyph in currentColor, with no gradients', () => {
+    const w = mount(CompanionAvatar, { props: { size: 16 } })
+    expect(w.findAll('radialGradient, linearGradient')).toHaveLength(0)
+    expect(w.find('[data-orb-ring]').attributes('stroke')).toBe('currentColor')
+    expect(w.find('[data-orb-busy]').exists()).toBe(false)
+    expect(mount(CompanionAvatar, { props: { size: 16, state: 'thinking' } }).find('[data-orb-busy]').exists()).toBe(true)
+  })
+
+  it('renders the full lens without gloss highlights or vignette', () => {
+    const w = mount(CompanionAvatar, { props: { size: 96 } })
+    expect(w.find('[data-orb-lens]').exists()).toBe(true)
+    expect(w.find('[data-orb-ring]').exists()).toBe(false)
+    expect(w.findAll('ellipse')).toHaveLength(0)
+  })
+
   it('draws the prod rim arc and the noticing dot only when asked', () => {
     const plain = mount(CompanionAvatar, { props: { size: 20 } })
     expect(plain.find('[data-orb-prod]').exists()).toBe(false)

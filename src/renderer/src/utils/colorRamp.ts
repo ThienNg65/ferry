@@ -133,3 +133,9 @@ export function generateShadeRamp(baseHex: string): ShadeRamp {
   }
   return ramp
 }
+
+/** Red, orange or amber accents: the Companion orb avoids them so it never reads as production or failure. */
+export function isWarmAccent(hex: string): boolean {
+  const { h, s } = rgbToHueSaturation(...hexToRgb(hex))
+  return s > 0.3 && (h < 60 || h >= 330)
+}
