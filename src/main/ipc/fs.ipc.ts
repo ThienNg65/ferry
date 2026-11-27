@@ -10,6 +10,7 @@ import {
 } from './validation'
 import {
   INVOKE_CHANNELS,
+  type CopyManyResult,
   type DeleteManyResult,
   type FileEntry,
   type FileListResult,
@@ -64,6 +65,34 @@ export function registerFsHandlers(): void {
   handle<void>(INVOKE_CHANNELS.fsLocalDelete, (targetPath, isDir) =>
     LocalFs.remove(requireNonEmptyString(targetPath, 'targetPath', INVOKE_CHANNELS.fsLocalDelete), Boolean(isDir))
   )
+  handle<CopyManyResult>(INVOKE_CHANNELS.fsLocalCopy, (req) => {
+    const channel = INVOKE_CHANNELS.fsLocalCopy
+    const request = requireObject(req, channel)
+    const rawPaths = requireArray(request.sourcePaths, 'sourcePaths', channel)
+    const sourcePaths = rawPaths.map((p) => requireNonEmptyString(p, 'sourcePaths[]', channel))
+    const targetDir = requireNonEmptyString(request.targetDir, 'targetDir', channel)
+    const label =
+      sourcePaths.length === 1
+        ? `Copying ${path.basename(sourcePaths[0])}`
+        : `Copying ${sourcePaths.length} items`
+    return OperationRegistry.getInstance().run(
+      {
+        kind: 'copy-local',
+        label,
+        cancellable: true
+      },
+      async ({ signal, reportProgress }) => {
+        const result = await LocalFs.copyLocal(sourcePaths, targetDir, {
+          signal,
+          onProgress: (done, total) => reportProgress(done, total, 'items')
+        })
+        if (sourcePaths.length > 0 && result.copied.length === 0) {
+          throw new Error(`Could not copy: ${result.failures.map((f) => f.error).join('; ')}`)
+        }
+        return result
+      }
+    )
+  })
   handle<FileEntry[]>(INVOKE_CHANNELS.fsLocalStageDrop, (req) => {
     const channel = INVOKE_CHANNELS.fsLocalStageDrop
     const request = requireObject(req, channel)
@@ -141,6 +170,36 @@ export function registerFsHandlers(): void {
       return RemoteFs.renameRemote(sid, from, to, requireBoolean(replace, 'replace', channel))
     }
     return RemoteFs.renameRemote(sid, from, to)
+  })
+  handle<CopyManyResult>(INVOKE_CHANNELS.fsRemoteCopy, (req) => {
+    const channel = INVOKE_CHANNELS.fsRemoteCopy
+    const request = requireObject(req, channel)
+    const sessionId = requireNonEmptyString(request.sessionId, 'sessionId', channel)
+    const rawPaths = requireArray(request.sourcePaths, 'sourcePaths', channel)
+    const sourcePaths = rawPaths.map((p) => requireNonEmptyString(p, 'sourcePaths[]', channel))
+    const targetDir = requireNonEmptyString(request.targetDir, 'targetDir', channel)
+    const label =
+      sourcePaths.length === 1
+        ? `Copying ${path.posix.basename(sourcePaths[0])}`
+        : `Copying ${sourcePaths.length} items`
+    return OperationRegistry.getInstance().run(
+      {
+        kind: 'copy-remote',
+        label,
+        sessionId,
+        cancellable: true
+      },
+      async ({ signal, reportProgress }) => {
+        const result = await RemoteFs.copyRemote(sessionId, sourcePaths, targetDir, {
+          signal,
+          onProgress: (done, total) => reportProgress(done, total, 'items')
+        })
+        if (sourcePaths.length > 0 && result.copied.length === 0) {
+          throw new Error(`Could not copy: ${result.failures.map((f) => f.error).join('; ')}`)
+        }
+        return result
+      }
+    )
   })
   // Deletes are deliberately NOT cancellable: aborting the channel mid-`rm -rf`
   // doesn't stop the remote rm and would mislead the user about what survived.

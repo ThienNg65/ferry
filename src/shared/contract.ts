@@ -469,6 +469,8 @@ export type OperationKind =
   | 'extract-remote'
   | 'compress-remote'
   | 'compress-local'
+  | 'copy-local'
+  | 'copy-remote'
   | 'delete-remote'
   | 'delete-remote-batch'
   | 'chmod-remote'
@@ -512,6 +514,31 @@ export interface DeleteManyRequest {
 /** Result of `fs:remote:deleteMany` — per-path outcomes so the renderer patches its listing once. */
 export interface DeleteManyResult {
   deletedPaths: string[]
+  failures: { path: string; error: string }[]
+}
+
+/** Request payload for `fs:local:copy`. */
+export interface LocalCopyRequest {
+  sourcePaths: string[]
+  targetDir: string
+}
+
+/** Request payload for `fs:remote:copy`. */
+export interface RemoteCopyRequest {
+  sessionId: string
+  sourcePaths: string[]
+  targetDir: string
+}
+
+/** Single copied item mapping returned by local/remote copy operations. */
+export interface CopyItemResult {
+  sourcePath: string
+  targetPath: string
+}
+
+/** Result of `fs:local:copy` and `fs:remote:copy`. */
+export interface CopyManyResult {
+  copied: CopyItemResult[]
   failures: { path: string; error: string }[]
 }
 
@@ -1082,6 +1109,7 @@ export const INVOKE_CHANNELS = {
   fsLocalList: 'fs:local:list',
   fsLocalMkdir: 'fs:local:mkdir',
   fsLocalRename: 'fs:local:rename',
+  fsLocalCopy: 'fs:local:copy',
   fsLocalDelete: 'fs:local:delete',
   fsLocalStageDrop: 'fs:local:stage-drop',
   fsLocalStageDropBegin: 'fs:local:stage-drop-begin',
@@ -1094,6 +1122,7 @@ export const INVOKE_CHANNELS = {
   fsLocalTouch: 'fs:local:touch',
   fsRemoteTouch: 'fs:remote:touch',
   fsRemoteRename: 'fs:remote:rename',
+  fsRemoteCopy: 'fs:remote:copy',
   fsRemoteDelete: 'fs:remote:delete',
   fsRemoteDeleteMany: 'fs:remote:deleteMany',
   fsRemoteChmod: 'fs:remote:chmod',

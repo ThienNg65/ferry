@@ -2,8 +2,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Writable } from 'node:stream'
-import { commitRemoteFile, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { PassThrough, Writable } from 'node:stream'
+import { commitRemoteFile, copyRemote, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { SshError } from '../ssh/errors'
 import { SessionManager } from '../ssh/SessionManager'
 
 vi.mock('../ssh/SessionManager', () => ({
@@ -391,5 +392,228 @@ describe('RemoteFsService POSIX rename fallback', () => {
 
     const dirRes = await readRemoteBufferForDiffSudo('sess-1', '/etc/ssl', 1024)
     expect(dirRes).toEqual({ size: 4096, isDir: true })
+  })
+})
+
+describe('RemoteFsService.copyRemote', () => {
+  const dirStat = { isDirectory: () => true, isSymbolicLink: () => false }
+  const fileStat = { isDirectory: () => false, isSymbolicLink: () => false }
+
+  it('uses SFTP ext_copy_data for regular files when supported', async () => {
+    const sftp = {
+      open: vi.fn((_p: string, flags: string, cb: (err: Error | null, h: Buffer) => void) =>
+        cb(null, Buffer.from(flags))
+      ),
+      close: vi.fn((_h: Buffer, cb: () => void) => cb()),
+      ext_copy_data: vi.fn((_s: Buffer, _so: number, _l: number, _d: Buffer, _do: number, cb: (err?: Error | null) => void) =>
+        cb(null)
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => dirStat),
+      readdir: vi.fn(async () => []),
+      lstat: vi.fn(async (p: string) => {
+        if (p === '/srv/src/app.log') return fileStat
+        throw new SshError('NOT_FOUND', 'missing')
+      }),
+      exec: vi.fn()
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/src/app.log'], '/srv/dest')
+    expect(res.failures).toEqual([])
+    expect(res.copied).toEqual([{ sourcePath: '/srv/src/app.log', targetPath: '/srv/dest/app.log' }])
+    expect(sftp.ext_copy_data).toHaveBeenCalledTimes(1)
+    expect(shell.exec).not.toHaveBeenCalled()
+  })
+
+  it('falls back to shell-escaped cp -Rp -- when ext_copy_data fails or for folders, and avoids collisions', async () => {
+    const sftp = {
+      open: vi.fn((_p: string, flags: string, cb: (err: Error | null, h: Buffer) => void) =>
+        cb(null, Buffer.from(flags))
+      ),
+      close: vi.fn((_h: Buffer, cb: () => void) => cb()),
+      unlink: vi.fn((_p: string, cb: () => void) => cb()),
+      ext_copy_data: vi.fn((_s: Buffer, _so: number, _l: number, _d: Buffer, _do: number, cb: (err?: Error | null) => void) =>
+        cb(new Error('EOPNOTSUPP'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => dirStat),
+      unlink: vi.fn(async () => undefined),
+      readdir: vi.fn(async () => [{ filename: 'notes.txt' }, { filename: 'my folder' }]),
+      lstat: vi.fn(async (p: string) => {
+        if (p === '/srv/dir/notes.txt') return fileStat
+        if (p === '/srv/dir/my folder') return dirStat
+        throw new SshError('NOT_FOUND', 'missing')
+      }),
+      exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }))
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/dir/notes.txt', '/srv/dir/my folder'], '/srv/dir')
+    expect(res.failures).toEqual([])
+    expect(res.copied).toEqual([
+      { sourcePath: '/srv/dir/notes.txt', targetPath: '/srv/dir/notes (1).txt' },
+      { sourcePath: '/srv/dir/my folder', targetPath: '/srv/dir/my folder (1)' }
+    ])
+    expect(shell.exec).toHaveBeenCalledWith(
+      "cp -Rp -- '/srv/dir/notes.txt' '/srv/dir/notes (1).txt'",
+      expect.any(Object)
+    )
+    expect(shell.exec).toHaveBeenCalledWith(
+      "cp -Rp -- '/srv/dir/my folder' '/srv/dir/my folder (1)'",
+      expect.any(Object)
+    )
+  })
+
+  it('falls back to recursive SFTP stream copy when exec is unavailable', async () => {
+    const chunks: Buffer[] = []
+    const sftp = {
+      createReadStream: vi.fn(() => {
+        const pt = new PassThrough()
+        pt.end('stream-body')
+        return pt
+      }),
+      createWriteStream: vi.fn(() => {
+        const ws = new Writable({
+          write(chunk, _enc, cb) {
+            chunks.push(Buffer.from(chunk))
+            cb()
+          }
+        })
+        ws.destroy = function (this: Writable) {
+          queueMicrotask(() => this.emit('close'))
+          return this
+        }
+        return ws
+      })
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => dirStat),
+      mkdir: vi.fn(async () => undefined),
+      readdir: vi.fn(async (p: string) => {
+        if (p === '/srv/dest') return []
+        if (p === '/srv/src/bundle') return [{ filename: 'data.bin', isDirectory: false, isSymlink: false }]
+        return []
+      }),
+      lstat: vi.fn(async (p: string) => {
+        if (p === '/srv/src/bundle') return dirStat
+        if (p === '/srv/src/bundle/data.bin') return fileStat
+        throw new SshError('NOT_FOUND', 'missing')
+      }),
+      exec: vi.fn(async () => ({ code: 127, stdout: '', stderr: 'exec disabled' }))
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/src/bundle'], '/srv/dest')
+    expect(res.failures).toEqual([])
+    expect(res.copied).toEqual([{ sourcePath: '/srv/src/bundle', targetPath: '/srv/dest/bundle' }])
+    expect(shell.mkdir).toHaveBeenCalledWith('/srv/dest/bundle')
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('stream-body')
+  })
+
+  it('rejects copying a remote folder into itself or a descendant', async () => {
+    const shell = {
+      sftp: vi.fn(),
+      stat: vi.fn(async () => dirStat),
+      readdir: vi.fn(async () => []),
+      lstat: vi.fn(async () => dirStat),
+      exec: vi.fn()
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/app'], '/srv/app/sub')
+    expect(res.copied).toEqual([])
+    expect(res.failures[0].error).toMatch(/itself or one of its subdirectories/i)
+    expect(shell.exec).not.toHaveBeenCalled()
+  })
+
+  it('propagates SSH_TIMEOUT and non-126/127 cp errors without running SFTP fallback on partial files', async () => {
+    const sftp = { ext_copy_data: undefined }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => dirStat),
+      mkdir: vi.fn(async () => undefined),
+      readdir: vi.fn(async () => []),
+      lstat: vi.fn(async (p: string) => {
+        if (p === '/srv/src/big') return dirStat
+        throw new SshError('NOT_FOUND', 'missing')
+      }),
+      exec: vi.fn().mockRejectedValueOnce(new SshError('SSH_TIMEOUT', 'Command timed out after 120000ms', true))
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const timeoutRes = await copyRemote('sess-1', ['/srv/src/big'], '/srv/dest')
+    expect(timeoutRes.copied).toEqual([])
+    expect(timeoutRes.failures[0].error).toMatch(/timed out/i)
+    expect(shell.mkdir).not.toHaveBeenCalled()
+
+    shell.exec.mockResolvedValueOnce({ code: 1, stdout: '', stderr: 'cp: No space left on device' })
+    const cpFailRes = await copyRemote('sess-1', ['/srv/src/big'], '/srv/dest')
+    expect(cpFailRes.copied).toEqual([])
+    expect(cpFailRes.failures[0].error).toBe('cp: No space left on device')
+    expect(shell.mkdir).not.toHaveBeenCalled()
+  })
+
+  it('closes handles before unlinking on ext_copy_data failure and probes ext_copy_data only once per batch', async () => {
+    const events: string[] = []
+    const sftp = {
+      open: vi.fn((_p: string, flags: string, cb: (err: Error | null, h: Buffer) => void) =>
+        cb(null, Buffer.from(flags))
+      ),
+      close: vi.fn((h: Buffer, cb: () => void) => {
+        events.push(`close:${h.toString()}`)
+        cb()
+      }),
+      ext_copy_data: vi.fn((_s: Buffer, _so: number, _l: number, _d: Buffer, _do: number, cb: (err?: Error | null) => void) =>
+        cb(new Error('EOPNOTSUPP'))
+      )
+    }
+    const shell = {
+      sftp: vi.fn(async () => sftp),
+      stat: vi.fn(async () => dirStat),
+      unlink: vi.fn(async (p: string) => {
+        events.push(`unlink:${p}`)
+      }),
+      readdir: vi.fn(async () => []),
+      lstat: vi.fn(async (p: string) => {
+        if (p === '/srv/src/a.txt' || p === '/srv/src/b.txt') return fileStat
+        throw new SshError('NOT_FOUND', 'missing')
+      }),
+      exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }))
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/src/a.txt', '/srv/src/b.txt'], '/srv/dest')
+    expect(res.failures).toEqual([])
+    expect(res.copied).toHaveLength(2)
+    expect(sftp.ext_copy_data).toHaveBeenCalledTimes(1)
+    const closeIdx = events.indexOf('close:wx')
+    const unlinkIdx = events.indexOf('unlink:/srv/dest/a.txt')
+    expect(closeIdx).toBeGreaterThanOrEqual(0)
+    expect(unlinkIdx).toBeGreaterThan(closeIdx)
+  })
+
+  it('normalizes double slashes and .. segments before root and self-copy checks', async () => {
+    const shell = {
+      sftp: vi.fn(),
+      stat: vi.fn(async () => dirStat),
+      readdir: vi.fn(async () => []),
+      lstat: vi.fn(async () => dirStat),
+      exec: vi.fn()
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => shell } as any)
+
+    const res = await copyRemote('sess-1', ['/srv/app', '/a/..', 'relative/path'], '/srv//app/sub/')
+    expect(res.copied).toEqual([])
+    expect(res.failures).toHaveLength(3)
+    expect(res.failures[0].error).toMatch(/itself or one of its subdirectories/i)
+    expect(res.failures[1].error).toMatch(/Refusing to copy/i)
+    expect(res.failures[2].error).toMatch(/Refusing to copy/i)
+    expect(shell.exec).not.toHaveBeenCalled()
   })
 })

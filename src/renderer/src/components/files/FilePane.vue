@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import type {
+  CopyManyResult,
+  FileEntry,
+  FileListResult,
+  LocalCopyRequest,
+  RemoteCopyRequest,
+  StageDropBeginResult,
+  StageDropEntryInput,
+  UnzipResult
+} from '@shared/contract'
 import { collectDroppedEntry, recordCollectedDropEntry } from '../../utils/osDrop'
 import type { CollectedDropEntry, DropCollectionState, MinimalFsEntry } from '../../utils/osDrop'
 import { invoke, IpcError } from '../../api'
@@ -13,6 +22,7 @@ import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
 import { OPEN_REMOTE_EDITOR_EVENT } from '../../stores/companion.store'
+import { useFileClipboardStore } from '../../stores/fileClipboard.store'
 import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
@@ -55,6 +65,7 @@ const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
+const clipboard = useFileClipboardStore()
 const fileFilters = useFileFiltersStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
@@ -179,6 +190,91 @@ watch(filteredEntries, (entries) => {
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 
+const canPaste = computed(
+  () =>
+    Boolean(store.currentPath) &&
+    clipboard.canPasteInto(props.side, sessions.activeSessionId, sessions.status === 'connected')
+)
+
+function onCopyEntries(entries: FileEntry[]): void {
+  if (entries.length === 0) return
+  clipboard.copy(props.side, entries, props.side === 'remote' ? sessions.activeSessionId : null)
+  toast.add({
+    title: 'Copied to clipboard',
+    description: entries.length === 1 ? entries[0].name : `${entries.length} items`,
+    icon: 'i-lucide-copy',
+    color: 'info'
+  })
+}
+
+function onCopySelected(): void {
+  onCopyEntries(visibleSelectedEntries.value)
+}
+
+function onCopyFromRow(entry: FileEntry): void {
+  if (visibleSelectedEntries.value.length > 1 && store.selected.has(entry.path)) {
+    onCopyEntries(visibleSelectedEntries.value)
+    return
+  }
+  onCopyEntries([entry])
+}
+
+async function onPaste(): Promise<void> {
+  if (!canPaste.value || !clipboard.payload) return
+  const { side: sourceSide, entries } = clipboard.payload
+  const targetDir = store.currentPath
+  const sessionId = sessions.activeSessionId
+  const refreshTarget = (): Promise<void> =>
+    props.side === 'local'
+      ? localFs.refreshIfViewing(targetDir)
+      : sessionId
+        ? remoteFs.refreshSessionIfViewing(sessionId, targetDir)
+        : Promise.resolve()
+
+  try {
+    if (sourceSide !== props.side) {
+      if (!sessionId) return
+      const intents: TransferIntent[] = []
+      for (const entry of entries) {
+        const intent = buildTransferIntent(sourceSide, entry, sessionId, targetDir)
+        if (intent) intents.push(intent)
+      }
+      if (intents.length > 0) {
+        await checkAndQueueTransfers(intents, store)
+      }
+      return
+    }
+    const sourcePaths = entries.map((e) => e.path)
+    let res: CopyManyResult
+    if (props.side === 'local') {
+      const req: LocalCopyRequest = { sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsLocalCopy, req)
+    } else {
+      if (!sessionId) return
+      const req: RemoteCopyRequest = { sessionId, sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsRemoteCopy, req)
+    }
+    await refreshTarget()
+    if (res.copied.length > 0) {
+      notify.success('Pasted', res.copied.length === 1 ? res.copied[0].targetPath : `${res.copied.length} items`)
+    }
+    if (res.failures.length > 0) {
+      toast.add({
+        title: 'Some items could not be copied',
+        description: res.failures.map((f) => f.error).join('; '),
+        icon: 'i-lucide-triangle-alert',
+        color: 'warning'
+      })
+    }
+  } catch (e) {
+    await refreshTarget().catch(() => undefined)
+    if (e instanceof IpcError && e.code === 'CANCELLED') {
+      return
+    }
+    notify.error('Paste failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
 const unregisterPaneActions = registerPaneActions(props.side, {
   selectedCount: () => visibleSelectedEntries.value.length,
   rename: () => {
@@ -198,7 +294,10 @@ const unregisterPaneActions = registerPaneActions(props.side, {
     if (entry && !entry.isDir) {
       void onEdit(entry)
     }
-  }
+  },
+  copy: () => onCopySelected(),
+  paste: () => void onPaste(),
+  canPaste: () => canPaste.value
 })
 onBeforeUnmount(unregisterPaneActions)
 
@@ -212,7 +311,10 @@ const onKeydown = usePaneKeyboard({
   fileListRef,
   onTransferSelected,
   onOpen,
-  confirmDeleteEntries
+  confirmDeleteEntries,
+  onCopySelected,
+  onPaste,
+  canPaste: () => canPaste.value
 })
 
 function onWindowKeydownFallback(event: KeyboardEvent): void {
@@ -1192,6 +1294,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :renaming-path="renamingPath"
         :sort-column="store.sortColumn"
         :sort-direction="store.sortDirection"
+        :can-paste="canPaste"
         @select="onSelect"
         @select-many="(paths: string[]) => store.selectPaths(paths)"
         @open="onOpen"
@@ -1210,6 +1313,8 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @drop-on="onDropOnFolder"
         @edit-root="onEditAsRoot"
         @diff="onDiffWithOpposite"
+        @copy="onCopyFromRow"
+        @paste="onPaste"
         @clear-filter="filterText = ''"
         @clear-visibility-filter="clearVisibilityFilter"
       />
@@ -1244,15 +1349,29 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
             Hidden off
           </button>
         </div>
-        <div v-if="selectionSummary" class="flex shrink-0 items-center gap-1.5">
-          <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
-          <button
-            type="button"
-            class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
-            @click="store.selectAll([])"
-          >
-            Clear
-          </button>
+        <div class="flex shrink-0 items-center gap-2">
+          <div v-if="clipboard.hasItems && clipboard.sourceSide === side" class="flex items-center gap-1.5">
+            <span class="text-primary tabular-nums">Copied: {{ clipboard.count }}</span>
+            <button
+              type="button"
+              aria-label="Clear clipboard"
+              class="text-muted hover:text-default hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+              @click="clipboard.clear()"
+            >
+              Clear
+            </button>
+          </div>
+          <div v-if="selectionSummary" class="flex items-center gap-1.5">
+            <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+              @click="store.selectAll([])"
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </div>
       <FilePreviewDialog

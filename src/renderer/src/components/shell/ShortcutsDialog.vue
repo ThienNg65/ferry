@@ -23,6 +23,7 @@ const SECTIONS: { title: string; rows: [string, string][] }[] = [
       ['Delete', 'Delete selection'],
       ['F5', 'Upload / download selection'],
       ['F6', 'Switch pane'],
+      ['Ctrl+C / Ctrl+V', 'Copy / paste selected files'],
       ['Ctrl+A', 'Select all'],
       ['Ctrl+R', 'Refresh'],
       ['Ctrl+F', 'Search files'],
