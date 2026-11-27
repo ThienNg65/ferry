@@ -400,7 +400,7 @@ describe('PortForwardingManager local (-L) tunnels', () => {
 
     const lateChannel = new PassThrough() as unknown as SshForwardChannel
     resolveForwardOut?.(undefined, lateChannel)
-    expect(lateChannel.destroyed).toBe(true)
+    await vi.waitFor(() => expect(lateChannel.destroyed).toBe(true))
   })
 
   it('handles forwardOut rejection cleanly without closing the local listener or session', async () => {
