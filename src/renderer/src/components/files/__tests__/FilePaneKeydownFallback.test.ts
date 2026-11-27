@@ -141,12 +141,16 @@ describe('window keydown fallback visibility guard', () => {
       modifiedAt: null
     }
 
+    const sessionId = 'test-session'
+    sessions.activeTab.sessionId = sessionId
+    const remoteBucket = remoteFs.ensureBucket(sessionId)
+    remoteBucket.entries = [entry]
+    remoteBucket.selected = new Set([entry.path])
+
     ui.activePane = 'remote'
     wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
     await vi.dynamicImportSettled()
     await flushPromises()
-    remoteFs.entries = [entry]
-    remoteFs.selected = new Set([entry.path])
 
     const goUp = vi.spyOn(remoteFs, 'goUp').mockResolvedValue()
     const selectAll = vi.spyOn(remoteFs, 'selectAll')
@@ -168,5 +172,24 @@ describe('window keydown fallback visibility guard', () => {
       expect(selectAll).not.toHaveBeenCalled()
       expect(fileList.props('renamingPath')).toBeNull()
     }
+
+    sessions.activeTab.status = 'connected'
+    confirm.mockResolvedValue(false)
+    dispatchKeydown('Delete')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('Backspace')
+    await flushPromises()
+    expect(goUp).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('a', { ctrlKey: true })
+    await flushPromises()
+    expect(selectAll).toHaveBeenCalledTimes(1)
+
+    dispatchKeydown('F2')
+    await flushPromises()
+    expect(fileList.props('renamingPath')).toBe(entry.path)
+    expect(scrollToIndex).toHaveBeenCalledWith(0)
   })
 })
