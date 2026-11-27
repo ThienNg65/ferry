@@ -1,11 +1,11 @@
 export const CMDLINE_MAX_CHARS = 16384
 export const CMDLINE_UI_MAX_CHARS = 180
 export const ENRICH_COMMS: readonly string[] = ['java']
-export const CMDLINE_ENRICH_MAX = 50
+export const CMDLINE_ENRICH_MAX = 20
 
 export const GENERIC_JAR_BASENAMES: readonly string[] = ['quarkus-run', 'app', 'application', 'main', 'server']
 export const SERVICE_NAME_VERSION_CUT = /-\d.*$/
-export const SECRET_KEY_PATTERN = '(?<![a-z])(?:password|passwd|secret|token|key)(?![a-z])'
+export const SECRET_WORDS: readonly string[] = ['password', 'passwd', 'secret', 'token', 'key']
 
 export interface ServiceRule {
   description: string
@@ -43,8 +43,15 @@ export function deriveServiceName(cmdline: string, rules: readonly ServiceRule[]
   return null
 }
 
-const SECRET_DEFINE = new RegExp(`(-D(?=[^=\\s]*${SECRET_KEY_PATTERN})[^=\\s]*=)\\S+`, 'gi')
+const OPTION_WITH_VALUE = /(?<=^|\s)(-D|--)([^=\s]+)=\S+/g
+const KEY_WORD_BOUNDARY = /[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])/
+
+function isSecretKey(key: string): boolean {
+  return key.split(KEY_WORD_BOUNDARY).some((word) => SECRET_WORDS.includes(word.toLowerCase()))
+}
 
 export function redactCmdline(cmdline: string): string {
-  return cmdline.replace(SECRET_DEFINE, '$1***')
+  return cmdline.replace(OPTION_WITH_VALUE, (option: string, prefix: string, key: string) =>
+    isSecretKey(key) ? `${prefix}${key}=***` : option
+  )
 }

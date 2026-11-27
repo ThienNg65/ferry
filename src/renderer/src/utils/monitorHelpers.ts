@@ -99,11 +99,11 @@ export function computeMemoryBreakdown(memory: MonitorSample['memory']): MemoryB
   }
 }
 
-/** Filters processes by name or PID substring and sorts by the selected column. */
 export function processLabel(process: MonitorProcessSample): string {
   return process.service ?? process.name
 }
 
+/** Filters processes by name or PID substring and sorts by the selected column. */
 export function filterAndSortProcesses(
   processes: MonitorProcessSample[],
   query: string,

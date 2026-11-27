@@ -3,6 +3,7 @@ import { EVENT_CHANNELS } from '../../shared/contract'
 
 import { testHost } from '../host/testHost.setup'
 import { setHost } from '../host/host'
+import { CMDLINE_ENRICH_MAX } from './serviceNames'
 
 const sent: Array<{ channel: string; evt: unknown }> = []
 setHost({
@@ -156,6 +157,18 @@ describe('MonitorManager', () => {
     it('leaves service undefined when the cmdline read returns nothing for the pid', async () => {
       const sample = await firstSample({}, [procRecord(999, 'java', 1)])
       expect(sample.processes.find((p) => p.pid === 999)?.service).toBeUndefined()
+    })
+
+    it('names every java process over successive ticks when there are more than the per-tick cap', async () => {
+      const total = CMDLINE_ENRICH_MAX * 2 + 10
+      const pids = Array.from({ length: total }, (_, i) => 1000 + i)
+      const cmdlines = Object.fromEntries(pids.map((pid) => [pid, `java -jar /opt/apps/svc${pid}-1.0.jar`]))
+      const first = await firstSample(cmdlines, pids.map((pid) => procRecord(pid, 'java', 1)))
+      const named = (sample: Sample): number => sample.processes.filter((p) => p.service).length
+      expect(named(first)).toBe(CMDLINE_ENRICH_MAX)
+      await vi.advanceTimersByTimeAsync(2000)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(named(sampleEvents().at(-1) as Sample)).toBe(total)
     })
 
     it('names a 10 KB classpath process and sends a short redacted cmdline', async () => {

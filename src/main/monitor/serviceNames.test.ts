@@ -30,7 +30,7 @@ const CASES: Array<[string, string, string | null]> = [
   ['module launch', `${JAVA} -m org.elasticsearch.server/org.elasticsearch.bootstrap.Elasticsearch`, 'Elasticsearch'],
   ['non-java process', 'nginx: master process /usr/sbin/nginx', null],
   ['-jar as last token', `${JAVA} -jar`, null],
-  ['jar path with spaces gives no garbage name', `${JAVA} -jar "/opt/my apps/x-1.0.jar"`, null],
+  ['jar path with spaces gives no garbage name', `${JAVA} -jar /opt/my apps/x-1.0.jar`, null],
   ['non-java process that mentions -jar', 'python run.py -jar /x/y-1.jar', null]
 ]
 
@@ -45,17 +45,47 @@ describe('deriveServiceName', () => {
   })
 })
 
+const SECRET_OPTIONS = [
+  '-Dfoo.password=abc',
+  '-Dclient.secret=x',
+  '-DFP_APP_KEY=zzz',
+  '-Dpassword=hunter2',
+  '-DPASSWORD=x',
+  '-Dtoken=abc',
+  '-Dsecret=x',
+  '-Dkey=x',
+  '-Djavax.net.ssl.keyStorePassword=changeit',
+  '-Djavax.net.ssl.trustStorePassword=changeit',
+  '-DdbPassword=abc',
+  '-DapiKey=abc',
+  '-Daws.secretKey=AKIA',
+  '--spring.datasource.password=s'
+]
+
+const PLAIN_OPTIONS = [
+  '-Dquarkus.http.port=80',
+  '-Dkeycloak.client.access.user-name=kcadmin',
+  '-Dmonkey.name=bobo',
+  '-cp /libs/jackson-databind-2.21.7.jar:/libs/x.jar'
+]
+
 describe('redactCmdline', () => {
-  it('masks values of secret-looking -D keys and leaves the rest', () => {
-    expect(
-      redactCmdline('java -Dfoo.password=abc -Dclient.secret=x -DFP_APP_KEY=zzz -Dquarkus.http.port=80')
-    ).toBe('java -Dfoo.password=*** -Dclient.secret=*** -DFP_APP_KEY=*** -Dquarkus.http.port=80')
+  it.each(SECRET_OPTIONS)('masks the value of %s', (option) => {
+    const key = option.slice(0, option.indexOf('=') + 1)
+    expect(redactCmdline(`java ${option} -Dquarkus.http.port=80`)).toBe(`java ${key}*** -Dquarkus.http.port=80`)
   })
 
-  it('does not mask keys that merely contain a secret word inside another word', () => {
-    expect(redactCmdline('java -Dkeycloak.client.access.user-name=kcadmin')).toBe(
-      'java -Dkeycloak.client.access.user-name=kcadmin'
-    )
+  it.each(PLAIN_OPTIONS)('leaves %s untouched', (option) => {
+    expect(redactCmdline(`java ${option}`)).toBe(`java ${option}`)
+  })
+
+  it('redacts a 12 KB classpath line quickly', () => {
+    const line = `java -cp ${'/libs/jackson-databind-2.21.7.jar:'.repeat(350)} kafka.Kafka`
+    const start = performance.now()
+    for (let i = 0; i < 300; i++) {
+      redactCmdline(line)
+    }
+    expect(performance.now() - start).toBeLessThan(300)
   })
 })
 

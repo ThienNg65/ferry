@@ -206,13 +206,14 @@ export class MonitorManager {
         ...processes.slice(0, CMDLINE_ENRICH_TOP_N),
         ...processes.filter((p) => ENRICH_COMMS.includes(p.name))
       ]
-      const topSlice = [...new Map(enrichCandidates.map((p) => [p.pid, p])).values()].slice(0, CMDLINE_ENRICH_MAX)
+      const topSlice = [...new Map(enrichCandidates.map((p) => [p.pid, p])).values()]
       const missingPids = topSlice
         .filter((p) => {
           const cached = entry.cmdlineCache.get(p.pid)
           return !cached || cached.comm !== p.name
         })
         .map((p) => p.pid)
+        .slice(0, CMDLINE_ENRICH_MAX)
       if (missingPids.length > 0 && !entry.stopped) {
         try {
           const cmd = `for p in ${missingPids.join(' ')}; do if [ -r "/proc/$p/cmdline" ]; then printf '@C@%s\\t' "$p"; tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | head -c ${CMDLINE_MAX_CHARS}; printf '\\n'; fi; done`
@@ -222,7 +223,11 @@ export class MonitorManager {
             for (const p of topSlice) {
               if (missingPids.includes(p.pid)) {
                 const cmdline = parsed.get(p.pid) ?? ''
-                entry.cmdlineCache.set(p.pid, { comm: p.name, cmdline, service: deriveServiceName(cmdline) })
+                entry.cmdlineCache.set(p.pid, {
+                  comm: p.name,
+                  cmdline: redactCmdline(cmdline).slice(0, CMDLINE_UI_MAX_CHARS),
+                  service: deriveServiceName(cmdline)
+                })
               }
             }
           }
@@ -238,8 +243,7 @@ export class MonitorManager {
         if (!cached || cached.comm !== p.name || !cached.cmdline) {
           return p
         }
-        const cmdline = redactCmdline(cached.cmdline).slice(0, CMDLINE_UI_MAX_CHARS)
-        return cached.service ? { ...p, cmdline, service: cached.service } : { ...p, cmdline }
+        return cached.service ? { ...p, cmdline: cached.cmdline, service: cached.service } : { ...p, cmdline: cached.cmdline }
       })
 
       const sample: MonitorSample = {
