@@ -4,6 +4,9 @@ export interface PaneActions {
   remove: () => void
   transfer: () => void
   edit: () => void
+  copy?: () => void
+  paste?: () => void
+  canPaste?: () => boolean
 }
 
 const registry = new Map<'local' | 'remote', PaneActions>()

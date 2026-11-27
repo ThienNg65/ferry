@@ -9,6 +9,7 @@ vi.mock('../fs/LocalFsService', () => ({
   mkdir: vi.fn(),
   touch: vi.fn(),
   rename: vi.fn(),
+  copyLocal: vi.fn(),
   remove: vi.fn(),
   readFileText: vi.fn(),
   writeFileText: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('../fs/RemoteFsService', () => ({
   mkdirRemote: vi.fn(),
   touchRemote: vi.fn(),
   renameRemote: vi.fn(),
+  copyRemote: vi.fn(),
   adminRemote: vi.fn(),
   chmodRemote: vi.fn(),
   readFile: vi.fn(),
@@ -245,9 +247,75 @@ describe('fs.ipc', () => {
       })
       expect(await invoke('fs:remote:chmod', 'sess-1', '/root/a', '')).toMatchObject({ ok: false, code: 'VALIDATION' })
       expect(await invoke('fs:remote:readFile', '', '/root/a')).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(await invoke('fs:local:copy', { sourcePaths: 'bad', targetDir: '/tmp' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(await invoke('fs:remote:copy', { sessionId: '', sourcePaths: ['/a'], targetDir: '/b' })).toMatchObject({
+        ok: false,
+        code: 'VALIDATION'
+      })
+      expect(LocalFs.copyLocal).not.toHaveBeenCalled()
+      expect(RemoteFs.copyRemote).not.toHaveBeenCalled()
       expect(RemoteFs.removeRemote).not.toHaveBeenCalled()
       expect(RemoteFs.adminRemote).not.toHaveBeenCalled()
       expect(operationRegistryMock.run).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('fs:local:copy & fs:remote:copy', () => {
+    it('forwards local copy through OperationRegistry and surfaces all-failed errors', async () => {
+      vi.mocked(LocalFs.copyLocal).mockResolvedValueOnce({
+        copied: [{ sourcePath: '/tmp/a.txt', targetPath: '/tmp/dest/a.txt' }],
+        failures: []
+      })
+      const okRes = await invoke('fs:local:copy', { sourcePaths: ['/tmp/a.txt'], targetDir: '/tmp/dest' })
+      expect(okRes).toEqual({
+        ok: true,
+        data: { copied: [{ sourcePath: '/tmp/a.txt', targetPath: '/tmp/dest/a.txt' }], failures: [] }
+      })
+      expect(operationRegistryMock.run).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'copy-local', cancellable: true }),
+        expect.any(Function)
+      )
+
+      vi.mocked(LocalFs.copyLocal).mockResolvedValueOnce({
+        copied: [],
+        failures: [{ path: '/tmp/missing.txt', error: 'ENOENT' }]
+      })
+      const errRes = await invoke('fs:local:copy', { sourcePaths: ['/tmp/missing.txt'], targetDir: '/tmp/dest' })
+      expect(errRes).toMatchObject({ ok: false })
+    })
+
+    it('forwards remote copy through OperationRegistry and surfaces all-failed errors', async () => {
+      vi.mocked(RemoteFs.copyRemote).mockResolvedValueOnce({
+        copied: [{ sourcePath: '/srv/a.txt', targetPath: '/srv/b/a.txt' }],
+        failures: []
+      })
+      const okRes = await invoke('fs:remote:copy', {
+        sessionId: 'sess-1',
+        sourcePaths: ['/srv/a.txt'],
+        targetDir: '/srv/b'
+      })
+      expect(okRes).toEqual({
+        ok: true,
+        data: { copied: [{ sourcePath: '/srv/a.txt', targetPath: '/srv/b/a.txt' }], failures: [] }
+      })
+      expect(operationRegistryMock.run).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'copy-remote', sessionId: 'sess-1', cancellable: true }),
+        expect.any(Function)
+      )
+
+      vi.mocked(RemoteFs.copyRemote).mockResolvedValueOnce({
+        copied: [],
+        failures: [{ path: '/srv/bad', error: 'Permission denied' }]
+      })
+      const errRes = await invoke('fs:remote:copy', {
+        sessionId: 'sess-1',
+        sourcePaths: ['/srv/bad'],
+        targetDir: '/srv/b'
+      })
+      expect(errRes).toMatchObject({ ok: false })
     })
   })
 })

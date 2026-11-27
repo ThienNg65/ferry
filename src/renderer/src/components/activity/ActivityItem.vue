@@ -24,6 +24,8 @@ const KIND_ICONS: Record<OperationKind, string> = {
   'extract-remote': 'i-lucide-package-open',
   'compress-remote': 'i-lucide-archive',
   'compress-local': 'i-lucide-archive',
+  'copy-local': 'i-lucide-copy',
+  'copy-remote': 'i-lucide-copy',
   'delete-remote': 'i-lucide-trash-2',
   'delete-remote-batch': 'i-lucide-trash-2',
   'chmod-remote': 'i-lucide-shield',

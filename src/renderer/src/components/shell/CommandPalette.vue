@@ -14,6 +14,7 @@ import { useCompanionStore } from '../../stores/companion.store'
 import { useNotify } from '../../composables/useNotify'
 import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
 import { getPaneActions } from '../../composables/usePaneActions'
+import { useFileClipboardStore } from '../../stores/fileClipboard.store'
 
 interface PaletteItem {
   id: string
@@ -199,12 +200,16 @@ const groups = computed<PaletteGroup[]>(() => {
 
   const side = ui.activePane
   const paneActions = getPaneActions(side)
+  const fileClipboard = useFileClipboardStore()
   const count = paneActions?.selectedCount() ?? 0
   const fileItems: PaletteItem[] = []
   if (sessions.status === 'connected' && paneActions && count > 0) {
     if (count === 1) {
       fileItems.push({ id: 'file-rename', label: 'Rename selected', icon: 'i-lucide-pencil', onSelect: () => run(paneActions.rename) })
       fileItems.push({ id: 'file-edit', label: 'Edit selected', icon: 'i-lucide-file-pen', onSelect: () => run(paneActions.edit) })
+    }
+    if (paneActions.copy) {
+      fileItems.push({ id: 'file-copy', label: `Copy ${count} selected`, icon: 'i-lucide-copy', onSelect: () => run(paneActions.copy!) })
     }
     fileItems.push({
       id: 'file-transfer',
@@ -213,6 +218,14 @@ const groups = computed<PaletteGroup[]>(() => {
       onSelect: () => run(paneActions.transfer)
     })
     fileItems.push({ id: 'file-delete', label: `Delete ${count} selected`, icon: 'i-lucide-trash-2', onSelect: () => run(paneActions.remove) })
+  }
+  if (sessions.status === 'connected' && paneActions?.canPaste?.() && paneActions.paste) {
+    fileItems.push({
+      id: 'file-paste',
+      label: `Paste ${fileClipboard.count} copied`,
+      icon: 'i-lucide-clipboard-paste',
+      onSelect: () => run(paneActions.paste!)
+    })
   }
 
   return [

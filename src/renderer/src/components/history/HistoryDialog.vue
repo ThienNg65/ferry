@@ -49,6 +49,9 @@ function iconFor(entry: HistoryEntry): string {
   if (entry.kind === 'transfer') {
     return entry.direction === 'upload' ? 'i-lucide-upload' : 'i-lucide-download'
   }
+  if (entry.operationKind === 'copy-local' || entry.operationKind === 'copy-remote') {
+    return 'i-lucide-copy'
+  }
   if (entry.operationKind === 'delete-remote' || entry.operationKind === 'delete-remote-batch') {
     return 'i-lucide-trash-2'
   }

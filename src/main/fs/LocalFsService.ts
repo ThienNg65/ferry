@@ -6,6 +6,7 @@ import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
 import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
 import type {
+  CopyManyResult,
   FileEntry,
   FileListResult,
   FileReadResult,
@@ -184,6 +185,105 @@ export async function remove(targetPath: string, isDir: boolean): Promise<void> 
   } catch (e) {
     throw new SshError('UNKNOWN', `Cannot delete "${targetPath}": ${(e as Error).message}`)
   }
+}
+
+/**
+ * Picks a collision-free filename in `taken` (reserving it in-place).
+ * Returns `baseName` unchanged when unused, or `stem (1).ext`, `stem (2).ext`, ... on collision.
+ */
+export function pickUniqueName(
+  baseName: string,
+  isDir: boolean,
+  taken: Set<string>,
+  caseInsensitive: boolean
+): string {
+  const keyOf = (name: string): string => (caseInsensitive ? name.toLowerCase() : name)
+  if (!taken.has(keyOf(baseName))) {
+    taken.add(keyOf(baseName))
+    return baseName
+  }
+  const dot = baseName.lastIndexOf('.')
+  const stem = !isDir && dot > 0 ? baseName.slice(0, dot) : baseName
+  const ext = !isDir && dot > 0 ? baseName.slice(dot) : ''
+  let index = 1
+  let candidate = `${stem} (${index})${ext}`
+  while (taken.has(keyOf(candidate))) {
+    index += 1
+    candidate = `${stem} (${index})${ext}`
+  }
+  taken.add(keyOf(candidate))
+  return candidate
+}
+
+/** Copies local files/folders recursively into `targetDir` with non-destructive collision naming. */
+export async function copyLocal(
+  sourcePaths: string[],
+  targetDir: string,
+  options?: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void }
+): Promise<CopyManyResult> {
+  if (!targetDir || !targetDir.trim()) {
+    throw new SshError('VALIDATION', 'Target directory is required')
+  }
+  const resolvedTargetDir = path.resolve(targetDir)
+  let targetStat
+  try {
+    targetStat = await fs.stat(resolvedTargetDir)
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'NOT_FOUND' : 'UNKNOWN'
+    throw new SshError(code, `Target directory "${resolvedTargetDir}" is not accessible: ${(e as Error).message}`)
+  }
+  if (!targetStat.isDirectory()) {
+    throw new SshError('VALIDATION', `Target "${resolvedTargetDir}" is not a directory`)
+  }
+
+  const isWin = process.platform === 'win32'
+  const existingNames = await fs.readdir(resolvedTargetDir)
+  const taken = new Set(existingNames.map((n) => (isWin ? n.toLowerCase() : n)))
+
+  const result: CopyManyResult = { copied: [], failures: [] }
+  let done = 0
+  for (const rawSource of sourcePaths) {
+    if (options?.signal?.aborted) {
+      throw new SshError('CANCELLED', 'Copy cancelled')
+    }
+    try {
+      if (isRootOrEmpty(rawSource)) {
+        throw new SshError('VALIDATION', `Refusing to copy root or empty path "${rawSource}"`)
+      }
+      const src = path.resolve(rawSource)
+      const stats = await fs.lstat(src)
+      const isDir = stats.isDirectory()
+      if (isDir) {
+        const rel = path.relative(src, resolvedTargetDir)
+        if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+          throw new SshError('VALIDATION', 'Cannot copy a folder into itself or one of its subdirectories.')
+        }
+      }
+      const baseName = path.basename(src)
+      let destName = pickUniqueName(baseName, isDir, taken, isWin)
+      let destPath = path.join(resolvedTargetDir, destName)
+      while (await fs.lstat(destPath).then(() => true, () => false)) {
+        destName = pickUniqueName(baseName, isDir, taken, isWin)
+        destPath = path.join(resolvedTargetDir, destName)
+      }
+      await fs.cp(src, destPath, {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+        preserveTimestamps: true,
+        verbatimSymlinks: true
+      })
+      result.copied.push({ sourcePath: src, targetPath: destPath })
+    } catch (e) {
+      if (e instanceof SshError && e.code === 'CANCELLED') {
+        throw e
+      }
+      result.failures.push({ path: rawSource, error: e instanceof Error ? e.message : String(e) })
+    }
+    done += 1
+    options?.onProgress?.(done, sourcePaths.length)
+  }
+  return result
 }
 
 /** One entry in a recursively-walked directory tree, path relative (`/`-separated) to the walk root. */

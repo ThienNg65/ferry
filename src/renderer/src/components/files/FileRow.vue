@@ -26,6 +26,7 @@ const props = defineProps<{
   allowExtract?: boolean
   canCompare?: boolean
   renaming?: boolean
+  canPaste?: boolean
 }>()
 
 const { startDrag, clearDrag } = useDragAndDrop()
@@ -67,6 +68,8 @@ const emit = defineEmits<{
   diff: [entry: FileEntry]
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
+  copy: [entry: FileEntry]
+  paste: []
 }>()
 
 const dropHover = ref(false)
@@ -124,8 +127,10 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     }
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
+  items.push({ label: 'Copy', icon: 'i-lucide-copy', kbds: ['Ctrl+C'], onSelect: () => emit('copy', props.entry) })
+  items.push({ label: 'Paste', icon: 'i-lucide-clipboard-paste', kbds: ['Ctrl+V'], disabled: !props.canPaste, onSelect: () => emit('paste') })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
-  items.push({ label: 'Copy path', icon: 'i-lucide-copy', onSelect: () => void copyPath() })
+  items.push({ label: 'Copy path', icon: 'i-lucide-link', onSelect: () => void copyPath() })
   if (props.side === 'remote' && props.entry.permissions) {
     items.push({ label: 'Permissions…', icon: 'i-lucide-key-round', onSelect: () => emit('chmod', props.entry) })
   }
