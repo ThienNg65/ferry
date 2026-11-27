@@ -56,13 +56,19 @@ export interface CompanionReply {
  * Classifies common user-visible SSH/SFTP error messages into targeted,
  * non-destructive diagnostic checklists (documentation guidance only).
  */
-export function diagnoseErrorText(errorText: string): string {
+export function diagnoseErrorText(errorText: string, direction?: 'upload' | 'download' | null): string {
   const lower = errorText.toLowerCase()
-  if (/publickey|keyboard-interactive|authentication failed|\bauth\b|\bpassphrase\b|\bssh key\b|\bprivate key\b/.test(lower)) {
+  if (/publickey|keyboard-interactive|authentication failed|\bpassphrase\b|\bssh key\b|\bprivate key\b/.test(lower)) {
     return 'Likely cause: rejected credentials or SSH key mismatch.\n1. Verify username, password/passphrase, or private key path in Site Settings.\n2. If using an SSH agent, confirm the key is loaded.'
   }
   if (/eacces|eperm|permission denied/.test(lower)) {
+    if (direction === 'download') {
+      return 'Likely cause: insufficient read permissions on the remote file or write permissions in the local destination folder.\n1. Check remote file read permissions (right-click → Permissions) and local folder permissions.\n2. Verify the local destination directory is writable and not locked by another application.\n3. Try downloading to your Downloads or Desktop folder to confirm local write access.'
+    }
     return 'Likely cause: insufficient read/write permissions on the destination path.\n1. Check folder ownership and chmod permissions (right-click → Permissions).\n2. Verify the target directory is not read-only or mounted `ro`.\n3. Try uploading to your home directory or `/tmp` to confirm write access.'
+  }
+  if (/\bauth\b/.test(lower)) {
+    return 'Likely cause: rejected credentials or SSH key mismatch.\n1. Verify username, password/passphrase, or private key path in Site Settings.\n2. If using an SSH agent, confirm the key is loaded.'
   }
   if (/enospc|no space left|disk full|quota/.test(lower)) {
     return 'Likely cause: destination disk or user quota is full.\n1. Check free space in the Monitor dock tab or destination drive.\n2. Remove temporary files or choose a different target directory, then retry.'
@@ -89,26 +95,40 @@ export interface CompanionQueryContext {
   offlineFallback: boolean
   isConnected: boolean
   lastTransferError?: string | null
+  lastTransferDirection?: 'upload' | 'download' | null
+  /** True when an external AI provider (Gemini / Ferry Pro) is configured. */
+  aiEnabled?: boolean
 }
 
-function buildWhatsNewReply(ctx: CompanionQueryContext, askDiff: boolean): CompanionReply {
+function extractExplicitSinceVersion(rawInput?: string): string | null {
+  if (!rawInput) return null
+  const match = rawInput.match(/\b(?:since|from|after)\s+v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/i)
+    ?? rawInput.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)
+  if (!match) return null
+  const candidate = match[1]
+  return parseSemver(candidate) ? candidate : null
+}
+
+function buildWhatsNewReply(ctx: CompanionQueryContext, askDiff: boolean, rawInput?: string): CompanionReply {
   const version = ctx.currentVersion || 'current'
-  if (askDiff && ctx.previousVersion && parseSemver(ctx.previousVersion)) {
-    const diffReleases = getReleasesSince(ctx.releases, ctx.previousVersion, ctx.currentVersion)
+  const explicitSince = askDiff ? extractExplicitSinceVersion(rawInput) : null
+  const sinceVersion = explicitSince ?? (ctx.previousVersion && parseSemver(ctx.previousVersion) ? ctx.previousVersion : null)
+  if (askDiff && sinceVersion) {
+    const diffReleases = getReleasesSince(ctx.releases, sinceVersion, ctx.currentVersion)
     if (diffReleases.length > 0) {
       const mergedHighlights = diffReleases.flatMap((r) =>
         r.highlights.map((h) => (diffReleases.length > 1 ? `v${r.version}: ${h}` : h))
       ).slice(0, 8)
       const latest = diffReleases[0]
       return {
-        text: `Here is what changed between v${ctx.previousVersion} and v${version}${ctx.offlineFallback ? ' (from bundled offline notes)' : ''}:`,
+        text: `Here is what changed between v${sinceVersion} and v${version}${ctx.offlineFallback ? ' (from bundled offline notes)' : ''}:`,
         releaseCard: {
           version,
-          title: `Changes since v${ctx.previousVersion}`,
+          title: `Changes since v${sinceVersion}`,
           highlights: mergedHighlights.length > 0 ? mergedHighlights : ['Maintenance and stability improvements.'],
           url: latest.url,
           source: latest.source,
-          previousVersion: ctx.previousVersion,
+          previousVersion: sinceVersion,
           moreCount: Math.max(0, diffReleases.length - 1)
         },
         actions: [
@@ -118,7 +138,7 @@ function buildWhatsNewReply(ctx: CompanionQueryContext, askDiff: boolean): Compa
       }
     }
     return {
-      text: `I don't have release notes between v${ctx.previousVersion} and v${version} locally right now. You can view the full official changelog on GitHub.`,
+      text: `I don't have release notes between v${sinceVersion} and v${version} locally right now. You can view the full official changelog on GitHub.`,
       actions: [
         {
           id: 'open-external-releases',
@@ -166,6 +186,7 @@ function buildWhatsNewReply(ctx: CompanionQueryContext, askDiff: boolean): Compa
 
 export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContext): CompanionReply {
   const q = rawInput.trim().toLowerCase()
+  const aiEnabled = Boolean(ctx.aiEnabled)
 
   if (!q) {
     return {
@@ -184,37 +205,26 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
 
   if (/\b(what'?s new|whats new|changed since|changelog|release notes|new version|updated)\b/.test(q)) {
     const askDiff = /\b(since|diff|changed since|previous|last version)\b/.test(q)
-    return buildWhatsNewReply(ctx, askDiff)
+    return buildWhatsNewReply(ctx, askDiff, rawInput)
   }
 
-  if (/\b(pre-?flight|folder sync|mirror mode|deleteextras)\b/i.test(q) || /\bsync\b.*\b(warning|delete|push|pull)\b/i.test(q)) {
+  // Explicit Ferry app-tour / bug-report intents stay local even when AI is configured.
+  if (/\b(start (the )?(ferry )?tour|show me around|help me use ferry|how do i use ferry)\b/.test(q)) {
     return {
-      text: 'Folder Sync Pre-Flight checks warn before mirror mode deletes destination files, uploads sensitive credential files (`.env`, private keys), or pushes to a nearly full disk.\n1. Review the **Preview** deletion list carefully — mirror deletions cannot be undone.\n2. Exclude `.env` or key files if you do not intend to deploy secrets.\n3. Check free space in the Monitor dock tab if a disk warning appears.',
+      text: 'I can help you navigate Ferry without leaving your workspace. Start the 4-step interactive tour or jump directly to a feature below:',
       actions: [
-        { id: 'open-dock-monitor', label: 'Open Monitor', icon: 'i-lucide-activity' },
-        { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' }
-      ]
-    }
-  }
-
-  const isErrorOrTransferQuery = /\b(transfers?|uploads?|downloads?|queue|failed|errors?|troubleshoot|permission denied|eacces|eperm|enospc|etimedout|econnreset|econnrefused|enoent|publickey|broken pipe|timeouts?|disk full|host key|refused|symlinks?)\b/.test(q)
-  if (isErrorOrTransferQuery) {
-    const combined = `${rawInput} ${ctx.lastTransferError ?? ''}`.trim()
-    const diagnosis = diagnoseErrorText(combined)
-    const errorHeader = ctx.lastTransferError
-      ? `Observed transfer error: "${ctx.lastTransferError}"\n\n`
-      : ''
-    return {
-      text: `${errorHeader}${diagnosis}`,
-      actions: [
-        { id: 'open-dock-transfers', label: 'Open Transfers', icon: 'i-lucide-arrow-up-down' },
+        { id: 'start-tour', label: 'Start 4-step tour', icon: 'i-lucide-map' },
+        { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' },
         { id: 'open-history', label: 'Show Transfer History', icon: 'i-lucide-history' },
-        { id: 'open-report-bug', label: 'Report a problem', icon: 'i-lucide-bug' }
+        { id: 'open-dock-terminal', label: 'Open Terminal', icon: 'i-lucide-terminal' },
+        { id: 'open-dock-tail', label: 'Open Log Tail', icon: 'i-lucide-scroll-text' },
+        { id: 'open-shortcuts', label: 'Keyboard Shortcuts', icon: 'i-lucide-keyboard' },
+        { id: 'open-settings', label: 'Open Settings', icon: 'i-lucide-settings' }
       ]
     }
   }
 
-  if (/\b(report|bug|issue|broken|crash)\b/.test(q)) {
+  if (/\b(report a? ?(bug|issue|problem)|file a? ?(bug|issue)|draft a? ?bug)\b/.test(q)) {
     return {
       text: 'I can help you draft a structured bug report with automatic secret & path redaction before you review and submit it on GitHub.',
       openReportCategory: 'bug',
@@ -222,8 +232,8 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
     }
   }
 
-  if (/\b(suggest|feature request|idea|feedback)\b/.test(q)) {
-    const isFeature = /\b(suggest|feature|idea)\b/.test(q)
+  if (/\b(suggest a? ?feature|feature request|send feedback)\b/.test(q)) {
+    const isFeature = /\b(suggest|feature)\b/.test(q)
     return {
       text: isFeature
         ? 'Love hearing ideas! Use the guided form below to draft a feature suggestion for the public Ferry tracker.'
@@ -239,14 +249,72 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
     }
   }
 
+  const withAiFallback = (reply: CompanionReply): CompanionReply =>
+    aiEnabled ? { ...reply, isFallback: true } : reply
+
+  if (/\b(pre-?flight|folder sync|mirror mode|deleteextras)\b/i.test(q) || /\bsync\b.*\b(warning|delete|push|pull)\b/i.test(q)) {
+    return withAiFallback({
+      text: 'Folder Sync Pre-Flight checks warn before mirror mode deletes destination files, uploads sensitive credential files (`.env`, private keys), or pushes to a nearly full disk.\n1. Review the **Preview** deletion list carefully — mirror deletions cannot be undone.\n2. Exclude `.env` or key files if you do not intend to deploy secrets.\n3. Check free space in the Monitor dock tab if a disk warning appears.',
+      actions: [
+        { id: 'open-dock-monitor', label: 'Open Monitor', icon: 'i-lucide-activity' },
+        { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' }
+      ]
+    })
+  }
+
+  const isErrorOrTransferQuery = /\b(transfers?|uploads?|downloads?|queue|failed|errors?|troubleshoot|permission denied|eacces|eperm|enospc|etimedout|econnreset|econnrefused|enoent|publickey|broken pipe|timeouts?|disk full|host key|refused|symlinks?)\b/.test(q)
+  if (isErrorOrTransferQuery) {
+    const combined = `${rawInput} ${ctx.lastTransferError ?? ''}`.trim()
+    const inferredDirection =
+      ctx.lastTransferDirection ??
+      (/\bdownloads?\b|\bdownloading\b/.test(q) ? 'download' : /\buploads?\b|\buploading\b/.test(q) ? 'upload' : null)
+    const diagnosis = diagnoseErrorText(combined, inferredDirection)
+    const errorHeader = ctx.lastTransferError
+      ? `Observed transfer error: "${ctx.lastTransferError}"\n\n`
+      : ''
+    return withAiFallback({
+      text: `${errorHeader}${diagnosis}`,
+      actions: [
+        { id: 'open-dock-transfers', label: 'Open Transfers', icon: 'i-lucide-arrow-up-down' },
+        { id: 'open-history', label: 'Show Transfer History', icon: 'i-lucide-history' },
+        { id: 'open-report-bug', label: 'Report a problem', icon: 'i-lucide-bug' }
+      ]
+    })
+  }
+
+  if (/\b(report|bug|issue|broken|crash)\b/.test(q)) {
+    return withAiFallback({
+      text: 'I can help you draft a structured bug report with automatic secret & path redaction before you review and submit it on GitHub.',
+      openReportCategory: aiEnabled ? undefined : 'bug',
+      actions: [{ id: 'open-report-bug', label: 'Draft bug report', icon: 'i-lucide-bug' }]
+    })
+  }
+
+  if (/\b(suggest|feature request|idea|feedback)\b/.test(q)) {
+    const isFeature = /\b(suggest|feature|idea)\b/.test(q)
+    return withAiFallback({
+      text: isFeature
+        ? 'Love hearing ideas! Use the guided form below to draft a feature suggestion for the public Ferry tracker.'
+        : 'Use the guided form below to share feedback with the Ferry maintainers.',
+      openReportCategory: aiEnabled ? undefined : isFeature ? 'feature' : 'feedback',
+      actions: [
+        {
+          id: isFeature ? 'open-report-feature' : 'open-report-feedback',
+          label: isFeature ? 'Suggest a feature' : 'Send feedback',
+          icon: 'i-lucide-message-square-plus'
+        }
+      ]
+    })
+  }
+
   if (/\b(filters?|visibility|hidden|globs?|exclude|include)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'File Visibility Filters let you include or exclude filenames by glob pattern (like `*.log` or `node_modules`) per pane without deleting anything on disk.',
       actions: [
         { id: 'open-file-filters', label: 'Open File Filters', icon: 'i-lucide-filter' },
         { id: 'open-shortcuts', label: 'Keyboard Shortcuts', icon: 'i-lucide-keyboard' }
       ]
-    }
+    })
   }
 
   const commandMatch = translatePlainEnglishCommandOffline(rawInput)
@@ -261,42 +329,42 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
   }
 
   if (/\b(terminal|ssh|shell|console|xterm)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'Press `Ctrl+\`` while connected to toggle the embedded SSH terminal in the dock. Your session and scrollback stay alive even when you switch dock tabs or collapse the dock.',
       actions: [
         { id: 'open-dock-terminal', label: 'Open Terminal', icon: 'i-lucide-terminal' },
         { id: 'open-settings', label: 'Terminal Settings', icon: 'i-lucide-settings' }
       ]
-    }
+    })
   }
 
   if (/\b(tails?|logs?|streams?)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'Right-click any log or text file in the Remote pane and choose "Tail this file live" to stream lines in real time with search and keyword highlighting.',
       actions: [{ id: 'open-dock-tail', label: 'Open Log Tail', icon: 'i-lucide-scroll-text' }]
-    }
+    })
   }
 
   if (/\b(monitor|cpu|memory|ram|process|disk)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'The Monitor dock tab displays live remote CPU, memory, and process metrics for the active SSH session.',
       actions: [{ id: 'open-dock-monitor', label: 'Open Monitor', icon: 'i-lucide-activity' }]
-    }
+    })
   }
 
   if (/\b(glass|theme|dark|light|appearance|settings|dock|proxy|shortcut|keybind)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'You can customize theme, accent color, Modern Glass UI, dock position (bottom/right), proxy, and privacy settings in Settings, or press `?` for all keyboard shortcuts.',
       actions: [
         { id: 'open-settings', label: 'Open Settings', icon: 'i-lucide-settings' },
         { id: 'open-shortcuts', label: 'Keyboard Shortcuts', icon: 'i-lucide-keyboard' },
         { id: 'open-command-palette', label: 'Command Palette', icon: 'i-lucide-search' }
       ]
-    }
+    })
   }
 
   if (/\b(help|how do i use|tour|show me around|features|guide)\b/.test(q)) {
-    return {
+    return withAiFallback({
       text: 'I can help you navigate Ferry without leaving your workspace. Start the 4-step interactive tour or jump directly to a feature below:',
       actions: [
         { id: 'start-tour', label: 'Start 4-step tour', icon: 'i-lucide-map' },
@@ -307,7 +375,7 @@ export function answerCompanionQuery(rawInput: string, ctx: CompanionQueryContex
         { id: 'open-shortcuts', label: 'Keyboard Shortcuts', icon: 'i-lucide-keyboard' },
         { id: 'open-settings', label: 'Open Settings', icon: 'i-lucide-settings' }
       ]
-    }
+    })
   }
 
   return {

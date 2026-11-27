@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import {
   escalateCommandRisk,
+  EVENT_CHANNELS,
+  formatRemoteOsLabel,
   INVOKE_CHANNELS,
   sanitizeCompanionCommand,
   SEND_CHANNELS,
@@ -10,15 +12,18 @@ import {
   type CompanionAiProvider,
   type CompanionAiConfigInput,
   type CompanionAiIntent,
+  type CompanionAiStreamEvent,
   type CompanionCommandCard,
   type CompanionCommandRisk,
   type CompanionReleaseHighlight,
   type CompanionReleasesResult,
+  type CompanionSiteEnvironment,
   type CompanionUiActionCard,
   type CompanionWorkspaceSignal,
-  type MonitorSample
+  type MonitorSample,
+  type OperationKind
 } from '@shared/contract'
-import { invoke } from '../api'
+import { companionAiCancel, invoke, onEvent } from '../api'
 import { openExternal } from '../bridge/neutralinoApi'
 import { useCommandPalette } from '../composables/useCommandPalette'
 import { useConfirm } from '../composables/useConfirm'
@@ -38,6 +43,7 @@ import {
   classifyCommandRisk,
   diagnoseLogSnippetOffline,
   diagnoseMonitorSpikeOffline,
+  translatePlainEnglishCommandOffline,
   type CompanionCommandHistoryEntry,
   type CompanionSnippet
 } from '../utils/companionSnippets'
@@ -46,7 +52,10 @@ import { COMPANION_TOUR_STEPS } from '../utils/companionTour'
 import { evaluateVersionTransition } from '../utils/companionVersion'
 import { prefersReducedMotion } from '../utils/motionTokens'
 import { resolveConnectionFilterKey, useFileFiltersStore } from './fileFilters.store'
+import { useMonitorStore } from './monitor.store'
+import { useRemoteFsStore } from './remoteFs.store'
 import { useSessionsStore } from './sessions.store'
+import { useSettingsStore } from './settings.store'
 import { useSitesStore } from './sites.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
@@ -85,6 +94,21 @@ export interface CompanionReveal {
   messageId: string
   chunks: string[]
   shown: number
+}
+
+export type CompanionErrorCategory = 'transfer' | 'ssh-connect' | 'host-key' | 'proxy' | 'bastion' | 'operation'
+
+export interface CompanionTransferErrorRecord {
+  sessionId: string
+  category?: CompanionErrorCategory
+  error: string
+  direction?: 'upload' | 'download'
+  localPath?: string
+  remotePath?: string
+  operationKind?: OperationKind
+  label?: string
+  hostLabel?: string
+  occurredAt: string
 }
 
 export interface CompanionNotice {
@@ -242,6 +266,8 @@ function nextId(prefix: string): string {
 
 interface CompanionState {
   open: boolean
+  /** Transient overlay override (e.g. when opened from inside a modal like SyncDialog) so panel floats above backdrops. */
+  forceOverlay: boolean
   hasOpenedOnce: boolean
   activeView: CompanionView
   reportCategory: IssueCategory
@@ -262,11 +288,16 @@ interface CompanionState {
   releasesLoaded: boolean
   releasesLoading: boolean
   releasesOfflineFallback: boolean
-  lastTransferError: string | null
+  transferErrorsBySession: Record<string, CompanionTransferErrorRecord>
   tourStep: number | null
   aiConfig: CompanionAiConfigInfo
   aiConfigLoaded: boolean
   aiBusy: boolean
+  aiGeneration: number
+  activeAiRequestId: string | null
+  chatStreamRequestId: string | null
+  streamingMessageId: string | null
+  unsubscribeAiStream: (() => void) | null
   customSnippets: CompanionSnippet[]
   commandHistory: CompanionCommandHistoryEntry[]
   lifecycleInitialized: boolean
@@ -282,6 +313,7 @@ interface CompanionState {
 export const useCompanionStore = defineStore('companion', {
   state: (): CompanionState => ({
     open: false,
+    forceOverlay: false,
     hasOpenedOnce: false,
     activeView: 'chat',
     reportCategory: 'bug',
@@ -302,11 +334,16 @@ export const useCompanionStore = defineStore('companion', {
     releasesLoaded: false,
     releasesLoading: false,
     releasesOfflineFallback: false,
-    lastTransferError: null,
+    transferErrorsBySession: {},
     tourStep: null,
     aiConfig: { provider: 'none', endpoint: '', model: '', hasApiKey: false },
     aiConfigLoaded: false,
     aiBusy: false,
+    aiGeneration: 0,
+    activeAiRequestId: null,
+    chatStreamRequestId: null,
+    streamingMessageId: null,
+    unsubscribeAiStream: null,
     customSnippets: parseSnippetList(readStored(SNIPPETS_KEY)),
     commandHistory: parseCommandHistory(readStored(CMD_HISTORY_KEY)),
     lifecycleInitialized: false,
@@ -324,6 +361,7 @@ export const useCompanionStore = defineStore('companion', {
     unreadAnnouncementCount: (state): number => state.announcements.filter((a) => !a.read).length,
     allSnippets: (state): CompanionSnippet[] => [...state.customSnippets, ...BUILT_IN_SNIPPETS],
     effectiveAvatarState(state): CompanionAvatarState {
+      if (state.streamingMessageId !== null) return 'streaming'
       if (state.aiBusy || state.releasesLoading) return 'thinking'
       if (state.reveal) return 'streaming'
       if (state.aiErrorLabel) return 'error'
@@ -331,8 +369,25 @@ export const useCompanionStore = defineStore('companion', {
       return 'idle'
     },
     hasNotice: (state): boolean => state.notice !== null && !state.quietMode,
+    lastTransferErrorRecord(state): CompanionTransferErrorRecord | null {
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      if (sessionId && state.transferErrorsBySession[sessionId]) {
+        return state.transferErrorsBySession[sessionId]
+      }
+      const tabId = sessions.activeTab?.tabId
+      if (tabId && state.transferErrorsBySession[tabId]) {
+        return state.transferErrorsBySession[tabId]
+      }
+      return state.transferErrorsBySession.__global__ ?? null
+    },
+    lastTransferError(): string | null {
+      return this.lastTransferErrorRecord?.error ?? null
+    },
     prodSiteLabel(): string | null {
-      const tab = useSessionsStore().activeTab
+      const sessions = useSessionsStore()
+      if (sessions.status !== 'connected') return null
+      const tab = sessions.activeTab
       const site = tab?.siteId ? useSitesStore().sites.find((s) => s.id === tab.siteId) : undefined
       if (site?.environment !== 'prod') return null
       return `${tab.label ?? site.name}, Production`
@@ -422,8 +477,11 @@ export const useCompanionStore = defineStore('companion', {
       }
     },
 
-    openPanel(view: CompanionView = 'chat'): void {
+    openPanel(view: CompanionView = 'chat', options?: { overlay?: boolean }): void {
       this.hasOpenedOnce = true
+      if (options?.overlay) {
+        this.forceOverlay = true
+      }
       this.open = true
       this.activeView = view
       if (!this.aiConfigLoaded) {
@@ -497,6 +555,7 @@ export const useCompanionStore = defineStore('companion', {
 
     closePanel(): void {
       this.open = false
+      this.forceOverlay = false
       this.finishReveal()
       this.aiErrorLabel = null
       this.listening = false
@@ -671,6 +730,14 @@ export const useCompanionStore = defineStore('companion', {
       if (this.releasesLoaded && !this.releasesOfflineFallback && !forceRefresh && this.releases.length > 0) {
         return this.releases
       }
+      if (!forceRefresh && !useSettingsStore().autoCheckUpdates) {
+        if (this.releases.length === 0) {
+          this.releases = getBundledChangelogReleases()
+          this.releasesOfflineFallback = true
+          this.releasesLoaded = true
+        }
+        return this.releases
+      }
       if (releasesInFlight && !forceRefresh) {
         return releasesInFlight
       }
@@ -704,15 +771,73 @@ export const useCompanionStore = defineStore('companion', {
       return promise
     },
 
-    notifyTransferFailure(errorMessage: string): void {
-      const trimmed = errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 500)
+    clearWorkspaceError(scopeKey: string): void {
+      if (scopeKey in this.transferErrorsBySession) {
+        const next = { ...this.transferErrorsBySession }
+        delete next[scopeKey]
+        this.transferErrorsBySession = next
+      }
+    },
+
+    notifyWorkspaceError(input: {
+      scopeKey?: string
+      category: CompanionErrorCategory
+      error: string
+      direction?: 'upload' | 'download'
+      localPath?: string
+      remotePath?: string
+      operationKind?: OperationKind
+      label?: string
+      hostLabel?: string
+    }): void {
+      const trimmed = input.error.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 500)
       if (!trimmed) return
-      this.lastTransferError = trimmed
+      const sessions = useSessionsStore()
+      const scopeKey = input.scopeKey || sessions.activeSessionId || sessions.activeTab?.tabId || '__global__'
+      this.transferErrorsBySession[scopeKey] = {
+        sessionId: scopeKey,
+        category: input.category,
+        error: trimmed,
+        direction: input.direction,
+        localPath: input.localPath,
+        remotePath: input.remotePath,
+        operationKind: input.operationKind,
+        label: input.label,
+        hostLabel: input.hostLabel,
+        occurredAt: new Date().toISOString()
+      }
+
+      const titleByCategory: Record<CompanionErrorCategory, string> = {
+        transfer:
+          input.direction === 'download'
+            ? 'Download issue detected'
+            : input.direction === 'upload'
+              ? 'Upload issue detected'
+              : 'Transfer issue detected',
+        'ssh-connect': 'SSH connection issue detected',
+        'host-key': 'Host key mismatch detected',
+        proxy: 'Proxy connection issue detected',
+        bastion: 'Jump host / bastion issue detected',
+        operation: input.label ? `Operation failed: ${input.label}` : 'Remote operation failed'
+      }
+
+      this.recordAnnouncement({
+        kind: 'transfer-error',
+        title: titleByCategory[input.category],
+        body: trimmed
+      })
 
       if (this.quietMode || !this.contextualTips || this.open) return
 
       const now = Date.now()
       if (now - this.lastTransferTipAt < TRANSFER_TIP_COOLDOWN_MS) return
+
+      const noticeTitle =
+        input.category === 'transfer'
+          ? 'Transfer ran into an issue'
+          : input.category === 'operation'
+            ? 'Remote operation failed'
+            : 'Connection ran into an issue'
 
       if (this.transferTipTimer) clearTimeout(this.transferTipTimer)
       this.transferTipTimer = setTimeout(() => {
@@ -723,18 +848,42 @@ export const useCompanionStore = defineStore('companion', {
           this.notice = {
             id: nextId('notice'),
             kind: 'transfer-error',
-            title: 'Transfer ran into an issue',
+            title: noticeTitle,
             body: 'Want help investigating? Your error details stay local.',
             ctaLabel: 'Investigate',
             errorSummary: trimmed
           }
         }
-        this.recordAnnouncement({
-          kind: 'transfer-error',
-          title: 'Transfer issue detected',
-          body: trimmed
-        })
       }, TRANSFER_TIP_DEBOUNCE_MS)
+    },
+
+    notifyTransferFailure(
+      input:
+        | string
+        | {
+            sessionId?: string
+            direction?: 'upload' | 'download'
+            localPath?: string
+            remotePath?: string
+            error: string
+          },
+      meta?: {
+        sessionId?: string
+        direction?: 'upload' | 'download'
+        localPath?: string
+        remotePath?: string
+      }
+    ): void {
+      const errorMessage = typeof input === 'string' ? input : input.error
+      const resolvedMeta = typeof input === 'string' ? meta : input
+      this.notifyWorkspaceError({
+        scopeKey: resolvedMeta?.sessionId,
+        category: 'transfer',
+        error: errorMessage,
+        direction: resolvedMeta?.direction,
+        localPath: resolvedMeta?.localPath,
+        remotePath: resolvedMeta?.remotePath
+      })
     },
 
     startReveal(messageId: string, text: string): void {
@@ -757,24 +906,211 @@ export const useCompanionStore = defineStore('companion', {
       this.reveal = null
     },
 
+    collectWorkspaceSignal(overrides?: Partial<CompanionWorkspaceSignal>): CompanionWorkspaceSignal | undefined {
+      const signal: CompanionWorkspaceSignal = {}
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      const isConnected = sessions.status === 'connected' && Boolean(sessionId)
+
+      if (isConnected && sessionId) {
+        const tab = sessions.activeTab
+        const site = tab?.siteId ? useSitesStore().sites.find((s) => s.id === tab.siteId) : undefined
+        const rawSiteName = site?.name || tab?.label || ''
+        if (rawSiteName) {
+          signal.siteName = redactSensitiveText(rawSiteName, { mode: 'diagnostic' }).text.slice(0, 80)
+        }
+        if (
+          site?.environment === 'prod' ||
+          site?.environment === 'staging' ||
+          site?.environment === 'dev' ||
+          site?.environment === 'other'
+        ) {
+          signal.siteEnvironment = site.environment as CompanionSiteEnvironment
+        }
+        if (tab?.remoteHostInfo) {
+          signal.remoteOs = formatRemoteOsLabel(tab.remoteHostInfo).slice(0, 120)
+          if (tab.remoteHostInfo.shell) {
+            signal.remoteShell = tab.remoteHostInfo.shell.slice(0, 80)
+          }
+        }
+
+        const remoteFs = useRemoteFsStore()
+        if (remoteFs.currentPath) {
+          signal.remoteCwd = redactSensitiveText(remoteFs.currentPath, { mode: 'diagnostic' }).text.slice(0, 260)
+          const selectedNames = Array.from(remoteFs.selected ?? []).slice(0, 5)
+          const summaryParts = [`${remoteFs.entries.length} items in ${signal.remoteCwd}`]
+          if (selectedNames.length > 0) {
+            summaryParts.push(`selected: ${selectedNames.join(', ')}`)
+          }
+          signal.sftpSummary = redactSensitiveText(summaryParts.join('; '), { mode: 'diagnostic' }).text.slice(0, 400)
+        }
+
+        const terminalStreams = useTerminalStreamsStore()
+        if (typeof terminalStreams.getRecentOutput === 'function') {
+          const rawTail = terminalStreams.getRecentOutput(sessionId, 30)
+          if (rawTail) {
+            signal.terminalTail = redactSensitiveText(rawTail, { mode: 'diagnostic' }).text.slice(-2000)
+          }
+        }
+
+        if (!overrides?.monitorSummary) {
+          const sample = useMonitorStore().latest
+          if (sample) {
+            const cpuPct = sample.cpu ? sample.cpu.aggregatePct : null
+            const memPct = sample.memory.totalBytes > 0 ? Math.round((sample.memory.usedBytes / sample.memory.totalBytes) * 100) : 0
+            const swapPct = sample.swap.totalBytes > 0 ? Math.round((sample.swap.usedBytes / sample.swap.totalBytes) * 100) : 0
+            const diskPct = sample.disk && sample.disk.totalBytes > 0 ? Math.round((sample.disk.usedBytes / sample.disk.totalBytes) * 100) : null
+            const topProcs = sample.processes
+              .slice(0, 3)
+              .map((p) => {
+                const cmd = p.cmdline && p.cmdline !== p.name ? ` cmd="${p.cmdline.slice(0, 80)}"` : ''
+                return `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${Math.round(p.rssBytes / (1024 * 1024))}MB${cmd})`
+              })
+              .join('; ')
+            const rawMonitor = [
+              `CPU: ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM: ${memPct}%, Swap: ${swapPct}%, Disk: ${diskPct !== null ? `${diskPct}%` : 'N/A'}`,
+              topProcs ? `Top: ${topProcs}` : ''
+            ]
+              .filter(Boolean)
+              .join(' | ')
+            signal.monitorSummary = redactSensitiveText(rawMonitor, { mode: 'diagnostic' }).text.slice(0, 800)
+          }
+        }
+
+        if (!overrides?.logSnippet) {
+          try {
+            const tailStreams = useTailStreamsStore()
+            const tailTab =
+              tailStreams.tabs.find((t) => t.tailId === tailStreams.activeTailId && t.sessionId === sessionId) ??
+              tailStreams.tabs.find((t) => t.sessionId === sessionId)
+            if (tailTab) {
+              const basename = tailTab.remotePath.split('/').pop() || tailTab.remotePath
+              signal.logBasename = basename.slice(0, 120)
+              signal.logPath = redactSensitiveText(tailTab.remotePath, { mode: 'diagnostic' }).text.slice(0, 260)
+              const lines = tailStreams.linesMap[tailTab.tailId] ?? []
+              if (lines.length > 0) {
+                const errorLines = lines.filter((l) => /\b(error|err|fatal|panic|exception|fail(?:ed)?|oom|warn)\b/i.test(l))
+                const chosen = (errorLines.length > 0 ? errorLines.slice(-10) : lines.slice(-8)).join('\n')
+                if (chosen.trim()) {
+                  signal.logSnippet = redactSensitiveText(chosen, { mode: 'diagnostic' }).text.slice(0, 1500)
+                }
+              }
+            }
+          } catch {
+            // Non-fatal in isolated tests where window.api.on is unavailable.
+          }
+        }
+
+      }
+
+      const errRec = this.lastTransferErrorRecord
+      if (errRec) {
+        const prefix = errRec.direction
+          ? `[${errRec.direction}] `
+          : errRec.category && errRec.category !== 'transfer'
+            ? `[${errRec.category}${errRec.operationKind ? `:${errRec.operationKind}` : ''}] `
+            : ''
+        const pathPart = errRec.remotePath
+          ? ` (remote: ${errRec.remotePath})`
+          : errRec.label
+            ? ` (${errRec.label})`
+            : ''
+        signal.lastTransferError = redactSensitiveText(`${prefix}${errRec.error}${pathPart}`, {
+          mode: 'diagnostic'
+        }).text.slice(0, 450)
+      }
+
+      if (overrides) {
+        for (const [k, v] of Object.entries(overrides)) {
+          if (v !== undefined && v !== '') {
+            ;(signal as Record<string, unknown>)[k] = v
+          }
+        }
+      }
+
+      return Object.keys(signal).length > 0 ? signal : undefined
+    },
+
+    ensureAiStreamSubscription(): void {
+      if (this.unsubscribeAiStream) return
+      if (typeof window === 'undefined' || typeof window.api?.on !== 'function') return
+      this.unsubscribeAiStream = onEvent<CompanionAiStreamEvent>(EVENT_CHANNELS.companionAiStream, (evt) => {
+        if (!evt || !evt.requestId || evt.requestId !== this.chatStreamRequestId) return
+        if (!evt.summaryText) return
+        if (this.streamingMessageId) {
+          const existing = this.messages.find((m) => m.id === this.streamingMessageId)
+          if (existing) {
+            existing.text = evt.summaryText
+            return
+          }
+        }
+        const id = this.pushMessage({
+          role: 'assistant',
+          text: evt.summaryText,
+          source: 'ai'
+        })
+        this.streamingMessageId = id
+      })
+    },
+
+    async cancelAiRequest(): Promise<void> {
+      const reqId = this.activeAiRequestId
+      this.aiGeneration += 1
+      this.aiBusy = false
+      this.activeAiRequestId = null
+      this.chatStreamRequestId = null
+      this.streamingMessageId = null
+      try {
+        await companionAiCancel(reqId ?? undefined)
+      } catch {
+        // Non-fatal in isolated tests or disconnected contexts.
+      }
+    },
+
     async requestAiChat(
       prompt: string,
       intent: CompanionAiIntent = 'chat',
-      workspaceSignal?: CompanionWorkspaceSignal
-    ): Promise<{ result: CompanionAiChatResult | null; errorHint: string | null }> {
+      workspaceSignal?: CompanionWorkspaceSignal,
+      options?: { streamToChat?: boolean }
+    ): Promise<{ result: CompanionAiChatResult | null; errorHint: string | null; cancelled?: boolean }> {
       if (this.aiConfig.provider === 'none') {
         return { result: null, errorHint: null }
+      }
+      const streamToChat = options?.streamToChat !== false
+      if (streamToChat) {
+        this.ensureAiStreamSubscription()
+      }
+      const gen = ++this.aiGeneration
+      const requestId = nextId('req')
+      this.activeAiRequestId = requestId
+      this.chatStreamRequestId = streamToChat ? requestId : null
+      if (streamToChat) {
+        this.streamingMessageId = null
       }
       this.aiBusy = true
       try {
         const sessions = useSessionsStore()
         const ui = useUiStore()
-        const redactedPrompt = redactSensitiveText(prompt).text
-        const history = this.messages.slice(-6, -1).map((m) => ({
-          role: m.role,
-          text: redactSensitiveText(m.text).text
-        }))
+        const redactedPrompt = redactSensitiveText(prompt, { mode: 'diagnostic' }).text
+        const history = this.messages.slice(-9, -1).map((m) => {
+          const parts = [m.text]
+          if (m.commandCards && m.commandCards.length > 0) {
+            const cmdSummary = m.commandCards.map((c) => `${c.command} (${c.risk})`).join('; ')
+            parts.push(`[Suggested commands: ${cmdSummary}]`)
+          }
+          if (m.uiActionCards && m.uiActionCards.length > 0) {
+            const actSummary = m.uiActionCards
+              .map((a) => (a.kind === 'apply-filter' ? `apply-filter(${a.mode}:${a.pattern})` : `${a.kind}(${a.remotePath})`))
+              .join('; ')
+            parts.push(`[Suggested actions: ${actSummary}]`)
+          }
+          return {
+            role: m.role,
+            text: redactSensitiveText(parts.join('\n'), { mode: 'diagnostic' }).text
+          }
+        })
         const req: CompanionAiChatRequest = {
+          requestId,
           prompt: redactedPrompt,
           history,
           intent,
@@ -786,14 +1122,24 @@ export const useCompanionStore = defineStore('companion', {
           }
         }
         const aiRes = await invoke<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiChat, req)
+        if (this.aiGeneration !== gen) {
+          return { result: null, errorHint: null, cancelled: true }
+        }
         if (aiRes?.ok && (aiRes.structured?.summary || aiRes.text)) {
           return { result: aiRes, errorHint: null }
         }
         return { result: null, errorHint: aiRes?.error || 'connection error' }
       } catch (err) {
+        if (this.aiGeneration !== gen) {
+          return { result: null, errorHint: null, cancelled: true }
+        }
         return { result: null, errorHint: err instanceof Error ? err.message : 'connection error' }
       } finally {
-        this.aiBusy = false
+        if (this.aiGeneration === gen) {
+          this.aiBusy = false
+          this.activeAiRequestId = null
+          this.chatStreamRequestId = null
+        }
       }
     },
 
@@ -821,13 +1167,26 @@ export const useCompanionStore = defineStore('companion', {
       this.aiErrorLabel = null
       let aiErrorHint: string | null = null
       if (opts.aiPrompt && this.aiConfig.provider !== 'none') {
-        const { result: aiRes, errorHint } = await this.requestAiChat(
+        const { result: aiRes, errorHint, cancelled } = await this.requestAiChat(
           opts.aiPrompt,
           opts.intent ?? 'chat',
           opts.workspaceSignal
         )
+        if (cancelled) {
+          return
+        }
         if (aiRes) {
           const text = aiRes.structured?.summary ?? aiRes.text ?? ''
+          const streamedId = this.streamingMessageId
+          this.streamingMessageId = null
+          const streamedMsg = streamedId ? this.messages.find((m) => m.id === streamedId) : undefined
+          if (streamedMsg) {
+            streamedMsg.text = text
+            streamedMsg.rootCause = aiRes.structured?.rootCause
+            streamedMsg.commandCards = aiRes.structured?.commandCards
+            streamedMsg.uiActionCards = aiRes.structured?.uiActionCards
+            return
+          }
           const id = this.pushMessage({
             role: 'assistant',
             text,
@@ -839,6 +1198,7 @@ export const useCompanionStore = defineStore('companion', {
           this.startReveal(id, text)
           return
         }
+        this.streamingMessageId = null
         aiErrorHint = errorHint
         if (aiErrorHint) {
           this.aiErrorLabel = `Couldn't reach ${PROVIDER_LABEL[this.aiConfig.provider]}`
@@ -875,18 +1235,25 @@ export const useCompanionStore = defineStore('companion', {
       }
 
       const sessions = useSessionsStore()
+      const aiEnabled = this.aiConfig.provider !== 'none'
+      const errRec = this.lastTransferErrorRecord
       const reply = answerCompanionQuery(text, {
         currentVersion: this.currentVersion || 'unknown',
         previousVersion: this.previousVersion,
         releases: this.releases.length > 0 ? this.releases : getBundledChangelogReleases(),
         offlineFallback: this.releasesOfflineFallback || this.releases.length === 0,
         isConnected: sessions.status === 'connected',
-        lastTransferError: this.lastTransferError
+        lastTransferError: errRec?.error ?? null,
+        lastTransferDirection: errRec?.direction ?? null,
+        aiEnabled
       })
+
+      const workspaceSignal = reply.isFallback && aiEnabled ? this.collectWorkspaceSignal() : undefined
 
       await this.deliverAiOrLocalReply({
         aiPrompt: reply.isFallback ? text : undefined,
         intent: reply.commandCards ? 'command' : 'chat',
+        workspaceSignal,
         errorPrefix: 'Falling back to local mode:',
         buildLocal: () => ({
           text: reply.text,
@@ -915,33 +1282,43 @@ export const useCompanionStore = defineStore('companion', {
         this.pushSystemNote('Still finishing the previous AI request — please try Explain Log again in a moment.')
         return
       }
-      const redactedPath = redactSensitiveText(input.remotePath).text
       const rawSnippet =
         input.contextLines && input.contextLines.length > 0
           ? input.contextLines.join('\n')
           : input.lineText
-      const redacted = redactSensitiveText(rawSnippet)
-      const logSnippet = redacted.text.slice(0, 2500)
-      if (!logSnippet.trim()) return
+      if (!rawSnippet.trim()) return
+
+      const logBasename = input.remotePath.split('/').pop() || input.remotePath
+      const diagnosticPath = redactSensitiveText(input.remotePath, { mode: 'diagnostic' }).text
+      const redactedForAi = redactSensitiveText(rawSnippet, { mode: 'diagnostic' })
+      const aiLogSnippet = redactedForAi.text.slice(0, 2500)
+      const bubbleLine = redactSensitiveText(input.lineText, { mode: 'diagnostic' }).text.slice(0, 400)
 
       this.openPanel('chat')
       const lineLabel = input.lineNumber ? `line #${input.lineNumber} in ` : ''
       const redactionNote =
-        redacted.redactionCount > 0
-          ? ` (${redacted.redactionCount} sensitive item${redacted.redactionCount === 1 ? '' : 's'} redacted locally)`
+        redactedForAi.redactionCount > 0
+          ? ` (${redactedForAi.redactionCount} sensitive item${redactedForAi.redactionCount === 1 ? '' : 's'} redacted locally)`
           : ''
       this.pushMessage({
         role: 'user',
-        text: `Explain log ${lineLabel}${redactedPath || 'active stream'}${redactionNote}:\n${redactSensitiveText(input.lineText).text.slice(0, 400)}`
+        text: `Explain log ${lineLabel}${diagnosticPath || 'active stream'}${redactionNote}:\n${bubbleLine}`
+      })
+
+      const workspaceSignal = this.collectWorkspaceSignal({
+        logPath: diagnosticPath,
+        logBasename,
+        logSnippet: aiLogSnippet
       })
 
       await this.deliverAiOrLocalReply({
-        aiPrompt: `Explain this log entry from ${redactedPath} and suggest safe diagnostic steps.`,
+        aiPrompt: `Explain this log entry from ${diagnosticPath || logBasename} and suggest safe diagnostic steps.`,
         intent: 'explain-log',
-        workspaceSignal: { logPath: redactedPath, logSnippet },
+        workspaceSignal,
         errorPrefix: 'Local log analysis:',
         buildLocal: () => {
-          const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet, input.remotePath)
+          // Run offline detectors on the unredacted raw snippet so namespaces like java.lang.OutOfMemoryError match.
+          const offline = diagnoseLogSnippetOffline(input.remotePath, rawSnippet, input.remotePath)
           return {
             text: offline.summary,
             rootCause: offline.rootCause,
@@ -978,7 +1355,7 @@ export const useCompanionStore = defineStore('companion', {
           ? `Top processes: ${topProcesses.map((p) => `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${p.rssMB}MB)`).join('; ')}`
           : 'Top processes: none'
       ].join('\n')
-      const monitorSummary = redactSensitiveText(rawSummary).text
+      const monitorSummary = redactSensitiveText(rawSummary, { mode: 'diagnostic' }).text
 
       this.openPanel('chat')
       this.pushMessage({
@@ -986,10 +1363,12 @@ export const useCompanionStore = defineStore('companion', {
         text: `Diagnose Resource Monitor metrics (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%${diskPct !== null ? `, Disk ${diskPct}%` : ''})`
       })
 
+      const workspaceSignal = this.collectWorkspaceSignal({ monitorSummary })
+
       await this.deliverAiOrLocalReply({
         aiPrompt: 'Triage these remote server resource metrics and propose read-only verification commands.',
         intent: 'diagnose-spike',
-        workspaceSignal: { monitorSummary },
+        workspaceSignal,
         errorPrefix: 'Local resource triage:',
         buildLocal: () => {
           const offline = diagnoseMonitorSpikeOffline({
@@ -1026,6 +1405,188 @@ export const useCompanionStore = defineStore('companion', {
       return entry
     },
 
+    updateCustomSnippet(
+      id: string,
+      input: { label: string; command: string; description?: string }
+    ): CompanionSnippet | null {
+      const label = input.label.trim().slice(0, 80)
+      const command = sanitizeCompanionCommand(input.command)
+      if (!label || !command) return null
+      const idx = this.customSnippets.findIndex((s) => s.id === id)
+      if (idx === -1) return null
+      const updated: CompanionSnippet = {
+        id,
+        label,
+        command,
+        description: (input.description ?? '').trim().slice(0, 240),
+        risk: classifyCommandRisk(command)
+      }
+      const next = [...this.customSnippets]
+      next[idx] = updated
+      this.customSnippets = next
+      writeStored(SNIPPETS_KEY, JSON.stringify(this.customSnippets), this.dirtyPrefKeys)
+      return updated
+    },
+
+    mergeImportedSnippets(
+      incoming: ReadonlyArray<{ label: string; command: string; description?: string }>
+    ): number {
+      let added = 0
+      const existingCommands = new Set(this.customSnippets.map((s) => s.command))
+      const created: CompanionSnippet[] = []
+      for (const item of incoming) {
+        const label = item.label.trim().slice(0, 80)
+        const command = sanitizeCompanionCommand(item.command)
+        if (!label || !command || existingCommands.has(command)) continue
+        existingCommands.add(command)
+        created.push({
+          id: nextId('snip'),
+          label,
+          command,
+          description: (item.description ?? '').trim().slice(0, 240),
+          risk: classifyCommandRisk(command)
+        })
+        added += 1
+      }
+      if (created.length > 0) {
+        this.customSnippets = [...created, ...this.customSnippets].slice(0, MAX_CUSTOM_SNIPPETS)
+        writeStored(SNIPPETS_KEY, JSON.stringify(this.customSnippets), this.dirtyPrefKeys)
+      }
+      return added
+    },
+
+    /** Generates a single risk-badged Command Card for the in-terminal Quick Command Bar or Snippet AI Drafter without mutating Chat. */
+    async requestQuickCommand(
+      query: string
+    ): Promise<{ card: CompanionCommandCard | null; message: string | null }> {
+      const trimmed = query.trim()
+      if (!trimmed) return { card: null, message: 'Enter a request first.' }
+
+      if (this.aiConfig.provider !== 'none') {
+        const signal = this.collectWorkspaceSignal()
+        const { result, errorHint } = await this.requestAiChat(
+          `Generate one concise, safe shell command for: ${trimmed}`,
+          'command',
+          signal,
+          { streamToChat: false }
+        )
+        const firstCard = result?.structured?.commandCards?.[0]
+        if (firstCard) {
+          return { card: firstCard, message: result?.structured?.summary ?? null }
+        }
+        if (errorHint) {
+          const offline = translatePlainEnglishCommandOffline(trimmed)
+          if (offline?.commandCards[0]) {
+            return { card: offline.commandCards[0], message: `AI unreachable (${errorHint}); showing offline suggestion.` }
+          }
+          return { card: null, message: `AI error: ${errorHint}` }
+        }
+      }
+
+      const offline = translatePlainEnglishCommandOffline(trimmed)
+      if (offline?.commandCards[0]) {
+        return { card: offline.commandCards[0], message: offline.summary }
+      }
+      return {
+        card: null,
+        message: 'No offline match found. Configure a free Gemini API key in Settings for natural-language command generation.'
+      }
+    },
+
+    /** Correlates a Resource Monitor spike with recent error/tail lines from the active session's Live Log Tail. */
+    async correlateSpikeAndLogs(sample: MonitorSample): Promise<void> {
+      if (this.aiBusy) {
+        this.open = true
+        this.activeView = 'chat'
+        this.pushSystemNote('Still finishing the previous AI request — please try Correlate Spike + Logs again in a moment.')
+        return
+      }
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      const tailStreams = useTailStreamsStore()
+      const tailTab = sessionId
+        ? tailStreams.tabs.find((t) => t.tailId === tailStreams.activeTailId && t.sessionId === sessionId) ??
+          tailStreams.tabs.find((t) => t.sessionId === sessionId)
+        : undefined
+      const tailLines = tailTab ? (tailStreams.linesMap[tailTab.tailId] ?? []).slice(-15) : []
+      const logSnippet = tailLines.length > 0
+        ? redactSensitiveText(tailLines.join('\n'), { mode: 'diagnostic' }).text.slice(0, 2000)
+        : undefined
+      const logBasename = tailTab ? tailTab.remotePath.split('/').pop() || tailTab.remotePath : undefined
+
+      const cpuPct = sample.cpu ? sample.cpu.aggregatePct : null
+      const memPct = sample.memory.totalBytes > 0 ? Math.round((sample.memory.usedBytes / sample.memory.totalBytes) * 100) : 0
+      const topProcs = sample.processes
+        .slice(0, 5)
+        .map((p) => `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${Math.round(p.rssBytes / (1024 * 1024))}MB${p.cmdline && p.cmdline !== p.name ? ` cmd="${p.cmdline.slice(0, 80)}"` : ''})`)
+        .join('; ')
+      const monitorSummary = redactSensitiveText(
+        `CPU: ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM: ${memPct}%, LoadAvg: ${sample.loadAvg.map((n) => n.toFixed(2)).join('/')} | Top: ${topProcs}`,
+        { mode: 'diagnostic' }
+      ).text
+
+      this.openPanel('chat')
+      this.pushMessage({
+        role: 'user',
+        text: `Correlate Monitor spike (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%) with ${logBasename || 'active log stream'}`
+      })
+
+      const workspaceSignal = this.collectWorkspaceSignal({
+        monitorSummary,
+        ...(logSnippet ? { logSnippet, logBasename } : {})
+      })
+
+      await this.deliverAiOrLocalReply({
+        aiPrompt: `Correlate the remote Resource Monitor spike with recent entries from ${logBasename || 'the active log tail'} to identify root cause and safe read-only verification commands.`,
+        intent: 'diagnose-spike',
+        workspaceSignal,
+        errorPrefix: 'Local spike triage:',
+        buildLocal: () => {
+          const offline = diagnoseMonitorSpikeOffline({
+            cpuPct,
+            memPct,
+            swapPct: sample.swap.totalBytes > 0 ? Math.round((sample.swap.usedBytes / sample.swap.totalBytes) * 100) : 0,
+            diskPct: sample.disk && sample.disk.totalBytes > 0 ? Math.round((sample.disk.usedBytes / sample.disk.totalBytes) * 100) : null,
+            loadAvg: sample.loadAvg,
+            coreCount: sample.cpu?.coreCount ?? 1,
+            topProcesses: sample.processes.slice(0, 5).map((p) => ({
+              pid: p.pid,
+              name: p.name,
+              cpuPct: p.cpuPct,
+              rssMB: Math.round(p.rssBytes / (1024 * 1024))
+            }))
+          })
+          return {
+            text: offline.summary,
+            rootCause: offline.rootCause,
+            commandCards: offline.commandCards
+          }
+        }
+      })
+    },
+
+    /** Opens Companion Chat and diagnoses a specific failed transfer or remote operation row. */
+    async troubleshootWorkspaceError(input: {
+      scopeKey?: string
+      category: CompanionErrorCategory
+      error: string
+      direction?: 'upload' | 'download'
+      localPath?: string
+      remotePath?: string
+      operationKind?: OperationKind
+      label?: string
+    }): Promise<void> {
+      this.notifyWorkspaceError(input)
+      this.openPanel('chat')
+      const subject =
+        input.category === 'transfer'
+          ? `failed ${input.direction ?? 'transfer'}${input.remotePath ? ` (${input.remotePath.split('/').pop()})` : ''}`
+          : input.label
+            ? `failed operation "${input.label}"`
+            : `failed ${input.category}`
+      await this.ask(`Troubleshoot this ${subject}: ${input.error}`)
+    },
+
     deleteCustomSnippet(id: string): void {
       const next = this.customSnippets.filter((s) => s.id !== id)
       if (next.length === this.customSnippets.length) return
@@ -1057,7 +1618,7 @@ export const useCompanionStore = defineStore('companion', {
       writeStored(CMD_HISTORY_KEY, JSON.stringify([]), this.dirtyPrefKeys)
     },
 
-    async runCommandCard(card: CompanionCommandCard): Promise<string> {
+    async runCommandCard(card: CompanionCommandCard, options?: { skipConfirm?: boolean }): Promise<string> {
       const sessions = useSessionsStore()
       const sessionId = sessions.activeSessionId
       if (sessions.status !== 'connected' || !sessionId) {
@@ -1069,36 +1630,80 @@ export const useCompanionStore = defineStore('companion', {
       }
       const risk = escalateCommandRisk(card.risk, command)
       const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
-      const riskNote =
-        risk === 'destructive'
-          ? 'DESTRUCTIVE command — can delete data or interrupt services.'
-          : risk === 'mutating'
-            ? 'MUTATING command — modifies files or service state.'
-            : 'READ-ONLY command — inspects remote state without modifying files.'
+      if (!options?.skipConfirm) {
+        const riskNote =
+          risk === 'destructive'
+            ? 'DESTRUCTIVE command — can delete data or interrupt services.'
+            : risk === 'mutating'
+              ? 'MUTATING command — modifies files or service state.'
+              : 'READ-ONLY command — inspects remote state without modifying files.'
 
-      const confirm = useConfirm()
-      const confirmed = await confirm({
-        title: `Run command on ${targetHost}?`,
-        body: `Risk: ${risk.toUpperCase()} — ${riskNote}`,
-        items: [command],
-        confirmLabel: 'Run in Terminal',
-        confirmColor: risk === 'destructive' ? 'error' : risk === 'mutating' ? 'warning' : 'primary',
-        destructive: risk === 'destructive'
-      })
-      if (!confirmed) {
-        return 'Command execution cancelled.'
+        const prodPrefix = this.isProd && risk === 'destructive' ? 'PRODUCTION ENVIRONMENT WARNING — ' : ''
+        const confirm = useConfirm()
+        const confirmed = await confirm({
+          title: `Run command on ${targetHost}?`,
+          body: `${prodPrefix}Risk: ${risk.toUpperCase()} — ${riskNote}`,
+          items: [command],
+          confirmLabel: 'Run in Terminal',
+          confirmColor: risk === 'destructive' ? 'error' : risk === 'mutating' ? 'warning' : 'primary',
+          destructive: risk === 'destructive'
+        })
+        if (!confirmed) {
+          return 'Command execution cancelled.'
+        }
       }
 
       useDockState().openDock('terminal')
-      const terminalId = await useTerminalStreamsStore().ensureTerminal(sessionId)
-      if (typeof window !== 'undefined' && window.api?.send) {
-        window.api.send(SEND_CHANNELS.terminalInput, {
-          terminalId,
-          data: `${command}\r`
-        })
+      const terminalStreams = useTerminalStreamsStore()
+      let wrote = false
+      if (typeof terminalStreams.write === 'function') {
+        wrote = await terminalStreams.write(sessionId, `${command}\r`)
+      } else {
+        const terminalId = await terminalStreams.ensureTerminal(sessionId)
+        if (terminalId && typeof window !== 'undefined' && typeof window.api?.send === 'function') {
+          window.api.send(SEND_CHANNELS.terminalInput, {
+            terminalId,
+            data: `${command}\r`
+          })
+          terminalStreams.focus?.(sessionId)
+          wrote = true
+        }
+      }
+      if (!wrote) {
+        return 'Could not send command to Terminal — shell is not active.'
       }
       this.recordCommandHistory(command, risk, targetHost)
       return `Sent command to Terminal (${targetHost}).`
+    },
+
+    async insertCommandInTerminal(rawCommand: string): Promise<string> {
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      if (sessions.status !== 'connected' || !sessionId) {
+        return 'Connect to an SSH session first to insert commands into Terminal.'
+      }
+      const command = sanitizeCompanionCommand(rawCommand)
+      if (!command) {
+        return 'Command is empty.'
+      }
+      useDockState().openDock('terminal')
+      const terminalStreams = useTerminalStreamsStore()
+      let inserted = false
+      if (typeof terminalStreams.insertText === 'function') {
+        inserted = await terminalStreams.insertText(sessionId, command)
+      } else {
+        const terminalId = await terminalStreams.ensureTerminal(sessionId)
+        if (terminalId && typeof window !== 'undefined' && typeof window.api?.send === 'function') {
+          window.api.send(SEND_CHANNELS.terminalInput, { terminalId, data: command })
+          terminalStreams.focus?.(sessionId)
+          inserted = true
+        }
+      }
+      if (!inserted) {
+        return 'Could not insert command into Terminal — shell is not active.'
+      }
+      const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
+      return `Inserted command into Terminal (${targetHost}) — press Enter to run.`
     },
 
     async executeUiActionCard(card: CompanionUiActionCard): Promise<string> {
@@ -1126,7 +1731,7 @@ export const useCompanionStore = defineStore('companion', {
           const key = isConnected ? resolveConnectionFilterKey(sessions.activeTab) : 'local'
           useFileFiltersStore().addPattern(key ?? 'local', card.mode, card.pattern)
           if (isConnected) {
-            window.dispatchEvent(new CustomEvent(OPEN_FILE_FILTERS_EVENT))
+            window.dispatchEvent(new CustomEvent(OPEN_FILE_FILTERS_EVENT, { detail: { pane: 'remote' } }))
           }
           return `Applied ${card.mode} filter "${card.pattern}".`
         }
@@ -1219,6 +1824,11 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     clearConversation(): void {
+      if (this.aiBusy || this.activeAiRequestId) {
+        void this.cancelAiRequest()
+      } else {
+        this.aiGeneration += 1
+      }
       this.finishReveal()
       this.messages = []
       this.aiErrorLabel = null
@@ -1236,6 +1846,7 @@ export const useCompanionStore = defineStore('companion', {
       this.disposeTimers()
       this.dirtyPrefKeys.clear()
       this.open = false
+      this.forceOverlay = false
       this.hasOpenedOnce = false
       this.activeView = 'chat'
       this.reportCategory = 'bug'
@@ -1253,11 +1864,17 @@ export const useCompanionStore = defineStore('companion', {
       this.notice = null
       this.announcements = []
       this.messages = []
-      this.lastTransferError = null
+      this.transferErrorsBySession = {}
       this.tourStep = null
       this.aiConfig = { provider: 'none', endpoint: '', model: '', hasApiKey: false }
       this.aiConfigLoaded = false
       this.aiBusy = false
+      this.aiGeneration += 1
+      this.activeAiRequestId = null
+      this.chatStreamRequestId = null
+      this.streamingMessageId = null
+      this.unsubscribeAiStream?.()
+      this.unsubscribeAiStream = null
       this.customSnippets = []
       this.commandHistory = []
       this.lastTransferTipAt = 0

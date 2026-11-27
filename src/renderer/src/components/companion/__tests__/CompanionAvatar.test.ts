@@ -37,13 +37,23 @@ describe('CompanionAvatar', () => {
     expect(w.findAll('ellipse')).toHaveLength(0)
   })
 
-  it('draws the prod rim arc and the noticing dot only when asked', () => {
+  it('draws the prod rim arc with non-scaling-stroke and sizes the noticing dot by orb size', () => {
     const plain = mount(CompanionAvatar, { props: { size: 20 } })
     expect(plain.find('[data-orb-prod]').exists()).toBe(false)
     expect(plain.find('[data-orb-notice]').exists()).toBe(false)
-    const both = mount(CompanionAvatar, { props: { size: 16, prod: true, noticing: true } })
-    expect(both.find('[data-orb-prod]').exists()).toBe(true)
-    expect(both.find('[data-orb-notice]').exists()).toBe(true)
+
+    const small = mount(CompanionAvatar, { props: { size: 16, prod: true, noticing: true } })
+    expect(small.find('[data-orb-prod]').exists()).toBe(true)
+    expect(small.find('[data-orb-notice]').classes()).toContain('size-1.5')
+    expect(small.find('[data-orb-notice]').classes()).toContain('ring-1')
+
+    const header = mount(CompanionAvatar, { props: { size: 20, prod: true, noticing: true } })
+    const prodPaths = header.findAll('[data-orb-prod] path')
+    expect(prodPaths.length).toBeGreaterThan(0)
+    for (const p of prodPaths) {
+      expect(p.attributes('vector-effect')).toBe('non-scaling-stroke')
+    }
+    expect(header.find('[data-orb-notice]').classes()).toContain('size-2')
   })
 
   it('gives each instance unique defs ids', () => {
@@ -57,10 +67,12 @@ describe('CompanionAvatar', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('is static at rest and animates while thinking or live', async () => {
+  it('is static at rest, pauses 20px header orb while idle, and animates while thinking or hero live', async () => {
     expect(mount(CompanionAvatar, { props: { state: 'idle' } }).attributes('data-animate')).toBe('false')
     expect(mount(CompanionAvatar, { props: { state: 'thinking' } }).attributes('data-animate')).toBe('true')
-    expect(mount(CompanionAvatar, { props: { state: 'idle', live: true } }).attributes('data-animate')).toBe('true')
+    expect(mount(CompanionAvatar, { props: { size: 20, state: 'idle', live: true } }).attributes('data-animate')).toBe('false')
+    expect(mount(CompanionAvatar, { props: { size: 20, state: 'thinking', live: true } }).attributes('data-animate')).toBe('true')
+    expect(mount(CompanionAvatar, { props: { size: 96, state: 'idle', live: true } }).attributes('data-animate')).toBe('true')
   })
 
   it('stops animating when the window loses focus', async () => {
