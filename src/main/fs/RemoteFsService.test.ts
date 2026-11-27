@@ -95,23 +95,37 @@ describe('RemoteFsService.listRemote', () => {
     expect(mockManager.setCwd).not.toHaveBeenCalled()
   })
 
-  it.each(['../escape', 'nested/escape', 'nested\\\\escape', ''])(
-    'rejects unsafe SFTP entry name "%s" before constructing a FileEntry path',
+  it.each(['../escape', 'nested/escape', 'nested\\escape', ''])(
+    'omits unsafe SFTP entry name "%s" without aborting the listing',
     async (filename) => {
       mockShell.exec.mockResolvedValueOnce({ code: 127, stdout: '', stderr: 'exec unavailable' })
       mockShell.realpath.mockResolvedValueOnce('/srv')
-      mockShell.readdir.mockResolvedValueOnce([{
-        filename,
-        longname: filename,
-        isDirectory: false,
-        isSymlink: false,
-        size: 1,
-        mtimeMs: 0,
-        permissions: '0644'
-      }])
+      mockShell.readdir.mockResolvedValueOnce([
+        {
+          filename,
+          longname: filename,
+          isDirectory: false,
+          isSymlink: false,
+          size: 1,
+          mtimeMs: 0,
+          permissions: '0644'
+        },
+        {
+          filename: 'safe.txt',
+          longname: 'safe.txt',
+          isDirectory: false,
+          isSymlink: false,
+          size: 2,
+          mtimeMs: 0,
+          permissions: '0644'
+        }
+      ])
 
-      await expect(listRemote('sess-1', '/srv')).rejects.toMatchObject({ code: 'SFTP' })
-      expect(mockManager.setCwd).not.toHaveBeenCalled()
+      const result = await listRemote('sess-1', '/srv')
+
+      expect(result.entries).toHaveLength(1)
+      expect(result.entries[0]).toMatchObject({ name: 'safe.txt', path: '/srv/safe.txt' })
+      expect(mockManager.setCwd).toHaveBeenCalledWith('sess-1', '/srv')
     }
   )
 
