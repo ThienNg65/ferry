@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import * as net from 'node:net'
-import { PassThrough } from 'node:stream'
+import { Duplex, PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PortForwardingManager,
@@ -73,6 +73,17 @@ function startLocalEchoServer(): Promise<{ server: net.Server; port: number }> {
     server.listen({ host: '127.0.0.1', port: 0 }, () => {
       const addr = server.address() as net.AddressInfo
       resolve({ server, port: addr.port })
+    })
+  })
+}
+
+function getUnusedPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer()
+    probe.once('error', reject)
+    probe.listen({ host: '127.0.0.1', port: 0 }, () => {
+      const port = (probe.address() as net.AddressInfo).port
+      probe.close(() => resolve(port))
     })
   })
 }
@@ -196,7 +207,6 @@ describe('Tunnel rule validation and helpers', () => {
     ])
     expect(wildcardConflict).toMatchObject({ ok: false, error: { code: 'PORT_IN_USE' } })
 
-    // Same port on different directions (-L vs -R) is valid.
     const mixedDirections = validateTunnelRules([
       { id: 'r1', type: 'local', bindPort: 8080, targetHost: 'app', targetPort: 8080 },
       { id: 'r2', type: 'remote', bindPort: 8080, targetHost: '127.0.0.1', targetPort: 3000 }
@@ -250,7 +260,6 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(started.data.localAddress).toBe(`localhost:${boundPort}`)
     expect(started.data.exposedExternally).toBe(false)
 
-    // PassThrough echoes bytes back through the tunnel.
     const reply = await sendTcpMessage(boundPort, 'SELECT 1')
     expect(reply).toBe('SELECT 1')
     expect(client.forwardOut).toHaveBeenCalledWith(
@@ -297,6 +306,34 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(manager.getActiveTunnels('sess-1')).toHaveLength(0)
   })
 
+  it('destroys active client sockets immediately when stopTunnel is called', async () => {
+    const manager = createManager()
+    const client = createMockSshClient()
+
+    const started = await manager.startTunnel(
+      'sess-active-close',
+      client,
+      {
+        id: 'keepopen',
+        type: 'local',
+        bindPort: 0,
+        targetHost: '127.0.0.1',
+        targetPort: 5432
+      },
+      { allowEphemeralPort: true }
+    )
+    expect(started.ok).toBe(true)
+    if (!started.ok) return
+
+    const openSocket = net.createConnection({ host: '127.0.0.1', port: started.data.bindPort })
+    await new Promise<void>((resolve) => openSocket.once('connect', () => resolve()))
+    const closedPromise = new Promise<void>((resolve) => openSocket.once('close', () => resolve()))
+
+    await manager.stopTunnel('sess-active-close', 'keepopen')
+    await closedPromise
+    expect(manager.getActiveTunnels('sess-active-close')).toHaveLength(0)
+  })
+
   it('handles forwardOut rejection cleanly without closing the local listener or session', async () => {
     const manager = createManager()
     const client = createMockSshClient()
@@ -321,7 +358,6 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(started.ok).toBe(true)
     if (!started.ok) return
 
-    // First connection gets rejected by SSH server, socket closes cleanly.
     await new Promise<void>((resolve) => {
       const sock = net.createConnection({ host: '127.0.0.1', port: started.data.bindPort })
       sock.once('close', () => resolve())
@@ -332,7 +368,6 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(active).toHaveLength(1)
     expect(active[0].lastError).toContain('Administratively prohibited')
 
-    // Subsequent connection succeeds once SSH forwardOut allows it.
     const reply = await sendTcpMessage(started.data.bindPort, 'ping')
     expect(reply).toBe('ping')
   })
@@ -357,46 +392,32 @@ describe('PortForwardingManager remote (-R) tunnels', () => {
     expect(started.ok).toBe(true)
     expect(client.forwardIn).toHaveBeenCalledWith('127.0.0.1', 9090, expect.any(Function))
 
-    // Simulate incoming remote TCP connection on port 9090.
-    const incomingChannel = new PassThrough()
     const rejectFn = vi.fn()
-    const responsePromise = new Promise<string>((resolve) => {
-      incomingChannel.once('data', (chunk: Buffer) => {
-        if (chunk.toString('utf8').startsWith('echo:')) {
-          resolve(chunk.toString('utf8'))
-        }
-      })
-    })
-
     const info: SshTcpConnectionInfo = {
       destIP: '127.0.0.1',
       destPort: 9090,
       srcIP: '10.0.0.1',
       srcPort: 51234
     }
-    client.emit('tcp connection', info, () => incomingChannel as unknown as SshForwardChannel, rejectFn)
 
-    // Write from remote side into the SSH channel; local echo server replies with "echo:hello".
     const received = await new Promise<string>((resolve) => {
-      const serverSide = new PassThrough()
-      const clientSide = new PassThrough()
-      // Create a proper duplex channel where server writes to clientSide and reads from serverSide.
-      const duplexChannel = Object.assign(new PassThrough(), {
-        _write(chunk: Buffer, _enc: BufferEncoding, cb: () => void) {
-          serverSide.write(chunk)
+      const outbound = new PassThrough()
+      outbound.once('data', (buf: Buffer) => {
+        duplexChannel.destroy()
+        resolve(buf.toString('utf8'))
+      })
+      const duplexChannel = new Duplex({
+        read() {
+          // Data is pushed manually below.
+        },
+        write(chunk: Buffer, _enc: BufferEncoding, cb: () => void) {
+          outbound.write(chunk)
           cb()
         }
-      })
-      serverSide.once('data', (buf: Buffer) => resolve(buf.toString('utf8')))
-      client.emit(
-        'tcp connection',
-        info,
-        () => duplexChannel as unknown as SshForwardChannel,
-        rejectFn
-      )
+      }) as unknown as SshForwardChannel
+
+      client.emit('tcp connection', info, () => duplexChannel, rejectFn)
       duplexChannel.push('hello')
-      void clientSide
-      void responsePromise
     })
 
     expect(rejectFn).not.toHaveBeenCalled()
@@ -415,6 +436,36 @@ describe('PortForwardingManager remote (-R) tunnels', () => {
     await manager.stopTunnel('sess-r1', 'remote-dev')
     expect(client.unforwardIn).toHaveBeenCalledWith('127.0.0.1', 9090, expect.any(Function))
     expect(manager.getActiveTunnels('sess-r1')).toHaveLength(0)
+  })
+
+  it('destroys the incoming channel and records lastError when the local target is unreachable', async () => {
+    const manager = createManager()
+    const client = createMockSshClient()
+    const closedPort = await getUnusedPort()
+
+    const started = await manager.startTunnel('sess-r-unreachable', client, {
+      id: 'remote-dead-target',
+      type: 'remote',
+      bindHost: '127.0.0.1',
+      bindPort: 9095,
+      targetHost: '127.0.0.1',
+      targetPort: closedPort
+    })
+    expect(started.ok).toBe(true)
+
+    const channel = new PassThrough() as unknown as SshForwardChannel
+    const channelClosed = new Promise<void>((resolve) => channel.once('close', () => resolve()))
+    client.emit(
+      'tcp connection',
+      { destIP: '127.0.0.1', destPort: 9095, srcIP: '10.0.0.1', srcPort: 51240 },
+      () => channel,
+      vi.fn()
+    )
+
+    await channelClosed
+    const active = manager.getActiveTunnels('sess-r-unreachable')
+    expect(active).toHaveLength(1)
+    expect(active[0].lastError).toContain('unreachable')
   })
 
   it('returns SSH_FORWARD_FAILED when the remote server rejects forwardIn', async () => {
@@ -471,7 +522,6 @@ describe('PortForwardingManager lifecycle, concurrency, and disconnect cleanup',
     expect(manager.getActiveTunnels('sess-disc')).toHaveLength(2)
     expect(client.listenerCount('tcp connection')).toBe(1)
 
-    // Simulate SSH transport close.
     client.emit('close')
 
     await vi.waitFor(() => {

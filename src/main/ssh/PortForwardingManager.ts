@@ -832,8 +832,18 @@ export class PortForwardingManager {
     })
 
     let connected = false
+    const onPreConnectChannelClose = (): void => {
+      if (!connected && !localSocket.destroyed) {
+        localSocket.destroy()
+      }
+    }
+    channel.once('close', onPreConnectChannelClose)
+    channel.on('error', onPreConnectChannelClose)
+
     localSocket.once('connect', () => {
       connected = true
+      channel.removeListener('close', onPreConnectChannelClose)
+      channel.removeListener('error', onPreConnectChannelClose)
       if (matched.stopped || state.disposed || channel.destroyed) {
         localSocket.destroy()
         channel.destroy()
@@ -845,6 +855,8 @@ export class PortForwardingManager {
 
     localSocket.on('error', (err) => {
       if (!connected) {
+        channel.removeListener('close', onPreConnectChannelClose)
+        channel.removeListener('error', onPreConnectChannelClose)
         matched.lastError = `Target ${matched.rule.targetHost}:${matched.rule.targetPort} unreachable: ${err.message}`
         channel.destroy()
         localSocket.destroy()
@@ -855,10 +867,6 @@ export class PortForwardingManager {
           tunnel: this.toPublicInfo(matched)
         })
       }
-    })
-
-    channel.on('error', () => {
-      localSocket.destroy()
     })
   }
 
