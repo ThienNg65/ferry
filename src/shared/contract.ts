@@ -223,6 +223,17 @@ export interface ImportedSessionCandidate {
   jumpHosts?: JumpHostConfig[]
 }
 
+export interface ExportSshConfigRequest {
+  siteIds?: string[]
+  includeHeader?: boolean
+}
+
+export interface ExportSshConfigResult {
+  content: string
+  exportedCount: number
+  skippedCount: number
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain models — bookmarks
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1129,6 +1140,7 @@ export const INVOKE_CHANNELS = {
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
+  sitesExportSshConfig: 'sites:exportSshConfig',
   sitesImportJson: 'sites:import-json',
   sitesExportVault: 'sites:exportVault',
   sitesImportVault: 'sites:importVault',
