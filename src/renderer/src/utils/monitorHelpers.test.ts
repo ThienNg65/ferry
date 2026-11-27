@@ -94,6 +94,22 @@ describe('filterAndSortProcesses', () => {
     expect(filterAndSortProcesses(sample, '202', 'cpuPct', 'desc').map((p) => p.pid)).toEqual([202])
   })
 
+  describe('with service names', () => {
+    const services: MonitorProcessSample[] = [
+      { pid: 1, name: 'java', service: 'billing-service', cpuPct: 1, rssBytes: 1 },
+      { pid: 2, name: 'java', service: 'auth-service', cpuPct: 2, rssBytes: 1 },
+      { pid: 3, name: 'nginx', cpuPct: 3, rssBytes: 1 }
+    ]
+
+    it('matches the query against service', () => {
+      expect(filterAndSortProcesses(services, 'BILLING', 'pid', 'asc').map((p) => p.pid)).toEqual([1])
+    })
+
+    it('sorts by name using the service when present', () => {
+      expect(filterAndSortProcesses(services, '', 'name', 'asc').map((p) => p.pid)).toEqual([2, 1, 3])
+    })
+  })
+
   it('sorts by cpuPct with null treated as lowest', () => {
     expect(filterAndSortProcesses(sample, '', 'cpuPct', 'desc').map((p) => p.pid)).toEqual([303, 101, 202])
     expect(filterAndSortProcesses(sample, '', 'cpuPct', 'asc').map((p) => p.pid)).toEqual([202, 101, 303])

@@ -6,6 +6,7 @@ import { useNotify } from '../../composables/useNotify'
 import { formatBytes } from '../../utils/format'
 import {
   filterAndSortProcesses,
+  processLabel,
   usageTone,
   type ProcessSortKey,
   type SortDirection
@@ -195,7 +196,7 @@ async function copyText(label: string, value: string): Promise<void> {
               class="shrink-0 truncate font-medium"
               :title="sortedProcesses[virtualRow.index].cmdline || sortedProcesses[virtualRow.index].name"
             >
-              {{ sortedProcesses[virtualRow.index].name }}
+              {{ processLabel(sortedProcesses[virtualRow.index]) }}
             </span>
             <span
               v-if="sortedProcesses[virtualRow.index].cmdline && sortedProcesses[virtualRow.index].cmdline !== sortedProcesses[virtualRow.index].name"

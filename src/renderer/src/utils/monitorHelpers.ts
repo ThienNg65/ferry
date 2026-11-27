@@ -100,6 +100,10 @@ export function computeMemoryBreakdown(memory: MonitorSample['memory']): MemoryB
 }
 
 /** Filters processes by name or PID substring and sorts by the selected column. */
+export function processLabel(process: MonitorProcessSample): string {
+  return process.service ?? process.name
+}
+
 export function filterAndSortProcesses(
   processes: MonitorProcessSample[],
   query: string,
@@ -111,6 +115,7 @@ export function filterAndSortProcesses(
     ? processes.filter(
         (p) =>
           p.name.toLowerCase().includes(needle) ||
+          (p.service?.toLowerCase().includes(needle) ?? false) ||
           String(p.pid).includes(needle) ||
           (p.cmdline?.toLowerCase().includes(needle) ?? false)
       )
@@ -119,7 +124,7 @@ export function filterAndSortProcesses(
   const dir = sortDir === 'asc' ? 1 : -1
   return [...filtered].sort((a, b) => {
     if (sortKey === 'name') {
-      return a.name.localeCompare(b.name) * dir
+      return processLabel(a).localeCompare(processLabel(b)) * dir
     }
     if (sortKey === 'pid') {
       return (a.pid - b.pid) * dir
