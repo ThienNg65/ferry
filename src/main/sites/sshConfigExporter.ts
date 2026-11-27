@@ -22,7 +22,6 @@ export interface ExportableSite {
 }
 
 export interface ExportSshConfigOptions {
-  /** Include a leading comment banner explaining that secrets are omitted (default: true). */
   includeHeader?: boolean
 }
 
@@ -38,7 +37,6 @@ function isValidPort(port: number | undefined): port is number {
   return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535
 }
 
-/** Returns true for raw IPv6 literals (two or more colons, not already bracketed). */
 function isUnbracketedIpv6(host: string): boolean {
   if (host.startsWith('[')) {
     return false
@@ -47,10 +45,6 @@ function isUnbracketedIpv6(host: string): boolean {
   return firstColon !== -1 && firstColon !== host.lastIndexOf(':')
 }
 
-/**
- * Formats an OpenSSH config token, quoting values that contain whitespace, `#`, or `=`.
- * Strips control characters and double quotes to prevent directive injection.
- */
 export function formatSshConfigValue(raw: string): string {
   const clean = stripControlChars(raw).replace(/"/g, '')
   if (!clean) {
@@ -59,10 +53,6 @@ export function formatSshConfigValue(raw: string): string {
   return NEEDS_QUOTING_RE.test(clean) ? `"${clean}"` : clean
 }
 
-/**
- * Formats an OpenSSH `IdentityFile` path, escaping literal `%` characters as `%%`
- * so OpenSSH does not interpret them as token expansions (`%h`, `%r`, `%u`, etc.).
- */
 function formatIdentityFileValue(raw: string): string {
   const clean = stripControlChars(raw).replace(/"/g, '').replace(/%/g, '%%')
   if (!clean) {
@@ -71,11 +61,6 @@ function formatIdentityFileValue(raw: string): string {
   return NEEDS_QUOTING_RE.test(clean) ? `"${clean}"` : clean
 }
 
-/**
- * Produces a safe OpenSSH `Host` alias that will not be interpreted as a wildcard,
- * negated pattern (`!`), or keyword/value delimiter (`=`) by OpenSSH or Ferry's
- * `parseSshConfig()` importer.
- */
 export function sanitizeHostAlias(rawName: string | undefined, fallbackHost: string): string {
   const base = stripControlChars(rawName || fallbackHost)
     .replace(/[*?"#!=]/g, '')
@@ -88,9 +73,7 @@ export function sanitizeHostAlias(rawName: string | undefined, fallbackHost: str
     return base
   }
 
-  const hostFallback = stripControlChars(fallbackHost)
-    .replace(/[*?"#!=\s]/g, '')
-
+  const hostFallback = stripControlChars(fallbackHost).replace(/[*?"#!=\s]/g, '')
   return hostFallback || 'host'
 }
 
@@ -124,19 +107,83 @@ function hasCustomHopKey(hop: ExportableJumpHost): boolean {
   return Boolean(hop.privateKeyPath && stripControlChars(hop.privateKeyPath) && hop.authMethod !== 'password')
 }
 
-/**
- * Serializes saved Ferry sites into standard OpenSSH `config` syntax.
- * Explicitly omits passwords, passphrases, and any other secret credentials.
- */
+interface JumpHostContext {
+  usedAliases: Set<string>
+  jumpAliasBySignature: Map<string, string>
+  jumpBlocks: string[]
+}
+
+function resolveJumpHopSpec(
+  hop: ExportableJumpHost,
+  siteAlias: string,
+  hopIndex: number,
+  hopCount: number,
+  ctx: JumpHostContext
+): string | null {
+  if (!hasCustomHopKey(hop)) {
+    return formatInlineProxyJumpHop(hop)
+  }
+
+  const hopHost = formatSshConfigValue(hop.host)
+  if (!hopHost) {
+    return null
+  }
+
+  const hopKey = formatIdentityFileValue(hop.privateKeyPath!)
+  if (!hopKey) {
+    return formatInlineProxyJumpHop(hop)
+  }
+
+  const hopPort = isValidPort(hop.port) && hop.port !== 22 ? hop.port : 22
+  const hopUser = hop.username ? formatSshConfigValue(hop.username) : ''
+  const signature = `${hopHost}|${hopPort}|${hopUser}|${hopKey}`
+
+  let hopAlias = ctx.jumpAliasBySignature.get(signature)
+  if (!hopAlias) {
+    const hopBase = sanitizeHostAlias(
+      hopCount > 1 ? `${siteAlias}-jump-${hopIndex + 1}` : `${siteAlias}-jump`,
+      hop.host
+    )
+    hopAlias = allocateUniqueAlias(hopBase, ctx.usedAliases)
+    ctx.jumpAliasBySignature.set(signature, hopAlias)
+
+    const hopLines: string[] = [`Host ${hopAlias}`, `  HostName ${hopHost}`]
+    if (hopPort !== 22) {
+      hopLines.push(`  Port ${hopPort}`)
+    }
+    if (hopUser) {
+      hopLines.push(`  User ${hopUser}`)
+    }
+    hopLines.push(`  IdentityFile ${hopKey}`)
+    ctx.jumpBlocks.push(hopLines.join('\n'))
+  }
+
+  return hopAlias
+}
+
+function formatProxyJumpLine(site: ExportableSite, siteAlias: string, ctx: JumpHostContext): string | null {
+  const hops = site.jumpHosts?.length ? site.jumpHosts : site.jumpHost ? [site.jumpHost] : []
+  if (hops.length === 0) {
+    return null
+  }
+
+  const jumpSpecs = hops
+    .map((hop, index) => resolveJumpHopSpec(hop, siteAlias, index, hops.length, ctx))
+    .filter((entry): entry is string => Boolean(entry))
+
+  return jumpSpecs.length > 0 ? `  ProxyJump ${formatSshConfigValue(jumpSpecs.join(','))}` : null
+}
+
 export function formatSitesAsSshConfig(
   sites: ReadonlyArray<ExportableSite>,
   options: ExportSshConfigOptions = {}
 ): ExportSshConfigResult {
   const { includeHeader = true } = options
-  const usedAliases = new Set<string>()
-  // Deduplicate identical bastion Host blocks (when multiple sites share a jump hop with a custom key).
-  const jumpAliasBySignature = new Map<string, string>()
-  const jumpBlocks: string[] = []
+  const ctx: JumpHostContext = {
+    usedAliases: new Set<string>(),
+    jumpAliasBySignature: new Map<string, string>(),
+    jumpBlocks: []
+  }
   const siteBlocks: string[] = []
   let skippedCount = 0
 
@@ -147,9 +194,7 @@ export function formatSitesAsSshConfig(
       continue
     }
 
-    const baseAlias = sanitizeHostAlias(site.name, site.host)
-    const alias = allocateUniqueAlias(baseAlias, usedAliases)
-
+    const alias = allocateUniqueAlias(sanitizeHostAlias(site.name, site.host), ctx.usedAliases)
     const lines: string[] = [`Host ${alias}`, `  HostName ${hostName}`]
 
     if (isValidPort(site.port) && site.port !== 22) {
@@ -163,7 +208,6 @@ export function formatSitesAsSshConfig(
       }
     }
 
-    // Only emit IdentityFile for key-based auth; passwords and passphrases are never written.
     if (site.authMethod === 'privateKey' && site.privateKeyPath) {
       const identityFile = formatIdentityFileValue(site.privateKeyPath)
       if (identityFile) {
@@ -171,71 +215,22 @@ export function formatSitesAsSshConfig(
       }
     }
 
-    const hops = site.jumpHosts?.length ? site.jumpHosts : site.jumpHost ? [site.jumpHost] : []
-    if (hops.length > 0) {
-      const jumpSpecs: string[] = []
-      for (let i = 0; i < hops.length; i += 1) {
-        const hop = hops[i]
-        if (hasCustomHopKey(hop)) {
-          const hopHost = formatSshConfigValue(hop.host)
-          if (!hopHost) {
-            continue
-          }
-          const hopPort = isValidPort(hop.port) && hop.port !== 22 ? hop.port : 22
-          const hopUser = hop.username ? formatSshConfigValue(hop.username) : ''
-          const hopKey = formatIdentityFileValue(hop.privateKeyPath!)
-          if (!hopKey) {
-            const inline = formatInlineProxyJumpHop(hop)
-            if (inline) jumpSpecs.push(inline)
-            continue
-          }
-
-          const signature = `${hopHost}|${hopPort}|${hopUser}|${hopKey}`
-          let hopAlias = jumpAliasBySignature.get(signature)
-          if (!hopAlias) {
-            const hopBase = sanitizeHostAlias(
-              hops.length > 1 ? `${alias}-jump-${i + 1}` : `${alias}-jump`,
-              hop.host
-            )
-            hopAlias = allocateUniqueAlias(hopBase, usedAliases)
-            jumpAliasBySignature.set(signature, hopAlias)
-
-            const hopLines: string[] = [`Host ${hopAlias}`, `  HostName ${hopHost}`]
-            if (hopPort !== 22) {
-              hopLines.push(`  Port ${hopPort}`)
-            }
-            if (hopUser) {
-              hopLines.push(`  User ${hopUser}`)
-            }
-            hopLines.push(`  IdentityFile ${hopKey}`)
-            jumpBlocks.push(hopLines.join('\n'))
-          }
-          jumpSpecs.push(hopAlias)
-        } else {
-          const inline = formatInlineProxyJumpHop(hop)
-          if (inline) {
-            jumpSpecs.push(inline)
-          }
-        }
-      }
-
-      if (jumpSpecs.length > 0) {
-        lines.push(`  ProxyJump ${formatSshConfigValue(jumpSpecs.join(','))}`)
-      }
+    const proxyJumpLine = formatProxyJumpLine(site, alias, ctx)
+    if (proxyJumpLine) {
+      lines.push(proxyJumpLine)
     }
 
     siteBlocks.push(lines.join('\n'))
   }
 
-  const allBlocks = [...jumpBlocks, ...siteBlocks]
-  const body = allBlocks.join('\n\n')
-
-  let content: string
-  if (body) {
-    content = includeHeader ? `${EXPORT_HEADER}\n\n${body}\n` : `${body}\n`
-  } else {
-    content = includeHeader ? `${EXPORT_HEADER}\n` : ''
-  }
+  const body = [...ctx.jumpBlocks, ...siteBlocks].join('\n\n')
+  const content = body
+    ? includeHeader
+      ? `${EXPORT_HEADER}\n\n${body}\n`
+      : `${body}\n`
+    : includeHeader
+      ? `${EXPORT_HEADER}\n`
+      : ''
 
   return {
     content,

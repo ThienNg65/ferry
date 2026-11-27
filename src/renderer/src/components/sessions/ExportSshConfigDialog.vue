@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { INVOKE_CHANNELS, type ExportSshConfigResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
 import { useNotify } from '../../composables/useNotify'
-// Not yet in the auto-generated global components.d.ts — deep-import instead
-// of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 
 const props = defineProps<{
@@ -42,6 +40,8 @@ function clearCopiedState(): void {
   }
   copied.value = false
 }
+
+onBeforeUnmount(clearCopiedState)
 
 async function refreshPreview(): Promise<void> {
   const seq = ++requestSeq

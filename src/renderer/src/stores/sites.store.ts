@@ -112,7 +112,6 @@ export const useSitesStore = defineStore('sites', {
       return invoke<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan)
     },
 
-    /** Serializes selected (or all) saved sites to standard OpenSSH config syntax without secrets. */
     async exportSshConfig(req?: ExportSshConfigRequest): Promise<ExportSshConfigResult> {
       return invoke<ExportSshConfigResult>(INVOKE_CHANNELS.sitesExportSshConfig, req)
     }

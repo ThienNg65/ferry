@@ -232,7 +232,6 @@ describe('sshConfigExporter', () => {
     )
     expect(result.content).toContain('  ProxyJump app-1-jump-1,inner@inner-jump.internal\n')
     expect(result.content).toContain('  ProxyJump app-1-jump-1\n')
-    // Bastion Host block is emitted only once even though both sites reference it.
     expect(result.content.match(/^Host app-1-jump-1$/gm)).toHaveLength(1)
 
     const imported = parseSshConfig(result.content, '/home/me', 'local')
