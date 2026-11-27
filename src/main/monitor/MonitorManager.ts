@@ -17,6 +17,14 @@ import {
   type CpuTimes,
   type ProcessSnapshot
 } from './procParse'
+import {
+  CMDLINE_ENRICH_MAX,
+  CMDLINE_MAX_CHARS,
+  CMDLINE_UI_MAX_CHARS,
+  ENRICH_COMMS,
+  deriveServiceName,
+  redactCmdline
+} from './serviceNames'
 import { EVENT_CHANNELS, type MonitorSample, type MonitorStatusEvent } from '../../shared/contract'
 
 /** Default/clamped bounds for the polling interval — an IPC-sourced numeric field must never be trusted as-is (see TailManager's sanitizeHistoryLines). */
@@ -62,7 +70,7 @@ interface MonitorEntry {
   /** Rebuilt fully from every tick's process dump (not merged) — naturally sheds exited pids and gives any newly-hot pid a fresh baseline. */
   prevProcesses: Map<number, ProcessSnapshot> | null
   /** Cached `/proc/[pid]/cmdline` per live pid (invalidated if comm changes or pid exits) so steady-state ticks do zero extra execs. */
-  cmdlineCache: Map<number, { comm: string; cmdline: string }>
+  cmdlineCache: Map<number, { comm: string; cmdline: string; service: string | null }>
   /** Resolved once per session; null means the first tick still needs discovery. */
   pageSizeBytes: number | null
   consecutiveFailures: number
@@ -194,7 +202,11 @@ export class MonitorManager {
       const { processes, totalCount } = capProcesses(processSamples, mem.totalBytes)
 
       // Enrich top hot processes with cached `/proc/[pid]/cmdline` (only queries uncached PIDs).
-      const topSlice = processes.slice(0, CMDLINE_ENRICH_TOP_N)
+      const enrichCandidates = [
+        ...processes.slice(0, CMDLINE_ENRICH_TOP_N),
+        ...processes.filter((p) => ENRICH_COMMS.includes(p.name))
+      ]
+      const topSlice = [...new Map(enrichCandidates.map((p) => [p.pid, p])).values()].slice(0, CMDLINE_ENRICH_MAX)
       const missingPids = topSlice
         .filter((p) => {
           const cached = entry.cmdlineCache.get(p.pid)
@@ -203,13 +215,14 @@ export class MonitorManager {
         .map((p) => p.pid)
       if (missingPids.length > 0 && !entry.stopped) {
         try {
-          const cmd = `for p in ${missingPids.join(' ')}; do if [ -r "/proc/$p/cmdline" ]; then printf '@C@%s\\t' "$p"; tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | head -c 180; printf '\\n'; fi; done`
+          const cmd = `for p in ${missingPids.join(' ')}; do if [ -r "/proc/$p/cmdline" ]; then printf '@C@%s\\t' "$p"; tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | head -c ${CMDLINE_MAX_CHARS}; printf '\\n'; fi; done`
           const cmdRes = await shell.exec(cmd, { timeoutMs: CMDLINE_TIMEOUT_MS })
           if (!entry.stopped && cmdRes.stdout) {
             const parsed = parseProcessCmdlines(cmdRes.stdout)
             for (const p of topSlice) {
               if (missingPids.includes(p.pid)) {
-                entry.cmdlineCache.set(p.pid, { comm: p.name, cmdline: parsed.get(p.pid) ?? '' })
+                const cmdline = parsed.get(p.pid) ?? ''
+                entry.cmdlineCache.set(p.pid, { comm: p.name, cmdline, service: deriveServiceName(cmdline) })
               }
             }
           }
@@ -222,7 +235,11 @@ export class MonitorManager {
       }
       const enrichedProcesses = processes.map((p) => {
         const cached = entry.cmdlineCache.get(p.pid)
-        return cached && cached.comm === p.name && cached.cmdline ? { ...p, cmdline: cached.cmdline } : p
+        if (!cached || cached.comm !== p.name || !cached.cmdline) {
+          return p
+        }
+        const cmdline = redactCmdline(cached.cmdline).slice(0, CMDLINE_UI_MAX_CHARS)
+        return cached.service ? { ...p, cmdline, service: cached.service } : { ...p, cmdline }
       })
 
       const sample: MonitorSample = {

@@ -64,6 +64,24 @@ function unsupportedTickOutput(): string {
   return ['', 'MemTotal: 100 kB', '0.1 0.1 0.1', '10', '', ''].join('\n@@@\n')
 }
 
+function procRecord(pid: number, comm: string, rssPages: number): string {
+  const fields = ['S', ...Array<string>(21).fill('0')]
+  fields[21] = String(rssPages)
+  return `@P@${pid}\n${pid} (${comm}) ${fields.join(' ')}`
+}
+
+function tickWithProcesses(records: string[]): string {
+  return validTickOutput().replace(/\n@@@\n$/, '') + '\n@@@\n\n@@@\n' + records.join('\n')
+}
+
+function cmdlineReply(command: string, byPid: Record<number, string>): string {
+  const pids = (/for p in ([\d ]+);/.exec(command)?.[1] ?? '').split(' ').map(Number)
+  return pids
+    .filter((pid) => byPid[pid] !== undefined)
+    .map((pid) => `@C@${pid}\t${byPid[pid]}`)
+    .join('\n')
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
   let resolve!: (v: T) => void
   let reject!: (e: unknown) => void
@@ -111,6 +129,44 @@ describe('MonitorManager', () => {
     expect(samples).toHaveLength(1)
     expect(samples[0].sessionId).toBe('session-1')
     expect(samples[0].cpu).toBeNull() // no prior reading yet on the first tick
+  })
+
+  describe('service names', () => {
+    type Sample = { processes: Array<{ pid: number; cmdline?: string; service?: string }> }
+
+    async function firstSample(cmdlines: Record<number, string>, records: string[]): Promise<Sample> {
+      execImpl = async (command) =>
+        command.includes('/proc/$p/cmdline')
+          ? { stdout: cmdlineReply(command, cmdlines), stderr: '', code: 0 }
+          : { stdout: tickWithProcesses(records), stderr: '', code: 0 }
+      MonitorManager.getInstance().start('session-1')
+      await vi.advanceTimersByTimeAsync(0)
+      return sampleEvents()[0] as Sample
+    }
+
+    const busy = Array.from({ length: 20 }, (_, i) => procRecord(100 + i, `busy${i}`, 100000 + i))
+
+    it('names a java process outside the top 15 by score', async () => {
+      const sample = await firstSample({ 999: 'java -jar /opt/apps/billing-service-1.0.jar' }, [...busy, procRecord(999, 'java', 1)])
+      const java = sample.processes.find((p) => p.pid === 999)
+      expect(java?.service).toBe('billing-service')
+      expect(java?.cmdline).toBe('java -jar /opt/apps/billing-service-1.0.jar')
+    })
+
+    it('leaves service undefined when the cmdline read returns nothing for the pid', async () => {
+      const sample = await firstSample({}, [procRecord(999, 'java', 1)])
+      expect(sample.processes.find((p) => p.pid === 999)?.service).toBeUndefined()
+    })
+
+    it('names a 10 KB classpath process and sends a short redacted cmdline', async () => {
+      const kafka = `java -Dclient.password=hunter2 -cp ${'/libs/x.jar:'.repeat(1000)} kafka.Kafka /etc/server.properties`
+      const sample = await firstSample({ 7: kafka }, [procRecord(7, 'java', 50)])
+      const proc = sample.processes.find((p) => p.pid === 7)
+      expect(proc?.service).toBe('Kafka')
+      expect(proc?.cmdline?.length).toBeLessThanOrEqual(180)
+      expect(proc?.cmdline).toContain('-Dclient.password=***')
+      expect(proc?.cmdline).not.toContain('hunter2')
+    })
   })
 
   it('reschedules and broadcasts another sample once the configured interval elapses', async () => {
