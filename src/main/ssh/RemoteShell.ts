@@ -38,6 +38,16 @@ export interface ExecLinesOptions extends Omit<RemoteOptions, 'timeoutMs'> {
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
+/**
+ * Encodes path bytes for a fixed POSIX shell script without interpolating
+ * untrusted path characters into the account shell's command syntax.
+ */
+function shellOctalEscape(value: string): string {
+  return Array.from(Buffer.from(value, 'utf8'), (byte) =>
+    `\\${byte.toString(8).padStart(3, '0')}`
+  ).join('')
+}
+
 /** A directory entry as reported over SFTP. */
 export interface SftpEntry {
   filename: string
@@ -752,8 +762,8 @@ export class RemoteShell {
    */
   private resolveDeletePath(remotePath: string, remoteCwd?: string): string {
     const inputPath = remotePath ?? ''
-    if (!inputPath || !inputPath.trim()) {
-      throw new SshError('VALIDATION', `Refusing to delete remote root or empty path "${remotePath}"`)
+    if (!inputPath || !inputPath.trim() || inputPath.includes('\0') || remoteCwd?.includes('\0')) {
+      throw new SshError('VALIDATION', `Refusing to delete remote root, empty path, or path containing a null byte "${remotePath}"`)
     }
 
     const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
@@ -822,26 +832,20 @@ export class RemoteShell {
   async deleteRecursive(remotePath: string, remoteCwd?: string): Promise<void> {
     const targetPath = this.resolveDeletePath(remotePath, remoteCwd)
     const commandTarget = pathPosix.isAbsolute(targetPath) ? targetPath : `./${targetPath}`
+    const encodedTarget = shellOctalEscape(commandTarget)
     const command = [
-      `target=${shellEscape(commandTarget)}`,
+      `target=$(printf %b "${encodedTarget}"; printf .); target=\${target%.}`,
       'target_entry=$target',
       'while [ "${target_entry%/}" != "$target_entry" ]; do target_entry=${target_entry%/}; done',
-      'if [ "$target_entry" != "$target" ]; then',
-      '  if [ -L "$target_entry" ] || [ -d "$target_entry" ]; then',
-      '    target=$target_entry',
-      '  elif [ -e "$target_entry" ]; then',
-      '    exit 75',
-      '  fi',
-      'fi',
-      'if [ -L "$target" ]; then :; elif [ -d "$target" ]; then',
-      'canonical=$(CDPATH= cd -P "$target" 2>/dev/null && pwd -P) || exit 74',
-      '[ "$canonical" != "/" ] || exit 73',
-      'fi',
+      'if [ "$target_entry" != "$target" ]; then if [ -L "$target_entry" ] || [ -d "$target_entry" ]; then target=$target_entry; elif [ -e "$target_entry" ]; then exit 75; fi; fi',
+      'if [ -L "$target" ]; then :; elif [ -d "$target" ]; then canonical=$(CDPATH= cd -P "$target" 2>/dev/null && pwd -P) || exit 74; [ "$canonical" != "/" ] || exit 73; fi',
       'rm -rf -- "$target"'
-    ].join('\n')
-
+    ].join('; ')
+    // Run the POSIX preflight explicitly; the account shell may be fish or csh.
+    // The path is octal-encoded, so the outer single-quoted wrapper contains no user data.
+    const shellCommand = `/bin/sh -c '${command}'`
     try {
-      const result = await this.exec(command, { timeoutMs: 5 * 60 * 1000 })
+      const result = await this.exec(shellCommand, { timeoutMs: 5 * 60 * 1000 })
       if (result.code === 0) {
         return
       }
