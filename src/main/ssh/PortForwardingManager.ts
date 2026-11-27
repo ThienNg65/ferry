@@ -125,6 +125,10 @@ export interface StartTunnelOptions {
   allowEphemeralPort?: boolean
 }
 
+export interface StopSessionOptions {
+  requestUnforwardIn?: boolean
+}
+
 export interface PortForwardingManagerOptions {
   unforwardTimeoutMs?: number
 }
@@ -530,6 +534,7 @@ export class PortForwardingManager {
       }
 
       if (state.cancelledStartingRules.has(normalized.id)) {
+        state.tunnels.delete(normalized.id)
         await this.teardownTunnel(state.client, started.data, !state.disposed)
         this.emit({ sessionId, ruleId: normalized.id, status: 'stopped' })
         return {
@@ -542,6 +547,7 @@ export class PortForwardingManager {
       }
 
       if (state.disposed || this.sessions.get(sessionId) !== state) {
+        state.tunnels.delete(normalized.id)
         await this.teardownTunnel(state.client, started.data, false)
         return {
           ok: false,
@@ -620,9 +626,11 @@ export class PortForwardingManager {
     return { ok: true, data: undefined }
   }
 
-  async stopAllForSession(sessionId: string): Promise<void> {
+  async stopAllForSession(sessionId: string, options: StopSessionOptions = {}): Promise<void> {
     const state = this.sessions.get(sessionId)
     if (!state) return
+
+    const requestUnforwardIn = options.requestUnforwardIn ?? true
 
     state.disposed = true
     this.sessions.delete(sessionId)
@@ -633,15 +641,15 @@ export class PortForwardingManager {
 
     await Promise.all(
       tunnels.map(async (tunnel) => {
-        await this.teardownTunnel(state.client, tunnel, false)
+        await this.teardownTunnel(state.client, tunnel, requestUnforwardIn)
         this.emit({ sessionId, ruleId: tunnel.rule.id, status: 'stopped' })
       })
     )
   }
 
-  async stopAll(): Promise<void> {
+  async stopAll(options: StopSessionOptions = {}): Promise<void> {
     const sessionIds = Array.from(this.sessions.keys())
-    await Promise.all(sessionIds.map((id) => this.stopAllForSession(id)))
+    await Promise.all(sessionIds.map((id) => this.stopAllForSession(id, options)))
   }
 
   private findBindingConflict(state: SessionTunnelState, normalized: NormalizedTunnelRule): TunnelError | null {
@@ -717,7 +725,7 @@ export class PortForwardingManager {
       return existing
     }
     if (existing) {
-      await this.stopAllForSession(sessionId)
+      await this.stopAllForSession(sessionId, { requestUnforwardIn: true })
     }
 
     const state: SessionTunnelState = {
@@ -731,7 +739,7 @@ export class PortForwardingManager {
         this.handleRemoteTcpConnection(state, info, accept, reject)
       },
       disconnectListener: () => {
-        void this.stopAllForSession(sessionId)
+        void this.stopAllForSession(sessionId, { requestUnforwardIn: false })
       }
     }
 
@@ -816,7 +824,7 @@ export class PortForwardingManager {
                 return
               }
 
-              if (tunnel.stopped || state.disposed || localSocket.destroyed) {
+              if (tunnel.stopped || state.disposed || localSocket.destroyed || localSocket.closed) {
                 channel.destroy()
                 localSocket.destroy()
                 return
@@ -917,6 +925,11 @@ export class PortForwardingManager {
             activeSockets: new Set(),
             activeChannels: new Set()
           }
+
+          if (!state.disposed && !state.cancelledStartingRules.has(rule.id)) {
+            state.tunnels.set(rule.id, tunnel)
+          }
+
           resolve({ ok: true, data: tunnel })
         })
       } catch (err) {

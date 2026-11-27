@@ -45,9 +45,7 @@ function createMockSshClient(): MockSshClient {
       cb?.(undefined)
     })
   })
-  const _typeCheck: PortForwardingSshClient = client
-  void _typeCheck
-  return client
+  return client satisfies PortForwardingSshClient
 }
 
 function sendTcpMessage(port: number, payload: string, halfClose = false): Promise<string> {
@@ -368,7 +366,7 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(manager.getActiveTunnels('sess-active-close')).toHaveLength(0)
   })
 
-  it('destroys the late SSH channel if local client disconnects while forwardOut is pending', async () => {
+  it('destroys the late SSH channel if local client resets while forwardOut is pending', async () => {
     const manager = createManager()
     const client = createMockSshClient()
     let resolveForwardOut: ((err: Error | undefined, ch: SshForwardChannel) => void) | undefined
@@ -396,9 +394,9 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     const sock = net.createConnection({ host: '127.0.0.1', port: started.data.bindPort })
     sock.on('error', () => undefined)
     await vi.waitFor(() => expect(resolveForwardOut).toBeDefined())
-    sock.destroy()
+    sock.resetAndDestroy()
     await new Promise<void>((resolve) => sock.once('close', () => resolve()))
-    await new Promise((resolve) => setTimeout(resolve, 15))
+    await new Promise((resolve) => setTimeout(resolve, 25))
 
     const lateChannel = new PassThrough() as unknown as SshForwardChannel
     resolveForwardOut?.(undefined, lateChannel)
@@ -512,6 +510,58 @@ describe('PortForwardingManager remote (-R) tunnels', () => {
     expect(manager.getActiveTunnels('sess-r1')).toHaveLength(1)
   })
 
+  it('routes an incoming -R connection arriving immediately after forwardIn before startTunnel resumes', async () => {
+    const manager = createManager()
+    const client = createMockSshClient()
+    const { server: echoServer, port: localTargetPort } = await startLocalEchoServer('early:')
+    serversToClose.push(echoServer)
+
+    const rejectFn = vi.fn()
+    const outbound = new PassThrough()
+    const received = new Promise<string>((resolve) => {
+      outbound.once('data', (buf: Buffer) => {
+        duplexChannel.destroy()
+        resolve(buf.toString('utf8'))
+      })
+    })
+    const duplexChannel = new Duplex({
+      read() {
+        // Driven by manual push below.
+      },
+      write(chunk: Buffer, _enc: BufferEncoding, cb: () => void) {
+        outbound.write(chunk)
+        cb()
+      }
+    }) as unknown as SshForwardChannel
+
+    client.forwardIn.mockImplementationOnce(
+      (_host: string, port: number, cb?: (err?: Error, boundPort?: number) => void) => {
+        cb?.(undefined, port)
+        // Emit immediately in the same tick, before startTunnel()'s await resumes.
+        client.emit(
+          'tcp connection',
+          { destIP: '127.0.0.1', destPort: port, srcIP: '10.0.0.2', srcPort: 55000 },
+          () => duplexChannel,
+          rejectFn
+        )
+        duplexChannel.push('fast')
+      }
+    )
+
+    const started = await manager.startTunnel('sess-r-immediate', client, {
+      id: 'remote-immediate',
+      type: 'remote',
+      bindHost: '127.0.0.1',
+      bindPort: 9093,
+      targetHost: '127.0.0.1',
+      targetPort: localTargetPort
+    })
+
+    expect(started.ok).toBe(true)
+    expect(rejectFn).not.toHaveBeenCalled()
+    expect(await received).toBe('early:fast')
+  })
+
   it('destroys incoming channel and records lastError when local target is unreachable', async () => {
     const manager = createManager()
     const client = createMockSshClient()
@@ -593,7 +643,7 @@ describe('PortForwardingManager remote (-R) tunnels', () => {
 })
 
 describe('PortForwardingManager lifecycle, concurrency, cancellation, and autoStart', () => {
-  it('cleans up all tunnels and detaches SSH listeners on session close', async () => {
+  it('cleans up all tunnels on session close without calling unforwardIn on dead transport', async () => {
     const manager = createManager()
     const client = createMockSshClient()
     const events: TunnelStatusEvent[] = []
@@ -619,9 +669,44 @@ describe('PortForwardingManager lifecycle, concurrency, cancellation, and autoSt
     await vi.waitFor(() => {
       expect(manager.getActiveTunnels('sess-disc')).toHaveLength(0)
     })
+    expect(client.unforwardIn).not.toHaveBeenCalled()
     expect(client.listenerCount('tcp connection')).toBe(0)
     expect(client.listenerCount('close')).toBe(0)
     expect(events.filter((e) => e.status === 'stopped')).toHaveLength(2)
+  })
+
+  it('calls unforwardIn when stopAllForSession or client replacement runs on a live SSH client', async () => {
+    const manager = createManager()
+    const client1 = createMockSshClient()
+    const client2 = createMockSshClient()
+
+    await manager.startTunnel('sess-live-stop', client1, {
+      id: 't-remote-1',
+      type: 'remote',
+      bindPort: 8082,
+      targetHost: '127.0.0.1',
+      targetPort: 3000
+    })
+
+    await manager.stopAllForSession('sess-live-stop')
+    expect(client1.unforwardIn).toHaveBeenCalledWith('127.0.0.1', 8082, expect.any(Function))
+
+    await manager.startTunnel('sess-replace', client1, {
+      id: 't-remote-2',
+      type: 'remote',
+      bindPort: 8083,
+      targetHost: '127.0.0.1',
+      targetPort: 3000
+    })
+    await manager.startTunnel('sess-replace', client2, {
+      id: 't-remote-3',
+      type: 'remote',
+      bindPort: 8084,
+      targetHost: '127.0.0.1',
+      targetPort: 3000
+    })
+    expect(client1.unforwardIn).toHaveBeenCalledWith('127.0.0.1', 8083, expect.any(Function))
+    expect(manager.getActiveTunnels('sess-replace')).toHaveLength(1)
   })
 
   it('cancels a pending tunnel cleanly when stopTunnel is called mid-startup', async () => {
