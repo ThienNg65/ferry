@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
-import { commitRemoteFile, listRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SessionManager } from '../ssh/SessionManager'
 
 vi.mock('../ssh/SessionManager', () => ({
@@ -369,5 +369,27 @@ describe('RemoteFsService POSIX rename fallback', () => {
 
     await expect(commitRemoteFile(shell as any, `${target}.part`, target)).rejects.toBe(permissionError)
     expect(shell.rename).toHaveBeenCalledTimes(1)
+  })
+
+  it('readRemoteBufferForDiffSudo checks size via stat before reading and skips oversized files', async () => {
+    const execWithStdin = vi.fn()
+      .mockResolvedValueOnce({ code: 0, stdout: Buffer.from('regular file|11\n'), stderr: '' })
+      .mockResolvedValueOnce({ code: 0, stdout: Buffer.from('root-secret'), stderr: '' })
+      .mockResolvedValueOnce({ code: 0, stdout: Buffer.from('regular file|2000000\n'), stderr: '' })
+      .mockResolvedValueOnce({ code: 0, stdout: Buffer.from('directory|4096\n'), stderr: '' })
+
+    vi.mocked(SessionManager.getInstance).mockReturnValue({ shell: () => ({ execWithStdin }) } as any)
+
+    const okRes = await readRemoteBufferForDiffSudo('sess-1', '/etc/shadow', 1024)
+    expect(okRes).toEqual({ size: 11, isDir: false, buffer: Buffer.from('root-secret') })
+    expect(execWithStdin).toHaveBeenNthCalledWith(1, "sudo -n stat -L -c '%F|%s' -- '/etc/shadow'", undefined, undefined)
+    expect(execWithStdin).toHaveBeenNthCalledWith(2, "sudo -n cat -- '/etc/shadow'", undefined, undefined)
+
+    const bigRes = await readRemoteBufferForDiffSudo('sess-1', '/var/log/huge.log', 1024)
+    expect(bigRes).toEqual({ size: 2_000_000, isDir: false })
+    expect(execWithStdin).toHaveBeenCalledTimes(3)
+
+    const dirRes = await readRemoteBufferForDiffSudo('sess-1', '/etc/ssl', 1024)
+    expect(dirRes).toEqual({ size: 4096, isDir: true })
   })
 })

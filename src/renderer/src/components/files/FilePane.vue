@@ -44,6 +44,7 @@ const EditorDialog = defineAsyncComponent(() => import('./EditorDialog.vue'))
 const ChmodDialog = defineAsyncComponent(() => import('./ChmodDialog.vue'))
 const SyncDialog = defineAsyncComponent(() => import('./SyncDialog.vue'))
 const CompareDialog = defineAsyncComponent(() => import('./CompareDialog.vue'))
+const FileDiffModal = defineAsyncComponent(() => import('./FileDiffModal.vue'))
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
@@ -154,6 +155,8 @@ const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
 const editorState = ref<{ editId: string | null; localTempPath: string; remotePath: string | null } | null>(null)
+const diffOpen = ref(false)
+const diffState = ref<{ sessionId: string; localPath: string; remotePath: string } | null>(null)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -344,6 +347,16 @@ watch(
   (visible) => {
     if (!visible && props.side === 'local') {
       previewOpen.value = false
+      diffOpen.value = false
+    }
+  }
+)
+
+watch(
+  () => [sessions.status, sessions.activeSessionId] as const,
+  ([status]) => {
+    if (status !== 'connected') {
+      diffOpen.value = false
     }
   }
 )
@@ -356,8 +369,39 @@ const transferIcon = computed(() => {
 })
 
 const showTail = computed(() => props.side === 'remote' && sessions.status === 'connected')
+const canCompare = computed(() => sessions.status === 'connected' && Boolean(sessions.activeSessionId))
 const syncDialogOpen = ref(false)
 const compareDialogOpen = ref(false)
+
+function onDiffWithOpposite(entry: FileEntry): void {
+  if (entry.isDir || entry.symlinkBroken) return
+  const sessionId = sessions.activeSessionId
+  if (!sessionId || sessions.status !== 'connected') {
+    notify.error('Not connected', 'Connect to a server to compare local and remote files.')
+    return
+  }
+  const oppositeEntries = props.side === 'local' ? remoteFs.entries : localFs.entries
+  const oppositeSelected = props.side === 'local' ? remoteFs.selected : localFs.selected
+  const selectedOppositeFiles = oppositeEntries.filter(
+    (e) => !e.isDir && !e.symlinkBroken && oppositeSelected.has(e.path)
+  )
+  const counterpart =
+    selectedOppositeFiles.length === 1
+      ? selectedOppositeFiles[0]
+      : oppositeEntries.find((e) => !e.isDir && !e.symlinkBroken && e.name === entry.name)
+  if (!counterpart) {
+    notify.error(
+      'No matching file in opposite pane',
+      `Select a file in the opposite pane or open a folder containing "${entry.name}".`
+    )
+    return
+  }
+  diffState.value =
+    props.side === 'local'
+      ? { sessionId, localPath: entry.path, remotePath: counterpart.path }
+      : { sessionId, localPath: counterpart.path, remotePath: entry.path }
+  diffOpen.value = true
+}
 
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
@@ -1144,6 +1188,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :transfer-icon="transferIcon"
         :show-tail="showTail"
         :allow-extract="showTail"
+        :can-compare="canCompare"
         :renaming-path="renamingPath"
         :sort-column="store.sortColumn"
         :sort-direction="store.sortDirection"
@@ -1164,6 +1209,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @hover-dir="onHoverDir"
         @drop-on="onDropOnFolder"
         @edit-root="onEditAsRoot"
+        @diff="onDiffWithOpposite"
         @clear-filter="filterText = ''"
         @clear-visibility-filter="clearVisibilityFilter"
       />
@@ -1237,6 +1283,12 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :session-id="sessions.activeSessionId"
         :initial-local-path="localFs.currentPath"
         :initial-remote-path="remoteFs.currentPath"
+      />
+      <FileDiffModal
+        v-model:open="diffOpen"
+        :session-id="diffState?.sessionId ?? null"
+        :local-path="diffState?.localPath ?? null"
+        :remote-path="diffState?.remotePath ?? null"
       />
       <UModal
         :open="Boolean(extractConflict)"

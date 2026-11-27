@@ -11,6 +11,7 @@ import { useSyncStore } from '../../stores/sync.store'
 import { useNotify } from '../../composables/useNotify'
 import { evaluateSyncPreFlight } from '../../utils/companionGuardrails'
 import { formatBytes } from '../../utils/format'
+import FileDiffModal from './FileDiffModal.vue'
 
 const props = defineProps<{
   open: boolean
@@ -44,6 +45,8 @@ let generation = 0
 
 const run = ref<{ requestId: string; operationId?: string; cancelling: boolean } | null>(null)
 const status = ref<string | null>(null)
+const diffOpen = ref(false)
+const diffTarget = ref<{ sessionId: string; localPath: string; remotePath: string } | null>(null)
 let unsubscribe: (() => void) | undefined
 onMounted(() => {
   unsubscribe = onEvent<OperationEvent>(EVENT_CHANNELS.operationEvent, (event) => {
@@ -70,6 +73,8 @@ function invalidatePreview(): void {
   generation++
   approval.value = null
   previewing.value = false
+  diffOpen.value = false
+  diffTarget.value = null
   if (!run.value) error.value = null
 }
 
@@ -208,7 +213,36 @@ function askCompanionAboutSync(): void {
   )
 }
 
+function diffPathsForEntry(relPath: string): { localPath: string; remotePath: string } | null {
+  const options = approval.value?.options
+  if (!options) return null
+  const segments = relPath.split('/')
+  if (segments.some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+    return null
+  }
+  const localSep = options.localPath.includes('\\') ? '\\' : '/'
+  const localPath = `${options.localPath.replace(/[/\\]+$/, '')}${localSep}${segments.join(localSep)}`
+  const remotePath = `${options.remotePath.replace(/\/+$/, '')}/${segments.join('/')}`
+  return { localPath, remotePath }
+}
+
+function openEntryDiff(relPath: string): void {
+  const options = approval.value?.options
+  const resolved = diffPathsForEntry(relPath)
+  if (!options || !resolved) {
+    notify.error('Could not open diff', 'The sync plan returned an invalid relative path.')
+    return
+  }
+  diffTarget.value = {
+    sessionId: options.sessionId,
+    localPath: resolved.localPath,
+    remotePath: resolved.remotePath
+  }
+  diffOpen.value = true
+}
+
 function close(): void {
+  diffOpen.value = false
   emit('update:open', false)
 }
 </script>
@@ -265,12 +299,24 @@ function close(): void {
           <ul v-if="plan.toTransfer.length" class="mt-2 max-h-40 space-y-1 overflow-y-auto rounded bg-muted p-2">
             <li v-for="entry in plan.toTransfer.slice(0, 200)" :key="entry.relPath" class="flex items-center justify-between gap-2 text-xs">
               <span class="min-w-0 truncate font-mono">{{ entry.relPath }}</span>
-              <span
-                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase"
-                :class="entry.action === 'overwrite' ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'"
-              >
-                {{ entry.action === 'overwrite' ? 'Overwrite' : 'New' }}
-              </span>
+              <div class="flex shrink-0 items-center gap-1.5">
+                <UButton
+                  v-if="entry.action === 'overwrite'"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-file-diff"
+                  @click="openEntryDiff(entry.relPath)"
+                >
+                  View Diff
+                </UButton>
+                <span
+                  class="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase"
+                  :class="entry.action === 'overwrite' ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'"
+                >
+                  {{ entry.action === 'overwrite' ? 'Overwrite' : 'New' }}
+                </span>
+              </div>
             </li>
             <li v-if="plan.toTransfer.length > 200" class="pt-1 text-xs text-muted">
               …and {{ plan.toTransfer.length - 200 }} more file(s)
@@ -322,4 +368,10 @@ function close(): void {
       </template>
     </template>
   </UModal>
+  <FileDiffModal
+    v-model:open="diffOpen"
+    :session-id="diffTarget?.sessionId ?? null"
+    :local-path="diffTarget?.localPath ?? null"
+    :remote-path="diffTarget?.remotePath ?? null"
+  />
 </template>

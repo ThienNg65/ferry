@@ -24,6 +24,7 @@ const props = defineProps<{
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
+  canCompare?: boolean
   renaming?: boolean
 }>()
 
@@ -63,6 +64,7 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   'edit-root': [entry: FileEntry]
+  diff: [entry: FileEntry]
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
 }>()
@@ -116,6 +118,9 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     items.push({ label: 'Edit', icon: 'i-lucide-file-pen', onSelect: () => emit('edit', props.entry) })
     if (props.side === 'remote') {
       items.push({ label: 'Edit as root', icon: 'i-lucide-shield-alert', onSelect: () => emit('edit-root', props.entry) })
+    }
+    if (props.canCompare && !props.entry.symlinkBroken) {
+      items.push({ label: 'Compare with opposite pane', icon: 'i-lucide-file-diff', onSelect: () => emit('diff', props.entry) })
     }
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })

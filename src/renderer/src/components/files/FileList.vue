@@ -20,6 +20,7 @@ const props = defineProps<{
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
+  canCompare?: boolean
   renamingPath?: string | null
   sortColumn: SortColumn
   sortDirection: SortDirection
@@ -109,6 +110,7 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   'edit-root': [entry: FileEntry]
+  diff: [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
   'clear-visibility-filter': []
@@ -356,6 +358,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
                 transferIcon,
                 showTail,
                 allowExtract,
+                canCompare,
                 ui.columns.hidden.join(','),
                 ui.permissionsDisplay,
                 ui.density,
@@ -369,6 +372,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
               :transfer-icon="transferIcon"
               :show-tail="showTail"
               :allow-extract="allowExtract"
+              :can-compare="canCompare"
               :renaming="renamingPath === entries[virtualRow.index].path"
               @select="(path, event) => emit('select', path, event)"
               @open="emit('open', $event)"
@@ -383,6 +387,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
               @chmod="emit('chmod', $event)"
               @edit="emit('edit', $event)"
               @edit-root="emit('edit-root', $event)"
+              @diff="emit('diff', $event)"
               @hover-dir="emit('hover-dir', $event)"
               @drop-on="(entry, event) => emit('drop-on', entry, event)"
             />
