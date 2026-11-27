@@ -143,7 +143,8 @@ function linePrefix(kind: FileDiffLine['kind']): string {
     :open="open"
     :title="modalTitle"
     :ui="{
-      content: 'sm:max-w-5xl h-[85vh] flex flex-col',
+      overlay: 'z-[60]',
+      content: 'z-[60] sm:max-w-5xl h-[85vh] flex flex-col',
       body: 'p-0 sm:p-0 flex-1 overflow-hidden flex flex-col',
       header: 'py-3',
       footer: 'justify-end'
