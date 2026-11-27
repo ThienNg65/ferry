@@ -1203,6 +1203,7 @@ export const INVOKE_CHANNELS = {
   companionAiSetConfig: 'companion:ai:setConfig',
   companionAiTest: 'companion:ai:test',
   companionAiChat: 'companion:ai:chat',
+  companionAiCancel: 'companion:ai:cancel',
   // profiling
   profileReport: 'profile:report'
 } as const
@@ -1246,11 +1247,83 @@ export interface CompanionStructuredOutput {
   uiActionCards?: CompanionUiActionCard[]
 }
 
+/**
+ * Normalizes a shell command for deterministic risk classification:
+ * - Strips single-quoted literal contents (POSIX shells never expand inside `'...'`).
+ * - Strips plain text inside double-quoted strings while preserving `$(...)` and backtick substitutions.
+ * - Unescapes backslash-obfuscated word characters (e.g. `r\m` -> `rm`).
+ */
+function normalizeCommandForRiskCheck(command: string): string {
+  let out = ''
+  let i = 0
+  const len = command.length
+  while (i < len) {
+    const ch = command[i]
+    if (ch === "'") {
+      // Single-quoted literal: preserve quotes as empty literal
+      out += "''"
+      i += 1
+      while (i < len && command[i] !== "'") i += 1
+      if (i < len) i += 1
+      continue
+    }
+    if (ch === '"') {
+      // Double-quoted string: strip inert text, keep $(...) and `...` command substitutions
+      out += '"'
+      i += 1
+      while (i < len && command[i] !== '"') {
+        if (command[i] === '\\' && i + 1 < len) {
+          i += 2
+          continue
+        }
+        if (command[i] === '$' && command[i + 1] === '(') {
+          let depth = 1
+          out += '$('
+          i += 2
+          while (i < len && depth > 0) {
+            if (command[i] === '(') depth += 1
+            else if (command[i] === ')') depth -= 1
+            out += command[i]
+            i += 1
+          }
+          continue
+        }
+        if (command[i] === '`') {
+          out += '`'
+          i += 1
+          while (i < len && command[i] !== '`') {
+            out += command[i]
+            i += 1
+          }
+          if (i < len) {
+            out += '`'
+            i += 1
+          }
+          continue
+        }
+        i += 1
+      }
+      out += '"'
+      if (i < len) i += 1
+      continue
+    }
+    if (ch === '\\' && i + 1 < len && /[A-Za-z0-9_/-]/.test(command[i + 1])) {
+      // Unescape backslash-obfuscated tokens like `r\m -rf /`
+      out += command[i + 1]
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
 const DESTRUCTIVE_COMMAND_RE =
-  /(\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\b|--recursive\b|--force\b)|\bfind\b[^\r\n]*\s-delete\b|\bshred\b|\bwipefs\b|\bmkfs(?:\.\w+)?\b|\bfdisk\b|\bparted\b|\bdd\s+if=|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\binit\s+[06]\b|\bkill\s+-9\b|\bkillall\b|\bpkill\b|\btruncate\b|\biptables\s+-F\b|\bufw\s+disable\b|\bsystemctl\s+(?:stop|disable|mask)\b|\bdocker\s+(?:rm|rmi|system\s+prune)\b|\bchmod\s+(?:-R\s+)?777\b|\b(?:curl|wget)\b[^\r\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b|>\s*\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/)|\bdrop\s+(?:table|database|schema)\b|:\(\)\s*\{)/i
+  /(\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\b|--recursive\b|--force\b)|\bunlink\b|\bfind\b[^\r\n]*\s-delete\b|\bfind\b[^\r\n]*\s-exec(?:dir)?\b[^\r\n]*\b(?:rm|unlink|shred|truncate|dd|kill|chmod\s+(?:-R\s+)?000|(?:ba|z|da|k)?sh)\b|\bxargs\b[^\r\n]*\b(?:rm|unlink|shred|truncate|kill)\b|\bshred\b|\bwipefs\b|\bmkfs(?:\.\w+)?\b|\bfdisk\b|\bparted\b|\bdd\s+if=|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\binit\s+[06]\b|\bkill\s+(?:-(?:9|KILL|SIGKILL)\b|-s\s*(?:9|KILL|SIGKILL)\b)|\bkillall\b|\bpkill\b|\btruncate\b|\biptables\s+-F\b|\bufw\s+disable\b|\bsystemctl\s+(?:stop|disable|mask)\b|\bservice\s+\S+\s+stop\b|\bdocker\s+(?:rm|rmi|system\s+prune)\b|\bdocker(?:[\s-]+)compose\b[^\r\n]*\bdown\b[^\r\n]*(?:-v\b|--volumes\b)|\bchmod\s+(?:-R\s+)?(?:777|000)\b|\bgit\s+push\b[^\r\n]*(?:--force(?:-with-lease)?\b|-f\b)|\brsync\b[^\r\n]*--delete(?:-(?:before|during|after|delay|excluded))?\b|\bkubectl\s+delete\b|\bterraform\s+destroy\b|\b(?:ba|z|da|k)?sh\s+-[a-zA-Z]*c\b|\beval\b|<\(|\|\s*(?:sudo\s+)?(?:env\s+)?(?:ba|z|da|k)?sh\b|\bcurl\b[^\r\n]*(?:(?:-d|--data(?:-(?:raw|binary|urlencode|ascii))?)\s*@|(?:-F|--form)\s+\S+=@|(?:-T|--upload-file)\s+)|(?:^|[;&|]\s*):\s*>\s*(?!\/dev\/null\b)|\b(?:echo|printf|cat)\b[^\r\n]*>\s*\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/|var\/log\/|root\/)|>\s*(?:\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/|var\/log\/|root\/)|~\/\.ssh\/)|\bdrop\s+(?:table|database|schema)\b|:\(\)\s*\{)/i
 
 const MUTATING_COMMAND_RE =
-  /(\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bchgrp\b|\bln\b|\bsed\s+-i\b|\btee\b|\bcrontab\b|\buseradd\b|\busermod\b|\buserdel\b|\bpasswd\b|\bufw\b|\biptables\b|\bsysctl\s+-w\b|\bsystemctl\s+(?:restart|reload|start|enable)\b|\bservice\s+\S+\s+(?:restart|reload|start|stop)\b|\b(?:apt|apt-get|yum|dnf|apk|pacman|brew|npm|pnpm|yarn|pip)\s+(?:install|remove|purge|update|upgrade|add)\b|\bgit\s+(?:push|reset|clean|checkout|merge|rebase)\b|\bdocker\s+(?:restart|stop|start|run|exec)\b|\btar\s+-[a-zA-Z]*x|\bunzip\b)/i
+  /(\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bchgrp\b|\bln\b|\bsed\s+-i\b|\btee\b|\bcrontab\b|\buseradd\b|\busermod\b|\buserdel\b|\bpasswd\b|\bufw\b|\biptables\b|\bsysctl\s+-w\b|\bkill\s+(?:-\S+\s+)*\d+\b|\bfind\b[^\r\n]*\s-exec(?:dir)?\b|\bsystemctl\s+(?:restart|reload|start|enable)\b|\bservice\s+\S+\s+(?:restart|reload|start)\b|\b(?:apt|apt-get|yum|dnf|apk|pacman|brew|npm|pnpm|yarn|pip)\s+(?:install|remove|purge|update|upgrade|add)\b|\bgit\s+(?:push|reset|clean|checkout|merge|rebase)\b|\bdocker\s+(?:restart|stop|start|run|exec)\b|\btar\s+-[a-zA-Z]*x|\bunzip\b|\$\(|`[^`]+`|(?:^|[^0-9>&])>>?\s*(?!&)(?!\/dev\/null\b)\S+)/i
 
 const RISK_ORDER: Record<CompanionCommandRisk, number> = {
   read_only: 0,
@@ -1260,8 +1333,9 @@ const RISK_ORDER: Record<CompanionCommandRisk, number> = {
 
 /** Classifies a shell command's safety risk deterministically without trusting model labels alone. */
 export function classifyCommandRisk(command: string): CompanionCommandRisk {
-  if (DESTRUCTIVE_COMMAND_RE.test(command)) return 'destructive'
-  if (MUTATING_COMMAND_RE.test(command)) return 'mutating'
+  const normalized = normalizeCommandForRiskCheck(command)
+  if (DESTRUCTIVE_COMMAND_RE.test(normalized)) return 'destructive'
+  if (MUTATING_COMMAND_RE.test(normalized)) return 'mutating'
   return 'read_only'
 }
 
@@ -1297,13 +1371,25 @@ export interface CompanionAiConfigInput {
 
 export type CompanionAiIntent = 'chat' | 'command' | 'explain-log' | 'diagnose-spike'
 
+export type CompanionSiteEnvironment = 'prod' | 'staging' | 'dev' | 'other'
+
 export interface CompanionWorkspaceSignal {
+  siteName?: string
+  siteEnvironment?: CompanionSiteEnvironment
+  remoteOs?: string
+  remoteShell?: string
+  remoteCwd?: string
+  terminalTail?: string
+  sftpSummary?: string
+  lastTransferError?: string
+  logBasename?: string
   logSnippet?: string
   logPath?: string
   monitorSummary?: string
 }
 
 export interface CompanionAiChatRequest {
+  requestId?: string
   prompt: string
   history?: Array<{ role: 'user' | 'assistant'; text: string }>
   intent?: CompanionAiIntent
@@ -1313,6 +1399,14 @@ export interface CompanionAiChatRequest {
     isConnected: boolean
     theme: string
   }
+}
+
+export interface CompanionAiCancelRequest {
+  requestId?: string
+}
+
+export interface CompanionAiCancelResult {
+  cancelled: boolean
 }
 
 export interface CompanionAiChatResult {

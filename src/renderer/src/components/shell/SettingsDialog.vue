@@ -127,6 +127,25 @@ const aiTesting = ref(false)
 const aiError = ref<string | null>(null)
 const aiTestStatus = ref<string | null>(null)
 
+const hasSavedKeyForSelectedProvider = computed(() => {
+  if (aiProvider.value === 'none') return false
+  const cfg = companion.aiConfig as typeof companion.aiConfig & {
+    hasGeminiApiKey?: boolean
+    hasFerryProApiKey?: boolean
+    hasApiKeyByProvider?: Partial<Record<CompanionAiProvider, boolean>>
+  }
+  if (cfg.hasApiKeyByProvider && typeof cfg.hasApiKeyByProvider[aiProvider.value] === 'boolean') {
+    return Boolean(cfg.hasApiKeyByProvider[aiProvider.value])
+  }
+  if (aiProvider.value === 'gemini' && typeof cfg.hasGeminiApiKey === 'boolean') {
+    return cfg.hasGeminiApiKey
+  }
+  if (aiProvider.value === 'ferry-pro' && typeof cfg.hasFerryProApiKey === 'boolean') {
+    return cfg.hasFerryProApiKey
+  }
+  return cfg.provider === aiProvider.value && cfg.hasApiKey
+})
+
 watch(aiProvider, (next) => {
   aiError.value = null
   aiTestStatus.value = null
@@ -166,7 +185,7 @@ async function saveCompanionAi(clearKey = false, silent = false): Promise<void> 
       provider: aiProvider.value,
       endpoint: aiProvider.value === 'none' ? '' : endpoint,
       model,
-      apiKey: clearKey || aiProvider.value === 'none' ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
+      apiKey: clearKey ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
     })
     aiApiKey.value = ''
     if (!silent) {
@@ -904,22 +923,34 @@ async function saveNetwork(): Promise<void> {
                           </datalist>
                         </label>
                       </div>
-                      <label class="flex flex-col gap-1 text-xs">
-                        <span class="text-muted">
-                          {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
-                          {{ companion.aiConfig.hasApiKey ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
-                        </span>
+                      <div class="flex flex-col gap-1 text-xs">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <label for="companion-ai-api-key" class="text-muted">
+                            {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
+                            {{ hasSavedKeyForSelectedProvider ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
+                          </label>
+                          <button
+                            v-if="aiProvider === 'gemini'"
+                            type="button"
+                            class="inline-flex cursor-pointer items-center gap-1 text-2xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                            @click="openExternal('https://aistudio.google.com/apikey').catch(() => {})"
+                          >
+                            <span>Get a free Gemini API key</span>
+                            <UIcon name="i-lucide-external-link" class="size-3" />
+                          </button>
+                        </div>
                         <PasswordInput
+                          id="companion-ai-api-key"
                           v-model="aiApiKey"
                           :placeholder="aiProvider === 'ferry-pro' ? 'ferry_pro_…' : 'AIza…'"
                         />
-                      </label>
+                      </div>
                     </template>
                     <p v-if="aiError" class="text-2xs text-error">{{ aiError }}</p>
                     <p v-else-if="aiTestStatus" class="text-2xs text-success">{{ aiTestStatus }}</p>
                     <div class="flex flex-wrap items-center justify-end gap-1.5">
                       <UButton
-                        v-if="aiProvider !== 'none' && companion.aiConfig.hasApiKey"
+                        v-if="aiProvider !== 'none' && hasSavedKeyForSelectedProvider"
                         size="xs"
                         color="neutral"
                         variant="ghost"

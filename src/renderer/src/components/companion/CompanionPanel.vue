@@ -41,6 +41,13 @@ const inputRef = ref<HTMLInputElement | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
 const actionFeedback = ref<string | null>(null)
 const prefsOpen = ref(false)
+const pendingRunCard = ref<CompanionCommandCard | null>(null)
+const runConfirmOpen = computed({
+  get: () => pendingRunCard.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingRunCard.value = null
+  }
+})
 const snippetFilter = ref('')
 const showSnippetForm = ref(false)
 const newSnippetLabel = ref('')
@@ -121,6 +128,9 @@ watch(
       const active = document.activeElement
       if (
         active instanceof HTMLElement &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        !active.closest('[data-companion-trigger]') &&
         !active.closest('[data-command-palette]') &&
         !active.closest('[role="dialog"]')
       ) {
@@ -175,7 +185,8 @@ watch(
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !companion.open) return
-  if (prefsOpen.value) {
+  if (e.target instanceof HTMLElement && e.target.closest('.xterm')) return
+  if (prefsOpen.value || pendingRunCard.value) {
     return
   }
   if (document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
@@ -213,8 +224,106 @@ async function onActionClick(action: CompanionActionChip): Promise<void> {
   actionFeedback.value = await companion.executeAction(action)
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function formatInlineMarkdown(text: string): string {
+  const parts = text.split(/(`[^`]+`)/g)
+  let out = ''
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]
+    if (!part) continue
+    if (i % 2 === 1 && part.startsWith('`') && part.endsWith('`')) {
+      out += `<code class="rounded bg-default/70 px-1 py-0.5 font-mono text-2xs">${escapeHtml(part.slice(1, -1))}</code>`
+    } else {
+      out += escapeHtml(part).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    }
+  }
+  return out
+}
+
+function renderSafeChatMarkdown(raw: string): string {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n')
+  const blocks: string[] = []
+  let listItems: string[] = []
+  let textLines: string[] = []
+
+  const flushList = (): void => {
+    if (listItems.length > 0) {
+      blocks.push(`<ul class="my-1 list-disc space-y-0.5 pl-4">${listItems.join('')}</ul>`)
+      listItems = []
+    }
+  }
+  const flushText = (): void => {
+    if (textLines.length > 0) {
+      blocks.push(`<p class="my-0.5 first:mt-0 last:mb-0">${textLines.join('<br />')}</p>`)
+      textLines = []
+    }
+  }
+
+  for (const line of lines) {
+    const bulletMatch = line.match(/^\s*[-*•]\s+(.+)$/)
+    if (bulletMatch) {
+      flushText()
+      listItems.push(`<li>${formatInlineMarkdown(bulletMatch[1])}</li>`)
+    } else if (line.trim() === '') {
+      flushList()
+      flushText()
+    } else {
+      flushList()
+      textLines.push(formatInlineMarkdown(line))
+    }
+  }
+  flushList()
+  flushText()
+  return blocks.join('')
+}
+
+function uiActionCardTarget(card: CompanionUiActionCard): string {
+  if (card.kind === 'apply-filter') return `${card.mode}: ${card.pattern}`
+  return card.remotePath
+}
+
+const activeHostLabel = computed(
+  () => sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
+)
+
+const pendingRunRisk = computed<CompanionCommandRisk>(() => {
+  const card = pendingRunCard.value
+  if (!card) return 'read_only'
+  const detected = classifyCommandRisk(card.command)
+  const rank: Record<CompanionCommandRisk, number> = { read_only: 0, mutating: 1, destructive: 2 }
+  return rank[detected] > rank[card.risk] ? detected : card.risk
+})
+
 async function onRunCommandCard(card: CompanionCommandCard): Promise<void> {
-  actionFeedback.value = await companion.runCommandCard(card)
+  if (sessions.status !== 'connected' || !sessions.activeSessionId) {
+    actionFeedback.value = await companion.runCommandCard(card)
+    return
+  }
+  pendingRunCard.value = card
+}
+
+async function confirmPendingRunCommand(): Promise<void> {
+  const card = pendingRunCard.value
+  pendingRunCard.value = null
+  if (!card) return
+  actionFeedback.value = await companion.runCommandCard(card, { skipConfirm: true })
+}
+
+async function onInsertCommand(command: string): Promise<void> {
+  actionFeedback.value = await companion.insertCommandInTerminal(command)
+}
+
+function onStopAi(): void {
+  void companion.cancelAiRequest()
+  actionFeedback.value = 'Stopped response.'
 }
 
 async function onUiActionCardClick(card: CompanionUiActionCard): Promise<void> {
@@ -280,6 +389,7 @@ function openFullNotes(url?: string): void {
 </script>
 
 <template>
+  <Teleport to="body">
   <Transition name="slide-right">
     <aside
       v-if="companion.open"
@@ -287,7 +397,7 @@ function openFullNotes(url?: string): void {
       tabindex="-1"
       role="complementary"
       aria-label="Ferry Companion"
-      class="fixed top-9 right-0 bottom-0 z-40 flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none"
+      class="pointer-events-auto fixed top-9 right-0 bottom-0 z-[60] flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none"
       :class="
         ui.glassUiEnabled
           ? 'ferry-glass-overlay rounded-l-[var(--ferry-radius-overlay)] rounded-r-none border-r-0 border-b-0'
@@ -537,16 +647,16 @@ function openFullNotes(url?: string): void {
               :class="msg.role === 'user' ? 'items-end' : 'items-start'"
             >
               <div
-                class="max-w-[92%] rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-line"
+                class="max-w-[92%] rounded-lg px-3 py-2 text-xs leading-relaxed"
                 :class="
                   msg.role === 'user'
-                    ? 'bg-primary text-inverted'
+                    ? 'whitespace-pre-line bg-primary text-inverted'
                     : 'border border-default bg-muted/35 text-default'
                 "
               >
-                <template v-if="isRevealing(msg)">
+                <template v-if="msg.role === 'assistant'">
                   <span class="sr-only">{{ msg.text }}</span>
-                  <span aria-hidden="true">{{ displayText(msg) }}</span>
+                  <div aria-hidden="true" data-companion-md v-html="renderSafeChatMarkdown(displayText(msg))" />
                 </template>
                 <template v-else>{{ msg.text }}</template>
               </div>
@@ -597,6 +707,16 @@ function openFullNotes(url?: string): void {
                     <UButton
                       size="xs"
                       color="neutral"
+                      variant="outline"
+                      icon="i-lucide-terminal"
+                      data-insert-command
+                      @click="onInsertCommand(card.command)"
+                    >
+                      Insert
+                    </UButton>
+                    <UButton
+                      size="xs"
+                      color="neutral"
                       variant="ghost"
                       icon="i-lucide-copy"
                       @click="copyCommandText(card.command)"
@@ -626,11 +746,17 @@ function openFullNotes(url?: string): void {
                   v-for="(uiAct, uIdx) in msg.uiActionCards"
                   :key="uiAct.kind + uiAct.label + uIdx"
                   type="button"
-                  class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary"
+                  :title="uiActionCardTarget(uiAct)"
+                  class="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary"
                   @click="onUiActionCardClick(uiAct)"
                 >
                   <UIcon :name="uiActionCardIcon(uiAct.kind)" class="size-3 shrink-0" />
-                  <span>{{ uiAct.label }}</span>
+                  <span class="shrink-0">{{ uiAct.label }}</span>
+                  <code
+                    v-if="uiActionCardTarget(uiAct)"
+                    data-ui-action-target
+                    class="truncate rounded bg-primary/10 px-1 font-mono text-3xs text-primary/90"
+                  >{{ uiActionCardTarget(uiAct) }}</code>
                 </button>
               </div>
 
@@ -695,15 +821,23 @@ function openFullNotes(url?: string): void {
               </div>
               </template>
             </div>
-            <div v-if="companion.aiBusy" class="flex items-center gap-1.5 text-xs text-muted">
-              <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
-              <span>Thinking…</span>
+            <div v-if="companion.aiBusy" class="flex items-center justify-between gap-2 text-xs text-muted">
+              <div class="flex items-center gap-1.5">
+                <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
+                <span>Thinking…</span>
+              </div>
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="soft"
+                icon="i-lucide-square"
+                data-stop-ai
+                @click="onStopAi"
+              >
+                Stop
+              </UButton>
             </div>
           </div>
-
-          <p role="status" aria-live="polite" class="text-3xs text-muted" :class="actionFeedback ? '' : 'sr-only'">
-            {{ actionFeedback ?? '' }}
-          </p>
         </div>
 
         <!-- SNIPPETS & COMMAND HISTORY VIEW -->
@@ -803,7 +937,7 @@ function openFullNotes(url?: string): void {
               </div>
               <pre class="mt-1.5 overflow-x-auto rounded bg-default/80 px-2 py-1 font-mono text-2xs text-default select-text">{{ snip.command }}</pre>
               <p v-if="snip.description" class="mt-1 text-2xs text-muted">{{ snip.description }}</p>
-              <div class="mt-2 flex items-center gap-1.5">
+              <div class="mt-2 flex flex-wrap items-center gap-1.5">
                 <UButton
                   size="xs"
                   color="primary"
@@ -812,6 +946,16 @@ function openFullNotes(url?: string): void {
                   @click="onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })"
                 >
                   Run in Terminal
+                </UButton>
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-terminal"
+                  data-insert-command
+                  @click="onInsertCommand(snip.command)"
+                >
+                  Insert
                 </UButton>
                 <UButton
                   size="xs"
@@ -992,6 +1136,16 @@ function openFullNotes(url?: string): void {
         </div>
       </div>
 
+      <!-- Shared action feedback status (visible across Chat, Snippets, etc.) -->
+      <p
+        role="status"
+        aria-live="polite"
+        class="border-t border-muted/60 px-3 py-1 text-3xs text-muted"
+        :class="actionFeedback ? '' : 'sr-only'"
+      >
+        {{ actionFeedback ?? '' }}
+      </p>
+
       <!-- Footer input (Chat view) -->
       <form
         v-if="companion.activeView === 'chat'"
@@ -1009,15 +1163,81 @@ function openFullNotes(url?: string): void {
           class="min-w-0 flex-1 rounded-md border border-default bg-default/70 px-2.5 py-1.5 text-xs text-default placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         />
         <UButton
+          v-if="companion.aiBusy"
+          type="button"
+          size="xs"
+          color="neutral"
+          variant="soft"
+          icon="i-lucide-square"
+          aria-label="Stop response"
+          data-stop-ai-footer
+          @click="onStopAi"
+        />
+        <UButton
+          v-else
           type="submit"
           size="xs"
           color="primary"
           icon="i-lucide-send"
           aria-label="Send message"
-          :loading="companion.aiBusy"
-          :disabled="!draftInput.trim() || companion.aiBusy"
+          :disabled="!draftInput.trim()"
         />
       </form>
     </aside>
   </Transition>
+  </Teleport>
+
+  <!-- Run in Terminal Confirmation Modal -->
+  <UModal
+    v-model:open="runConfirmOpen"
+    :title="`Run command on ${activeHostLabel}?`"
+    :ui="{ overlay: 'z-[70]', content: 'z-[70] max-w-md', footer: 'justify-end' }"
+  >
+    <template #body>
+      <div v-if="pendingRunCard" class="flex flex-col gap-3">
+        <div
+          v-if="companion.isProd"
+          role="alert"
+          data-prod-warning-banner
+          class="flex items-start gap-2 rounded-md border border-error/50 bg-error/15 px-3 py-2 text-xs text-error"
+        >
+          <UIcon name="i-lucide-shield-alert" class="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p class="font-semibold">Production Environment</p>
+            <p class="mt-0.5 text-2xs">
+              You are connected to {{ companion.prodSiteLabel || activeHostLabel }}. Verify this command carefully before executing.
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span
+            class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
+            :class="riskBadgeClass(pendingRunRisk)"
+          >
+            {{ riskBadgeLabel(pendingRunRisk) }}
+          </span>
+          <span class="text-muted">
+            {{
+              pendingRunRisk === 'destructive'
+                ? 'Can delete data or interrupt services.'
+                : pendingRunRisk === 'mutating'
+                  ? 'Modifies files or service state.'
+                  : 'Inspects remote state without modifying files.'
+            }}
+          </span>
+        </div>
+        <pre class="max-h-48 overflow-auto rounded-md bg-muted p-2.5 font-mono text-xs text-default select-text">{{ pendingRunCard.command }}</pre>
+      </div>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="outline" @click="pendingRunCard = null">Cancel</UButton>
+      <UButton
+        :color="pendingRunRisk === 'destructive' ? 'error' : pendingRunRisk === 'mutating' ? 'warning' : 'primary'"
+        data-confirm-run-command
+        @click="confirmPendingRunCommand"
+      >
+        Run in Terminal
+      </UButton>
+    </template>
+  </UModal>
 </template>

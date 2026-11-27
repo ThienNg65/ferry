@@ -130,7 +130,7 @@ onBeforeUnmount(() => {
         class="inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-primary"
         :class="[
           companion.open
-            ? 'bg-primary/15 text-primary'
+            ? 'bg-[color-mix(in_oklab,var(--ferry-companion-accent,var(--ui-color-primary-500))_15%,transparent)] text-[var(--ferry-companion-accent,var(--ui-color-primary-500))]'
             : 'text-muted hover:bg-elevated/70 hover:text-highlighted',
           showBubble || companion.open ? '' : 'ferry-pressable'
         ]"

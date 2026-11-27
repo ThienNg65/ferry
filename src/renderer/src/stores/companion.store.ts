@@ -14,11 +14,12 @@ import {
   type CompanionCommandRisk,
   type CompanionReleaseHighlight,
   type CompanionReleasesResult,
+  type CompanionSiteEnvironment,
   type CompanionUiActionCard,
   type CompanionWorkspaceSignal,
   type MonitorSample
 } from '@shared/contract'
-import { invoke } from '../api'
+import { companionAiCancel, invoke } from '../api'
 import { openExternal } from '../bridge/neutralinoApi'
 import { useCommandPalette } from '../composables/useCommandPalette'
 import { useConfirm } from '../composables/useConfirm'
@@ -46,7 +47,10 @@ import { COMPANION_TOUR_STEPS } from '../utils/companionTour'
 import { evaluateVersionTransition } from '../utils/companionVersion'
 import { prefersReducedMotion } from '../utils/motionTokens'
 import { resolveConnectionFilterKey, useFileFiltersStore } from './fileFilters.store'
+import { useMonitorStore } from './monitor.store'
+import { useRemoteFsStore } from './remoteFs.store'
 import { useSessionsStore } from './sessions.store'
+import { useSettingsStore } from './settings.store'
 import { useSitesStore } from './sites.store'
 import { useTailStreamsStore } from './tailStreams.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
@@ -85,6 +89,15 @@ export interface CompanionReveal {
   messageId: string
   chunks: string[]
   shown: number
+}
+
+export interface CompanionTransferErrorRecord {
+  sessionId: string
+  error: string
+  direction?: 'upload' | 'download'
+  localPath?: string
+  remotePath?: string
+  occurredAt: string
 }
 
 export interface CompanionNotice {
@@ -262,11 +275,13 @@ interface CompanionState {
   releasesLoaded: boolean
   releasesLoading: boolean
   releasesOfflineFallback: boolean
-  lastTransferError: string | null
+  transferErrorsBySession: Record<string, CompanionTransferErrorRecord>
   tourStep: number | null
   aiConfig: CompanionAiConfigInfo
   aiConfigLoaded: boolean
   aiBusy: boolean
+  aiGeneration: number
+  activeAiRequestId: string | null
   customSnippets: CompanionSnippet[]
   commandHistory: CompanionCommandHistoryEntry[]
   lifecycleInitialized: boolean
@@ -302,11 +317,13 @@ export const useCompanionStore = defineStore('companion', {
     releasesLoaded: false,
     releasesLoading: false,
     releasesOfflineFallback: false,
-    lastTransferError: null,
+    transferErrorsBySession: {},
     tourStep: null,
     aiConfig: { provider: 'none', endpoint: '', model: '', hasApiKey: false },
     aiConfigLoaded: false,
     aiBusy: false,
+    aiGeneration: 0,
+    activeAiRequestId: null,
     customSnippets: parseSnippetList(readStored(SNIPPETS_KEY)),
     commandHistory: parseCommandHistory(readStored(CMD_HISTORY_KEY)),
     lifecycleInitialized: false,
@@ -331,8 +348,20 @@ export const useCompanionStore = defineStore('companion', {
       return 'idle'
     },
     hasNotice: (state): boolean => state.notice !== null && !state.quietMode,
+    lastTransferErrorRecord(state): CompanionTransferErrorRecord | null {
+      const sessionId = useSessionsStore().activeSessionId
+      if (sessionId) {
+        return state.transferErrorsBySession[sessionId] ?? null
+      }
+      return state.transferErrorsBySession.__global__ ?? null
+    },
+    lastTransferError(): string | null {
+      return this.lastTransferErrorRecord?.error ?? null
+    },
     prodSiteLabel(): string | null {
-      const tab = useSessionsStore().activeTab
+      const sessions = useSessionsStore()
+      if (sessions.status !== 'connected') return null
+      const tab = sessions.activeTab
       const site = tab?.siteId ? useSitesStore().sites.find((s) => s.id === tab.siteId) : undefined
       if (site?.environment !== 'prod') return null
       return `${tab.label ?? site.name}, Production`
@@ -671,6 +700,14 @@ export const useCompanionStore = defineStore('companion', {
       if (this.releasesLoaded && !this.releasesOfflineFallback && !forceRefresh && this.releases.length > 0) {
         return this.releases
       }
+      if (!forceRefresh && !useSettingsStore().autoCheckUpdates) {
+        if (this.releases.length === 0) {
+          this.releases = getBundledChangelogReleases()
+          this.releasesOfflineFallback = true
+          this.releasesLoaded = true
+        }
+        return this.releases
+      }
       if (releasesInFlight && !forceRefresh) {
         return releasesInFlight
       }
@@ -704,10 +741,47 @@ export const useCompanionStore = defineStore('companion', {
       return promise
     },
 
-    notifyTransferFailure(errorMessage: string): void {
+    notifyTransferFailure(
+      input:
+        | string
+        | {
+            sessionId?: string
+            direction?: 'upload' | 'download'
+            localPath?: string
+            remotePath?: string
+            error: string
+          },
+      meta?: {
+        sessionId?: string
+        direction?: 'upload' | 'download'
+        localPath?: string
+        remotePath?: string
+      }
+    ): void {
+      const errorMessage = typeof input === 'string' ? input : input.error
+      const resolvedMeta = typeof input === 'string' ? meta : input
       const trimmed = errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 500)
       if (!trimmed) return
-      this.lastTransferError = trimmed
+      const sessionKey = resolvedMeta?.sessionId || useSessionsStore().activeSessionId || '__global__'
+      this.transferErrorsBySession[sessionKey] = {
+        sessionId: sessionKey,
+        error: trimmed,
+        direction: resolvedMeta?.direction,
+        localPath: resolvedMeta?.localPath,
+        remotePath: resolvedMeta?.remotePath,
+        occurredAt: new Date().toISOString()
+      }
+
+      this.recordAnnouncement({
+        kind: 'transfer-error',
+        title:
+          resolvedMeta?.direction === 'download'
+            ? 'Download issue detected'
+            : resolvedMeta?.direction === 'upload'
+              ? 'Upload issue detected'
+              : 'Transfer issue detected',
+        body: trimmed
+      })
 
       if (this.quietMode || !this.contextualTips || this.open) return
 
@@ -729,11 +803,6 @@ export const useCompanionStore = defineStore('companion', {
             errorSummary: trimmed
           }
         }
-        this.recordAnnouncement({
-          kind: 'transfer-error',
-          title: 'Transfer issue detected',
-          body: trimmed
-        })
       }, TRANSFER_TIP_DEBOUNCE_MS)
     },
 
@@ -757,24 +826,160 @@ export const useCompanionStore = defineStore('companion', {
       this.reveal = null
     },
 
+    collectWorkspaceSignal(overrides?: Partial<CompanionWorkspaceSignal>): CompanionWorkspaceSignal | undefined {
+      const signal: CompanionWorkspaceSignal = {}
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      const isConnected = sessions.status === 'connected' && Boolean(sessionId)
+
+      if (isConnected && sessionId) {
+        const tab = sessions.activeTab
+        const site = tab?.siteId ? useSitesStore().sites.find((s) => s.id === tab.siteId) : undefined
+        const rawSiteName = site?.name || tab?.label || ''
+        if (rawSiteName) {
+          signal.siteName = redactSensitiveText(rawSiteName, { mode: 'diagnostic' }).text.slice(0, 80)
+        }
+        if (
+          site?.environment === 'prod' ||
+          site?.environment === 'staging' ||
+          site?.environment === 'dev' ||
+          site?.environment === 'other'
+        ) {
+          signal.siteEnvironment = site.environment as CompanionSiteEnvironment
+        }
+
+        const remoteFs = useRemoteFsStore()
+        if (remoteFs.currentPath) {
+          signal.remoteCwd = redactSensitiveText(remoteFs.currentPath, { mode: 'diagnostic' }).text.slice(0, 260)
+          const selectedNames = Array.from(remoteFs.selected ?? []).slice(0, 5)
+          const summaryParts = [`${remoteFs.entries.length} items in ${signal.remoteCwd}`]
+          if (selectedNames.length > 0) {
+            summaryParts.push(`selected: ${selectedNames.join(', ')}`)
+          }
+          signal.sftpSummary = redactSensitiveText(summaryParts.join('; '), { mode: 'diagnostic' }).text.slice(0, 400)
+        }
+
+        const terminalStreams = useTerminalStreamsStore()
+        if (typeof terminalStreams.getRecentOutput === 'function') {
+          const rawTail = terminalStreams.getRecentOutput(sessionId, 30)
+          if (rawTail) {
+            signal.terminalTail = redactSensitiveText(rawTail, { mode: 'diagnostic' }).text.slice(-2000)
+          }
+        }
+
+        if (!overrides?.monitorSummary) {
+          const sample = useMonitorStore().latest
+          if (sample) {
+            const cpuPct = sample.cpu ? sample.cpu.aggregatePct : null
+            const memPct = sample.memory.totalBytes > 0 ? Math.round((sample.memory.usedBytes / sample.memory.totalBytes) * 100) : 0
+            const swapPct = sample.swap.totalBytes > 0 ? Math.round((sample.swap.usedBytes / sample.swap.totalBytes) * 100) : 0
+            const diskPct = sample.disk && sample.disk.totalBytes > 0 ? Math.round((sample.disk.usedBytes / sample.disk.totalBytes) * 100) : null
+            const topProcs = sample.processes
+              .slice(0, 3)
+              .map((p) => `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${Math.round(p.rssBytes / (1024 * 1024))}MB)`)
+              .join('; ')
+            const rawMonitor = [
+              `CPU: ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM: ${memPct}%, Swap: ${swapPct}%, Disk: ${diskPct !== null ? `${diskPct}%` : 'N/A'}`,
+              topProcs ? `Top: ${topProcs}` : ''
+            ]
+              .filter(Boolean)
+              .join(' | ')
+            signal.monitorSummary = redactSensitiveText(rawMonitor, { mode: 'diagnostic' }).text.slice(0, 800)
+          }
+        }
+
+        if (!overrides?.logSnippet) {
+          try {
+            const tailStreams = useTailStreamsStore()
+            const tailTab =
+              tailStreams.tabs.find((t) => t.tailId === tailStreams.activeTailId && t.sessionId === sessionId) ??
+              tailStreams.tabs.find((t) => t.sessionId === sessionId)
+            if (tailTab) {
+              const basename = tailTab.remotePath.split('/').pop() || tailTab.remotePath
+              signal.logBasename = basename.slice(0, 120)
+              signal.logPath = redactSensitiveText(tailTab.remotePath, { mode: 'diagnostic' }).text.slice(0, 260)
+              const lines = tailStreams.linesMap[tailTab.tailId] ?? []
+              if (lines.length > 0) {
+                const errorLines = lines.filter((l) => /\b(error|err|fatal|panic|exception|fail(?:ed)?|oom|warn)\b/i.test(l))
+                const chosen = (errorLines.length > 0 ? errorLines.slice(-10) : lines.slice(-8)).join('\n')
+                if (chosen.trim()) {
+                  signal.logSnippet = redactSensitiveText(chosen, { mode: 'diagnostic' }).text.slice(0, 1500)
+                }
+              }
+            }
+          } catch {
+            // Non-fatal in isolated tests where window.api.on is unavailable.
+          }
+        }
+
+        const errRec = this.transferErrorsBySession[sessionId]
+        if (errRec) {
+          const dirLabel = errRec.direction ? `[${errRec.direction}] ` : ''
+          const pathPart = errRec.remotePath ? ` (remote: ${errRec.remotePath})` : ''
+          signal.lastTransferError = redactSensitiveText(`${dirLabel}${errRec.error}${pathPart}`, {
+            mode: 'diagnostic'
+          }).text.slice(0, 400)
+        }
+      }
+
+      if (overrides) {
+        for (const [k, v] of Object.entries(overrides)) {
+          if (v !== undefined && v !== '') {
+            ;(signal as Record<string, unknown>)[k] = v
+          }
+        }
+      }
+
+      return Object.keys(signal).length > 0 ? signal : undefined
+    },
+
+    async cancelAiRequest(): Promise<void> {
+      const reqId = this.activeAiRequestId
+      this.aiGeneration += 1
+      this.aiBusy = false
+      this.activeAiRequestId = null
+      try {
+        await companionAiCancel(reqId ?? undefined)
+      } catch {
+        // Non-fatal in isolated tests or disconnected contexts.
+      }
+    },
+
     async requestAiChat(
       prompt: string,
       intent: CompanionAiIntent = 'chat',
       workspaceSignal?: CompanionWorkspaceSignal
-    ): Promise<{ result: CompanionAiChatResult | null; errorHint: string | null }> {
+    ): Promise<{ result: CompanionAiChatResult | null; errorHint: string | null; cancelled?: boolean }> {
       if (this.aiConfig.provider === 'none') {
         return { result: null, errorHint: null }
       }
+      const gen = ++this.aiGeneration
+      const requestId = nextId('req')
+      this.activeAiRequestId = requestId
       this.aiBusy = true
       try {
         const sessions = useSessionsStore()
         const ui = useUiStore()
-        const redactedPrompt = redactSensitiveText(prompt).text
-        const history = this.messages.slice(-6, -1).map((m) => ({
-          role: m.role,
-          text: redactSensitiveText(m.text).text
-        }))
+        const redactedPrompt = redactSensitiveText(prompt, { mode: 'diagnostic' }).text
+        const history = this.messages.slice(-9, -1).map((m) => {
+          const parts = [m.text]
+          if (m.commandCards && m.commandCards.length > 0) {
+            const cmdSummary = m.commandCards.map((c) => `${c.command} (${c.risk})`).join('; ')
+            parts.push(`[Suggested commands: ${cmdSummary}]`)
+          }
+          if (m.uiActionCards && m.uiActionCards.length > 0) {
+            const actSummary = m.uiActionCards
+              .map((a) => (a.kind === 'apply-filter' ? `apply-filter(${a.mode}:${a.pattern})` : `${a.kind}(${a.remotePath})`))
+              .join('; ')
+            parts.push(`[Suggested actions: ${actSummary}]`)
+          }
+          return {
+            role: m.role,
+            text: redactSensitiveText(parts.join('\n'), { mode: 'diagnostic' }).text
+          }
+        })
         const req: CompanionAiChatRequest = {
+          requestId,
           prompt: redactedPrompt,
           history,
           intent,
@@ -786,14 +991,23 @@ export const useCompanionStore = defineStore('companion', {
           }
         }
         const aiRes = await invoke<CompanionAiChatResult>(INVOKE_CHANNELS.companionAiChat, req)
+        if (this.aiGeneration !== gen) {
+          return { result: null, errorHint: null, cancelled: true }
+        }
         if (aiRes?.ok && (aiRes.structured?.summary || aiRes.text)) {
           return { result: aiRes, errorHint: null }
         }
         return { result: null, errorHint: aiRes?.error || 'connection error' }
       } catch (err) {
+        if (this.aiGeneration !== gen) {
+          return { result: null, errorHint: null, cancelled: true }
+        }
         return { result: null, errorHint: err instanceof Error ? err.message : 'connection error' }
       } finally {
-        this.aiBusy = false
+        if (this.aiGeneration === gen) {
+          this.aiBusy = false
+          this.activeAiRequestId = null
+        }
       }
     },
 
@@ -821,11 +1035,14 @@ export const useCompanionStore = defineStore('companion', {
       this.aiErrorLabel = null
       let aiErrorHint: string | null = null
       if (opts.aiPrompt && this.aiConfig.provider !== 'none') {
-        const { result: aiRes, errorHint } = await this.requestAiChat(
+        const { result: aiRes, errorHint, cancelled } = await this.requestAiChat(
           opts.aiPrompt,
           opts.intent ?? 'chat',
           opts.workspaceSignal
         )
+        if (cancelled) {
+          return
+        }
         if (aiRes) {
           const text = aiRes.structured?.summary ?? aiRes.text ?? ''
           const id = this.pushMessage({
@@ -875,18 +1092,25 @@ export const useCompanionStore = defineStore('companion', {
       }
 
       const sessions = useSessionsStore()
+      const aiEnabled = this.aiConfig.provider !== 'none'
+      const errRec = this.lastTransferErrorRecord
       const reply = answerCompanionQuery(text, {
         currentVersion: this.currentVersion || 'unknown',
         previousVersion: this.previousVersion,
         releases: this.releases.length > 0 ? this.releases : getBundledChangelogReleases(),
         offlineFallback: this.releasesOfflineFallback || this.releases.length === 0,
         isConnected: sessions.status === 'connected',
-        lastTransferError: this.lastTransferError
+        lastTransferError: errRec?.error ?? null,
+        lastTransferDirection: errRec?.direction ?? null,
+        aiEnabled
       })
+
+      const workspaceSignal = reply.isFallback && aiEnabled ? this.collectWorkspaceSignal() : undefined
 
       await this.deliverAiOrLocalReply({
         aiPrompt: reply.isFallback ? text : undefined,
         intent: reply.commandCards ? 'command' : 'chat',
+        workspaceSignal,
         errorPrefix: 'Falling back to local mode:',
         buildLocal: () => ({
           text: reply.text,
@@ -915,33 +1139,43 @@ export const useCompanionStore = defineStore('companion', {
         this.pushSystemNote('Still finishing the previous AI request — please try Explain Log again in a moment.')
         return
       }
-      const redactedPath = redactSensitiveText(input.remotePath).text
       const rawSnippet =
         input.contextLines && input.contextLines.length > 0
           ? input.contextLines.join('\n')
           : input.lineText
-      const redacted = redactSensitiveText(rawSnippet)
-      const logSnippet = redacted.text.slice(0, 2500)
-      if (!logSnippet.trim()) return
+      if (!rawSnippet.trim()) return
+
+      const logBasename = input.remotePath.split('/').pop() || input.remotePath
+      const diagnosticPath = redactSensitiveText(input.remotePath, { mode: 'diagnostic' }).text
+      const redactedForAi = redactSensitiveText(rawSnippet, { mode: 'diagnostic' })
+      const aiLogSnippet = redactedForAi.text.slice(0, 2500)
+      const bubbleLine = redactSensitiveText(input.lineText, { mode: 'diagnostic' }).text.slice(0, 400)
 
       this.openPanel('chat')
       const lineLabel = input.lineNumber ? `line #${input.lineNumber} in ` : ''
       const redactionNote =
-        redacted.redactionCount > 0
-          ? ` (${redacted.redactionCount} sensitive item${redacted.redactionCount === 1 ? '' : 's'} redacted locally)`
+        redactedForAi.redactionCount > 0
+          ? ` (${redactedForAi.redactionCount} sensitive item${redactedForAi.redactionCount === 1 ? '' : 's'} redacted locally)`
           : ''
       this.pushMessage({
         role: 'user',
-        text: `Explain log ${lineLabel}${redactedPath || 'active stream'}${redactionNote}:\n${redactSensitiveText(input.lineText).text.slice(0, 400)}`
+        text: `Explain log ${lineLabel}${diagnosticPath || 'active stream'}${redactionNote}:\n${bubbleLine}`
+      })
+
+      const workspaceSignal = this.collectWorkspaceSignal({
+        logPath: diagnosticPath,
+        logBasename,
+        logSnippet: aiLogSnippet
       })
 
       await this.deliverAiOrLocalReply({
-        aiPrompt: `Explain this log entry from ${redactedPath} and suggest safe diagnostic steps.`,
+        aiPrompt: `Explain this log entry from ${diagnosticPath || logBasename} and suggest safe diagnostic steps.`,
         intent: 'explain-log',
-        workspaceSignal: { logPath: redactedPath, logSnippet },
+        workspaceSignal,
         errorPrefix: 'Local log analysis:',
         buildLocal: () => {
-          const offline = diagnoseLogSnippetOffline(redactedPath, logSnippet, input.remotePath)
+          // Run offline detectors on the unredacted raw snippet so namespaces like java.lang.OutOfMemoryError match.
+          const offline = diagnoseLogSnippetOffline(input.remotePath, rawSnippet, input.remotePath)
           return {
             text: offline.summary,
             rootCause: offline.rootCause,
@@ -978,7 +1212,7 @@ export const useCompanionStore = defineStore('companion', {
           ? `Top processes: ${topProcesses.map((p) => `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${p.rssMB}MB)`).join('; ')}`
           : 'Top processes: none'
       ].join('\n')
-      const monitorSummary = redactSensitiveText(rawSummary).text
+      const monitorSummary = redactSensitiveText(rawSummary, { mode: 'diagnostic' }).text
 
       this.openPanel('chat')
       this.pushMessage({
@@ -986,10 +1220,12 @@ export const useCompanionStore = defineStore('companion', {
         text: `Diagnose Resource Monitor metrics (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%${diskPct !== null ? `, Disk ${diskPct}%` : ''})`
       })
 
+      const workspaceSignal = this.collectWorkspaceSignal({ monitorSummary })
+
       await this.deliverAiOrLocalReply({
         aiPrompt: 'Triage these remote server resource metrics and propose read-only verification commands.',
         intent: 'diagnose-spike',
-        workspaceSignal: { monitorSummary },
+        workspaceSignal,
         errorPrefix: 'Local resource triage:',
         buildLocal: () => {
           const offline = diagnoseMonitorSpikeOffline({
@@ -1057,7 +1293,7 @@ export const useCompanionStore = defineStore('companion', {
       writeStored(CMD_HISTORY_KEY, JSON.stringify([]), this.dirtyPrefKeys)
     },
 
-    async runCommandCard(card: CompanionCommandCard): Promise<string> {
+    async runCommandCard(card: CompanionCommandCard, options?: { skipConfirm?: boolean }): Promise<string> {
       const sessions = useSessionsStore()
       const sessionId = sessions.activeSessionId
       if (sessions.status !== 'connected' || !sessionId) {
@@ -1069,36 +1305,80 @@ export const useCompanionStore = defineStore('companion', {
       }
       const risk = escalateCommandRisk(card.risk, command)
       const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
-      const riskNote =
-        risk === 'destructive'
-          ? 'DESTRUCTIVE command — can delete data or interrupt services.'
-          : risk === 'mutating'
-            ? 'MUTATING command — modifies files or service state.'
-            : 'READ-ONLY command — inspects remote state without modifying files.'
+      if (!options?.skipConfirm) {
+        const riskNote =
+          risk === 'destructive'
+            ? 'DESTRUCTIVE command — can delete data or interrupt services.'
+            : risk === 'mutating'
+              ? 'MUTATING command — modifies files or service state.'
+              : 'READ-ONLY command — inspects remote state without modifying files.'
 
-      const confirm = useConfirm()
-      const confirmed = await confirm({
-        title: `Run command on ${targetHost}?`,
-        body: `Risk: ${risk.toUpperCase()} — ${riskNote}`,
-        items: [command],
-        confirmLabel: 'Run in Terminal',
-        confirmColor: risk === 'destructive' ? 'error' : risk === 'mutating' ? 'warning' : 'primary',
-        destructive: risk === 'destructive'
-      })
-      if (!confirmed) {
-        return 'Command execution cancelled.'
+        const prodPrefix = this.isProd && risk === 'destructive' ? 'PRODUCTION ENVIRONMENT WARNING — ' : ''
+        const confirm = useConfirm()
+        const confirmed = await confirm({
+          title: `Run command on ${targetHost}?`,
+          body: `${prodPrefix}Risk: ${risk.toUpperCase()} — ${riskNote}`,
+          items: [command],
+          confirmLabel: 'Run in Terminal',
+          confirmColor: risk === 'destructive' ? 'error' : risk === 'mutating' ? 'warning' : 'primary',
+          destructive: risk === 'destructive'
+        })
+        if (!confirmed) {
+          return 'Command execution cancelled.'
+        }
       }
 
       useDockState().openDock('terminal')
-      const terminalId = await useTerminalStreamsStore().ensureTerminal(sessionId)
-      if (typeof window !== 'undefined' && window.api?.send) {
-        window.api.send(SEND_CHANNELS.terminalInput, {
-          terminalId,
-          data: `${command}\r`
-        })
+      const terminalStreams = useTerminalStreamsStore()
+      let wrote = false
+      if (typeof terminalStreams.write === 'function') {
+        wrote = await terminalStreams.write(sessionId, `${command}\r`)
+      } else {
+        const terminalId = await terminalStreams.ensureTerminal(sessionId)
+        if (terminalId && typeof window !== 'undefined' && typeof window.api?.send === 'function') {
+          window.api.send(SEND_CHANNELS.terminalInput, {
+            terminalId,
+            data: `${command}\r`
+          })
+          terminalStreams.focus?.(sessionId)
+          wrote = true
+        }
+      }
+      if (!wrote) {
+        return 'Could not send command to Terminal — shell is not active.'
       }
       this.recordCommandHistory(command, risk, targetHost)
       return `Sent command to Terminal (${targetHost}).`
+    },
+
+    async insertCommandInTerminal(rawCommand: string): Promise<string> {
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      if (sessions.status !== 'connected' || !sessionId) {
+        return 'Connect to an SSH session first to insert commands into Terminal.'
+      }
+      const command = sanitizeCompanionCommand(rawCommand)
+      if (!command) {
+        return 'Command is empty.'
+      }
+      useDockState().openDock('terminal')
+      const terminalStreams = useTerminalStreamsStore()
+      let inserted = false
+      if (typeof terminalStreams.insertText === 'function') {
+        inserted = await terminalStreams.insertText(sessionId, command)
+      } else {
+        const terminalId = await terminalStreams.ensureTerminal(sessionId)
+        if (terminalId && typeof window !== 'undefined' && typeof window.api?.send === 'function') {
+          window.api.send(SEND_CHANNELS.terminalInput, { terminalId, data: command })
+          terminalStreams.focus?.(sessionId)
+          inserted = true
+        }
+      }
+      if (!inserted) {
+        return 'Could not insert command into Terminal — shell is not active.'
+      }
+      const targetHost = sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
+      return `Inserted command into Terminal (${targetHost}) — press Enter to run.`
     },
 
     async executeUiActionCard(card: CompanionUiActionCard): Promise<string> {
@@ -1126,7 +1406,7 @@ export const useCompanionStore = defineStore('companion', {
           const key = isConnected ? resolveConnectionFilterKey(sessions.activeTab) : 'local'
           useFileFiltersStore().addPattern(key ?? 'local', card.mode, card.pattern)
           if (isConnected) {
-            window.dispatchEvent(new CustomEvent(OPEN_FILE_FILTERS_EVENT))
+            window.dispatchEvent(new CustomEvent(OPEN_FILE_FILTERS_EVENT, { detail: { pane: 'remote' } }))
           }
           return `Applied ${card.mode} filter "${card.pattern}".`
         }
@@ -1219,6 +1499,11 @@ export const useCompanionStore = defineStore('companion', {
     },
 
     clearConversation(): void {
+      if (this.aiBusy || this.activeAiRequestId) {
+        void this.cancelAiRequest()
+      } else {
+        this.aiGeneration += 1
+      }
       this.finishReveal()
       this.messages = []
       this.aiErrorLabel = null
@@ -1253,11 +1538,13 @@ export const useCompanionStore = defineStore('companion', {
       this.notice = null
       this.announcements = []
       this.messages = []
-      this.lastTransferError = null
+      this.transferErrorsBySession = {}
       this.tourStep = null
       this.aiConfig = { provider: 'none', endpoint: '', model: '', hasApiKey: false }
       this.aiConfigLoaded = false
       this.aiBusy = false
+      this.aiGeneration += 1
+      this.activeAiRequestId = null
       this.customSnippets = []
       this.commandHistory = []
       this.lastTransferTipAt = 0

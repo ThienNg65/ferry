@@ -5,9 +5,10 @@ export interface RemoteDiskSnapshot {
 }
 
 const SAFE_ENV_TEMPLATE_RE = /^\.env\.(?:example|sample|template|dist)$/i
+const SAFE_PUBLIC_KEY_RE = /(?:^|[_-])id_(?:rsa|ed25519|ecdsa|dsa)\.pub$/i
 const SENSITIVE_BASENAME_RE =
-  /^(?:\.env(?:\..+)?|id_rsa|id_ed25519|id_ecdsa|id_dsa|\.npmrc|\.pypirc|\.netrc|kubeconfig|credentials\.json|service[-_]?account.*\.json)$/i
-const SENSITIVE_EXT_RE = /\.(?:pem|key|p12|pfx|kdbx|jks|keystore)$/i
+  /^(?:\.env(?:\..+)?|(?:.*[_-])?id_(?:rsa|ed25519|ecdsa|dsa)|\.npmrc|\.pypirc|\.netrc|kubeconfig|credentials\.json|service[-_]?account.*\.json|.*secret.*)$/i
+const SENSITIVE_EXT_RE = /\.(?:pem|key|ppk|ovpn|p12|pfx|kdbx|jks|keystore)$/i
 
 function formatCompactBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -23,7 +24,7 @@ function formatCompactBytes(bytes: number): string {
 
 export function isSensitiveSecretFilename(nameOrPath: string): boolean {
   const base = (nameOrPath.split(/[\\/]/).pop() || nameOrPath).trim()
-  if (!base || SAFE_ENV_TEMPLATE_RE.test(base)) return false
+  if (!base || SAFE_ENV_TEMPLATE_RE.test(base) || SAFE_PUBLIC_KEY_RE.test(base)) return false
   return SENSITIVE_BASENAME_RE.test(base) || SENSITIVE_EXT_RE.test(base)
 }
 

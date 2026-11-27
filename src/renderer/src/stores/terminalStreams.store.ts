@@ -429,11 +429,17 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       return instances.get(sessionId)
     },
 
-    /** Opens (or returns the existing/in-flight) terminal for `sessionId`. */
+    /** Opens (or returns the existing/in-flight) terminal for `sessionId`, restarting an exited PTY automatically. */
     async ensureTerminal(sessionId: string): Promise<string> {
       const existing = instances.get(sessionId)
       if (existing) {
-        return existing.terminalId
+        if (this.exitedSessionIds.includes(sessionId)) {
+          await this.restart(sessionId)
+        }
+        const current = instances.get(sessionId)
+        if (current) {
+          return current.terminalId
+        }
       }
       const inFlight = pending.get(sessionId)
       if (inFlight) {
@@ -566,7 +572,73 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
 
     /** Moves keyboard focus into a session's terminal (no-op if none is open). */
     focus(sessionId: string): void {
-      instances.get(sessionId)?.term.focus()
+      const inst = instances.get(sessionId)
+      if (inst) {
+        inst.term.focus()
+        return
+      }
+      if (typeof document !== 'undefined') {
+        ;(document.querySelector('.xterm-helper-textarea') as HTMLElement | null)?.focus()
+      }
+    },
+
+    /** Reads the last `maxLines` non-empty lines from the active xterm buffer safely. */
+    getRecentOutput(sessionId: string, maxLines = 30): string {
+      const inst = instances.get(sessionId)
+      if (!inst) return ''
+      try {
+        const active = inst.term.buffer?.active
+        if (!active || active.length <= 0) return ''
+        const limit = Math.max(1, Math.min(maxLines, 200))
+        const collected: string[] = []
+        for (let y = active.length - 1; y >= 0 && collected.length < limit; y -= 1) {
+          const line = active.getLine(y)?.translateToString(true) ?? ''
+          if (collected.length === 0 && !line.trim()) continue
+          collected.push(line)
+        }
+        return collected.reverse().join('\n').trim()
+      } catch {
+        return ''
+      }
+    },
+
+    /**
+     * Stages `text` onto the active terminal prompt without executing (`\r` stripped),
+     * restarting an exited PTY if needed and returning focus to `.xterm`.
+     */
+    async insertText(sessionId: string, text: string): Promise<boolean> {
+      const staged = text.replace(/[\r\n]+/g, ' ').trim()
+      if (!staged) return false
+      if (typeof window === 'undefined' || typeof window.api?.send !== 'function') {
+        return false
+      }
+      const terminalId = await this.ensureTerminal(sessionId)
+      if (!terminalId || this.exitedSessionIds.includes(sessionId)) {
+        return false
+      }
+      const input: TerminalInputEvent = { terminalId, data: staged }
+      window.api.send(SEND_CHANNELS.terminalInput, input)
+      this.focus(sessionId)
+      return true
+    },
+
+    /**
+     * Sends raw `data` to the session's PTY, ensuring a live (restarted if exited) shell
+     * and returning focus to `.xterm`. Returns `true` only when input was actually written.
+     */
+    async write(sessionId: string, data: string): Promise<boolean> {
+      if (!data) return false
+      if (typeof window === 'undefined' || typeof window.api?.send !== 'function') {
+        return false
+      }
+      const terminalId = await this.ensureTerminal(sessionId)
+      if (!terminalId || this.exitedSessionIds.includes(sessionId)) {
+        return false
+      }
+      const input: TerminalInputEvent = { terminalId, data }
+      window.api.send(SEND_CHANNELS.terminalInput, input)
+      this.focus(sessionId)
+      return true
     },
 
     /**

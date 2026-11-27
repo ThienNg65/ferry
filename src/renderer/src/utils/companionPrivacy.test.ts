@@ -188,4 +188,74 @@ describe('companionPrivacy', () => {
     expect(out.text).not.toContain('Documents/id_rsa')
     expect(out.text).not.toContain('AAAAb3BlbnNzaC1rZXktdjE=')
   })
+
+  it('fixes strict-mode leaks for multi-hyphen hostnames, space-containing paths, env secrets, JWTs, and DB URLs', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV'
+    const raw = [
+      'Hosts: prod-web-01, us-east-1, prod-api-02',
+      'Paths: C:\\Program Files\\My App\\secret.key and C:\\Users\\John Doe\\.ssh\\id_rsa',
+      'POSIX: /Users/John Doe/.ssh/id_rsa',
+      'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI DB_PASSWORD_HASH=hash999 TOKEN_VALUE=tok888 DB_PASS=mysecret',
+      `JWT=${jwt}`,
+      'DB: postgres://db.internal:5432/prod_db and redis://cache.internal:6379/0'
+    ].join('\n')
+
+    const out = redactSensitiveText(raw)
+    for (const leaked of [
+      'prod-web-01',
+      'us-east-1',
+      'prod-api-02',
+      'Program Files',
+      'My App',
+      'secret.key',
+      'John Doe',
+      'wJalrXUtnFEMI',
+      'hash999',
+      'tok888',
+      'mysecret',
+      jwt,
+      'postgres://db.internal:5432/prod_db',
+      'redis://cache.internal:6379/0'
+    ]) {
+      expect(out.text).not.toContain(leaked)
+    }
+  })
+
+  it('preserves safe OS paths, exception namespaces, and process names in diagnostic mode while redacting secrets and IPs', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig12345'
+    const raw = [
+      'Log /var/log/nginx/error.log and /etc/nginx/nginx.conf and /config/app.yml',
+      'Exception: java.lang.OutOfMemoryError at com.acme.billing.InvoiceWorker.run',
+      'Processes: worker-0 kworker-0 php-fpm8 nginx-1.24',
+      'Secrets: AWS_SECRET_ACCESS_KEY=topsecret123 IP 10.24.5.19 user@prod.example.com',
+      `Token ${jwt} and postgres://db.internal:5432/prod_db`,
+      'Home key: C:\\Users\\John Doe\\.ssh\\id_rsa and /home/alice/.ssh/id_ed25519'
+    ].join('\n')
+
+    const out = redactSensitiveText(raw, { mode: 'diagnostic' })
+    for (const preserved of [
+      '/var/log/nginx/error.log',
+      '/etc/nginx/nginx.conf',
+      '/config/app.yml',
+      'java.lang.OutOfMemoryError',
+      'com.acme.billing.InvoiceWorker.run',
+      'worker-0',
+      'kworker-0',
+      'php-fpm8',
+      'nginx-1.24'
+    ]) {
+      expect(out.text).toContain(preserved)
+    }
+    for (const redacted of [
+      'topsecret123',
+      '10.24.5.19',
+      'user@prod.example.com',
+      jwt,
+      'postgres://db.internal:5432/prod_db',
+      'John Doe',
+      '/home/alice/.ssh/id_ed25519'
+    ]) {
+      expect(out.text).not.toContain(redacted)
+    }
+  })
 })

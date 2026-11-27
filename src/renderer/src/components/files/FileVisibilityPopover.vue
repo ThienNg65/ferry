@@ -100,10 +100,11 @@ function onClear(): void {
 const triggerHostRef = ref<HTMLElement | null>(null)
 const ui = useUiStore()
 
-function onOpenFiltersEvent(): void {
+function onOpenFiltersEvent(e: Event): void {
   if (props.disabled) return
   const pane = triggerHostRef.value?.closest('[data-pane]')?.getAttribute('data-pane')
-  const preferred = ui.showLocalPane ? ui.activePane : 'remote'
+  const requestedPane = (e as CustomEvent<{ pane?: 'local' | 'remote' }>).detail?.pane
+  const preferred = requestedPane ?? (ui.showLocalPane ? ui.activePane : 'remote')
   if (!pane || pane === preferred) {
     open.value = true
   }

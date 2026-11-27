@@ -207,9 +207,19 @@ function deletionPath(relPath: string): string {
 
 function askCompanionAboutSync(): void {
   if (!preFlight.value || preFlight.value.warnings.length === 0) return
+  const currentPlan = plan.value
+  const dir = approval.value?.options.direction ?? 'push'
+  const summaryParts: string[] = [
+    `direction: ${dir}`,
+    `toTransfer: ${currentPlan?.toTransfer.length ?? 0}`,
+    `toDelete: ${currentPlan?.toDelete.length ?? 0}`
+  ]
+  if (preFlight.value.sensitiveFiles.length > 0) {
+    summaryParts.push(`flaggedSecrets: ${preFlight.value.sensitiveFiles.slice(0, 10).join(', ')}`)
+  }
   companion.openPanel('chat')
   void companion.ask(
-    `Review this folder sync pre-flight warning (${approval.value?.options.direction ?? 'push'}): ${preFlight.value.warnings.join(' ')}`
+    `Review this folder sync pre-flight check (${summaryParts.join('; ')}). Warnings: ${preFlight.value.warnings.join(' ')}`
   )
 }
 

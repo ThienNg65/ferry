@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { INVOKE_CHANNELS, type FileEntry } from '@shared/contract'
 import { invoke } from '../api'
+import { useCompanionStore } from '../stores/companion.store'
 import { useLocalFsStore } from '../stores/localFs.store'
 import { useMonitorStore } from '../stores/monitor.store'
 import { useRemoteFsStore } from '../stores/remoteFs.store'
@@ -24,6 +25,7 @@ export interface TransferIntent {
 }
 
 export function useTransferIntents() {
+  const companion = useCompanionStore()
   const localFs = useLocalFsStore()
   const remoteFs = useRemoteFsStore()
   const sessions = useSessionsStore()
@@ -86,7 +88,7 @@ export function useTransferIntents() {
   async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
     if (intents.length === 0) return
     const preFlight = evaluateTransferPreFlight(intents, monitor.latest?.disk)
-    if (preFlight.warnings.length > 0) {
+    if (preFlight.warnings.length > 0 && !companion.quietMode) {
       const proceed = await confirm({
         title: 'Ferry Companion — Pre-Flight Safety Check',
         body: preFlight.warnings.join('\n\n'),
