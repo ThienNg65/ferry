@@ -1,5 +1,10 @@
 import { ref } from 'vue'
-import { INVOKE_CHANNELS, type FileEntry } from '@shared/contract'
+import {
+  INVOKE_CHANNELS,
+  type FileEntry,
+  type LocalUploadScanResult,
+  type MonitorDiskUsage
+} from '@shared/contract'
 import { invoke } from '../api'
 import { useCompanionStore } from '../stores/companion.store'
 import { useLocalFsStore } from '../stores/localFs.store'
@@ -87,7 +92,30 @@ export function useTransferIntents() {
 
   async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
     if (intents.length === 0) return
-    const preFlight = evaluateTransferPreFlight(intents, monitor.latest?.disk)
+    const uploads = intents.filter((i) => i.direction === 'upload')
+    let nestedScan: LocalUploadScanResult | null = null
+    let remoteDisk: MonitorDiskUsage | null | undefined = monitor.latest?.disk
+
+    if (uploads.length > 0 && !companion.quietMode) {
+      const dirPaths = uploads.filter((u) => u.isDir).map((u) => u.localPath)
+      const firstUpload = uploads[0]
+      const targetDir = firstUpload.remotePath.slice(0, Math.max(1, firstUpload.remotePath.lastIndexOf('/'))) || remoteFs.currentPath || '/'
+
+      const [scanRes, diskRes] = await Promise.all([
+        dirPaths.length > 0
+          ? invoke<LocalUploadScanResult>(INVOKE_CHANNELS.fsLocalScanUploadPaths, { paths: dirPaths }).catch(() => null)
+          : Promise.resolve(null),
+        firstUpload.sessionId
+          ? invoke<MonitorDiskUsage | null>(INVOKE_CHANNELS.fsRemoteDiskUsage, firstUpload.sessionId, targetDir).catch(() => null)
+          : Promise.resolve(null)
+      ])
+      nestedScan = scanRes
+      if (diskRes) {
+        remoteDisk = diskRes
+      }
+    }
+
+    const preFlight = evaluateTransferPreFlight(intents, remoteDisk, nestedScan)
     if (preFlight.warnings.length > 0 && !companion.quietMode) {
       const proceed = await confirm({
         title: 'Ferry Companion — Pre-Flight Safety Check',

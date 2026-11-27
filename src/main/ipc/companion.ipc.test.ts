@@ -122,7 +122,9 @@ describe('companion.ipc & settingsSetUiPref', () => {
           lastTransferError: 'EACCES',
           logBasename: 'error.log'
         })
-      })
+      }),
+      undefined,
+      expect.objectContaining({ stream: true, onStreamSummary: expect.any(Function) })
     )
 
     const cancelRes = await invoke(INVOKE_CHANNELS.companionAiCancel, { requestId: 'req-1' })

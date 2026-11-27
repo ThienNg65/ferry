@@ -1,5 +1,6 @@
 import {
   DEFAULT_GEMINI_ENDPOINT,
+  EVENT_CHANNELS,
   INVOKE_CHANNELS,
   normalizeGeminiModel,
   type CompanionAiCancelResult,
@@ -8,6 +9,7 @@ import {
   type CompanionAiConfigInfo,
   type CompanionAiIntent,
   type CompanionAiProvider,
+  type CompanionAiStreamEvent,
   type CompanionReleasesResult,
   type CompanionSiteEnvironment,
   type CompanionWorkspaceSignal
@@ -15,6 +17,7 @@ import {
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { AiCompanionService, validateAiEndpoint } from '../companion/AiCompanionService'
 import { ReleaseNotesService } from '../companion/ReleaseNotesService'
+import { host } from '../host/host'
 import { handle } from './envelope'
 import {
   failValidation,
@@ -163,18 +166,34 @@ export function registerCompanionHandlers(): void {
 
     const requestId = sanitizeSignalLine(req.requestId, 128)
 
-    return AiCompanionService.getInstance().chat({
-      requestId,
-      prompt,
-      history: sanitizeHistory(req.history),
-      intent,
-      workspaceSignal: sanitizeWorkspaceSignal(req.workspaceSignal),
-      context: {
-        appVersion: safeSingleLine(ctx?.appVersion, 32),
-        isConnected: Boolean(ctx?.isConnected),
-        theme: safeSingleLine(ctx?.theme, 32)
-      }
-    })
+    return AiCompanionService.getInstance().chat(
+      {
+        requestId,
+        prompt,
+        history: sanitizeHistory(req.history),
+        intent,
+        workspaceSignal: sanitizeWorkspaceSignal(req.workspaceSignal),
+        context: {
+          appVersion: safeSingleLine(ctx?.appVersion, 32),
+          isConnected: Boolean(ctx?.isConnected),
+          theme: safeSingleLine(ctx?.theme, 32)
+        }
+      },
+      undefined,
+      requestId
+        ? {
+            stream: true,
+            onStreamSummary: (summaryText) => {
+              try {
+                const payload: CompanionAiStreamEvent = { requestId, summaryText }
+                host().broadcast(EVENT_CHANNELS.companionAiStream, payload)
+              } catch {
+                // Non-fatal in isolated unit tests without an initialized host.
+              }
+            }
+          }
+        : undefined
+    )
   })
 
   handle<CompanionAiCancelResult>(INVOKE_CHANNELS.companionAiCancel, (payload: unknown) => {

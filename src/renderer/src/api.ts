@@ -38,7 +38,9 @@ const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.companionAiSetConfig,
   INVOKE_CHANNELS.companionAiTest,
   INVOKE_CHANNELS.companionAiChat,
-  INVOKE_CHANNELS.companionAiCancel
+  INVOKE_CHANNELS.companionAiCancel,
+  INVOKE_CHANNELS.fsLocalScanUploadPaths,
+  INVOKE_CHANNELS.fsRemoteDiskUsage
 ])
 
 /**

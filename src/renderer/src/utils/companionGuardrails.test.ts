@@ -63,4 +63,23 @@ describe('companionGuardrails', () => {
     expect(syncCheck.lowDiskWarning).toContain('Upload requires')
     expect(syncCheck.warnings.length).toBe(3)
   })
+
+  it('catches nested secrets inside uploaded folders and reports mountPoint/inode exhaustion', () => {
+    const res = evaluateTransferPreFlight(
+      [{ direction: 'upload', targetName: 'deploy-bundle', sourceSize: 0, isDir: true }],
+      {
+        totalBytes: 100 * 1024 * 1024,
+        usedBytes: 50 * 1024 * 1024,
+        availableBytes: 50 * 1024 * 1024,
+        mountPoint: '/var',
+        inodesTotal: 10_000,
+        inodesUsed: 9_600,
+        inodesAvailable: 400
+      },
+      { relativePaths: ['deploy-bundle/config/.env', 'deploy-bundle/app.js'], totalBytes: 2048 }
+    )
+    expect(res.sensitiveFiles).toEqual(['deploy-bundle/config/.env'])
+    expect(res.lowDiskWarning).toContain('/var')
+    expect(res.lowDiskWarning).toContain('inode usage is 96%')
+  })
 })

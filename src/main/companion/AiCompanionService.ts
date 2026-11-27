@@ -17,6 +17,12 @@ import {
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { readJsonWithLimit } from './httpJson'
+import {
+  consumeSseChunk,
+  extractPartialSummaryField,
+  flushSseCarry,
+  parseGeminiSseEvent
+} from './streamJsonSummary'
 
 export { classifyCommandRisk, DEFAULT_GEMINI_ENDPOINT, DEFAULT_GEMINI_MODEL, escalateCommandRisk }
 
@@ -679,9 +685,95 @@ export class AiCompanionService {
     return first
   }
 
+  private async readSseInteractionText(
+    res: Response,
+    signal: AbortSignal,
+    onStreamSummary?: (summaryText: string) => void
+  ): Promise<{ rawText: string; streamError?: string }> {
+    const reader = res.body?.getReader()
+    if (!reader) {
+      return { rawText: '' }
+    }
+    const decoder = new TextDecoder('utf-8')
+    const sseState = { carry: '' }
+    let rawText = ''
+    let completedFallback = ''
+    let totalBytes = 0
+    let lastEmittedSummary = ''
+    let lastEmitAt = 0
+
+    const emitIfGrown = (force = false): void => {
+      if (!onStreamSummary) return
+      const partial = extractPartialSummaryField(rawText)
+      if (!partial || partial === lastEmittedSummary) return
+      const now = Date.now()
+      if (!force && now - lastEmitAt < 30) return
+      lastEmittedSummary = partial
+      lastEmitAt = now
+      onStreamSummary(partial)
+    }
+
+    const handlePayloads = (payloads: string[]): string | undefined => {
+      for (const payload of payloads) {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(payload) as unknown
+        } catch {
+          continue
+        }
+        const evt = parseGeminiSseEvent(parsed)
+        if (evt.errorMessage) {
+          return evt.errorMessage
+        }
+        if (evt.deltaText) {
+          rawText += evt.deltaText
+          emitIfGrown()
+        }
+        if (evt.completedInteraction) {
+          const fallback = extractGeminiInteractionText(evt.completedInteraction)
+          if (fallback) completedFallback = fallback
+        }
+      }
+      return undefined
+    }
+
+    try {
+      while (true) {
+        if (signal.aborted) {
+          throw signal.reason ?? new Error('Aborted')
+        }
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          totalBytes += value.byteLength
+          if (totalBytes > MAX_AI_RESPONSE_BYTES) {
+            throw new Error('AI response exceeded size limit')
+          }
+          const chunk = decoder.decode(value, { stream: true })
+          const streamError = handlePayloads(consumeSseChunk(sseState, chunk))
+          if (streamError) {
+            return { rawText, streamError }
+          }
+        }
+      }
+      const tail = decoder.decode()
+      if (tail) {
+        const streamError = handlePayloads(consumeSseChunk(sseState, tail))
+        if (streamError) return { rawText, streamError }
+      }
+      const flushError = handlePayloads(flushSseCarry(sseState))
+      if (flushError) return { rawText, streamError: flushError }
+      emitIfGrown(true)
+      return { rawText: rawText.trim() ? rawText : completedFallback }
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
   async chat(
     request: CompanionAiChatRequest,
-    overrideConfig?: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']>
+    overrideConfig?: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']>,
+    options?: { stream?: boolean; onStreamSummary?: (summaryText: string) => void }
   ): Promise<CompanionAiChatResult> {
     let config: ReturnType<AppSettingsStore['getDecryptedCompanionAiConfig']>
     try {
@@ -730,12 +822,30 @@ export class AiCompanionService {
       controller.abort()
     }, this.timeoutMs)
 
+    const wantStream = options?.stream !== false
+
     try {
       if (config.provider === 'gemini') {
         if (!config.apiKey?.trim()) {
           return { ok: false, provider: 'gemini', error: 'Gemini API key is required' }
         }
         const url = buildGeminiInteractionsUrl(endpointUrl)
+        const isGemini4 = /^gemini-4-/i.test(model)
+        const bodyPayload: Record<string, unknown> = {
+          model,
+          system_instruction: systemPrompt,
+          input: fullInput,
+          store: false,
+          ...(wantStream ? { stream: true } : {}),
+          ...(isGemini4 && request.intent === 'command'
+            ? { generation_config: { thinking_level: 'low' } }
+            : {}),
+          response_format: {
+            type: 'text',
+            mime_type: 'application/json',
+            schema: COMPANION_RESPONSE_SCHEMA
+          }
+        }
         const res = await this.fetchWithRetry(
           url,
           {
@@ -744,20 +854,11 @@ export class AiCompanionService {
             signal: controller.signal,
             headers: {
               'Content-Type': 'application/json',
+              Accept: wantStream ? 'text/event-stream, application/json' : 'application/json',
               'x-goog-api-key': config.apiKey,
               'Api-Revision': GEMINI_API_REVISION
             },
-            body: JSON.stringify({
-              model,
-              system_instruction: systemPrompt,
-              input: fullInput,
-              store: false,
-              response_format: {
-                type: 'text',
-                mime_type: 'application/json',
-                schema: COMPANION_RESPONSE_SCHEMA
-              }
-            })
+            body: JSON.stringify(bodyPayload)
           },
           controller.signal
         )
@@ -768,6 +869,21 @@ export class AiCompanionService {
             provider: 'gemini',
             error: detail ? `Gemini API HTTP ${res.status}: ${detail}` : `Gemini API returned HTTP ${res.status}`
           }
+        }
+        const contentType = res.headers?.get?.('content-type')?.toLowerCase() ?? ''
+        if (contentType.includes('text/event-stream') && res.body) {
+          const { rawText, streamError } = await this.readSseInteractionText(
+            res,
+            controller.signal,
+            options?.onStreamSummary
+          )
+          if (streamError) {
+            return { ok: false, provider: 'gemini', error: sanitizeErrorMessage(new Error(streamError), config.apiKey) }
+          }
+          if (!rawText.trim()) {
+            return { ok: false, provider: 'gemini', error: 'Empty response from Gemini API' }
+          }
+          return buildTextSuccessResult('gemini', rawText)
         }
         const data = await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES, 'AI response exceeded size limit')
         const rawText = extractGeminiInteractionText(data)
@@ -784,6 +900,7 @@ export class AiCompanionService {
       const url = buildFerryProChatUrl(endpointUrl)
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        Accept: wantStream ? 'text/event-stream, application/json' : 'application/json',
         Authorization: `Bearer ${config.apiKey}`
       }
       const res = await this.fetchWithRetry(
@@ -800,7 +917,8 @@ export class AiCompanionService {
             history,
             workspaceSignal,
             context: request.context,
-            schema: COMPANION_RESPONSE_SCHEMA
+            schema: COMPANION_RESPONSE_SCHEMA,
+            ...(wantStream ? { stream: true } : {})
           })
         },
         controller.signal
@@ -812,6 +930,21 @@ export class AiCompanionService {
           provider: 'ferry-pro',
           error: detail ? `Ferry Pro AI HTTP ${res.status}: ${detail}` : `Ferry Pro AI returned HTTP ${res.status}`
         }
+      }
+      const contentType = res.headers?.get?.('content-type')?.toLowerCase() ?? ''
+      if (contentType.includes('text/event-stream') && res.body) {
+        const { rawText, streamError } = await this.readSseInteractionText(
+          res,
+          controller.signal,
+          options?.onStreamSummary
+        )
+        if (streamError) {
+          return { ok: false, provider: 'ferry-pro', error: sanitizeErrorMessage(new Error(streamError), config.apiKey) }
+        }
+        if (!rawText.trim()) {
+          return { ok: false, provider: 'ferry-pro', error: 'Empty response from Ferry Pro AI' }
+        }
+        return buildTextSuccessResult('ferry-pro', rawText)
       }
       const data = (await readJsonWithLimit(res, MAX_AI_RESPONSE_BYTES, 'AI response exceeded size limit')) as Record<string, unknown>
       const directStructured = normalizeStructuredOutput(data?.structured)
@@ -882,7 +1015,8 @@ export class AiCompanionService {
         history: [],
         context: { appVersion: 'test', isConnected: false, theme: 'neutral' }
       },
-      overrideConfig
+      overrideConfig,
+      { stream: false }
     )
   }
 }

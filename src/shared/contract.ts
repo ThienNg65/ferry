@@ -814,6 +814,42 @@ export interface MonitorStartRequest {
   intervalMs?: number
 }
 
+/** Disk usage (bytes + optional mount point & inode stats) from `df -Pk` / `df -Pi`. */
+export interface MonitorDiskUsage {
+  totalBytes: number
+  usedBytes: number
+  availableBytes: number
+  mountPoint?: string
+  inodesTotal?: number
+  inodesUsed?: number
+  inodesAvailable?: number
+}
+
+/** Capped recursive local folder scan result for upload pre-flight safety & size checks. */
+export interface LocalUploadScanResult {
+  relativePaths: string[]
+  totalBytes: number
+  truncated: boolean
+}
+
+export type RemoteInitSystem = 'systemd' | 'openrc' | 'sysvinit' | 'launchd' | 'unknown'
+
+/** Automatically probed remote host OS, distro, shell, and init system metadata. */
+export interface RemoteHostInfo {
+  os: string
+  distro?: string
+  kernel?: string
+  arch?: string
+  shell?: string
+  initSystem: RemoteInitSystem
+}
+
+/** Push-event payload for `session:host-info`. */
+export interface SessionHostInfoEvent {
+  sessionId: string
+  info: RemoteHostInfo
+}
+
 /**
  * One remote resource sample (Monitor dock tab). `cpu` is null on the very
  * first tick after a (re)start — CPU% needs two consecutive /proc/stat
@@ -843,11 +879,7 @@ export interface MonitorSample {
     usedBytes: number
   }
   /** Root filesystem ("/") usage — null if `df` failed/unavailable (not fatal, unlike a missing /proc/stat). */
-  disk: {
-    totalBytes: number
-    usedBytes: number
-    availableBytes: number
-  } | null
+  disk: MonitorDiskUsage | null
   /** Top processes by combined CPU+RAM score, capped at MAX_PROCESSES — see procParse.ts's capProcesses. */
   processes: MonitorProcessSample[]
   /** Full process count before capping, so the UI can show "showing top N of M". */
@@ -861,6 +893,8 @@ export interface MonitorProcessSample {
   pid: number
   /** comm — process name, truncated to 15 chars by the kernel like `ps`/`top` show. */
   name: string
+  /** Optional truncated `/proc/[pid]/cmdline` for top hot processes. */
+  cmdline?: string
   /** 0–100, on the same scale as MonitorSample.cpu.aggregatePct — null until a second consecutive sample exists for this pid. */
   cpuPct: number | null
   rssBytes: number
@@ -1116,8 +1150,10 @@ export const INVOKE_CHANNELS = {
   fsLocalStageDropFinish: 'fs:local:stage-drop-finish',
   fsLocalStageDropAbort: 'fs:local:stage-drop-abort',
   fsLocalCleanupStagedDrop: 'fs:local:cleanup-staged-drop',
+  fsLocalScanUploadPaths: 'fs:local:scanUploadPaths',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
+  fsRemoteDiskUsage: 'fs:remote:diskUsage',
   fsRemoteMkdir: 'fs:remote:mkdir',
   fsLocalTouch: 'fs:local:touch',
   fsRemoteTouch: 'fs:remote:touch',
@@ -1217,13 +1253,24 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen'
 export const GEMINI_MODEL_OPTIONS = [
   'gemini-4-hydrogen',
   'gemini-3.5-flash-lite',
-  'gemini-4-argon'
+  'gemini-3.8-flash',
+  'gemini-4-argon',
+  'gemini-4-neon',
+  'gemini-4-carbon'
 ] as const
 
-/** Upgrades deprecated legacy Gemini 1.5/2.0/2.5 model identifiers to current gemini-4-hydrogen. */
+/**
+ * Upgrades empty or retired/retiring legacy Gemini models (1.0, 1.5, 2.0, 2.5-pro, 2.5-flash)
+ * to current `gemini-4-hydrogen`, while preserving still-active `gemini-2.5-flash-lite` and all 3.x/4.x models.
+ */
 export function normalizeGeminiModel(raw: string): string {
   const trimmed = raw.trim()
-  if (!trimmed || /^gemini-(?:1\.5|2\.0|2\.5)-/i.test(trimmed)) {
+  if (
+    !trimmed ||
+    /^gemini-(?:1\.0|1\.5|2\.0)-/i.test(trimmed) ||
+    /^gemini-2\.5-pro(?:$|-)/i.test(trimmed) ||
+    /^gemini-2\.5-flash(?!-lite(?:$|-))(?:$|-)/i.test(trimmed)
+  ) {
     return DEFAULT_GEMINI_MODEL
   }
   return trimmed
@@ -1409,6 +1456,12 @@ export interface CompanionAiCancelResult {
   cancelled: boolean
 }
 
+export interface CompanionAiStreamEvent {
+  requestId: string
+  /** Full accumulated clean summary text so far. */
+  summaryText: string
+}
+
 export interface CompanionAiChatResult {
   ok: boolean
   text?: string
@@ -1465,6 +1518,7 @@ export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
 export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   sessionProgress: 'session:progress',
+  sessionHostInfo: 'session:host-info',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   hostKeyPrompt: 'session:host-key-prompt',
   transferEvent: 'transfer:event',
@@ -1481,7 +1535,8 @@ export const EVENT_CHANNELS = {
   windowStateChange: 'window:state-change',
   updateAvailable: 'update:available',
   updateDownloaded: 'update:downloaded',
-  updateStatus: 'update:status'
+  updateStatus: 'update:status',
+  companionAiStream: 'companion:ai:stream'
 } as const
 
 export const SEND_CHANNELS = {

@@ -887,7 +887,7 @@ async function saveNetwork(): Promise<void> {
                         <UBadge color="neutral" variant="outline" size="xs">Ultra · Team · Enterprise (Under Construction)</UBadge>
                       </div>
                       <p class="mt-1 text-2xs text-muted">
-                        Free includes local Snippets, Command History, offline commands, and unlimited BYO Google AI Studio Gemini keys. Pro adds managed proxy routing plus workspace log &amp; monitor diagnostics. Prompts are locally redacted before transit.
+                        Starter (Free) includes local Snippets, Command History, Pre-Flight Safety Guardrails, and unlimited BYO Google AI Studio Gemini keys (unlocking full AI Chat, Explain This Log, Diagnose Spike, and Action Cards). Pro adds a turnkey Managed AI Proxy with zero API-key setup. Prompts are locally redacted before transit.
                       </p>
                     </div>
                   </div>

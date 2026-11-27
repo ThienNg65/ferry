@@ -12,6 +12,7 @@ import type { CompanionActionChip } from '../../utils/companionEngine'
 import { classifyCommandRisk } from '../../utils/companionSnippets'
 import { COMPANION_TOUR_STEPS } from '../../utils/companionTour'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import { trapTabWithinElement } from '../../composables/useDialogFocusTrap'
 import CompanionAvatar from './CompanionAvatar.vue'
 import CompanionIssueForm from './CompanionIssueForm.vue'
 
@@ -30,7 +31,7 @@ const subtitle = computed(() => {
 })
 
 function isRevealing(msg: { id: string }): boolean {
-  return companion.reveal?.messageId === msg.id
+  return companion.reveal?.messageId === msg.id || companion.streamingMessageId === msg.id
 }
 function displayText(msg: { id: string; text: string }): string {
   const r = companion.reveal
@@ -183,13 +184,21 @@ watch(
   }
 )
 
+function onPanelTabKeydown(e: KeyboardEvent): void {
+  if (!companion.open || prefsOpen.value || pendingRunCard.value) return
+  if (document.querySelector('[role="dialog"]:not([data-state="closed"]):not([data-companion-panel])')) {
+    return
+  }
+  trapTabWithinElement(e, panelRef.value)
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !companion.open) return
   if (e.target instanceof HTMLElement && e.target.closest('.xterm')) return
   if (prefsOpen.value || pendingRunCard.value) {
     return
   }
-  if (document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
+  if (document.querySelector('[role="dialog"]:not([data-state="closed"]):not([data-companion-panel])')) {
     return
   }
   e.preventDefault()
@@ -395,7 +404,8 @@ function openFullNotes(url?: string): void {
       v-if="companion.open"
       ref="panelRef"
       tabindex="-1"
-      role="complementary"
+      role="dialog"
+      aria-modal="true"
       aria-label="Ferry Companion"
       class="pointer-events-auto fixed top-9 right-0 bottom-0 z-[60] flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none"
       :class="
@@ -404,6 +414,7 @@ function openFullNotes(url?: string): void {
           : 'bg-default'
       "
       data-companion-panel
+      @keydown.tab="onPanelTabKeydown"
     >
       <!-- Header -->
       <div class="flex items-center justify-between gap-2 border-b border-muted px-3 py-2 select-none">

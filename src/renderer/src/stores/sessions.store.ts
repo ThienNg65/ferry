@@ -7,7 +7,9 @@ import type {
   HostKeyPromptEvent,
   KeyboardInteractiveRequestEvent,
   QuickConnectInput,
+  RemoteHostInfo,
   Site,
+  SessionHostInfoEvent,
   SessionOpenResult,
   SessionStatus,
   SessionStatusEvent,
@@ -15,6 +17,7 @@ import type {
 } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { useCompanionStore } from './companion.store'
 import { useLocalFsStore } from './localFs.store'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
@@ -142,6 +145,8 @@ export interface SessionTab {
   pendingHostKeyMismatch: PendingHostKeyMismatch | null
   /** Sanitized Quick Connect parameters (secrets stripped) for promoting an active Quick Connect session to a saved site. */
   quickConnectInput?: Omit<QuickConnectInput, 'password' | 'passphrase'>
+  /** Automatically probed remote OS/distro/shell/init metadata for this connected session. */
+  remoteHostInfo?: RemoteHostInfo | null
 }
 
 type ConnectRequest = { siteId: string } | { quickConnect: QuickConnectInput }
@@ -162,6 +167,7 @@ interface SessionsState {
   recentQuickConnects: RecentQuickConnect[]
   unsubscribeStatus: (() => void) | null
   unsubscribeProgress: (() => void) | null
+  unsubscribeHostInfo: (() => void) | null
   unsubscribeKeyboardInteractive: (() => void) | null
   /** Per-session queue of live keyboard-interactive (2FA/OTP) prompts so concurrent tab connects never overwrite each other. */
   pendingKeyboardPrompts: KeyboardInteractiveRequestEvent[]
@@ -199,6 +205,7 @@ export const useSessionsStore = defineStore('sessions', {
       recentQuickConnects: loadRecentQuickConnects(),
       unsubscribeStatus: null,
       unsubscribeProgress: null,
+      unsubscribeHostInfo: null,
       unsubscribeKeyboardInteractive: null,
       pendingKeyboardPrompts: [],
       unsubscribeHostKey: null,
@@ -313,12 +320,27 @@ export const useSessionsStore = defineStore('sessions', {
         tab.statusMessage = evt.message ?? null
         if (wasConnected && evt.status === 'error') {
           notify.error('Connection lost', tab.label ? `${tab.label}: ${evt.message ?? ''}` : evt.message)
+          try {
+            useCompanionStore().notifyWorkspaceError({
+              scopeKey: evt.sessionId,
+              category: 'ssh-connect',
+              hostLabel: tab.hostLabel ?? tab.label ?? undefined,
+              error: evt.message || 'SSH connection dropped unexpectedly'
+            })
+          } catch {
+            // Non-fatal in isolated store tests.
+          }
         }
       })
       this.unsubscribeProgress = onEvent<SessionProgressEvent>(EVENT_CHANNELS.sessionProgress, (evt) => {
         const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
         if (!tab) return
         tab.progressMessages.push(evt.message)
+      })
+      this.unsubscribeHostInfo = onEvent<SessionHostInfoEvent>(EVENT_CHANNELS.sessionHostInfo, (evt) => {
+        const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
+        if (!tab) return
+        tab.remoteHostInfo = evt.info
       })
     },
 
@@ -432,6 +454,7 @@ export const useSessionsStore = defineStore('sessions', {
       tab.progressMessages = []
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
+      tab.remoteHostInfo = null
       tab.label = label
       tab.hostLabel = hostLabel
       tab.siteId = siteId
@@ -515,6 +538,25 @@ export const useSessionsStore = defineStore('sessions', {
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
         tab.preConnectSnapshot = null
+        const errMsg = tab.statusMessage
+        const category =
+          e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH'
+            ? 'host-key'
+            : /\b(proxy|socks5?)\b/i.test(errMsg)
+              ? 'proxy'
+              : /\b(jump\s*host|bastion|hop\s*\d)\b/i.test(errMsg)
+                ? 'bastion'
+                : 'ssh-connect'
+        try {
+          useCompanionStore().notifyWorkspaceError({
+            scopeKey: tab.tabId,
+            category,
+            hostLabel: hostLabel || label,
+            error: errMsg
+          })
+        } catch {
+          // Non-fatal in isolated store tests.
+        }
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
           tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId, hostKey: e.hostKey }
         } else {
@@ -730,6 +772,7 @@ export const useSessionsStore = defineStore('sessions', {
       tab.connectPromise = null
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
+      tab.remoteHostInfo = null
       tab.preConnectSnapshot = null
       if (sid) {
         try {

@@ -4,6 +4,7 @@ import { ref } from 'vue'
 const props = defineProps<{
   title: string
   body?: string
+  prodWarning?: string
   items?: string[]
   confirmLabel?: string
   confirmColor?: 'primary' | 'error' | 'warning'
@@ -67,6 +68,16 @@ async function onConfirm(event?: MouseEvent): Promise<void> {
   >
     <template #body>
       <div class="flex flex-col gap-3">
+        <UAlert
+          v-if="prodWarning"
+          data-confirm-prod-warning
+          role="alert"
+          color="error"
+          variant="soft"
+          icon="i-lucide-shield-alert"
+          title="Production Environment"
+          :description="prodWarning"
+        />
         <p v-if="body" class="text-sm text-default">{{ body }}</p>
         <ul v-if="items?.length" class="flex max-h-60 flex-col gap-1 overflow-y-auto rounded-md bg-muted p-2">
           <li v-for="item in items" :key="item" class="break-all text-xs text-default">{{ item }}</li>

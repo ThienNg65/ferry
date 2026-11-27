@@ -2,6 +2,10 @@ export interface RemoteDiskSnapshot {
   totalBytes: number
   usedBytes: number
   availableBytes: number
+  mountPoint?: string
+  inodesTotal?: number
+  inodesUsed?: number
+  inodesAvailable?: number
 }
 
 const SAFE_ENV_TEMPLATE_RE = /^\.env\.(?:example|sample|template|dist)$/i
@@ -30,12 +34,19 @@ export function isSensitiveSecretFilename(nameOrPath: string): boolean {
 
 function checkRemoteDiskRisk(incomingBytes: number, remoteDisk?: RemoteDiskSnapshot | null): string | null {
   if (!remoteDisk || remoteDisk.totalBytes <= 0) return null
+  const mount = remoteDisk.mountPoint || '/'
   const usedPct = Math.round((remoteDisk.usedBytes / remoteDisk.totalBytes) * 100)
   if (incomingBytes > 0 && incomingBytes > remoteDisk.availableBytes) {
-    return `Upload requires ${formatCompactBytes(incomingBytes)}, but the remote filesystem only reports ${formatCompactBytes(remoteDisk.availableBytes)} free (${usedPct}% full).`
+    return `Upload requires ${formatCompactBytes(incomingBytes)}, but the remote filesystem (${mount}) only reports ${formatCompactBytes(remoteDisk.availableBytes)} free (${usedPct}% full).`
   }
   if (usedPct >= 95) {
-    return `Remote root filesystem is ${usedPct}% full (${formatCompactBytes(remoteDisk.availableBytes)} free).`
+    return `Remote filesystem (${mount}) is ${usedPct}% full (${formatCompactBytes(remoteDisk.availableBytes)} free).`
+  }
+  if (remoteDisk.inodesTotal && remoteDisk.inodesTotal > 0 && remoteDisk.inodesUsed !== undefined) {
+    const inodePct = Math.round((remoteDisk.inodesUsed / remoteDisk.inodesTotal) * 100)
+    if (inodePct >= 95) {
+      return `Remote filesystem (${mount}) inode usage is ${inodePct}% (${remoteDisk.inodesAvailable ?? 0} free inodes).`
+    }
   }
   return null
 }
@@ -47,19 +58,37 @@ export interface TransferPreFlightResult {
 }
 
 export function evaluateTransferPreFlight(
-  intents: ReadonlyArray<{ direction: 'upload' | 'download'; targetName: string; sourceSize: number | null }>,
-  remoteDisk?: RemoteDiskSnapshot | null
+  intents: ReadonlyArray<{ direction: 'upload' | 'download'; targetName: string; sourceSize: number | null; isDir?: boolean }>,
+  remoteDisk?: RemoteDiskSnapshot | null,
+  nestedUploadScan?: { relativePaths: readonly string[]; totalBytes: number } | null
 ): TransferPreFlightResult {
   const uploads = intents.filter((i) => i.direction === 'upload')
   if (uploads.length === 0) {
     return { warnings: [], sensitiveFiles: [], lowDiskWarning: null }
   }
 
-  const sensitiveFiles = uploads
-    .map((u) => u.targetName)
-    .filter((name) => isSensitiveSecretFilename(name))
+  const seenSensitive = new Set<string>()
+  const sensitiveFiles: string[] = []
+  const recordIfSensitive = (nameOrPath: string): void => {
+    if (isSensitiveSecretFilename(nameOrPath) && !seenSensitive.has(nameOrPath)) {
+      seenSensitive.add(nameOrPath)
+      sensitiveFiles.push(nameOrPath)
+    }
+  }
+  for (const u of uploads) {
+    recordIfSensitive(u.targetName)
+  }
+  if (nestedUploadScan?.relativePaths) {
+    for (const rel of nestedUploadScan.relativePaths) {
+      recordIfSensitive(rel)
+    }
+  }
 
-  const knownUploadBytes = uploads.reduce((sum, u) => sum + (u.sourceSize && u.sourceSize > 0 ? u.sourceSize : 0), 0)
+  const fileUploadBytes = uploads.reduce(
+    (sum, u) => sum + (!u.isDir && u.sourceSize && u.sourceSize > 0 ? u.sourceSize : 0),
+    0
+  )
+  const knownUploadBytes = fileUploadBytes + (nestedUploadScan && nestedUploadScan.totalBytes > 0 ? nestedUploadScan.totalBytes : 0)
   const lowDiskWarning = checkRemoteDiskRisk(knownUploadBytes, remoteDisk)
 
   const warnings: string[] = []
