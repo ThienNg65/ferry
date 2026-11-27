@@ -33,7 +33,23 @@ export function compareSemver(a: string, b: string): number {
   if (pa.prerelease === pb.prerelease) return 0
   if (!pa.prerelease) return 1
   if (!pb.prerelease) return -1
-  return pa.prerelease.localeCompare(pb.prerelease)
+  return comparePrerelease(pa.prerelease, pb.prerelease)
+}
+
+/** SemVer 11.4: dot-separated identifiers; numeric ones compare numerically and rank below alphanumeric ones. */
+function comparePrerelease(a: string, b: string): number {
+  const as = a.split('.')
+  const bs = b.split('.')
+  for (let i = 0; i < Math.min(as.length, bs.length); i++) {
+    const [x, y] = [as[i], bs[i]]
+    if (x === y) continue
+    const xNum = /^\d+$/.test(x)
+    const yNum = /^\d+$/.test(y)
+    if (xNum && yNum) return Number(x) - Number(y)
+    if (xNum !== yNum) return xNum ? -1 : 1
+    return x < y ? -1 : 1
+  }
+  return as.length - bs.length
 }
 
 export type VersionTransition = 'first-run' | 'upgraded' | 'same' | 'downgraded' | 'invalid'

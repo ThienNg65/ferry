@@ -8,6 +8,11 @@ describe('companionVersion', () => {
     expect(compareSemver('1.3.0', '1.3.0')).toBe(0)
     expect(compareSemver('1.2.9', '1.3.0')).toBeLessThan(0)
     expect(compareSemver('1.3.0', '1.3.0-beta.1')).toBeGreaterThan(0)
+    // SemVer 11.4: numeric identifiers compare numerically, numeric < alphanumeric, shorter set < longer
+    expect(compareSemver('1.3.0-beta.10', '1.3.0-beta.2')).toBeGreaterThan(0)
+    expect(compareSemver('1.3.0-alpha.1', '1.3.0-alpha.beta')).toBeLessThan(0)
+    expect(compareSemver('1.3.0-alpha', '1.3.0-alpha.1')).toBeLessThan(0)
+    expect(compareSemver('1.3.0-rc.1', '1.3.0-beta.11')).toBeGreaterThan(0)
   })
 
   it('classifies clean install as first-run without upgrade announcement', () => {
