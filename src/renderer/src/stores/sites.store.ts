@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { ImportedSessionCandidate, Site, SiteInput } from '@shared/contract'
+import type { ExportSshConfigRequest, ExportSshConfigResult, ImportedSessionCandidate, Site, SiteInput } from '@shared/contract'
 import { invoke } from '../api'
 
 /** Defaults the site name to the hostname when the user leaves it blank. */
@@ -110,6 +110,11 @@ export const useSitesStore = defineStore('sites', {
     /** Scans WinSCP/PuTTY's saved sessions (Windows only) — read-only, does not create anything. */
     async scanImportCandidates(): Promise<ImportedSessionCandidate[]> {
       return invoke<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan)
+    },
+
+    /** Serializes selected (or all) saved sites to standard OpenSSH config syntax without secrets. */
+    async exportSshConfig(req?: ExportSshConfigRequest): Promise<ExportSshConfigResult> {
+      return invoke<ExportSshConfigResult>(INVOKE_CHANNELS.sitesExportSshConfig, req)
     }
   }
 })

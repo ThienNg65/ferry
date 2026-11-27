@@ -24,6 +24,7 @@ declare module 'vue' {
     ConfirmDialog: typeof import('./src/components/shell/ConfirmDialog.vue')['default']
     ConnectionModals: typeof import('./src/components/sessions/ConnectionModals.vue')['default']
     EditorDialog: typeof import('./src/components/files/EditorDialog.vue')['default']
+    ExportSshConfigDialog: typeof import('./src/components/sessions/ExportSshConfigDialog.vue')['default']
     FerryLogo: typeof import('./src/components/shell/FerryLogo.vue')['default']
     FileDiffModal: typeof import('./src/components/files/FileDiffModal.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
