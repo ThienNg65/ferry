@@ -137,7 +137,7 @@ async function importSelected(): Promise<void> {
           variant="soft"
           icon="i-lucide-info"
           title="Passwords aren't imported"
-          description="WinSCP/PuTTY don't store passwords in a form Ferry can safely decode — set one after import if the site needs it."
+          description="WinSCP/PuTTY don't store passwords in a form Ferry can safely decode. Set one after import if the site needs it."
         />
 
         <div v-if="loading" role="status" aria-live="polite" class="py-4 text-center text-xs text-muted">
@@ -177,7 +177,7 @@ async function importSelected(): Promise<void> {
                 <div class="truncate text-sm font-medium text-highlighted">{{ row.candidate.name }}</div>
                 <div class="truncate text-xs text-muted">
                   {{ row.candidate.username }}@{{ row.candidate.host }}:{{ row.candidate.port }}
-                  <span v-if="row.alreadySaved">— already saved</span>
+                  <span v-if="row.alreadySaved">(already saved)</span>
                 </div>
               </div>
             </li>

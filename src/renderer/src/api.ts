@@ -1,4 +1,9 @@
-import { INVOKE_CHANNELS, type IpcErrorCode, type IpcResult } from '@shared/contract'
+import {
+  INVOKE_CHANNELS,
+  type CompanionAiCancelResult,
+  type IpcErrorCode,
+  type IpcResult
+} from '@shared/contract'
 import { useIpcActivityStore } from './stores/ipcActivity.store'
 
 /** Thrown by {@link invoke} on `{ ok: false }` — carries the stable {@link IpcErrorCode} alongside the message, so callers can branch on failure kind instead of parsing text. */
@@ -27,7 +32,15 @@ const QUIET_CHANNELS = new Set<string>([
   INVOKE_CHANNELS.windowSyncTheme,
   INVOKE_CHANNELS.windowGetDisplays,
   INVOKE_CHANNELS.updateGetStatus,
-  INVOKE_CHANNELS.settingsSetUiPref
+  INVOKE_CHANNELS.settingsSetUiPref,
+  INVOKE_CHANNELS.companionGetReleases,
+  INVOKE_CHANNELS.companionAiGetConfig,
+  INVOKE_CHANNELS.companionAiSetConfig,
+  INVOKE_CHANNELS.companionAiTest,
+  INVOKE_CHANNELS.companionAiChat,
+  INVOKE_CHANNELS.companionAiCancel,
+  INVOKE_CHANNELS.fsLocalScanUploadPaths,
+  INVOKE_CHANNELS.fsRemoteDiskUsage
 ])
 
 /**
@@ -128,4 +141,12 @@ export async function invoke<T>(channel: string, ...args: unknown[]): Promise<T>
  */
 export function onEvent<T>(channel: string, cb: (payload: T) => void): () => void {
   return window.api.on(channel, (payload: unknown) => cb(payload as T))
+}
+
+/** Cancels an in-flight Companion AI request by id, or all active requests when omitted. */
+export function companionAiCancel(requestId?: string): Promise<CompanionAiCancelResult> {
+  return invoke<CompanionAiCancelResult>(
+    INVOKE_CHANNELS.companionAiCancel,
+    requestId ? { requestId } : {}
+  )
 }

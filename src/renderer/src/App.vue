@@ -22,6 +22,7 @@ import { useDockState } from './composables/useDockState'
 import ShortcutsDialog from './components/shell/ShortcutsDialog.vue'
 import { useNotify } from './composables/useNotify'
 import { useUpdateStore } from './stores/update.store'
+import { useCompanionStore } from './stores/companion.store'
 import SiteTabBar from './components/shell/SiteTabBar.vue'
 import ConnectionModals from './components/sessions/ConnectionModals.vue'
 
@@ -30,6 +31,7 @@ const SettingsDialog = defineAsyncComponent(() => import('./components/shell/Set
 const HistoryDialog = defineAsyncComponent(() => import('./components/history/HistoryDialog.vue'))
 const CommandPalette = defineAsyncComponent(() => import('./components/shell/CommandPalette.vue'))
 const LegalConsentDialog = defineAsyncComponent(() => import('./components/shell/LegalConsentDialog.vue'))
+const CompanionPanel = defineAsyncComponent(() => import('./components/companion/CompanionPanel.vue'))
 
 // Only ever rendered once connected — deferring these keeps their whole
 // subtree (FileList/FileRow/FilePreviewDialog/TransferQueue/TerminalView/...)
@@ -40,6 +42,8 @@ const BottomDock = defineAsyncComponent(() => import('./components/shell/BottomD
 const sessions = useSessionsStore()
 const settingsStore = useSettingsStore()
 const updateStore = useUpdateStore()
+const companion = useCompanionStore()
+const transferQueue = useTransferQueueStore()
 const ui = useUiStore()
 const needsLegalConsent = computed(
   () =>
@@ -57,6 +61,9 @@ const connectionPhase = computed(() => {
 const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
+const effectiveCompanionMode = computed<'split' | 'overlay'>(() =>
+  ui.companionLayoutMode === 'split' && viewportWidth.value >= 1024 && !companion.forceOverlay ? 'split' : 'overlay'
+)
 const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
@@ -64,6 +71,7 @@ window.addEventListener('resize', onWindowResize)
 let disposeWindowBounds: (() => void) | null = null
 onUnmounted(() => {
   disposeWindowBounds?.()
+  companion.disposeTimers()
   unsubscribeUpdateAvailable()
   unsubscribeUpdateDownloaded()
   window.removeEventListener('resize', onWindowResize)
@@ -196,6 +204,21 @@ function onTabShortcut(event: KeyboardEvent): void {
   if (!(event.ctrlKey || event.metaKey) || event.altKey) {
     return
   }
+  if (event.ctrlKey && !event.metaKey && !event.shiftKey && event.code === 'Space') {
+    const target = event.target
+    const typing =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && (target.isContentEditable || target.closest('.xterm') !== null))
+    const inCompanion =
+      companion.open && target instanceof HTMLElement && target.closest('[data-companion-panel]') !== null
+    if ((typing && !inCompanion) || document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
+      return
+    }
+    event.preventDefault()
+    companion.togglePanel()
+    return
+  }
   if (!event.shiftKey && event.code === 'Backquote') {
     if (!isConnected.value || document.querySelector('[role="dialog"]')) {
       return
@@ -301,9 +324,9 @@ watch(
 )
 
 watch(
-  [() => settingsStore.loaded, needsLegalConsent],
-  ([loaded, consentNeeded]) => {
-    if (!loaded || consentNeeded || promoToastShown) return
+  [() => settingsStore.loaded, needsLegalConsent, () => companion.onboarded],
+  ([loaded, consentNeeded, onboarded]) => {
+    if (!loaded || consentNeeded || !onboarded || promoToastShown) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
 
@@ -351,6 +374,59 @@ watch(
   },
   { immediate: true }
 )
+
+// Initialize Ferry Companion lifecycle after legal consent and settings hydration
+// (decoupled from Glass UI promo toast so currentVersion populates immediately on boot).
+watch(
+  [() => settingsStore.loaded, needsLegalConsent],
+  ([loaded, consentNeeded]) => {
+    if (!loaded || consentNeeded || companion.lifecycleInitialized) return
+    const resolveAndInit = async (): Promise<void> => {
+      let version = updateStore.currentVersion
+      if (!version) {
+        try {
+          const res = await invoke<string | { version?: string }>(INVOKE_CHANNELS.systemGetAppVersion)
+          version = typeof res === 'string' ? res : (res?.version ?? '')
+        } catch {
+          version = ''
+        }
+      }
+      if (version) {
+        companion.initLifecycle(version)
+      }
+    }
+    setTimeout(() => {
+      void resolveAndInit()
+    }, 0)
+  },
+  { immediate: true }
+)
+
+// Offer optional, rate-limited troubleshooting help when a transfer transitions into error.
+const transferStateById = new Map<string, string>()
+watch(
+  () => transferQueue.list.map((i) => `${i.transferId}\0${i.state}\0${i.error ?? ''}`),
+  () => {
+    const activeIds = new Set<string>()
+    for (const item of transferQueue.list) {
+      activeIds.add(item.transferId)
+      const prevState = transferStateById.get(item.transferId)
+      transferStateById.set(item.transferId, item.state)
+      if (item.state === 'error' && prevState !== 'error' && item.error) {
+        companion.notifyTransferFailure({
+          sessionId: item.sessionId,
+          direction: item.kind,
+          localPath: item.localPath,
+          remotePath: item.remotePath,
+          error: item.error
+        })
+      }
+    }
+    for (const id of transferStateById.keys()) {
+      if (!activeIds.has(id)) transferStateById.delete(id)
+    }
+  }
+)
 </script>
 
 <template>
@@ -371,7 +447,8 @@ watch(
       :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
     >
       <SiteTabBar />
-      <main class="relative min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+      <main class="relative min-h-0 min-w-0 flex-1">
         <!--
           The connected view is hoisted out of the Transition/v-if instead of toggling with
           v-if/v-else — BottomDock renders TerminalView, which owns long-lived xterm.js
@@ -446,6 +523,8 @@ watch(
           <BottomDock />
         </div>
       </main>
+      <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'split'" mode="split" />
+      </div>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
@@ -453,5 +532,6 @@ watch(
     <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
     <ConnectionModals />
+    <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'overlay'" mode="overlay" />
   </UApp>
 </template>

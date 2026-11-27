@@ -15,6 +15,9 @@ export interface PaneKeyboardContext {
   onTransferSelected: () => Promise<void>
   onOpen: (entry: FileEntry) => void
   confirmDeleteEntries: (entries: FileEntry[]) => Promise<void>
+  onCopySelected?: () => void
+  onPaste?: () => Promise<void>
+  canPaste?: () => boolean
 }
 
 export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent) => Promise<void> {
@@ -25,10 +28,15 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
   return async function onKeydown(event: KeyboardEvent): Promise<void> {
     // Typing in the filter box or the new-folder box must never fall through to pane shortcuts
     // (Delete/Ctrl+A/F2/Ctrl+R) — neither input stops keydown propagation like the rename row does.
+    const target = event.target
     if (
-      event.target instanceof HTMLInputElement ||
-      event.target instanceof HTMLTextAreaElement ||
-      (event.target instanceof HTMLElement && event.target.isContentEditable)
+      (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) ||
+      (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) ||
+      (typeof HTMLSelectElement !== 'undefined' && target instanceof HTMLSelectElement) ||
+      (typeof HTMLElement !== 'undefined' &&
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          Boolean(target.closest?.('.xterm, [role="dialog"], [role="menu"], [role="listbox"]'))))
     ) {
       return
     }
@@ -66,6 +74,20 @@ export function usePaneKeyboard(ctx: PaneKeyboardContext): (event: KeyboardEvent
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
       event.preventDefault()
       ctx.store.selectAll(ctx.filteredEntries.value)
+      return
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c') {
+      const selectedText = typeof window !== 'undefined' ? window.getSelection?.()?.toString() : ''
+      if (selectedText) return
+      if (getVisibleSelected().length === 0) return
+      event.preventDefault()
+      ctx.onCopySelected?.()
+      return
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v') {
+      if (!ctx.canPaste?.()) return
+      event.preventDefault()
+      await ctx.onPaste?.()
       return
     }
     if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {

@@ -3,9 +3,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, shallowMount, type VueWrapper } from '@vue/test-utils'
 import { EVENT_CHANNELS, INVOKE_CHANNELS, type FileEntry, type OperationEvent, type SyncPlan } from '@shared/contract'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { invoke, onEvent } from '../../../api'
+import { invoke, IpcError, onEvent } from '../../../api'
 import type { ConfirmOptions } from '../../../composables/useConfirm'
 import { useBookmarksStore } from '../../../stores/bookmarks.store'
+import { useFileClipboardStore } from '../../../stores/fileClipboard.store'
 import { useLocalFsStore } from '../../../stores/localFs.store'
 import { useRemoteFsStore } from '../../../stores/remoteFs.store'
 import { useSessionsStore } from '../../../stores/sessions.store'
@@ -230,7 +231,7 @@ it.each(['close', 'external editor'])('does not discard newer text with a stale 
   if (action === 'close') {
     wrapper.getComponent({ name: 'UModal' }).vm.$emit('update:open', false)
   } else {
-    await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+    await wrapper.get('button[aria-label="Open in external editor"]').trigger('click')
   }
   await wrapper.get('textarea').setValue('newer edit')
   approval.resolve(true)
@@ -248,7 +249,7 @@ it('keeps the built-in editor open when text changes during external handoff', a
     global: { stubs }
   })
   await flushPromises()
-  await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+  await wrapper.get('button[aria-label="Open in external editor"]').trigger('click')
   expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenExternal, { editId: 'edit' })
   await wrapper.get('textarea').setValue('edit during handoff')
   opened.resolve()
@@ -530,5 +531,122 @@ describe('local file editing', () => {
 
     expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalWriteFile, { path: '/local/notes.txt', content: 'after' })
     expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalList, '/local')
+  })
+})
+
+describe('file clipboard copy and paste routing', () => {
+  it('routes cross-pane local -> remote paste through transfer queue', async () => {
+    const sessions = useSessionsStore()
+    sessions.activeTab.sessionId = 'server-a'
+    sessions.activeTab.status = 'connected'
+    const localFs = useLocalFsStore()
+    localFs.currentPath = '/local'
+    const remoteFs = useRemoteFsStore()
+    remoteFs.ensureBucket('server-a').currentPath = '/remote'
+
+    const localEntry: FileEntry = { name: 'app.tar.gz', path: '/local/app.tar.gz', isDir: false, isSymlink: false, size: 512, modifiedAt: null }
+    const clipboard = useFileClipboardStore()
+    clipboard.copy('local', [localEntry], null)
+
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsRemoteList) return { path: '/remote', entries: [] } as never
+      if (channel === INVOKE_CHANNELS.transferEnqueue) return { transferId: 't-1' } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await flushPromises()
+
+    wrapper.getComponent(FileList).vm.$emit('paste')
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.transferEnqueue, {
+      sessionId: 'server-a',
+      kind: 'upload',
+      localPath: '/local/app.tar.gz',
+      remotePath: '/remote/app.tar.gz',
+      isDir: false
+    })
+    expect(notifyError).not.toHaveBeenCalled()
+  })
+
+  it('refreshes target directory via refreshIfViewing on local paste and suppresses error toast on cancel', async () => {
+    const localFs = useLocalFsStore()
+    localFs.currentPath = '/local'
+    const entry: FileEntry = { name: 'notes.txt', path: '/local/notes.txt', isDir: false, isSymlink: false, size: 10, modifiedAt: null }
+    const clipboard = useFileClipboardStore()
+    clipboard.copy('local', [entry], null)
+
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalCopy) {
+        return { copied: [{ sourcePath: '/local/notes.txt', targetPath: '/local/notes (1).txt' }], failures: [] } as never
+      }
+      if (channel === INVOKE_CHANNELS.fsLocalList) {
+        return { path: '/local', entries: [entry] } as never
+      }
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'local' }, global: { stubs } })
+    await flushPromises()
+
+    wrapper.getComponent(FileList).vm.$emit('paste')
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalCopy, {
+      sourcePaths: ['/local/notes.txt'],
+      targetDir: '/local'
+    })
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsLocalList, '/local')
+    expect(notifyError).not.toHaveBeenCalled()
+
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsLocalCopy) {
+        throw new IpcError('CANCELLED', 'Copy cancelled')
+      }
+      if (channel === INVOKE_CHANNELS.fsLocalList) {
+        return { path: '/local', entries: [entry] } as never
+      }
+      return undefined as never
+    })
+    wrapper.getComponent(FileList).vm.$emit('paste')
+    await flushPromises()
+    expect(notifyError).not.toHaveBeenCalled()
+  })
+
+  it('invalidates original remote SWR cache without error when disconnecting mid-paste', async () => {
+    const sessions = useSessionsStore()
+    sessions.activeTab.sessionId = 'server-a'
+    sessions.activeTab.status = 'connected'
+    const remoteFs = useRemoteFsStore()
+    const bucket = remoteFs.ensureBucket('server-a')
+    bucket.currentPath = '/srv/a'
+    bucket.dirCache.set('/srv/a', { path: '/srv/a', entries: [], timestamp: Date.now() })
+
+    const entry: FileEntry = { name: 'conf.yml', path: '/srv/a/conf.yml', isDir: false, isSymlink: false, size: 20, modifiedAt: null }
+    const pastedEntry: FileEntry = { name: 'conf (1).yml', path: '/srv/a/conf (1).yml', isDir: false, isSymlink: false, size: 20, modifiedAt: null }
+    useFileClipboardStore().copy('remote', [entry], 'server-a')
+
+    const copyReq = deferred<{ copied: Array<{ sourcePath: string; targetPath: string }>; failures: [] }>()
+    vi.mocked(invoke).mockImplementation(async (channel) => {
+      if (channel === INVOKE_CHANNELS.fsRemoteCopy) return copyReq.promise as never
+      if (channel === INVOKE_CHANNELS.fsRemoteList) return { path: '/srv/a', entries: [entry, pastedEntry] } as never
+      return undefined as never
+    })
+
+    wrapper = shallowMount(FilePane, { props: { side: 'remote' }, global: { stubs } })
+    await flushPromises()
+
+    wrapper.getComponent(FileList).vm.$emit('paste')
+    await flushPromises()
+
+    sessions.activeTab.sessionId = null
+    sessions.activeTab.status = 'disconnected'
+    copyReq.resolve({ copied: [{ sourcePath: '/srv/a/conf.yml', targetPath: '/srv/a/conf (1).yml' }], failures: [] })
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.fsRemoteList, 'server-a', '/srv/a', true)
+    expect(bucket.entries.map((e) => e.name)).toContain('conf (1).yml')
+    expect(notifyError).not.toHaveBeenCalled()
   })
 })

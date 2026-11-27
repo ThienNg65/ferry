@@ -20,6 +20,8 @@ import { TerminalManager } from '../terminal/TerminalManager'
 import { OperationRegistry } from '../operations/OperationRegistry'
 import { MonitorManager } from '../monitor/MonitorManager'
 import { EditSessionManager } from '../edit/EditSessionManager'
+import { clearDiskUsageCache } from '../fs/RemoteFsService'
+import { parseRemoteHostInfo, REMOTE_HOST_PROBE_COMMAND } from './remoteHostProbe'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
@@ -29,6 +31,7 @@ import {
   type KeyboardInteractiveRequestEvent,
   type ProxyConfig,
   type QuickConnectInput,
+  type SessionHostInfoEvent,
   type SessionOpenResult,
   type SessionStatus,
   type SessionStatusEvent
@@ -888,7 +891,24 @@ export class SessionManager {
       }
     })
     this.broadcastStatus(sessionId, 'connected')
+    void this.probeHostInfo(sessionId, entry)
     return { sessionId, status: 'connected' }
+  }
+
+  /** Non-blocking post-connect probe for remote OS/distro/shell/init metadata. */
+  private async probeHostInfo(sessionId: string, entry: SessionEntry): Promise<void> {
+    try {
+      const res = await entry.shell.exec(REMOTE_HOST_PROBE_COMMAND, { timeoutMs: 4_000 })
+      if (this.sessions.get(sessionId) !== entry || entry.status !== 'connected') {
+        return
+      }
+      const info = parseRemoteHostInfo(res.stdout)
+      if (!info) return
+      const payload: SessionHostInfoEvent = { sessionId, info }
+      getHost().broadcast(EVENT_CHANNELS.sessionHostInfo, payload)
+    } catch {
+      // Non-fatal on restricted SFTP-only accounts or hosts without shell exec.
+    }
   }
 
   /** Releases all resources even if one shutdown step fails; safe on repeated close. */
@@ -918,6 +938,7 @@ export class SessionManager {
     attempt(() => OperationRegistry.getInstance().cancelAllForSession(sessionId))
     attempt(() => MonitorManager.getInstance().stopAllForSession(sessionId))
     attempt(() => EditSessionManager.getInstance().closeAllForSession(sessionId))
+    attempt(() => clearDiskUsageCache(sessionId))
 
     // Close every socket, including bastions, even when an earlier step threw.
     // Prefer the SSH graceful disconnect; force-destroy only when end() fails.

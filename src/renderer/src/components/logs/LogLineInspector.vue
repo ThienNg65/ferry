@@ -21,6 +21,7 @@ const emit = defineEmits<{
   prev: []
   next: []
   togglePin: []
+  explain: []
   close: []
 }>()
 
@@ -143,6 +144,16 @@ async function copyValue(value: string, label = 'Copied to clipboard'): Promise<
       </div>
 
       <div class="flex items-center gap-0.5 shrink-0">
+        <UTooltip text="Explain with Companion">
+          <UButton
+            aria-label="Explain this log with Companion"
+            icon="i-lucide-sparkles"
+            size="xs"
+            color="primary"
+            variant="soft"
+            @click="emit('explain')"
+          />
+        </UTooltip>
         <UTooltip text="Previous line (↑)">
           <UButton
             aria-label="Previous line"

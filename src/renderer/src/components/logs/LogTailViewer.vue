@@ -30,6 +30,7 @@ const wrapLines = moduleRef<boolean>(loadWrapLines())
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, watchEffect, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { MAX_TAIL_LINES, useTailStreamsStore } from '../../stores/tailStreams.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useNotify } from '../../composables/useNotify'
 import {
@@ -54,6 +55,7 @@ const props = withDefaults(defineProps<{ tailId: string; active?: boolean }>(), 
 const isActive = computed(() => props.active)
 
 const tailStreams = useTailStreamsStore()
+const companion = useCompanionStore()
 const sessions = useSessionsStore()
 const notify = useNotify()
 
@@ -530,6 +532,18 @@ async function copyText(text: string, title: string, description?: string): Prom
   }
 }
 
+function explainLogEntry(originalIndex: number, lineText: string): void {
+  const contextLines = parsedLines.value
+    .filter((l) => Math.abs(l.originalIndex - originalIndex) <= 3)
+    .map((l) => l.text)
+  void companion.explainLogLine({
+    remotePath: currentTab.value?.remotePath ?? '',
+    lineText,
+    lineNumber: originalIndex + 1,
+    contextLines
+  })
+}
+
 async function onCopyAll(): Promise<void> {
   const text = filteredLines.value.map((l) => l.text).join('\n')
   if (!text) {
@@ -990,6 +1004,16 @@ watchEffect(() => {
                   <UIcon name="i-lucide-bookmark" class="size-3" />
                 </button>
               </UTooltip>
+              <UTooltip text="Explain with Companion">
+                <button
+                  type="button"
+                  aria-label="Explain log line with Companion"
+                  class="rounded p-0.5 text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                  @click="explainLogEntry(filteredLines[virtualRow.index].originalIndex, filteredLines[virtualRow.index].text)"
+                >
+                  <UIcon name="i-lucide-sparkles" class="size-3" />
+                </button>
+              </UTooltip>
               <UTooltip text="Copy line">
                 <button
                   type="button"
@@ -1017,7 +1041,7 @@ watchEffect(() => {
             <UIcon v-else-if="streamStatus === 'connecting'" name="i-lucide-loader-2" class="size-6 animate-spin text-primary" />
             <UIcon v-else name="i-lucide-scroll-text" class="size-6 text-muted" />
             <p class="text-xs text-muted">
-              <template v-if="error">Unable to stream this file — see error below</template>
+              <template v-if="error">Can't stream this file. See the error below.</template>
               <template v-else-if="ended">Stream ended with no output</template>
               <template v-else-if="streamStatus === 'connecting'">Connecting to remote log stream…</template>
               <template v-else>Waiting for output…</template>
@@ -1066,6 +1090,7 @@ watchEffect(() => {
           @prev="stepSelectedLine(-1)"
           @next="stepSelectedLine(1)"
           @toggle-pin="tailStreams.togglePin(tailId, selectedItem.originalIndex)"
+          @explain="explainLogEntry(selectedItem.originalIndex, selectedItem.text)"
           @close="selectedOriginalIndex = null"
         />
       </Transition>

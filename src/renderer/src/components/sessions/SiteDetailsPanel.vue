@@ -59,7 +59,7 @@ const rows = computed(() => {
   if (s.authMethod === 'password') {
     out.push({
       label: 'Password',
-      value: s.hasPassword ? 'Saved (encrypted)' : 'Not set — edit or enter on connect',
+      value: s.hasPassword ? 'Saved (encrypted)' : 'Not set. Edit the site or enter it on connect',
       warn: !s.hasPassword
     })
   } else if (s.authMethod === 'privateKey') {

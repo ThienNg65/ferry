@@ -28,6 +28,64 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.6.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.5.0...ferry-v1.6.0) (2026-11-27)
+
+
+### Features
+
+* **companion:** audit remediation, SSE streaming, quick bar, snippets & split layout ([#267](https://github.com/ThienNg65/ferry/issues/267)) ([ac623e2](https://github.com/ThienNg65/ferry/commit/ac623e26ab23388c57013779072cfe91763cea8b))
+
+
+### Documentation
+
+* tighten wording in docs and UI copy ([#269](https://github.com/ThienNg65/ferry/issues/269)) ([c5bf05d](https://github.com/ThienNg65/ferry/commit/c5bf05d7b35045a6ecbd05d7c151983176262411))
+
+## [1.5.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.4.0...ferry-v1.5.0) (2026-11-27)
+
+
+### Features
+
+* **companion:** add Ferry Companion assistant, What's New, tour, and privacy-checked issue reporting ([#78](https://github.com/ThienNg65/ferry/issues/78)) ([#165](https://github.com/ThienNg65/ferry/issues/165)) ([1663462](https://github.com/ThienNg65/ferry/commit/1663462748b42f3214b87dc1cf18a4b67491d3fc))
+* **diff:** add built-in local vs remote text diff viewer ([#259](https://github.com/ThienNg65/ferry/issues/259)) ([#261](https://github.com/ThienNg65/ferry/issues/261)) ([709a1d1](https://github.com/ThienNg65/ferry/commit/709a1d1540e57874eea6c9fe9d559bee1e2e07aa))
+* **files:** support Ctrl+C / Ctrl+V copy and paste for files and folders ([#262](https://github.com/ThienNg65/ferry/issues/262)) ([#263](https://github.com/ThienNg65/ferry/issues/263)) ([7220504](https://github.com/ThienNg65/ferry/commit/72205040a22e38b13f2fd092eba586235170e2f9))
+* **transfers:** add live bandwidth speed limit selector and MB/s unit support ([#255](https://github.com/ThienNg65/ferry/issues/255)) ([fbd6c47](https://github.com/ThienNg65/ferry/commit/fbd6c4795217e9f90d1f0c7a3e813f8768d8a537))
+
+
+### Bug Fixes
+
+* **bookmarks:** guard non-array bookmarks in deleteForSite ([#210](https://github.com/ThienNg65/ferry/issues/210)) ([eca7d41](https://github.com/ThienNg65/ferry/commit/eca7d41357d489ae735f3e275ebe971682c572ed))
+* **ci:** exclude fork PRs from release VERSION sync ([#265](https://github.com/ThienNg65/ferry/issues/265)) ([1981cb8](https://github.com/ThienNg65/ferry/commit/1981cb84314b53c560dd3dac4dc67a956610eb1b))
+* **edits:** mark remote-changed conflicts as unsaved ([#201](https://github.com/ThienNg65/ferry/issues/201)) ([4dfe14a](https://github.com/ThienNg65/ferry/commit/4dfe14a106622f26e06595eec02088f4d1b81b95))
+* **files:** include UI display preferences in FileRow v-memo ([#212](https://github.com/ThienNg65/ferry/issues/212)) ([0906602](https://github.com/ThienNg65/ferry/commit/0906602662f195c93495e2ae71f49a7471865b1b))
+* **files:** mount EditorDialog for local file pane ([#198](https://github.com/ThienNg65/ferry/issues/198)) ([c415254](https://github.com/ThienNg65/ferry/commit/c4152542a8dd227f8156d698d1eee8e0d40f3f80))
+* **fs:** fall back when POSIX rename extension fails ([#193](https://github.com/ThienNg65/ferry/issues/193)) ([05b5ca8](https://github.com/ThienNg65/ferry/commit/05b5ca882137537ab3daa6584dc308d9e0e2ba38))
+* **ipc:** validate fs and sync IPC payloads at runtime ([#197](https://github.com/ThienNg65/ferry/issues/197)) ([#205](https://github.com/ThienNg65/ferry/issues/205)) ([00d2e67](https://github.com/ThienNg65/ferry/commit/00d2e67b87c3a0549518c94e2e6b818b5e4ff5a9))
+* **ipc:** validate history, operations, and window IPC payloads ([#229](https://github.com/ThienNg65/ferry/issues/229)) ([7de85d5](https://github.com/ThienNg65/ferry/commit/7de85d5ac53ff94240c40da1c5ad0bf111f718f4))
+* **palette:** hide selected file actions when disconnected ([#227](https://github.com/ThienNg65/ferry/issues/227)) ([51e0831](https://github.com/ThienNg65/ferry/commit/51e08319374f0ee1dce186e6b369299be5930cb5))
+* **privacy:** remove upgrade and migration backups during deleteAllData ([#248](https://github.com/ThienNg65/ferry/issues/248)) ([#249](https://github.com/ThienNg65/ferry/issues/249)) ([8a2338b](https://github.com/ThienNg65/ferry/commit/8a2338b8303046b7383c4b727f8afbf35bc62850))
+* **release:** add automated duplicate changelog guard and tests ([#172](https://github.com/ThienNg65/ferry/issues/172)) ([#234](https://github.com/ThienNg65/ferry/issues/234)) ([cc09340](https://github.com/ThienNg65/ferry/commit/cc09340e239bcca1e2d06e3197d353cc25f788c3))
+* **release:** reconcile stale VERSION file with Release Please manifest ([#231](https://github.com/ThienNg65/ferry/issues/231)) ([f67f768](https://github.com/ThienNg65/ferry/commit/f67f7683cdc98be9b0a604199f96a33766c7f6d5))
+* **sites:** fall back to default OS username for PuTTY and WinSCP imports ([#200](https://github.com/ThienNg65/ferry/issues/200)) ([#221](https://github.com/ThienNg65/ferry/issues/221)) ([6633dfb](https://github.com/ThienNg65/ferry/commit/6633dfb94b8bb19fd737468792ef80572f281c37))
+* **sites:** surface backup validation errors as VALIDATION SshError ([#222](https://github.com/ThienNg65/ferry/issues/222)) ([97b9167](https://github.com/ThienNg65/ferry/commit/97b91677d3d8df7c31b9ab067acc0fe871c20e3a))
+* **ssh:** propagate recursive delete timeout and cancellation ([#219](https://github.com/ThienNg65/ferry/issues/219)) ([ea00b5c](https://github.com/ThienNg65/ferry/commit/ea00b5c127226f6c3073dc379838fd77585d0798))
+
+
+### Documentation
+
+* add GitHub Sponsors FUNDING.yml and README section ([f9929e8](https://github.com/ThienNg65/ferry/commit/f9929e874c1930ef55771629d65077f9ae14bbd0))
+* align CI/CD runbook and README with current workflows ([#159](https://github.com/ThienNg65/ferry/issues/159)) ([#191](https://github.com/ThienNg65/ferry/issues/191)) ([ffb4a61](https://github.com/ThienNg65/ferry/commit/ffb4a615349c81b0e89a7f93b31769474dd91659))
+
+
+### Miscellaneous Chores
+
+* harden logging, store migrations, timeouts, and IPC validation ([#241](https://github.com/ThienNg65/ferry/issues/241)) ([c315cf3](https://github.com/ThienNg65/ferry/commit/c315cf311d82bc280c1011ce4aae2c98aafd26e5))
+
+
+### Continuous Integration
+
+* align pinned Node.js version with dependency engines ([#190](https://github.com/ThienNg65/ferry/issues/190)) ([c301ab6](https://github.com/ThienNg65/ferry/commit/c301ab6ad2da2a3b72338c8654b57587758e5f5e))
+* **release:** sync VERSION file on release PR ([#264](https://github.com/ThienNg65/ferry/issues/264)) ([3dbadc9](https://github.com/ThienNg65/ferry/commit/3dbadc94ad56156ca5415c641cd552cdc40012fb))
+
 ## [1.4.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.3.4...ferry-v1.4.0) (2026-11-24)
 
 

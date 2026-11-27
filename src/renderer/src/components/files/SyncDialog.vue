@@ -2,12 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
-import type { OperationEvent, SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
+import type { MonitorDiskUsage, OperationEvent, SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../../api'
+import { useCompanionStore } from '../../stores/companion.store'
+import { useMonitorStore } from '../../stores/monitor.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useSyncStore } from '../../stores/sync.store'
 import { useNotify } from '../../composables/useNotify'
+import { evaluateSyncPreFlight } from '../../utils/companionGuardrails'
 import { formatBytes } from '../../utils/format'
+import FileDiffModal from './FileDiffModal.vue'
 
 const props = defineProps<{
   open: boolean
@@ -20,6 +24,8 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const sync = useSyncStore()
 const sessions = useSessionsStore()
+const monitor = useMonitorStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 
 const localPath = ref('')
@@ -29,11 +35,25 @@ const deleteExtras = ref(false)
 const previewing = ref(false)
 const error = ref<string | null>(null)
 const approval = shallowRef<{ options: SyncOptions; plan: SyncPlan } | null>(null)
+const previewDisk = shallowRef<MonitorDiskUsage | null>(null)
 const plan = computed(() => approval.value?.plan)
+const preFlight = computed(() =>
+  plan.value && approval.value
+    ? evaluateSyncPreFlight(plan.value, approval.value.options, previewDisk.value ?? monitor.latest?.disk)
+    : null
+)
+const isProdPushDelete = computed(
+  () =>
+    companion.isProd &&
+    approval.value?.options.direction === 'push' &&
+    Boolean(plan.value?.toDelete.length)
+)
 let generation = 0
 
 const run = ref<{ requestId: string; operationId?: string; cancelling: boolean } | null>(null)
 const status = ref<string | null>(null)
+const diffOpen = ref(false)
+const diffTarget = ref<{ sessionId: string; localPath: string; remotePath: string } | null>(null)
 let unsubscribe: (() => void) | undefined
 onMounted(() => {
   unsubscribe = onEvent<OperationEvent>(EVENT_CHANNELS.operationEvent, (event) => {
@@ -59,7 +79,10 @@ const directionOptions: { label: string; value: SyncDirection }[] = [
 function invalidatePreview(): void {
   generation++
   approval.value = null
+  previewDisk.value = null
   previewing.value = false
+  diffOpen.value = false
+  diffTarget.value = null
   if (!run.value) error.value = null
 }
 
@@ -118,7 +141,17 @@ async function preview(): Promise<void> {
   previewing.value = true
   try {
     const reviewedPlan = await sync.preview(options)
-    if (version === generation) approval.value = { options, plan: reviewedPlan }
+    if (version !== generation) return
+    approval.value = { options, plan: reviewedPlan }
+    if (options.direction === 'push' && reviewedPlan.toTransfer.length > 0) {
+      void invoke<MonitorDiskUsage | null>(INVOKE_CHANNELS.fsRemoteDiskUsage, options.sessionId, options.remotePath)
+        .then((disk) => {
+          if (version === generation && disk) {
+            previewDisk.value = disk
+          }
+        })
+        .catch(() => undefined)
+    }
   } catch (e) {
     if (version === generation) error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -190,7 +223,54 @@ function deletionPath(relPath: string): string {
   return `${target.replace(/[/\\]+$/, '')}${separator}${relPath.split('/').join(separator)}`
 }
 
+function askCompanionAboutSync(): void {
+  if (!preFlight.value || preFlight.value.warnings.length === 0) return
+  const currentPlan = plan.value
+  const dir = approval.value?.options.direction ?? 'push'
+  const summaryParts: string[] = [
+    `direction: ${dir}`,
+    `toTransfer: ${currentPlan?.toTransfer.length ?? 0}`,
+    `toDelete: ${currentPlan?.toDelete.length ?? 0}`
+  ]
+  if (preFlight.value.sensitiveFiles.length > 0) {
+    summaryParts.push(`flaggedSecrets: ${preFlight.value.sensitiveFiles.slice(0, 10).join(', ')}`)
+  }
+  companion.openPanel('chat', { overlay: true })
+  void companion.ask(
+    `Review this folder sync pre-flight check (${summaryParts.join('; ')}). Warnings: ${preFlight.value.warnings.join(' ')}`
+  )
+}
+
+function diffPathsForEntry(relPath: string): { localPath: string; remotePath: string } | null {
+  const options = approval.value?.options
+  if (!options) return null
+  const segments = relPath.split('/')
+  if (segments.some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+    return null
+  }
+  const localSep = options.localPath.includes('\\') ? '\\' : '/'
+  const localPath = `${options.localPath.replace(/[/\\]+$/, '')}${localSep}${segments.join(localSep)}`
+  const remotePath = `${options.remotePath.replace(/\/+$/, '')}/${segments.join('/')}`
+  return { localPath, remotePath }
+}
+
+function openEntryDiff(relPath: string): void {
+  const options = approval.value?.options
+  const resolved = diffPathsForEntry(relPath)
+  if (!options || !resolved) {
+    notify.error('Could not open diff', 'The sync plan returned an invalid relative path.')
+    return
+  }
+  diffTarget.value = {
+    sessionId: options.sessionId,
+    localPath: resolved.localPath,
+    remotePath: resolved.remotePath
+  }
+  diffOpen.value = true
+}
+
 function close(): void {
+  diffOpen.value = false
   emit('update:open', false)
 }
 </script>
@@ -247,12 +327,24 @@ function close(): void {
           <ul v-if="plan.toTransfer.length" class="mt-2 max-h-40 space-y-1 overflow-y-auto rounded bg-muted p-2">
             <li v-for="entry in plan.toTransfer.slice(0, 200)" :key="entry.relPath" class="flex items-center justify-between gap-2 text-xs">
               <span class="min-w-0 truncate font-mono">{{ entry.relPath }}</span>
-              <span
-                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase"
-                :class="entry.action === 'overwrite' ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'"
-              >
-                {{ entry.action === 'overwrite' ? 'Overwrite' : 'New' }}
-              </span>
+              <div class="flex shrink-0 items-center gap-1.5">
+                <UButton
+                  v-if="entry.action === 'overwrite'"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-file-diff"
+                  @click="openEntryDiff(entry.relPath)"
+                >
+                  View Diff
+                </UButton>
+                <span
+                  class="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase"
+                  :class="entry.action === 'overwrite' ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success'"
+                >
+                  {{ entry.action === 'overwrite' ? 'Overwrite' : 'New' }}
+                </span>
+              </div>
             </li>
             <li v-if="plan.toTransfer.length > 200" class="pt-1 text-xs text-muted">
               …and {{ plan.toTransfer.length - 200 }} more file(s)
@@ -266,6 +358,37 @@ function close(): void {
             <li v-if="plan.toDelete.length > 200" class="pt-1 text-xs text-muted">
               …and {{ plan.toDelete.length - 200 }} more item(s)
             </li>
+          </ul>
+        </div>
+
+        <UAlert
+          v-if="isProdPushDelete"
+          data-sync-prod-warning
+          role="alert"
+          color="error"
+          variant="soft"
+          icon="i-lucide-shield-alert"
+          title="Production deletion warning"
+          :description="`Connected to ${companion.prodSiteLabel}. Running this mirror sync will permanently delete ${plan?.toDelete.length ?? 0} destination item(s) on Production.`"
+        />
+
+        <div
+          v-if="preFlight && preFlight.warnings.length > 0"
+          data-sync-preflight-guardrail
+          role="note"
+          class="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-default"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 font-semibold text-warning">
+              <UIcon name="i-lucide-shield-alert" class="size-4 shrink-0" />
+              <span>Companion pre-flight safety check</span>
+            </div>
+            <UButton size="xs" color="warning" variant="soft" icon="i-lucide-sparkles" @click="askCompanionAboutSync">
+              Ask Companion
+            </UButton>
+          </div>
+          <ul class="list-disc space-y-1 pl-4 text-muted">
+            <li v-for="w in preFlight.warnings" :key="w">{{ w }}</li>
           </ul>
         </div>
       </div>
@@ -284,4 +407,10 @@ function close(): void {
       </template>
     </template>
   </UModal>
+  <FileDiffModal
+    v-model:open="diffOpen"
+    :session-id="diffTarget?.sessionId ?? null"
+    :local-path="diffTarget?.localPath ?? null"
+    :remote-path="diffTarget?.remotePath ?? null"
+  />
 </template>
