@@ -258,4 +258,18 @@ describe('companionPrivacy', () => {
       expect(out.text).not.toContain(redacted)
     }
   })
+
+  it('redacts whitespace-separated CLI credential flags and curl -u passwords in diagnostic mode', () => {
+    const raw =
+      'Top: python3(pid=901,cpu=88.0%,rss=500MB cmd="python3 worker.py --password hunter2 --token tok_999 --api-key key123 -u admin:superpass --no-password --host db")'
+    const out = redactSensitiveText(raw, { mode: 'diagnostic' })
+    expect(out.text).toContain('--password [REDACTED]')
+    expect(out.text).toContain('--token [REDACTED]')
+    expect(out.text).toContain('--api-key [REDACTED]')
+    expect(out.text).toContain('-u admin:[REDACTED]')
+    expect(out.text).toContain('--no-password --host db"')
+    for (const secret of ['hunter2', 'tok_999', 'key123', 'superpass']) {
+      expect(out.text).not.toContain(secret)
+    }
+  })
 })

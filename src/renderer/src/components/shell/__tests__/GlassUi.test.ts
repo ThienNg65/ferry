@@ -250,8 +250,13 @@ describe('Modern Glass UI rollout', () => {
     // Held while needsLegalConsent is true
     expect(toastMock.add).not.toHaveBeenCalled()
 
-    // Fires once user accepts current legal policy
+    // Fires once user accepts current legal policy and completes first-run Companion onboarding
     settings.termsAcceptance = { version: LEGAL_POLICY_VERSION, acceptedAt: '2026-11-18T00:00:00.000Z' }
+    await nextTick()
+    expect(toastMock.add).not.toHaveBeenCalled()
+
+    const { useCompanionStore } = await import('../../../stores/companion.store')
+    useCompanionStore().onboarded = true
     await nextTick()
 
     expect(toastMock.add).toHaveBeenCalledTimes(1)

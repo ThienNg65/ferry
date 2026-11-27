@@ -60,7 +60,7 @@ export interface TransferPreFlightResult {
 export function evaluateTransferPreFlight(
   intents: ReadonlyArray<{ direction: 'upload' | 'download'; targetName: string; sourceSize: number | null; isDir?: boolean }>,
   remoteDisk?: RemoteDiskSnapshot | null,
-  nestedUploadScan?: { relativePaths: readonly string[]; totalBytes: number } | null
+  nestedUploadScan?: { relativePaths: readonly string[]; totalBytes: number; truncated?: boolean } | null
 ): TransferPreFlightResult {
   const uploads = intents.filter((i) => i.direction === 'upload')
   if (uploads.length === 0) {
@@ -101,6 +101,11 @@ export function evaluateTransferPreFlight(
   }
   if (lowDiskWarning) {
     warnings.push(lowDiskWarning)
+  }
+  if (nestedUploadScan?.truncated) {
+    warnings.push(
+      'Folder pre-flight scan hit its safety limit and could not inspect every nested file. Some secrets or total upload size may not be reflected above.'
+    )
   }
 
   return { warnings, sensitiveFiles, lowDiskWarning }

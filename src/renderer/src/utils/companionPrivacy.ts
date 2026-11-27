@@ -77,6 +77,16 @@ const REDACTION_RULES: RedactionRule[] = [
   },
   {
     label: 'credential',
+    pattern: /(?<![A-Za-z0-9_-])(--?(?:[A-Za-z0-9_-]*(?:password|passwd|passphrase|secret|token|api[-_]?key|auth[-_]?key|credential)|pass(?:[-_][A-Za-z0-9_-]*)?)\s+)(?!--)(?:"[^"]*"|'[^']*'|[^\s,;"']+)/gi,
+    replacement: '$1[REDACTED]'
+  },
+  {
+    label: 'credential',
+    pattern: /(?<![A-Za-z0-9_-])(-u\s+[^\s:'"\\]+:)(?:"[^"]*"|'[^']*'|[^\s,;"']+)/g,
+    replacement: '$1[REDACTED]'
+  },
+  {
+    label: 'credential',
     pattern: /\b((?:(?:my|our|the|this|that)\s+)?(?:password|passwd|passphrase|secret|token|api[\s_-]?key|access[\s_-]?token|refresh[\s_-]?token|client[\s_-]?secret|private[\s_-]?key)\s+(?:is|was|equals?))\s+(?:"[^"]+"|'[^']+'|[^\s,;]+)/gi,
     replacement: '$1 [REDACTED]'
   },

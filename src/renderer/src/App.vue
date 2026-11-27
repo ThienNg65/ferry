@@ -324,11 +324,9 @@ watch(
 )
 
 watch(
-  [() => settingsStore.loaded, needsLegalConsent],
-  ([loaded, consentNeeded]) => {
-    if (!loaded || consentNeeded || promoToastShown) return
-    // Avoid stacking Glass UI promo on top of first-run Companion onboarding.
-    if (!companion.onboarded) return
+  [() => settingsStore.loaded, needsLegalConsent, () => companion.onboarded],
+  ([loaded, consentNeeded, onboarded]) => {
+    if (!loaded || consentNeeded || !onboarded || promoToastShown) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
 

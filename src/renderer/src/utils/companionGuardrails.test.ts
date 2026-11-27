@@ -82,4 +82,15 @@ describe('companionGuardrails', () => {
     expect(res.lowDiskWarning).toContain('/var')
     expect(res.lowDiskWarning).toContain('inode usage is 96%')
   })
+
+  it('warns when a nested folder pre-flight scan is truncated', () => {
+    const res = evaluateTransferPreFlight(
+      [{ direction: 'upload', targetName: 'huge-folder', sourceSize: 0, isDir: true }],
+      null,
+      { relativePaths: ['huge-folder/index.js'], totalBytes: 1024, truncated: true }
+    )
+    expect(res.sensitiveFiles).toEqual([])
+    expect(res.warnings).toHaveLength(1)
+    expect(res.warnings[0]).toContain('could not inspect every nested file')
+  })
 })
