@@ -418,6 +418,44 @@ export async function downloadForEditSudo(
   await writeLocalFile(localPath, content, { mode: 0o600 })
 }
 
+/**
+ * Sudo counterpart to {@link readRemoteBufferForDiff} for files opened with "Edit as root".
+ * Checks type and byte size via `sudo -n stat` before streaming bytes via `cat`.
+ */
+export async function readRemoteBufferForDiffSudo(
+  sessionId: string,
+  remotePath: string,
+  maxBytes: number
+): Promise<{ size: number; isDir: boolean; buffer?: Buffer }> {
+  const shell = SessionManager.getInstance().shell(sessionId)
+  let statOut: string
+  try {
+    statOut = (await sudoExec(shell, `stat -L -c '%F|%s' -- ${shellEscape(remotePath)}`)).toString('utf-8').trim()
+  } catch (e) {
+    if (e instanceof SshError && /no such file/i.test(e.message)) {
+      throw new SshError('NOT_FOUND', `"${remotePath}" not found`)
+    }
+    throw e
+  }
+  const sep = statOut.lastIndexOf('|')
+  const fileType = sep >= 0 ? statOut.slice(0, sep).trim() : ''
+  const size = Number(sep >= 0 ? statOut.slice(sep + 1).trim() : NaN)
+  if (/directory/i.test(fileType)) {
+    return { size: Number.isFinite(size) ? size : 0, isDir: true }
+  }
+  if (!Number.isFinite(size) || size < 0) {
+    throw new SshError('SSH_EXEC', `Could not stat "${remotePath}" via sudo`)
+  }
+  if (size > maxBytes) {
+    return { size, isDir: false }
+  }
+  if (size === 0) {
+    return { size: 0, isDir: false, buffer: Buffer.alloc(0) }
+  }
+  const buffer = await sudoExec(shell, `cat -- ${shellEscape(remotePath)}`)
+  return { size, isDir: false, buffer }
+}
+
 export async function uploadForEditSudo(sessionId: string, localPath: string, remotePath: string): Promise<void> {
   const shell = SessionManager.getInstance().shell(sessionId)
   const data = await readLocalFile(localPath)

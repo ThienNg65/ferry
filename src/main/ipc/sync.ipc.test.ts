@@ -131,7 +131,7 @@ describe('sync.ipc', () => {
         hunks: []
       }
       fileDiffServiceMock.diffLocalAndRemote.mockResolvedValueOnce(diffResult)
-      const req = { sessionId: 's1', localPath: 'C:\\local\\a.txt', remotePath: '/srv/a.txt', localContent: '' }
+      const req = { sessionId: 's1', localPath: 'C:\\local\\a.txt', remotePath: '/srv/a.txt', localContent: '', viaSudo: true }
       const result = await invoke('sync:diffFiles', req)
       expect(fileDiffServiceMock.diffLocalAndRemote).toHaveBeenCalledWith(req)
       expect(result).toEqual({ ok: true, data: diffResult })
@@ -144,6 +144,9 @@ describe('sync.ipc', () => {
       ).toMatchObject({ ok: false, code: 'VALIDATION' })
       expect(
         await invoke('sync:diffFiles', { sessionId: 's1', localPath: 'a', remotePath: '/b', localContent: 123 })
+      ).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(
+        await invoke('sync:diffFiles', { sessionId: 's1', localPath: 'a', remotePath: '/b', viaSudo: 'yes' })
       ).toMatchObject({ ok: false, code: 'VALIDATION' })
       expect(fileDiffServiceMock.diffLocalAndRemote).not.toHaveBeenCalled()
     })

@@ -5,11 +5,14 @@ import type {
   FileDiffRequest,
   FileDiffResult
 } from '../../shared/contract'
-import { readRemoteBufferForDiff } from '../fs/RemoteFsService'
+import { readRemoteBufferForDiff, readRemoteBufferForDiffSudo } from '../fs/RemoteFsService'
 import { SshError } from '../ssh/errors'
 
 /** Matches the built-in editor/preview text cap (1 MiB) so diffing stays responsive. */
 export const MAX_DIFF_BYTES = 1_048_576
+
+/** Cap on changed lines emitted per side when Myers falls back to a simplified diff. */
+export const MAX_SIMPLIFIED_SIDE_LINES = 250
 
 const BINARY_SAMPLE_BYTES = 8192
 const MAX_MYERS_D = 1500
@@ -55,20 +58,68 @@ interface RawOp {
   remoteLine: number | null
 }
 
-function myersMiddle(a: string[], b: string[], localOffset: number, remoteOffset: number): { ops: RawOp[]; simplified: boolean } {
+function simplifiedFallback(
+  a: string[],
+  b: string[],
+  localOffset: number,
+  remoteOffset: number
+): { ops: RawOp[]; simplified: true; additions: number; deletions: number; omittedLines: number } {
+  const shownLocal = a.slice(0, MAX_SIMPLIFIED_SIDE_LINES)
+  const shownRemote = b.slice(0, MAX_SIMPLIFIED_SIDE_LINES)
+  const omittedLines =
+    Math.max(0, a.length - MAX_SIMPLIFIED_SIDE_LINES) +
+    Math.max(0, b.length - MAX_SIMPLIFIED_SIDE_LINES)
+  const ops: RawOp[] = [
+    ...shownLocal.map((text, idx) => ({
+      kind: 'remove' as const,
+      text,
+      localLine: localOffset + idx + 1,
+      remoteLine: null
+    })),
+    ...shownRemote.map((text, idx) => ({
+      kind: 'add' as const,
+      text,
+      localLine: null,
+      remoteLine: remoteOffset + idx + 1
+    }))
+  ]
+  return {
+    ops,
+    simplified: true,
+    deletions: a.length,
+    additions: b.length,
+    omittedLines
+  }
+}
+
+function myersMiddle(
+  a: string[],
+  b: string[],
+  localOffset: number,
+  remoteOffset: number
+): { ops: RawOp[]; simplified: boolean; additions?: number; deletions?: number; omittedLines?: number } {
   const n = a.length
   const m = b.length
   if (n === 0) {
+    if (m > MAX_SIMPLIFIED_SIDE_LINES) {
+      return simplifiedFallback(a, b, localOffset, remoteOffset)
+    }
     return {
       simplified: false,
       ops: b.map((text, idx) => ({ kind: 'add', text, localLine: null, remoteLine: remoteOffset + idx + 1 }))
     }
   }
   if (m === 0) {
+    if (n > MAX_SIMPLIFIED_SIDE_LINES) {
+      return simplifiedFallback(a, b, localOffset, remoteOffset)
+    }
     return {
       simplified: false,
       ops: a.map((text, idx) => ({ kind: 'remove', text, localLine: localOffset + idx + 1, remoteLine: null }))
     }
+  }
+  if (Math.abs(n - m) > MAX_MYERS_D) {
+    return simplifiedFallback(a, b, localOffset, remoteOffset)
   }
 
   const cap = Math.min(n + m, MAX_MYERS_D)
@@ -99,11 +150,7 @@ function myersMiddle(a: string[], b: string[], localOffset: number, remoteOffset
     trace.push(v.subarray(offset - d, offset + d + 1).slice())
   }
 
-  const ops: RawOp[] = [
-    ...a.map((text, idx) => ({ kind: 'remove' as const, text, localLine: localOffset + idx + 1, remoteLine: null })),
-    ...b.map((text, idx) => ({ kind: 'add' as const, text, localLine: null, remoteLine: remoteOffset + idx + 1 }))
-  ]
-  return { ops, simplified: true }
+  return simplifiedFallback(a, b, localOffset, remoteOffset)
 }
 
 function backtrackMyers(
@@ -209,7 +256,7 @@ export function computeLineDiff(
   localText: string,
   remoteText: string,
   contextLines = 3
-): { identical: boolean; additions: number; deletions: number; hunks: FileDiffHunk[]; simplified?: boolean } {
+): { identical: boolean; additions: number; deletions: number; hunks: FileDiffHunk[]; simplified?: boolean; omittedLines?: number } {
   const localLines = splitNormalizedLines(localText)
   const remoteLines = splitNormalizedLines(remoteText)
 
@@ -234,7 +281,8 @@ export function computeLineDiff(
     return { identical: true, additions: 0, deletions: 0, hunks: [] }
   }
 
-  const { ops: midOps, simplified } = myersMiddle(midLocal, midRemote, prefix, prefix)
+  const midResult = myersMiddle(midLocal, midRemote, prefix, prefix)
+  const { ops: midOps, simplified } = midResult
 
   // Include just enough prefix/suffix context lines to build accurate hunks without allocating full-file arrays.
   const preStart = Math.max(0, prefix - contextLines)
@@ -258,16 +306,23 @@ export function computeLineDiff(
 
   const allOps = [...preOps, ...midOps, ...sufOps]
   const hunks = groupIntoHunks(allOps, contextLines)
-  let additions = 0
-  let deletions = 0
-  for (const op of midOps) {
-    if (op.kind === 'add') additions++
-    else if (op.kind === 'remove') deletions++
+  let additions = midResult.additions ?? 0
+  let deletions = midResult.deletions ?? 0
+  if (midResult.additions === undefined || midResult.deletions === undefined) {
+    additions = 0
+    deletions = 0
+    for (const op of midOps) {
+      if (op.kind === 'add') additions++
+      else if (op.kind === 'remove') deletions++
+    }
   }
 
-  return simplified
-    ? { identical: false, additions, deletions, hunks, simplified: true }
-    : { identical: false, additions, deletions, hunks }
+  if (!simplified) {
+    return { identical: false, additions, deletions, hunks }
+  }
+  return midResult.omittedLines
+    ? { identical: false, additions, deletions, hunks, simplified: true, omittedLines: midResult.omittedLines }
+    : { identical: false, additions, deletions, hunks, simplified: true }
 }
 
 async function defaultReadLocal(req: FileDiffRequest, maxBytes: number): Promise<DiffSideData> {
@@ -296,7 +351,9 @@ async function defaultReadLocal(req: FileDiffRequest, maxBytes: number): Promise
 }
 
 async function defaultReadRemote(req: FileDiffRequest, maxBytes: number): Promise<DiffSideData> {
-  return readRemoteBufferForDiff(req.sessionId, req.remotePath, maxBytes)
+  return req.viaSudo
+    ? readRemoteBufferForDiffSudo(req.sessionId, req.remotePath, maxBytes)
+    : readRemoteBufferForDiff(req.sessionId, req.remotePath, maxBytes)
 }
 
 function describeSides(localFlag: boolean, remoteFlag: boolean): { side: 'local' | 'remote' | 'both'; label: string } {

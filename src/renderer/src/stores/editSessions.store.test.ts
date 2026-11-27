@@ -18,10 +18,11 @@ it('marks a remote-changed edit dirty until overwrite succeeds', () => {
   store.ensureSubscription()
   const onEditEvent = vi.mocked(onEvent).mock.calls[0][1]
   const edit = { editId: 'edit-2', sessionId: 'session-1', remotePath: '/srv/conflict.txt', localTempPath: 'conflict.txt' }
-  const emit = (state: EditEvent['state']) => onEditEvent({ ...edit, state } satisfies EditEvent)
+  const emit = (state: EditEvent['state']) => onEditEvent({ ...edit, state, ...(state === 'opened' ? { viaSudo: true } : {}) } satisfies EditEvent)
 
   emit('opened')
   expect(store.edits[0].conflict).toBe(false)
+  expect(store.edits[0].viaSudo).toBe(true)
   emit('remote-changed')
 
   expect(store.edits[0].dirty).toBe(true)

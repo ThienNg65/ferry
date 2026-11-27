@@ -192,6 +192,30 @@ describe('FileDiffModal & entry-point integrations', () => {
     expect(wrapper.text()).not.toContain('const b = 2')
   })
 
+  it('renders omitted-lines summary when a large diff is simplified', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      ...sampleDiff,
+      additions: 900,
+      deletions: 900,
+      simplified: true,
+      omittedLines: 1300
+    })
+
+    wrapper = mount(FileDiffModal, {
+      props: {
+        open: true,
+        sessionId: 's1',
+        localPath: '/local/big.txt',
+        remotePath: '/srv/big.txt'
+      },
+      global: { stubs }
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Large diff simplified')
+    expect(wrapper.text()).toContain('1300 lines omitted')
+  })
+
   it('offers View Diff on SyncDialog overwrite rows and opens FileDiffModal', async () => {
     const plan: SyncPlan = {
       toTransfer: [
@@ -240,7 +264,8 @@ describe('FileDiffModal & entry-point integrations', () => {
         localTempPath: '/tmp/conf.yml',
         dirty: true,
         sessionClosed: false,
-        conflict: true
+        conflict: true,
+        viaSudo: true
       }
     ]
     vi.mocked(invoke)
@@ -270,7 +295,8 @@ describe('FileDiffModal & entry-point integrations', () => {
       sessionId: 's1',
       localPath: '/tmp/conf.yml',
       remotePath: '/srv/conf.yml',
-      localContent: 'edited local'
+      localContent: 'edited local',
+      viaSudo: true
     })
 
     const overwriteBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'Overwrite server')!

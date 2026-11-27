@@ -621,6 +621,8 @@ export interface FileDiffRequest {
   remotePath: string
   /** Optional in-memory local text (e.g. unsaved buffer in EditorDialog). */
   localContent?: string
+  /** True when the remote file requires passwordless sudo (opened via Edit as root). */
+  viaSudo?: boolean
 }
 
 export interface FileDiffResult {
@@ -640,6 +642,8 @@ export interface FileDiffResult {
   hunks: FileDiffHunk[]
   /** True when the edit script exceeded the Myers cap and fell back to a simplified hunk. */
   simplified?: boolean
+  /** Count of changed lines omitted when `simplified` caps per-side output. */
+  omittedLines?: number
 }
 
 export interface SyncRunRequest {
@@ -723,6 +727,8 @@ export interface OpenEditSnapshot {
   dirty: boolean
   /** True if the underlying SSH session has closed — further changes won't be uploaded. */
   sessionClosed: boolean
+  /** True if this edit session reads/writes the remote file via sudo. */
+  viaSudo?: boolean
 }
 
 /**
@@ -740,6 +746,7 @@ export interface EditEvent {
   localTempPath: string
   state: 'opened' | 'reuploading' | 'reuploaded' | 'upload-error' | 'remote-changed' | 'session-closed' | 'closed'
   error?: string
+  viaSudo?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

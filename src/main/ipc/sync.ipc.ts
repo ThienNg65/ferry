@@ -1,5 +1,5 @@
 import { handle } from './envelope'
-import { requireArray, requireBoolean, requireEnum, requireNonEmptyString, requireObject, requireString } from './validation'
+import { optionalBoolean, requireArray, requireBoolean, requireEnum, requireNonEmptyString, requireObject, requireString } from './validation'
 import {
   INVOKE_CHANNELS,
   type CompareRequest,
@@ -55,6 +55,10 @@ export function registerSyncHandlers(): void {
     }
     if (obj.localContent !== undefined) {
       request.localContent = requireString(obj.localContent, 'localContent', channel)
+    }
+    const viaSudo = optionalBoolean(obj.viaSudo, 'viaSudo', channel)
+    if (viaSudo !== undefined) {
+      request.viaSudo = viaSudo
     }
     return diffLocalAndRemote(request)
   })

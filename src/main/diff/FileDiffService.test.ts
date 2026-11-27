@@ -4,6 +4,7 @@ import {
   diffLocalAndRemote,
   isBinaryBuffer,
   MAX_DIFF_BYTES,
+  MAX_SIMPLIFIED_SIDE_LINES,
   splitNormalizedLines
 } from './FileDiffService'
 
@@ -74,7 +75,7 @@ describe('FileDiffService', () => {
       expect(removed.deletions).toBe(2)
     })
 
-    it('falls back to a simplified diff when Myers edit distance exceeds cap', () => {
+    it('falls back to a bounded simplified diff when Myers edit distance exceeds cap', () => {
       const local = Array.from({ length: 900 }, (_, i) => `left-${i}`).join('\n')
       const remote = Array.from({ length: 900 }, (_, i) => `right-${i}`).join('\n')
       const diff = computeLineDiff(local, remote)
@@ -82,7 +83,20 @@ describe('FileDiffService', () => {
       expect(diff.simplified).toBe(true)
       expect(diff.deletions).toBe(900)
       expect(diff.additions).toBe(900)
-      expect(diff.hunks.length).toBeGreaterThan(0)
+      expect(diff.omittedLines).toBe((900 - MAX_SIMPLIFIED_SIDE_LINES) * 2)
+      expect(diff.hunks).toHaveLength(1)
+      expect(diff.hunks[0].lines).toHaveLength(MAX_SIMPLIFIED_SIDE_LINES * 2)
+    })
+
+    it('bounds output without running Myers when line count difference alone exceeds MAX_MYERS_D', () => {
+      const remote = Array.from({ length: 2000 }, (_, i) => `line-${i}`).join('\n')
+      const diff = computeLineDiff('', remote)
+
+      expect(diff.simplified).toBe(true)
+      expect(diff.additions).toBe(2000)
+      expect(diff.deletions).toBe(0)
+      expect(diff.omittedLines).toBe(2000 - MAX_SIMPLIFIED_SIDE_LINES)
+      expect(diff.hunks[0].lines).toHaveLength(MAX_SIMPLIFIED_SIDE_LINES)
     })
   })
 

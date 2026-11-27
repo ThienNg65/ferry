@@ -12,6 +12,7 @@ export interface OpenEdit {
   dirty: boolean
   sessionClosed: boolean
   conflict: boolean
+  viaSudo?: boolean
 }
 
 interface EditSessionsState {
@@ -84,7 +85,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
 
     async hydrate(): Promise<void> {
       const snapshot = await invoke<OpenEditSnapshot[]>(INVOKE_CHANNELS.editList)
-      this.edits = snapshot.map((s) => ({ ...s, conflict: false }))
+      this.edits = snapshot.map((s) => ({ ...s, conflict: false, viaSudo: Boolean(s.viaSudo) }))
     },
 
     applyEvent(evt: EditEvent): void {
@@ -102,7 +103,8 @@ export const useEditSessionsStore = defineStore('editSessions', {
             localTempPath: evt.localTempPath,
             dirty: false,
             sessionClosed: false,
-            conflict: false
+            conflict: false,
+            viaSudo: Boolean(evt.viaSudo)
           })
         }
         return

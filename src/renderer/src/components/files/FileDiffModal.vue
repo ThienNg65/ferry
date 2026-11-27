@@ -19,6 +19,7 @@ const props = withDefaults(
     localLabel?: string
     remoteLabel?: string
     localContent?: string
+    viaSudo?: boolean
   }>(),
   {
     localLabel: 'Local',
@@ -85,19 +86,23 @@ async function loadDiff(): Promise<void> {
   error.value = null
   result.value = null
   try {
-    const payload =
-      props.localContent !== undefined
-        ? {
-            sessionId: props.sessionId,
-            localPath: props.localPath,
-            remotePath: props.remotePath,
-            localContent: props.localContent
-          }
-        : {
-            sessionId: props.sessionId,
-            localPath: props.localPath,
-            remotePath: props.remotePath
-          }
+    const payload: {
+      sessionId: string
+      localPath: string
+      remotePath: string
+      localContent?: string
+      viaSudo?: boolean
+    } = {
+      sessionId: props.sessionId,
+      localPath: props.localPath,
+      remotePath: props.remotePath
+    }
+    if (props.localContent !== undefined) {
+      payload.localContent = props.localContent
+    }
+    if (props.viaSudo) {
+      payload.viaSudo = true
+    }
     const res = await invoke<FileDiffResult>(INVOKE_CHANNELS.syncDiffFiles, payload)
     if (token !== loadToken || !props.open) return
     result.value = res
@@ -112,7 +117,7 @@ async function loadDiff(): Promise<void> {
 }
 
 watch(
-  () => [props.open, props.sessionId, props.localPath, props.remotePath, props.localContent] as const,
+  () => [props.open, props.sessionId, props.localPath, props.remotePath, props.localContent, props.viaSudo] as const,
   () => {
     void loadDiff()
   },
@@ -242,7 +247,9 @@ function linePrefix(kind: FileDiffLine['kind']): string {
             color="warning"
             variant="soft"
             title="Large diff simplified"
-            description="Too many changed lines for full line-by-line alignment; showing block differences."
+            :description="result.omittedLines
+              ? `Too many changed lines for full line-by-line alignment; showing the first 250 changed lines per side (${result.omittedLines} lines omitted).`
+              : 'Too many changed lines for full line-by-line alignment; showing block differences.'"
           />
 
           <div v-if="viewMode === 'unified'" class="overflow-x-auto rounded-md border border-default font-mono text-xs">

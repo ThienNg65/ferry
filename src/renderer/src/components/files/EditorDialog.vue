@@ -306,6 +306,7 @@ async function onDiscardConflict(): Promise<void> {
     :local-path="localTempPath"
     :remote-path="remotePath"
     :local-content="content"
+    :via-sudo="Boolean(activeEdit.viaSudo)"
     local-label="Your edits"
     remote-label="Server version"
   />
