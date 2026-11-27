@@ -10,6 +10,7 @@
  */
 
 import type { MonitorProcessSample, MonitorSample } from '../../shared/contract'
+import { CMDLINE_MAX_CHARS } from './serviceNames'
 
 /** Marker line the tick command echoes between /proc sections. */
 export const SECTION_MARKER = '@@@'
@@ -260,7 +261,7 @@ export function parseProcessCmdlines(text: string): Map<number, string> {
     const tabIdx = body.indexOf('\t')
     if (tabIdx <= 0) continue
     const pid = Number(body.slice(0, tabIdx).trim())
-    const cmdline = body.slice(tabIdx + 1).replace(/\s+/g, ' ').trim().slice(0, 180)
+    const cmdline = body.slice(tabIdx + 1).replace(/\s+/g, ' ').trim().slice(0, CMDLINE_MAX_CHARS)
     if (Number.isInteger(pid) && pid > 0 && cmdline) {
       map.set(pid, cmdline)
     }

@@ -906,6 +906,7 @@ export interface MonitorProcessSample {
   name: string
   /** Optional truncated `/proc/[pid]/cmdline` for top hot processes. */
   cmdline?: string
+  service?: string
   /** 0–100, on the same scale as MonitorSample.cpu.aggregatePct — null until a second consecutive sample exists for this pid. */
   cpuPct: number | null
   rssBytes: number
