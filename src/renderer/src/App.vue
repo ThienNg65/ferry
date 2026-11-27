@@ -61,6 +61,9 @@ const connectionPhase = computed(() => {
 const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
+const effectiveCompanionMode = computed<'split' | 'overlay'>(() =>
+  ui.companionLayoutMode === 'split' && viewportWidth.value >= 1024 ? 'split' : 'overlay'
+)
 const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
@@ -324,6 +327,8 @@ watch(
   [() => settingsStore.loaded, needsLegalConsent],
   ([loaded, consentNeeded]) => {
     if (!loaded || consentNeeded || promoToastShown) return
+    // Avoid stacking Glass UI promo on top of first-run Companion onboarding.
+    if (!companion.onboarded) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
 
@@ -444,7 +449,8 @@ watch(
       :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
     >
       <SiteTabBar />
-      <main class="relative min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+      <main class="relative min-h-0 min-w-0 flex-1">
         <!--
           The connected view is hoisted out of the Transition/v-if instead of toggling with
           v-if/v-else — BottomDock renders TerminalView, which owns long-lived xterm.js
@@ -519,6 +525,8 @@ watch(
           <BottomDock />
         </div>
       </main>
+      <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'split'" mode="split" />
+      </div>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
@@ -526,6 +534,6 @@ watch(
     <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
     <ConnectionModals />
-    <CompanionPanel v-if="companion.hasOpenedOnce" />
+    <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'overlay'" mode="overlay" />
   </UApp>
 </template>

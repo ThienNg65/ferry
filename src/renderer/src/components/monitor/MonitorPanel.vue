@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { MONITOR_INTERVAL_OPTIONS, useMonitorStore } from '../../stores/monitor.store'
 import { useCompanionStore } from '../../stores/companion.store'
 import { useSessionsStore } from '../../stores/sessions.store'
+import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { formatBytes, formatElapsed, formatUptime } from '../../utils/format'
 import {
   buildSparklineGeometry,
@@ -16,6 +17,10 @@ import ProcessTable from './ProcessTable.vue'
 const monitor = useMonitorStore()
 const companion = useCompanionStore()
 const sessions = useSessionsStore()
+const tailStreams = useTailStreamsStore()
+const hasActiveTailForSession = computed(() =>
+  Boolean(sessions.activeSessionId && tailStreams.tabs.some((t) => t.sessionId === sessions.activeSessionId))
+)
 const cpuGradId = useId()
 
 /** Caps the per-core bar strip in the summary card — beyond this a "+N" badge stands in for the rest. */
@@ -245,6 +250,20 @@ const spikeAlertColor = computed<'error' | 'warning' | 'neutral'>(() => {
       </div>
 
       <div class="flex items-center gap-1">
+        <UTooltip
+          v-if="monitor.latest && hasActiveTailForSession"
+          text="Correlate Monitor spike with recent Live Log Tail errors"
+        >
+          <UButton
+            label="Correlate Spike + Logs"
+            icon="i-lucide-git-compare-arrows"
+            :color="hasSpikeAlert ? spikeAlertColor : 'neutral'"
+            :variant="hasSpikeAlert ? 'soft' : 'ghost'"
+            size="xs"
+            data-correlate-spike-logs
+            @click="companion.correlateSpikeAndLogs(monitor.latest)"
+          />
+        </UTooltip>
         <UTooltip v-if="monitor.latest" text="Triage CPU, RAM, disk, and top processes with Ferry Companion">
           <UButton
             label="Diagnose Spike"

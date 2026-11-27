@@ -227,6 +227,79 @@ async function testCompanionAi(): Promise<void> {
   }
 }
 
+const vaultMode = ref<'export' | 'import' | null>(null)
+const vaultPassphrase = ref('')
+const vaultPassphraseConfirm = ref('')
+const vaultBusy = ref(false)
+const vaultError = ref<string | null>(null)
+
+function openVaultAction(mode: 'export' | 'import'): void {
+  vaultMode.value = vaultMode.value === mode ? null : mode
+  vaultPassphrase.value = ''
+  vaultPassphraseConfirm.value = ''
+  vaultError.value = null
+}
+
+async function submitVaultAction(): Promise<void> {
+  if (!vaultMode.value || vaultBusy.value) return
+  vaultError.value = null
+  if (vaultPassphrase.value.length < 8) {
+    vaultError.value = 'Passphrase must be at least 8 characters.'
+    return
+  }
+  if (vaultMode.value === 'export' && vaultPassphrase.value !== vaultPassphraseConfirm.value) {
+    vaultError.value = 'Passphrases do not match.'
+    return
+  }
+  vaultBusy.value = true
+  try {
+    if (vaultMode.value === 'export') {
+      const savePath = await invoke<string | null>(INVOKE_CHANNELS.dialogPickSaveFile, 'ferry-backup.ferryvault')
+      if (!savePath) return
+      const res = await invoke<{ filePath: string; siteCount: number; snippetCount: number } | null>(
+        INVOKE_CHANNELS.sitesExportVault,
+        {
+          filePath: savePath,
+          passphrase: vaultPassphrase.value,
+          customSnippets: companion.customSnippets.map((s) => ({
+            id: s.id,
+            label: s.label,
+            command: s.command,
+            description: s.description
+          }))
+        }
+      )
+      if (res) {
+        notify.success('Encrypted vault exported', `Saved ${res.siteCount} site(s) and ${res.snippetCount} snippet(s).`)
+        vaultMode.value = null
+      }
+    } else {
+      const res = await invoke<{
+        imported: number
+        skipped: number
+        customSnippets: Array<{ label: string; command: string; description: string }>
+      } | null>(INVOKE_CHANNELS.sitesImportVault, {
+        passphrase: vaultPassphrase.value
+      })
+      if (res) {
+        const snippetsAdded = companion.mergeImportedSnippets(res.customSnippets)
+        await useSitesStore().fetchSites()
+        notify.success(
+          'Encrypted vault imported',
+          `Imported ${res.imported} site(s) (${res.skipped} duplicate skipped) and ${snippetsAdded} snippet(s).`
+        )
+        vaultMode.value = null
+      }
+    }
+  } catch (err) {
+    vaultError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    vaultBusy.value = false
+    vaultPassphrase.value = ''
+    vaultPassphraseConfirm.value = ''
+  }
+}
+
 watch(
   () => props.open,
   (isOpen) => {
@@ -1121,6 +1194,47 @@ async function saveNetwork(): Promise<void> {
                   @update:model-value="(v: number) => onRetentionChange(Number(v))"
                 />
               </SettingsRow>
+
+              <SettingsRow
+                label="Encrypted Vault (.ferryvault)"
+                description="Passphrase-encrypted portable backup including saved passwords, passphrases, and custom snippets."
+              >
+                <div class="flex flex-wrap gap-2">
+                  <UButton size="xs" variant="outline" color="primary" icon="i-lucide-lock" @click="openVaultAction('export')">
+                    Export Vault
+                  </UButton>
+                  <UButton size="xs" variant="outline" color="neutral" icon="i-lucide-unlock" @click="openVaultAction('import')">
+                    Import Vault
+                  </UButton>
+                </div>
+              </SettingsRow>
+              <div
+                v-if="vaultMode"
+                data-vault-passphrase-box
+                class="my-2 flex flex-col gap-2 rounded-md border border-primary/35 bg-primary/5 p-3 text-xs"
+              >
+                <p class="font-semibold text-highlighted">
+                  {{ vaultMode === 'export' ? 'Export Encrypted .ferryvault' : 'Import Encrypted .ferryvault' }}
+                </p>
+                <PasswordInput
+                  v-model="vaultPassphrase"
+                  placeholder="Vault passphrase (min 8 characters)"
+                />
+                <PasswordInput
+                  v-if="vaultMode === 'export'"
+                  v-model="vaultPassphraseConfirm"
+                  placeholder="Confirm vault passphrase"
+                />
+                <p v-if="vaultError" role="alert" class="text-2xs text-error">{{ vaultError }}</p>
+                <div class="flex justify-end gap-1.5">
+                  <UButton size="xs" color="neutral" variant="ghost" :disabled="vaultBusy" @click="vaultMode = null">
+                    Cancel
+                  </UButton>
+                  <UButton size="xs" color="primary" :loading="vaultBusy" @click="submitVaultAction">
+                    {{ vaultMode === 'export' ? 'Choose file & export' : 'Choose file & import' }}
+                  </UButton>
+                </div>
+              </div>
 
               <SettingsRow label="Data access & deletion" description="Export local data (excluding passwords) or erase all local Ferry data.">
                 <div class="flex flex-wrap gap-2">

@@ -57,6 +57,7 @@ declare module 'vue' {
     SiteTabBar: typeof import('./src/components/shell/SiteTabBar.vue')['default']
     SyncDialog: typeof import('./src/components/files/SyncDialog.vue')['default']
     TerminalAppearanceSettings: typeof import('./src/components/shell/TerminalAppearanceSettings.vue')['default']
+    TerminalCommandBar: typeof import('./src/components/terminal/TerminalCommandBar.vue')['default']
     TerminalView: typeof import('./src/components/terminal/TerminalView.vue')['default']
     TransferConflictDialog: typeof import('./src/components/files/TransferConflictDialog.vue')['default']
     TransferItem: typeof import('./src/components/transfers/TransferItem.vue')['default']

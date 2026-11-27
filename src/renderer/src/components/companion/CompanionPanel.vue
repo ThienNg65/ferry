@@ -5,18 +5,28 @@ import USwitch from '@nuxt/ui/components/Switch.vue'
 import type { CompanionCommandCard, CompanionCommandRisk, CompanionUiActionCard } from '@shared/contract'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { useCompanionStore, type CompanionView } from '../../stores/companion.store'
+import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useUiStore } from '../../stores/ui.store'
 import { OFFICIAL_RELEASES_URL } from '../../utils/companionChangelogFallback'
 import type { CompanionActionChip } from '../../utils/companionEngine'
-import { classifyCommandRisk } from '../../utils/companionSnippets'
+import { classifyCommandRisk, type CompanionSnippet } from '../../utils/companionSnippets'
+import {
+  defaultSnippetParamValues,
+  extractSnippetParams,
+  interpolateSnippetCommand
+} from '../../utils/snippetParams'
 import { COMPANION_TOUR_STEPS } from '../../utils/companionTour'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import { trapTabWithinElement } from '../../composables/useDialogFocusTrap'
 import CompanionAvatar from './CompanionAvatar.vue'
 import CompanionIssueForm from './CompanionIssueForm.vue'
 
+const props = withDefaults(defineProps<{ mode?: 'split' | 'overlay' }>(), { mode: 'overlay' })
+const isSplitMode = computed(() => props.mode === 'split')
+
 const companion = useCompanionStore()
+const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
 const ui = useUiStore()
 
@@ -51,9 +61,18 @@ const runConfirmOpen = computed({
 })
 const snippetFilter = ref('')
 const showSnippetForm = ref(false)
+const editingSnippetId = ref<string | null>(null)
 const newSnippetLabel = ref('')
 const newSnippetCommand = ref('')
 const newSnippetDescription = ref('')
+const aiSnippetPrompt = ref('')
+const aiSnippetDrafting = ref(false)
+const pendingParamSnippet = ref<{
+  snippet: CompanionSnippet
+  action: 'run' | 'insert'
+  params: string[]
+  values: Record<string, string>
+} | null>(null)
 let previouslyFocused: HTMLElement | null = null
 
 const currentTourStep = computed(() =>
@@ -185,7 +204,8 @@ watch(
 )
 
 function onPanelTabKeydown(e: KeyboardEvent): void {
-  if (!companion.open || prefsOpen.value || pendingRunCard.value) return
+  // WAI-ARIA APG: trap Tab only in modal overlay mode, never in split/complementary mode.
+  if (isSplitMode.value || !companion.open || prefsOpen.value || pendingRunCard.value) return
   if (document.querySelector('[role="dialog"]:not([data-state="closed"]):not([data-companion-panel])')) {
     return
   }
@@ -358,20 +378,120 @@ function saveCardAsSnippet(card: CompanionCommandCard): void {
 }
 
 function onCreateSnippet(): void {
-  const saved = companion.saveCustomSnippet({
-    label: newSnippetLabel.value,
-    command: newSnippetCommand.value,
-    description: newSnippetDescription.value
-  })
+  const saved = editingSnippetId.value
+    ? companion.updateCustomSnippet(editingSnippetId.value, {
+        label: newSnippetLabel.value,
+        command: newSnippetCommand.value,
+        description: newSnippetDescription.value
+      })
+    : companion.saveCustomSnippet({
+        label: newSnippetLabel.value,
+        command: newSnippetCommand.value,
+        description: newSnippetDescription.value
+      })
   if (!saved) {
     actionFeedback.value = 'Enter a valid label and shell command.'
     return
   }
+  const wasEdit = Boolean(editingSnippetId.value)
+  editingSnippetId.value = null
   newSnippetLabel.value = ''
   newSnippetCommand.value = ''
   newSnippetDescription.value = ''
+  aiSnippetPrompt.value = ''
   showSnippetForm.value = false
-  actionFeedback.value = `Saved snippet "${saved.label}".`
+  actionFeedback.value = wasEdit ? `Updated snippet "${saved.label}".` : `Saved snippet "${saved.label}".`
+}
+
+function startEditSnippet(snip: CompanionSnippet): void {
+  editingSnippetId.value = snip.id
+  newSnippetLabel.value = snip.label
+  newSnippetCommand.value = snip.command
+  newSnippetDescription.value = snip.description
+  showSnippetForm.value = true
+}
+
+function toggleNewSnippetForm(): void {
+  if (showSnippetForm.value) {
+    showSnippetForm.value = false
+    editingSnippetId.value = null
+    newSnippetLabel.value = ''
+    newSnippetCommand.value = ''
+    newSnippetDescription.value = ''
+    aiSnippetPrompt.value = ''
+  } else {
+    editingSnippetId.value = null
+    showSnippetForm.value = true
+  }
+}
+
+async function draftSnippetWithAi(): Promise<void> {
+  const prompt = aiSnippetPrompt.value.trim()
+  if (!prompt || aiSnippetDrafting.value) return
+  aiSnippetDrafting.value = true
+  try {
+    const res = await companion.requestQuickCommand(prompt)
+    if (res.card) {
+      if (!newSnippetLabel.value.trim()) {
+        newSnippetLabel.value = res.card.description.slice(0, 50) || prompt.slice(0, 50)
+      }
+      newSnippetCommand.value = res.card.command
+      newSnippetDescription.value = res.card.description
+      actionFeedback.value = 'Drafted snippet command — review and save.'
+    } else {
+      actionFeedback.value = res.message || 'Could not draft snippet.'
+    }
+  } finally {
+    aiSnippetDrafting.value = false
+  }
+}
+
+function invokeSnippetAction(snip: CompanionSnippet, action: 'run' | 'insert'): void {
+  const params = extractSnippetParams(snip.command)
+  if (params.length > 0) {
+    const selected = Array.from(remoteFs.selected ?? [])
+    const firstSelected = selected[0] ?? null
+    const entry = firstSelected ? remoteFs.entries.find((e) => e.path === firstSelected) : null
+    pendingParamSnippet.value = {
+      snippet: snip,
+      action,
+      params,
+      values: defaultSnippetParamValues(params, {
+        remoteCwd: remoteFs.currentPath,
+        selectedPath: firstSelected,
+        selectedName: entry?.name ?? null,
+        siteName: sessions.activeTab?.label ?? null
+      })
+    }
+    return
+  }
+  if (action === 'run') {
+    void onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })
+  } else {
+    void onInsertCommand(snip.command)
+  }
+}
+
+const resolvedParamSnippetCommand = computed(() => {
+  if (!pendingParamSnippet.value) return ''
+  return interpolateSnippetCommand(pendingParamSnippet.value.snippet.command, pendingParamSnippet.value.values)
+})
+
+function submitParamSnippet(): void {
+  const pending = pendingParamSnippet.value
+  if (!pending) return
+  const resolved = resolvedParamSnippetCommand.value
+  pendingParamSnippet.value = null
+  if (!resolved) return
+  if (pending.action === 'run') {
+    void onRunCommandCard({
+      command: resolved,
+      description: pending.snippet.description || pending.snippet.label,
+      risk: classifyCommandRisk(resolved)
+    })
+  } else {
+    void onInsertCommand(resolved)
+  }
 }
 
 function riskBadgeLabel(risk: CompanionCommandRisk): string {
@@ -398,22 +518,25 @@ function openFullNotes(url?: string): void {
 </script>
 
 <template>
-  <Teleport to="body">
-  <Transition name="slide-right">
+  <Teleport to="body" :disabled="isSplitMode">
+  <Transition :name="isSplitMode ? '' : 'slide-right'">
     <aside
       v-if="companion.open"
       ref="panelRef"
       tabindex="-1"
-      role="dialog"
-      aria-modal="true"
+      :role="isSplitMode ? 'complementary' : 'dialog'"
+      :aria-modal="isSplitMode ? undefined : 'true'"
       aria-label="Ferry Companion"
-      class="pointer-events-auto fixed top-9 right-0 bottom-0 z-[60] flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none"
-      :class="
+      :class="[
+        isSplitMode
+          ? 'relative z-20 flex h-full w-[380px] shrink-0 flex-col border-l border-default focus:outline-none'
+          : 'pointer-events-auto fixed top-9 right-0 bottom-0 z-[60] flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none',
         ui.glassUiEnabled
           ? 'ferry-glass-overlay rounded-l-[var(--ferry-radius-overlay)] rounded-r-none border-r-0 border-b-0'
           : 'bg-default'
-      "
+      ]"
       data-companion-panel
+      :data-companion-mode="props.mode"
       @keydown.tab="onPanelTabKeydown"
     >
       <!-- Header -->
@@ -510,6 +633,17 @@ function openFullNotes(url?: string): void {
             </template>
           </Popover>
 
+          <UTooltip :text="ui.companionLayoutMode === 'split' ? 'Float as overlay' : 'Dock side-by-side'">
+            <UButton
+              :icon="ui.companionLayoutMode === 'split' ? 'i-lucide-picture-in-picture-2' : 'i-lucide-panel-right'"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="ui.companionLayoutMode === 'split' ? 'Float Companion as overlay' : 'Dock Companion side-by-side'"
+              data-companion-layout-toggle
+              @click="ui.toggleCompanionLayoutMode()"
+            />
+          </UTooltip>
           <UTooltip text="Close (Esc)">
             <UButton
               icon="i-lucide-x"
@@ -866,7 +1000,7 @@ function openFullNotes(url?: string): void {
               color="primary"
               variant="soft"
               :icon="showSnippetForm ? 'i-lucide-x' : 'i-lucide-plus'"
-              @click="showSnippetForm = !showSnippetForm"
+              @click="toggleNewSnippetForm"
             >
               {{ showSnippetForm ? 'Cancel' : 'New' }}
             </UButton>
@@ -878,7 +1012,9 @@ function openFullNotes(url?: string): void {
             @submit.prevent="onCreateSnippet"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="font-semibold text-highlighted">Save Local Snippet</span>
+              <span class="font-semibold text-highlighted">
+                {{ editingSnippetId ? 'Edit Local Snippet' : 'Save Local Snippet' }}
+              </span>
               <span
                 v-if="newSnippetCommand.trim()"
                 class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
@@ -886,6 +1022,27 @@ function openFullNotes(url?: string): void {
               >
                 {{ riskBadgeLabel(draftSnippetRisk) }}
               </span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <input
+                v-model="aiSnippetPrompt"
+                type="text"
+                aria-label="Draft snippet with AI"
+                placeholder="Draft with AI (e.g. tail {{service}} logs)…"
+                class="min-w-0 flex-1 rounded border border-default bg-default/80 px-2 py-1 text-2xs text-default"
+              />
+              <UButton
+                type="button"
+                size="xs"
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-sparkles"
+                :loading="aiSnippetDrafting"
+                :disabled="!aiSnippetPrompt.trim()"
+                @click="draftSnippetWithAi"
+              >
+                Draft
+              </UButton>
             </div>
             <input
               v-model="newSnippetLabel"
@@ -898,7 +1055,7 @@ function openFullNotes(url?: string): void {
               v-model="newSnippetCommand"
               type="text"
               aria-label="Snippet command"
-              placeholder="Shell command (e.g. nginx -t)"
+              placeholder="Shell command (supports {{service}}, {{path}})"
               class="rounded border border-default bg-default/80 px-2 py-1 font-mono text-xs text-default"
             />
             <input
@@ -915,10 +1072,42 @@ function openFullNotes(url?: string): void {
                 color="primary"
                 :disabled="!newSnippetLabel.trim() || !newSnippetCommand.trim()"
               >
-                Save Snippet
+                {{ editingSnippetId ? 'Update Snippet' : 'Save Snippet' }}
               </UButton>
             </div>
           </form>
+
+          <!-- Inline {{param}} prompt for parameterized snippets -->
+          <div
+            v-if="pendingParamSnippet"
+            data-snippet-param-prompt
+            class="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/8 p-2.5 text-xs"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold text-highlighted">Fill parameters · {{ pendingParamSnippet.snippet.label }}</span>
+              <button
+                type="button"
+                class="cursor-pointer text-2xs text-muted hover:text-default"
+                @click="pendingParamSnippet = null"
+              >
+                Cancel
+              </button>
+            </div>
+            <label v-for="param in pendingParamSnippet.params" :key="param" class="flex flex-col gap-0.5 text-2xs">
+              <span class="font-mono text-muted">{{ param }}</span>
+              <input
+                v-model="pendingParamSnippet.values[param]"
+                type="text"
+                class="rounded border border-default bg-default px-2 py-1 font-mono text-2xs text-default"
+              />
+            </label>
+            <pre class="overflow-x-auto rounded bg-default px-2 py-1 font-mono text-2xs text-default">{{ resolvedParamSnippetCommand }}</pre>
+            <div class="flex justify-end gap-1.5">
+              <UButton size="xs" color="primary" :disabled="!resolvedParamSnippetCommand" @click="submitParamSnippet">
+                {{ pendingParamSnippet.action === 'run' ? 'Continue to Run' : 'Insert in Terminal' }}
+              </UButton>
+            </div>
+          </div>
 
           <div class="flex flex-col gap-2">
             <div
@@ -938,6 +1127,15 @@ function openFullNotes(url?: string): void {
                   <button
                     v-if="!snip.builtIn"
                     type="button"
+                    aria-label="Edit snippet"
+                    class="cursor-pointer rounded p-0.5 text-muted hover:text-primary"
+                    @click="startEditSnippet(snip)"
+                  >
+                    <UIcon name="i-lucide-pencil" class="size-3" />
+                  </button>
+                  <button
+                    v-if="!snip.builtIn"
+                    type="button"
                     aria-label="Delete snippet"
                     class="cursor-pointer rounded p-0.5 text-muted hover:text-error"
                     @click="companion.deleteCustomSnippet(snip.id)"
@@ -954,7 +1152,7 @@ function openFullNotes(url?: string): void {
                   color="primary"
                   variant="soft"
                   icon="i-lucide-play"
-                  @click="onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })"
+                  @click="invokeSnippetAction(snip, 'run')"
                 >
                   Run in Terminal
                 </UButton>
@@ -964,7 +1162,7 @@ function openFullNotes(url?: string): void {
                   variant="outline"
                   icon="i-lucide-terminal"
                   data-insert-command
-                  @click="onInsertCommand(snip.command)"
+                  @click="invokeSnippetAction(snip, 'insert')"
                 >
                   Insert
                 </UButton>

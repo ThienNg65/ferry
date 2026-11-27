@@ -43,6 +43,7 @@ import {
   classifyCommandRisk,
   diagnoseLogSnippetOffline,
   diagnoseMonitorSpikeOffline,
+  translatePlainEnglishCommandOffline,
   type CompanionCommandHistoryEntry,
   type CompanionSnippet
 } from '../utils/companionSnippets'
@@ -1386,6 +1387,187 @@ export const useCompanionStore = defineStore('companion', {
       this.customSnippets = [entry, ...this.customSnippets.filter((s) => s.command !== command)].slice(0, MAX_CUSTOM_SNIPPETS)
       writeStored(SNIPPETS_KEY, JSON.stringify(this.customSnippets), this.dirtyPrefKeys)
       return entry
+    },
+
+    updateCustomSnippet(
+      id: string,
+      input: { label: string; command: string; description?: string }
+    ): CompanionSnippet | null {
+      const label = input.label.trim().slice(0, 80)
+      const command = sanitizeCompanionCommand(input.command)
+      if (!label || !command) return null
+      const idx = this.customSnippets.findIndex((s) => s.id === id)
+      if (idx === -1) return null
+      const updated: CompanionSnippet = {
+        id,
+        label,
+        command,
+        description: (input.description ?? '').trim().slice(0, 240),
+        risk: classifyCommandRisk(command)
+      }
+      const next = [...this.customSnippets]
+      next[idx] = updated
+      this.customSnippets = next
+      writeStored(SNIPPETS_KEY, JSON.stringify(this.customSnippets), this.dirtyPrefKeys)
+      return updated
+    },
+
+    mergeImportedSnippets(
+      incoming: ReadonlyArray<{ label: string; command: string; description?: string }>
+    ): number {
+      let added = 0
+      const existingCommands = new Set(this.customSnippets.map((s) => s.command))
+      const created: CompanionSnippet[] = []
+      for (const item of incoming) {
+        const label = item.label.trim().slice(0, 80)
+        const command = sanitizeCompanionCommand(item.command)
+        if (!label || !command || existingCommands.has(command)) continue
+        existingCommands.add(command)
+        created.push({
+          id: nextId('snip'),
+          label,
+          command,
+          description: (item.description ?? '').trim().slice(0, 240),
+          risk: classifyCommandRisk(command)
+        })
+        added += 1
+      }
+      if (created.length > 0) {
+        this.customSnippets = [...created, ...this.customSnippets].slice(0, MAX_CUSTOM_SNIPPETS)
+        writeStored(SNIPPETS_KEY, JSON.stringify(this.customSnippets), this.dirtyPrefKeys)
+      }
+      return added
+    },
+
+    /** Generates a single risk-badged Command Card for the in-terminal Quick Command Bar or Snippet AI Drafter without mutating Chat. */
+    async requestQuickCommand(
+      query: string
+    ): Promise<{ card: CompanionCommandCard | null; message: string | null }> {
+      const trimmed = query.trim()
+      if (!trimmed) return { card: null, message: 'Enter a request first.' }
+
+      if (this.aiConfig.provider !== 'none') {
+        const signal = this.collectWorkspaceSignal()
+        const { result, errorHint } = await this.requestAiChat(
+          `Generate one concise, safe shell command for: ${trimmed}`,
+          'command',
+          signal
+        )
+        const firstCard = result?.structured?.commandCards?.[0]
+        if (firstCard) {
+          return { card: firstCard, message: result?.structured?.summary ?? null }
+        }
+        if (errorHint) {
+          const offline = translatePlainEnglishCommandOffline(trimmed)
+          if (offline?.commandCards[0]) {
+            return { card: offline.commandCards[0], message: `AI unreachable (${errorHint}); showing offline suggestion.` }
+          }
+          return { card: null, message: `AI error: ${errorHint}` }
+        }
+      }
+
+      const offline = translatePlainEnglishCommandOffline(trimmed)
+      if (offline?.commandCards[0]) {
+        return { card: offline.commandCards[0], message: offline.summary }
+      }
+      return {
+        card: null,
+        message: 'No offline match found. Configure a free Gemini API key in Settings for natural-language command generation.'
+      }
+    },
+
+    /** Correlates a Resource Monitor spike with recent error/tail lines from the active session's Live Log Tail. */
+    async correlateSpikeAndLogs(sample: MonitorSample): Promise<void> {
+      if (this.aiBusy) {
+        this.open = true
+        this.activeView = 'chat'
+        this.pushSystemNote('Still finishing the previous AI request — please try Correlate Spike + Logs again in a moment.')
+        return
+      }
+      const sessions = useSessionsStore()
+      const sessionId = sessions.activeSessionId
+      const tailStreams = useTailStreamsStore()
+      const tailTab = sessionId
+        ? tailStreams.tabs.find((t) => t.tailId === tailStreams.activeTailId && t.sessionId === sessionId) ??
+          tailStreams.tabs.find((t) => t.sessionId === sessionId)
+        : undefined
+      const tailLines = tailTab ? (tailStreams.linesMap[tailTab.tailId] ?? []).slice(-15) : []
+      const logSnippet = tailLines.length > 0
+        ? redactSensitiveText(tailLines.join('\n'), { mode: 'diagnostic' }).text.slice(0, 2000)
+        : undefined
+      const logBasename = tailTab ? tailTab.remotePath.split('/').pop() || tailTab.remotePath : undefined
+
+      const cpuPct = sample.cpu ? sample.cpu.aggregatePct : null
+      const memPct = sample.memory.totalBytes > 0 ? Math.round((sample.memory.usedBytes / sample.memory.totalBytes) * 100) : 0
+      const topProcs = sample.processes
+        .slice(0, 5)
+        .map((p) => `${p.name}(pid=${p.pid},cpu=${p.cpuPct?.toFixed(1) ?? '?'}%,rss=${Math.round(p.rssBytes / (1024 * 1024))}MB${p.cmdline && p.cmdline !== p.name ? ` cmd="${p.cmdline.slice(0, 80)}"` : ''})`)
+        .join('; ')
+      const monitorSummary = redactSensitiveText(
+        `CPU: ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM: ${memPct}%, LoadAvg: ${sample.loadAvg.map((n) => n.toFixed(2)).join('/')} | Top: ${topProcs}`,
+        { mode: 'diagnostic' }
+      ).text
+
+      this.openPanel('chat')
+      this.pushMessage({
+        role: 'user',
+        text: `Correlate Monitor spike (CPU ${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : 'N/A'}, RAM ${memPct}%) with ${logBasename || 'active log stream'}`
+      })
+
+      const workspaceSignal = this.collectWorkspaceSignal({
+        monitorSummary,
+        ...(logSnippet ? { logSnippet, logBasename } : {})
+      })
+
+      await this.deliverAiOrLocalReply({
+        aiPrompt: `Correlate the remote Resource Monitor spike with recent entries from ${logBasename || 'the active log tail'} to identify root cause and safe read-only verification commands.`,
+        intent: 'diagnose-spike',
+        workspaceSignal,
+        errorPrefix: 'Local spike triage:',
+        buildLocal: () => {
+          const offline = diagnoseMonitorSpikeOffline({
+            cpuPct,
+            memPct,
+            swapPct: sample.swap.totalBytes > 0 ? Math.round((sample.swap.usedBytes / sample.swap.totalBytes) * 100) : 0,
+            diskPct: sample.disk && sample.disk.totalBytes > 0 ? Math.round((sample.disk.usedBytes / sample.disk.totalBytes) * 100) : null,
+            loadAvg: sample.loadAvg,
+            coreCount: sample.cpu?.coreCount ?? 1,
+            topProcesses: sample.processes.slice(0, 5).map((p) => ({
+              pid: p.pid,
+              name: p.name,
+              cpuPct: p.cpuPct,
+              rssMB: Math.round(p.rssBytes / (1024 * 1024))
+            }))
+          })
+          return {
+            text: offline.summary,
+            rootCause: offline.rootCause,
+            commandCards: offline.commandCards
+          }
+        }
+      })
+    },
+
+    /** Opens Companion Chat and diagnoses a specific failed transfer or remote operation row. */
+    async troubleshootWorkspaceError(input: {
+      scopeKey?: string
+      category: CompanionErrorCategory
+      error: string
+      direction?: 'upload' | 'download'
+      localPath?: string
+      remotePath?: string
+      operationKind?: OperationKind
+      label?: string
+    }): Promise<void> {
+      this.notifyWorkspaceError(input)
+      this.openPanel('chat')
+      const subject =
+        input.category === 'transfer'
+          ? `failed ${input.direction ?? 'transfer'}${input.remotePath ? ` (${input.remotePath.split('/').pop()})` : ''}`
+          : input.label
+            ? `failed operation "${input.label}"`
+            : `failed ${input.category}`
+      await this.ask(`Troubleshoot this ${subject}: ${input.error}`)
     },
 
     deleteCustomSnippet(id: string): void {

@@ -1119,6 +1119,8 @@ export const INVOKE_CHANNELS = {
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
   sitesImportJson: 'sites:import-json',
+  sitesExportVault: 'sites:exportVault',
+  sitesImportVault: 'sites:importVault',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',
