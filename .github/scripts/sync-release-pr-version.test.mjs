@@ -6,16 +6,31 @@ import {
   syncReleasePrVersion
 } from './sync-release-pr-version.mjs'
 
-test('extractReleasePrBranches combines RELEASE_PRS and open release-please PRs without duplicates', () => {
+test('extractReleasePrBranches combines RELEASE_PRS and open same-repo release-please PRs while excluding forks', () => {
   const branches = extractReleasePrBranches({
+    repo: 'ThienNg65/ferry',
     baseBranch: 'main',
     releasePrsJson: JSON.stringify([
       { headBranchName: 'release-please--branches--main--components--ferry', baseBranchName: 'main', number: 194 },
       { headBranchName: 'release-please--branches--next--components--ferry', baseBranchName: 'next', number: 195 }
     ]),
     openPulls: [
-      { head: { ref: 'release-please--branches--main--components--ferry' }, base: { ref: 'main' } },
-      { head: { ref: 'feat/some-feature' }, base: { ref: 'main' } }
+      {
+        head: { ref: 'release-please--branches--main--components--ferry', repo: { full_name: 'ThienNg65/ferry' } },
+        base: { ref: 'main', repo: { full_name: 'ThienNg65/ferry' } }
+      },
+      {
+        head: { ref: 'release-please--branches--main--components--fork', repo: { full_name: 'external/ferry' } },
+        base: { ref: 'main', repo: { full_name: 'ThienNg65/ferry' } }
+      },
+      {
+        head: { ref: 'release-please--branches--main--components--deleted-fork', repo: null },
+        base: { ref: 'main', repo: { full_name: 'ThienNg65/ferry' } }
+      },
+      {
+        head: { ref: 'feat/some-feature', repo: { full_name: 'ThienNg65/ferry' } },
+        base: { ref: 'main', repo: { full_name: 'ThienNg65/ferry' } }
+      }
     ]
   })
 
@@ -61,7 +76,12 @@ test('syncReleasePrVersion updates stale VERSION on the release PR branch and sk
 
     if (url.endsWith('/pulls?state=open&base=main&per_page=100')) {
       return new Response(
-        JSON.stringify([{ head: { ref: branch }, base: { ref: 'main' } }]),
+        JSON.stringify([
+          {
+            head: { ref: branch, repo: { full_name: 'ThienNg65/ferry' } },
+            base: { ref: 'main', repo: { full_name: 'ThienNg65/ferry' } }
+          }
+        ]),
         { status: 200 }
       )
     }

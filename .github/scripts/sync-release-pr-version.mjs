@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 const API = 'https://api.github.com'
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
-export function extractReleasePrBranches({ releasePrsJson = '', openPulls = [], baseBranch = 'main' } = {}) {
+export function extractReleasePrBranches({ releasePrsJson = '', openPulls = [], baseBranch = 'main', repo = '' } = {}) {
   const branches = []
   const trimmed = releasePrsJson.trim()
   if (trimmed) {
@@ -25,10 +25,14 @@ export function extractReleasePrBranches({ releasePrsJson = '', openPulls = [], 
   }
 
   const branchPrefix = `release-please--branches--${baseBranch}--`
+  const expectedRepo = repo.toLowerCase()
   for (const pr of openPulls) {
     const headRef = pr?.head?.ref
     const baseRef = pr?.base?.ref
-    if (baseRef === baseBranch && typeof headRef === 'string' && headRef.startsWith(branchPrefix)) {
+    const headRepo = pr?.head?.repo?.full_name?.toLowerCase() ?? ''
+    const baseRepo = expectedRepo || (pr?.base?.repo?.full_name?.toLowerCase() ?? '')
+    const isSameRepo = Boolean(baseRepo) && headRepo === baseRepo
+    if (baseRef === baseBranch && isSameRepo && typeof headRef === 'string' && headRef.startsWith(branchPrefix)) {
       branches.push(headRef)
     }
   }
@@ -130,7 +134,7 @@ export async function syncReleasePrVersion({
     {},
     fetchImpl
   )
-  const branches = extractReleasePrBranches({ releasePrsJson, openPulls, baseBranch })
+  const branches = extractReleasePrBranches({ releasePrsJson, openPulls, baseBranch, repo })
 
   if (branches.length === 0) {
     log('No open Release Please PRs found; nothing to sync.')
