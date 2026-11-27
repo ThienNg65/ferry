@@ -144,8 +144,11 @@ export function registerFsHandlers(): void {
     const paths = rawPaths.slice(0, 50).map((p) => requireNonEmptyString(p, 'paths[]', channel))
     return LocalFs.scanUploadPaths(paths)
   })
-  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath) =>
-    LocalFs.readFileText(requireNonEmptyString(filePath, 'filePath', INVOKE_CHANNELS.fsLocalReadFile))
+  handle<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, (filePath, maxBytes) =>
+    LocalFs.readFileText(
+      requireNonEmptyString(filePath, 'filePath', INVOKE_CHANNELS.fsLocalReadFile),
+      maxBytes as number | undefined
+    )
   )
   handle<void>(INVOKE_CHANNELS.fsLocalWriteFile, (req) => {
     const channel = INVOKE_CHANNELS.fsLocalWriteFile
