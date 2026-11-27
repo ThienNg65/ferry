@@ -7,7 +7,6 @@ export interface TunnelRule {
   id: string
   name?: string
   type: TunnelType
-  /** Bind interface. Defaults to `127.0.0.1` when omitted or blank. */
   bindHost?: string
   bindPort: number
   targetHost: string
@@ -63,7 +62,6 @@ export interface ActiveTunnelInfo {
   bytesIn: number
   bytesOut: number
   startedAt: number
-  /** Quick-copy endpoint for local tunnels (e.g. `localhost:5432`). */
   localAddress?: string
   exposedExternally: boolean
   lastError?: string
@@ -77,6 +75,11 @@ export interface TunnelStatusEvent {
   error?: TunnelError
 }
 
+export interface AutoStartTunnelsResult {
+  started: ActiveTunnelInfo[]
+  failed: Array<{ ruleId: string; error: TunnelError }>
+}
+
 export interface SshForwardChannel extends Duplex {
   close?: () => void
 }
@@ -88,10 +91,6 @@ export interface SshTcpConnectionInfo {
   srcPort: number
 }
 
-/**
- * Structural subset of `ssh2.Client` required for `-L` and `-R` port forwarding.
- * Keeps the manager decoupled from concrete `ssh2` instances for unit testing.
- */
 export interface PortForwardingSshClient {
   forwardOut(
     srcIP: string,
@@ -123,13 +122,16 @@ export interface PortForwardingSshClient {
 }
 
 export interface StartTunnelOptions {
-  /** Allow `bindPort: 0` so the OS assigns an ephemeral port (primarily for tests). */
   allowEphemeralPort?: boolean
 }
 
+export interface PortForwardingManagerOptions {
+  unforwardTimeoutMs?: number
+}
+
 const DEFAULT_BIND_HOST = '127.0.0.1'
-const UNFORWARD_TIMEOUT_MS = 3_000
-const INVALID_HOST_CHARS_RE = /[\s\r\n\0\x01-\x1f\x7f"'`$;\\]/
+const DEFAULT_UNFORWARD_TIMEOUT_MS = 3_000
+const INVALID_HOST_CHARS_RE = /[\s\r\n\0\x01-\x1f\x7f"'`$;\\[\]]/
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '*'])
 
@@ -145,16 +147,21 @@ function isValidPort(port: number, allowZero = false): boolean {
   return port >= min && port <= 65535
 }
 
-function isValidHostToken(host: string): boolean {
-  if (!host || host.length > 255) {
+function isValidHostToken(host: string, allowWildcard = true): boolean {
+  if (!host || host.length > 255 || host.startsWith('-')) {
+    return false
+  }
+  if (!allowWildcard && host === '*') {
     return false
   }
   return !INVALID_HOST_CHARS_RE.test(host)
 }
 
-/**
- * Returns true when a bind host exposes the forwarded port beyond the loopback interface.
- */
+function formatHostForEndpoint(host: string): string {
+  const clean = stripIpv6Brackets(host.trim())
+  return clean.includes(':') ? `[${clean}]` : clean
+}
+
 export function isExposedBindHost(rawHost: string | undefined): boolean {
   const normalized = stripIpv6Brackets((rawHost ?? DEFAULT_BIND_HOST).trim().toLowerCase())
   if (!normalized) {
@@ -163,21 +170,24 @@ export function isExposedBindHost(rawHost: string | undefined): boolean {
   return !LOOPBACK_HOSTS.has(normalized)
 }
 
-/**
- * Formats a user-friendly copyable endpoint such as `localhost:5432` or `[::1]:5432`.
- */
 export function formatCopyAddress(bindHost: string, bindPort: number): string {
   const clean = stripIpv6Brackets(bindHost.trim())
   const lower = clean.toLowerCase()
   if (!clean || lower === '127.0.0.1' || lower === '0.0.0.0' || lower === 'localhost' || lower === '::1' || lower === '::') {
     return `localhost:${bindPort}`
   }
-  return clean.includes(':') ? `[${clean}]:${bindPort}` : `${clean}:${bindPort}`
+  return `${formatHostForEndpoint(clean)}:${bindPort}`
 }
 
-/**
- * Validates and normalizes a single tunnel rule before persistence or startup.
- */
+export function formatTunnelSpec(
+  rule: Pick<NormalizedTunnelRule, 'type' | 'bindHost' | 'bindPort' | 'targetHost' | 'targetPort'>
+): string {
+  const flag = rule.type === 'local' ? '-L' : '-R'
+  const bind = `${formatHostForEndpoint(rule.bindHost)}:${rule.bindPort}`
+  const target = `${formatHostForEndpoint(rule.targetHost)}:${rule.targetPort}`
+  return `${flag} ${bind}:${target}`
+}
+
 export function validateTunnelRule(
   rule: TunnelRule,
   options: StartTunnelOptions = {}
@@ -193,13 +203,16 @@ export function validateTunnelRule(
   if (rule.type !== 'local' && rule.type !== 'remote') {
     return {
       ok: false,
-      error: { code: 'VALIDATION_ERROR', message: `Unsupported tunnel type "${String(rule.type)}". Expected "local" or "remote".` }
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: `Unsupported tunnel type "${String(rule.type)}". Expected "local" or "remote".`
+      }
     }
   }
 
   const rawBindHost = typeof rule.bindHost === 'string' ? rule.bindHost.trim() : ''
   const bindHost = stripIpv6Brackets(rawBindHost || DEFAULT_BIND_HOST)
-  if (!isValidHostToken(bindHost)) {
+  if (!isValidHostToken(bindHost, true)) {
     return {
       ok: false,
       error: { code: 'VALIDATION_ERROR', message: `Invalid bind host "${rule.bindHost ?? ''}".` }
@@ -209,13 +222,16 @@ export function validateTunnelRule(
   if (!isValidPort(rule.bindPort, Boolean(options.allowEphemeralPort))) {
     return {
       ok: false,
-      error: { code: 'VALIDATION_ERROR', message: `Bind port must be an integer between 1 and 65535 (got ${String(rule.bindPort)}).` }
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: `Bind port must be an integer between 1 and 65535 (got ${String(rule.bindPort)}).`
+      }
     }
   }
 
   const rawTargetHost = typeof rule.targetHost === 'string' ? rule.targetHost.trim() : ''
   const targetHost = stripIpv6Brackets(rawTargetHost)
-  if (!isValidHostToken(targetHost)) {
+  if (!isValidHostToken(targetHost, false)) {
     return {
       ok: false,
       error: { code: 'VALIDATION_ERROR', message: `Invalid target host "${rule.targetHost ?? ''}".` }
@@ -225,7 +241,10 @@ export function validateTunnelRule(
   if (!isValidPort(rule.targetPort, false)) {
     return {
       ok: false,
-      error: { code: 'VALIDATION_ERROR', message: `Target port must be an integer between 1 and 65535 (got ${String(rule.targetPort)}).` }
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: `Target port must be an integer between 1 and 65535 (got ${String(rule.targetPort)}).`
+      }
     }
   }
 
@@ -265,9 +284,6 @@ function hostsConflict(a: string, b: string): boolean {
   return false
 }
 
-/**
- * Validates a list of per-host tunnel rules, rejecting duplicate IDs and conflicting bindings.
- */
 export function validateTunnelRules(rules: ReadonlyArray<TunnelRule>): TunnelResult<NormalizedTunnelRule[]> {
   const normalized: NormalizedTunnelRule[] = []
   const seenIds = new Set<string>()
@@ -362,6 +378,10 @@ function matchesRemoteDestination(tunnel: ManagedTunnel, info: SshTcpConnectionI
   return false
 }
 
+function chunkByteLength(chunk: Buffer | string): number {
+  return typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
+}
+
 interface ManagedTunnel {
   sessionId: string
   rule: NormalizedTunnelRule
@@ -382,7 +402,8 @@ interface SessionTunnelState {
   sessionId: string
   client: PortForwardingSshClient
   tunnels: Map<string, ManagedTunnel>
-  startingRules: Set<string>
+  startingRules: Map<string, NormalizedTunnelRule>
+  cancelledStartingRules: Set<string>
   disposed: boolean
   tcpConnectionListener: (
     info: SshTcpConnectionInfo,
@@ -392,15 +413,16 @@ interface SessionTunnelState {
   disconnectListener: () => void
 }
 
-/**
- * Manages active `-L` (local) and `-R` (remote) SSH port-forwarding tunnels across sessions.
- * Cleans up TCP listeners, remote bindings, and active sockets on stop or session disconnect.
- */
 export class PortForwardingManager {
   private static instance: PortForwardingManager | null = null
 
   private readonly sessions = new Map<string, SessionTunnelState>()
   private readonly listeners = new Set<(event: TunnelStatusEvent) => void>()
+  private readonly unforwardTimeoutMs: number
+
+  constructor(options: PortForwardingManagerOptions = {}) {
+    this.unforwardTimeoutMs = options.unforwardTimeoutMs ?? DEFAULT_UNFORWARD_TIMEOUT_MS
+  }
 
   static getInstance(): PortForwardingManager {
     if (!PortForwardingManager.instance) {
@@ -409,7 +431,6 @@ export class PortForwardingManager {
     return PortForwardingManager.instance
   }
 
-  /** Subscribes to live tunnel status transitions. Returns an unsubscribe function. */
   onChange(listener: (event: TunnelStatusEvent) => void): () => void {
     this.listeners.add(listener)
     return () => {
@@ -417,7 +438,6 @@ export class PortForwardingManager {
     }
   }
 
-  /** Lists active tunnels, optionally filtered to a single session. */
   getActiveTunnels(sessionId?: string): ActiveTunnelInfo[] {
     const result: ActiveTunnelInfo[] = []
     if (sessionId !== undefined) {
@@ -441,9 +461,6 @@ export class PortForwardingManager {
     return result
   }
 
-  /**
-   * Starts a local (`-L`) or remote (`-R`) port-forwarding tunnel over an active SSH client.
-   */
   async startTunnel(
     sessionId: string,
     sshClient: PortForwardingSshClient | null | undefined,
@@ -466,7 +483,7 @@ export class PortForwardingManager {
     }
     const normalized = validated.data
 
-    const state = this.ensureSessionState(sessionId, sshClient)
+    const state = await this.ensureSessionState(sessionId, sshClient)
     if (state.tunnels.has(normalized.id) || state.startingRules.has(normalized.id)) {
       return {
         ok: false,
@@ -477,29 +494,14 @@ export class PortForwardingManager {
       }
     }
 
-    // Reject duplicate local port bindings across all sessions before touching the OS socket.
-    if (normalized.type === 'local' && normalized.bindPort !== 0) {
-      for (const otherState of this.sessions.values()) {
-        for (const existing of otherState.tunnels.values()) {
-          if (
-            !existing.stopped &&
-            existing.rule.type === 'local' &&
-            existing.actualBindPort === normalized.bindPort &&
-            hostsConflict(existing.rule.bindHost, normalized.bindHost)
-          ) {
-            return {
-              ok: false,
-              error: {
-                code: 'PORT_IN_USE',
-                message: `Local port ${normalized.bindHost}:${normalized.bindPort} is already used by tunnel "${existing.rule.name}".`
-              }
-            }
-          }
-        }
-      }
+    const conflictError = this.findBindingConflict(state, normalized)
+    if (conflictError) {
+      this.cleanupEmptySession(sessionId)
+      return { ok: false, error: conflictError }
     }
 
-    state.startingRules.add(normalized.id)
+    state.startingRules.set(normalized.id, normalized)
+    state.cancelledStartingRules.delete(normalized.id)
     this.emit({ sessionId, ruleId: normalized.id, status: 'starting' })
 
     try {
@@ -509,12 +511,26 @@ export class PortForwardingManager {
           : await this.startRemoteTunnel(state, normalized)
 
       if (!started.ok) {
-        this.emit({ sessionId, ruleId: normalized.id, status: 'error', error: started.error })
-        this.cleanupEmptySession(sessionId)
+        if (state.cancelledStartingRules.has(normalized.id)) {
+          this.emit({ sessionId, ruleId: normalized.id, status: 'stopped' })
+        } else {
+          this.emit({ sessionId, ruleId: normalized.id, status: 'error', error: started.error })
+        }
         return started
       }
 
-      // Guard against a session disconnect that happened while listen/forwardIn was pending.
+      if (state.cancelledStartingRules.has(normalized.id)) {
+        await this.teardownTunnel(state.client, started.data, !state.disposed)
+        this.emit({ sessionId, ruleId: normalized.id, status: 'stopped' })
+        return {
+          ok: false,
+          error: {
+            code: 'TUNNEL_NOT_FOUND',
+            message: `Tunnel "${normalized.name}" was stopped before startup completed.`
+          }
+        }
+      }
+
       if (state.disposed || this.sessions.get(sessionId) !== state) {
         await this.teardownTunnel(state.client, started.data, false)
         return {
@@ -532,15 +548,52 @@ export class PortForwardingManager {
       return { ok: true, data: info }
     } finally {
       state.startingRules.delete(normalized.id)
+      state.cancelledStartingRules.delete(normalized.id)
       this.cleanupEmptySession(sessionId)
     }
   }
 
-  /** Stops a single active tunnel and releases its port and active sockets. */
+  async startAutoTunnels(
+    sessionId: string,
+    sshClient: PortForwardingSshClient | null | undefined,
+    rules: ReadonlyArray<TunnelRule>,
+    options: StartTunnelOptions = {}
+  ): Promise<AutoStartTunnelsResult> {
+    const started: ActiveTunnelInfo[] = []
+    const failed: Array<{ ruleId: string; error: TunnelError }> = []
+
+    for (const rule of rules) {
+      if (!rule.autoStart) continue
+      const result = await this.startTunnel(sessionId, sshClient, rule, options)
+      if (result.ok) {
+        started.push(result.data)
+      } else {
+        failed.push({ ruleId: rule.id, error: result.error })
+      }
+    }
+
+    return { started, failed }
+  }
+
   async stopTunnel(sessionId: string, ruleId: string): Promise<TunnelResult<void>> {
     const state = this.sessions.get(sessionId)
-    const tunnel = state?.tunnels.get(ruleId)
-    if (!state || !tunnel) {
+    if (!state) {
+      return {
+        ok: false,
+        error: {
+          code: 'TUNNEL_NOT_FOUND',
+          message: `Active tunnel "${ruleId}" was not found for session "${sessionId}".`
+        }
+      }
+    }
+
+    if (state.startingRules.has(ruleId)) {
+      state.cancelledStartingRules.add(ruleId)
+      return { ok: true, data: undefined }
+    }
+
+    const tunnel = state.tunnels.get(ruleId)
+    if (!tunnel) {
       return {
         ok: false,
         error: {
@@ -557,7 +610,6 @@ export class PortForwardingManager {
     return { ok: true, data: undefined }
   }
 
-  /** Stops and cleans up all tunnels bound to a session (called on disconnect/tab close). */
   async stopAllForSession(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId)
     if (!state) return
@@ -577,26 +629,93 @@ export class PortForwardingManager {
     )
   }
 
-  /** Stops all tunnels across every session (called on application exit). */
   async stopAll(): Promise<void> {
     const sessionIds = Array.from(this.sessions.keys())
     await Promise.all(sessionIds.map((id) => this.stopAllForSession(id)))
   }
 
-  private ensureSessionState(sessionId: string, client: PortForwardingSshClient): SessionTunnelState {
+  private findBindingConflict(state: SessionTunnelState, normalized: NormalizedTunnelRule): TunnelError | null {
+    if (normalized.bindPort === 0) {
+      return null
+    }
+
+    if (normalized.type === 'local') {
+      for (const otherState of this.sessions.values()) {
+        for (const existing of otherState.tunnels.values()) {
+          if (
+            !existing.stopped &&
+            existing.rule.type === 'local' &&
+            existing.actualBindPort === normalized.bindPort &&
+            hostsConflict(existing.rule.bindHost, normalized.bindHost)
+          ) {
+            return {
+              code: 'PORT_IN_USE',
+              message: `Local port ${normalized.bindHost}:${normalized.bindPort} is already used by tunnel "${existing.rule.name}".`
+            }
+          }
+        }
+        for (const pending of otherState.startingRules.values()) {
+          if (
+            pending.type === 'local' &&
+            pending.bindPort === normalized.bindPort &&
+            hostsConflict(pending.bindHost, normalized.bindHost)
+          ) {
+            return {
+              code: 'PORT_IN_USE',
+              message: `Local port ${normalized.bindHost}:${normalized.bindPort} is already being bound by tunnel "${pending.name}".`
+            }
+          }
+        }
+      }
+      return null
+    }
+
+    for (const existing of state.tunnels.values()) {
+      if (
+        !existing.stopped &&
+        existing.rule.type === 'remote' &&
+        existing.actualBindPort === normalized.bindPort &&
+        hostsConflict(existing.rule.bindHost, normalized.bindHost)
+      ) {
+        return {
+          code: 'PORT_IN_USE',
+          message: `Remote port ${normalized.bindHost}:${normalized.bindPort} is already used by tunnel "${existing.rule.name}".`
+        }
+      }
+    }
+    for (const pending of state.startingRules.values()) {
+      if (
+        pending.type === 'remote' &&
+        pending.bindPort === normalized.bindPort &&
+        hostsConflict(pending.bindHost, normalized.bindHost)
+      ) {
+        return {
+          code: 'PORT_IN_USE',
+          message: `Remote port ${normalized.bindHost}:${normalized.bindPort} is already being bound by tunnel "${pending.name}".`
+        }
+      }
+    }
+    return null
+  }
+
+  private async ensureSessionState(
+    sessionId: string,
+    client: PortForwardingSshClient
+  ): Promise<SessionTunnelState> {
     const existing = this.sessions.get(sessionId)
     if (existing && existing.client === client && !existing.disposed) {
       return existing
     }
     if (existing) {
-      void this.stopAllForSession(sessionId)
+      await this.stopAllForSession(sessionId)
     }
 
     const state: SessionTunnelState = {
       sessionId,
       client,
       tunnels: new Map(),
-      startingRules: new Set(),
+      startingRules: new Map(),
+      cancelledStartingRules: new Set(),
       disposed: false,
       tcpConnectionListener: (info, accept, reject) => {
         this.handleRemoteTcpConnection(state, info, accept, reject)
@@ -649,22 +768,20 @@ export class PortForwardingManager {
         activeChannels: new Set()
       }
 
-      const server = net.createServer((localSocket) => {
+      const server = net.createServer({ allowHalfOpen: true }, (localSocket) => {
         if (tunnel.stopped || state.disposed) {
           localSocket.destroy()
           return
         }
 
-        // Pause until the SSH forwardOut channel is ready so early client bytes are not lost.
         localSocket.pause()
         tunnel.activeSockets.add(localSocket)
 
-        const removeSocket = (): void => {
+        localSocket.once('close', () => {
           tunnel.activeSockets.delete(localSocket)
-        }
-        localSocket.once('close', removeSocket)
+        })
         localSocket.on('error', () => {
-          // Handled cleanly via close/teardown; never crash the sidecar on client reset.
+          tunnel.activeSockets.delete(localSocket)
         })
 
         const srcIp = localSocket.remoteAddress || '127.0.0.1'
@@ -720,6 +837,7 @@ export class PortForwardingManager {
       server.listen({ host: rule.bindHost, port: rule.bindPort, exclusive: true }, () => {
         server.removeListener('error', onInitialError)
         server.on('error', (runtimeErr) => {
+          tunnel.status = 'error'
           tunnel.lastError = runtimeErr.message
           this.emit({
             sessionId: state.sessionId,
@@ -765,6 +883,17 @@ export class PortForwardingManager {
           }
 
           const actualPort = typeof boundPort === 'number' && boundPort > 0 ? boundPort : rule.bindPort
+          if (actualPort <= 0) {
+            resolve({
+              ok: false,
+              error: {
+                code: 'SSH_FORWARD_FAILED',
+                message: `Remote server did not return a valid bound port for ${rule.bindHost}:${rule.bindPort}.`
+              }
+            })
+            return
+          }
+
           const tunnel: ManagedTunnel = {
             sessionId: state.sessionId,
             rule,
@@ -805,14 +934,9 @@ export class PortForwardingManager {
       return
     }
 
-    let matched: ManagedTunnel | undefined
-    for (const tunnel of state.tunnels.values()) {
-      if (matchesRemoteDestination(tunnel, info)) {
-        matched = tunnel
-        break
-      }
-    }
-
+    const matched = Array.from(state.tunnels.values()).find((tunnel) =>
+      matchesRemoteDestination(tunnel, info)
+    )
     if (!matched) {
       reject()
       return
@@ -820,35 +944,46 @@ export class PortForwardingManager {
 
     const channel = accept()
     channel.pause()
+    matched.activeChannels.add(channel)
 
     const localSocket = net.createConnection({
       host: matched.rule.targetHost,
       port: matched.rule.targetPort
     })
-
     matched.activeSockets.add(localSocket)
-    localSocket.once('close', () => {
-      matched.activeSockets.delete(localSocket)
-    })
 
     let connected = false
     const onPreConnectChannelClose = (): void => {
+      matched.activeChannels.delete(channel)
       if (!connected && !localSocket.destroyed) {
         localSocket.destroy()
       }
     }
+    const onPreConnectSocketClose = (): void => {
+      matched.activeSockets.delete(localSocket)
+      if (!connected && !channel.destroyed) {
+        channel.destroy()
+      }
+    }
+
     channel.once('close', onPreConnectChannelClose)
     channel.on('error', onPreConnectChannelClose)
+    localSocket.once('close', onPreConnectSocketClose)
 
     localSocket.once('connect', () => {
       connected = true
       channel.removeListener('close', onPreConnectChannelClose)
       channel.removeListener('error', onPreConnectChannelClose)
+      localSocket.removeListener('close', onPreConnectSocketClose)
+
       if (matched.stopped || state.disposed || channel.destroyed) {
         localSocket.destroy()
         channel.destroy()
+        matched.activeSockets.delete(localSocket)
+        matched.activeChannels.delete(channel)
         return
       }
+
       this.bridgeBidirectional(matched, localSocket, channel)
       channel.resume()
     })
@@ -857,6 +992,9 @@ export class PortForwardingManager {
       if (!connected) {
         channel.removeListener('close', onPreConnectChannelClose)
         channel.removeListener('error', onPreConnectChannelClose)
+        localSocket.removeListener('close', onPreConnectSocketClose)
+        matched.activeSockets.delete(localSocket)
+        matched.activeChannels.delete(channel)
         matched.lastError = `Target ${matched.rule.targetHost}:${matched.rule.targetPort} unreachable: ${err.message}`
         channel.destroy()
         localSocket.destroy()
@@ -876,6 +1014,7 @@ export class PortForwardingManager {
     channel: SshForwardChannel
   ): void {
     tunnel.activeChannels.add(channel)
+    tunnel.activeSockets.add(localSocket)
     tunnel.activeConnections += 1
 
     let closed = false
@@ -887,11 +1026,11 @@ export class PortForwardingManager {
       tunnel.activeConnections = Math.max(0, tunnel.activeConnections - 1)
     }
 
-    localSocket.on('data', (chunk: Buffer) => {
-      tunnel.bytesOut += chunk.length
+    localSocket.on('data', (chunk: Buffer | string) => {
+      tunnel.bytesOut += chunkByteLength(chunk)
     })
-    channel.on('data', (chunk: Buffer) => {
-      tunnel.bytesIn += chunk.length
+    channel.on('data', (chunk: Buffer | string) => {
+      tunnel.bytesIn += chunkByteLength(chunk)
     })
 
     localSocket.on('error', () => {
@@ -953,7 +1092,7 @@ export class PortForwardingManager {
           clearTimeout(timer)
           resolve()
         }
-        const timer = setTimeout(done, UNFORWARD_TIMEOUT_MS)
+        const timer = setTimeout(done, this.unforwardTimeoutMs)
         timer.unref?.()
         try {
           client.unforwardIn(tunnel.rule.bindHost, tunnel.actualBindPort, () => done())
@@ -993,7 +1132,7 @@ export class PortForwardingManager {
       try {
         listener(event)
       } catch {
-        // Status observers must not disrupt tunnel lifecycle operations.
+        // Ignore observer errors so tunnel lifecycle cannot be interrupted.
       }
     }
   }
