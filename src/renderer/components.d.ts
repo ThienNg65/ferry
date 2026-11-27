@@ -21,6 +21,7 @@ declare module 'vue' {
     ConnectionModals: typeof import('./src/components/sessions/ConnectionModals.vue')['default']
     EditorDialog: typeof import('./src/components/files/EditorDialog.vue')['default']
     FerryLogo: typeof import('./src/components/shell/FerryLogo.vue')['default']
+    FileDiffModal: typeof import('./src/components/files/FileDiffModal.vue')['default']
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     FilePane: typeof import('./src/components/files/FilePane.vue')['default']
     FilePreviewDialog: typeof import('./src/components/files/FilePreviewDialog.vue')['default']
