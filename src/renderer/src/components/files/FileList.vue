@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
+import ContextMenu, { type ContextMenuItem } from '@nuxt/ui/components/ContextMenu.vue'
 import type { FileEntry } from '@shared/contract'
 import type { SortColumn, SortDirection } from '../../utils/fileSort'
 import { FERRY_MOTION_TOKENS, prefersReducedMotion } from '../../utils/motionTokens'
@@ -20,9 +21,11 @@ const props = defineProps<{
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
+  canCompare?: boolean
   renamingPath?: string | null
   sortColumn: SortColumn
   sortDirection: SortDirection
+  canPaste?: boolean
 }>()
 
 const ui = useUiStore()
@@ -109,12 +112,15 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   'edit-root': [entry: FileEntry]
+  diff: [entry: FileEntry]
   sort: [column: SortColumn]
   'clear-filter': []
   'clear-visibility-filter': []
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
   'select-many': [paths: string[]]
+  copy: [entry: FileEntry]
+  paste: []
 }>()
 import { COLUMN_HIDE } from '../../utils/paneColumns'
 import { DEFAULT_COLUMN_WIDTHS, type ColumnKey } from '../../utils/columnPrefs'
@@ -205,6 +211,16 @@ const columnMenuItems = computed(() => {
     onUpdateChecked: (checked: boolean) => ui.setColumnVisible(key, checked)
   }))
 })
+
+const paneContextMenuItems = computed<ContextMenuItem[]>(() => [
+  {
+    label: 'Paste',
+    icon: 'i-lucide-clipboard-paste',
+    kbds: ['Ctrl+V'],
+    disabled: !props.canPaste,
+    onSelect: () => emit('paste')
+  }
+])
 
 function startResize(key: ColumnKey, event: PointerEvent): void {
   activeResizeCleanup?.()
@@ -334,6 +350,7 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
       <div aria-hidden="true" class="h-0.5 shrink-0">
         <UProgress v-if="loading && entries.length > 0" size="xs" />
       </div>
+      <ContextMenu :items="paneContextMenuItems">
       <div ref="scrollEl" role="rowgroup" v-show="entries.length > 0" class="relative flex-1 overflow-y-auto [scrollbar-gutter:stable]" @mousedown="onBandStart">
         <div v-if="band" aria-hidden="true" class="pointer-events-none absolute z-10 border border-primary bg-primary/15" :style="bandStyle" />
         <div v-if="entries.length" role="presentation" class="relative w-full" :style="{ height: `${totalSize}px` }">
@@ -356,6 +373,8 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
                 transferIcon,
                 showTail,
                 allowExtract,
+                canCompare,
+                canPaste,
                 ui.columns.hidden.join(','),
                 ui.permissionsDisplay,
                 ui.density,
@@ -369,7 +388,9 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
               :transfer-icon="transferIcon"
               :show-tail="showTail"
               :allow-extract="allowExtract"
+              :can-compare="canCompare"
               :renaming="renamingPath === entries[virtualRow.index].path"
+              :can-paste="canPaste"
               @select="(path, event) => emit('select', path, event)"
               @open="emit('open', $event)"
               @remove="emit('remove', $event)"
@@ -383,14 +404,19 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
               @chmod="emit('chmod', $event)"
               @edit="emit('edit', $event)"
               @edit-root="emit('edit-root', $event)"
+              @diff="emit('diff', $event)"
               @hover-dir="emit('hover-dir', $event)"
               @drop-on="(entry, event) => emit('drop-on', entry, event)"
+              @copy="emit('copy', $event)"
+              @paste="emit('paste')"
             />
           </div>
         </div>
       </div>
+      </ContextMenu>
     </div>
-    <div v-if="!entries.length" class="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+    <ContextMenu v-if="!entries.length" :items="paneContextMenuItems">
+    <div class="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div v-if="loading" role="status" aria-label="Loading directory" class="flex flex-col gap-1 px-2 py-2">
         <div
           v-for="i in 10"
@@ -428,5 +454,6 @@ function startResize(key: ColumnKey, event: PointerEvent): void {
         <p class="text-xs text-muted">Empty folder</p>
       </div>
     </div>
+    </ContextMenu>
   </div>
 </template>

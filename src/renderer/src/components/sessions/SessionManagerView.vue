@@ -142,7 +142,7 @@ const privateKeyError = computed(() =>
 )
 const portError = computed(() => {
   if (!quickTouched.port && !quickSubmitted.value) return ''
-  return isPortValid.value ? '' : 'Port must be 1–65535'
+  return isPortValid.value ? '' : 'Port must be between 1 and 65535'
 })
 
 const canQuickConnect = computed(() => {
@@ -515,7 +515,7 @@ async function openBulkDeleteConfirm(): Promise<void> {
     body: `${
       targets.length === 1 ? 'Delete this 1 site?' : `Delete these ${targets.length} sites?`
     }${hasActive ? ' Active connections will be unlinked.' : ''} This cannot be undone.`,
-    items: targets.map((s) => `${s.name} — ${s.username}@${s.host}:${s.port}`),
+    items: targets.map((s) => `${s.name} (${s.username}@${s.host}:${s.port})`),
     confirmLabel: `Delete ${targets.length}`,
     confirmColor: 'error',
     destructive: true,
@@ -629,7 +629,7 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                 <template v-else-if="activeTabQuickConnect">
                   {{ activeTabQuickConnect.username }}@{{ activeTabQuickConnect.host }}:{{ activeTabQuickConnect.port }}
                 </template>
-                <span v-if="sessions.statusMessage" role="alert" class="text-error"> — {{ sessions.statusMessage }}</span>
+                <span v-if="sessions.statusMessage" role="alert" class="text-error">: {{ sessions.statusMessage }}</span>
               </div>
             </div>
           </div>

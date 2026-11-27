@@ -6,11 +6,24 @@ vi.mock('../stores/ui.store', () => ({
   useUiStore: () => ({ showLocalPane: true, toggleShowHidden: vi.fn() })
 }))
 
-class DummyEl {}
+class DummyHTMLElement {
+  isContentEditable = false
+  private readonly selectorMatch: string | null
+  constructor(selectorMatch: string | null = null) {
+    this.selectorMatch = selectorMatch
+  }
+  closest(selector: string): object | null {
+    return this.selectorMatch && selector.includes(this.selectorMatch) ? this : null
+  }
+}
+class DummyInputElement extends DummyHTMLElement {}
+class DummyTextAreaElement extends DummyHTMLElement {}
+class DummySelectElement extends DummyHTMLElement {}
 Object.assign(globalThis, {
-  HTMLInputElement: DummyEl,
-  HTMLTextAreaElement: DummyEl,
-  HTMLElement: DummyEl
+  HTMLInputElement: DummyInputElement,
+  HTMLTextAreaElement: DummyTextAreaElement,
+  HTMLSelectElement: DummySelectElement,
+  HTMLElement: DummyHTMLElement
 })
 
 const { usePaneKeyboard } = await import('./usePaneKeyboard')
@@ -233,5 +246,118 @@ describe('usePaneKeyboard Home/End/PageUp/PageDown', () => {
 
     await onKeydown(makeKeyEvent('ArrowUp', true))
     expect([...selected]).toEqual(['/dir/file-2.txt', '/dir/file-3.txt', '/dir/file-4.txt'])
+  })
+
+  it('supports Ctrl/Cmd+C and Ctrl/Cmd+V with input, selection, terminal, and dialog guards', async () => {
+    const entries = makeEntries(2)
+    const selected = new Set<string>(['/dir/file-0.txt'])
+    const onCopySelected = vi.fn()
+    const onPaste = vi.fn().mockResolvedValue(undefined)
+    let pasteReady = false
+    const renamingPath = ref<string | null>(null)
+
+    const onKeydown = usePaneKeyboard({
+      side: 'local',
+      store: { entries, selected } as never,
+      renamingPath,
+      filterText: ref(''),
+      filteredEntries: ref(entries),
+      toolbarRef: ref(null),
+      fileListRef: ref(null),
+      onTransferSelected: vi.fn(),
+      onOpen: vi.fn(),
+      confirmDeleteEntries: vi.fn(),
+      onCopySelected,
+      onPaste,
+      canPaste: () => pasteReady
+    })
+
+    const makeModKey = (
+      key: string,
+      opts: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; target?: unknown } = {}
+    ): KeyboardEvent =>
+      ({
+        key,
+        ctrlKey: opts.ctrlKey ?? true,
+        metaKey: opts.metaKey ?? false,
+        shiftKey: opts.shiftKey ?? false,
+        altKey: false,
+        target: opts.target ?? null,
+        preventDefault: vi.fn()
+      }) as unknown as KeyboardEvent
+
+    // Ctrl+C copies when visible items are selected
+    const copyEvt = makeModKey('c', { ctrlKey: true })
+    await onKeydown(copyEvt)
+    expect(copyEvt.preventDefault).toHaveBeenCalled()
+    expect(onCopySelected).toHaveBeenCalledTimes(1)
+
+    // Cmd+C also copies
+    const cmdCopyEvt = makeModKey('c', { ctrlKey: false, metaKey: true })
+    await onKeydown(cmdCopyEvt)
+    expect(cmdCopyEvt.preventDefault).toHaveBeenCalled()
+    expect(onCopySelected).toHaveBeenCalledTimes(2)
+
+    // Ctrl+V does not prevent default or paste when clipboard cannot paste
+    const pasteBlockedEvt = makeModKey('v', { ctrlKey: true })
+    await onKeydown(pasteBlockedEvt)
+    expect(pasteBlockedEvt.preventDefault).not.toHaveBeenCalled()
+    expect(onPaste).not.toHaveBeenCalled()
+
+    // Ctrl+V / Cmd+V paste when ready
+    pasteReady = true
+    const pasteEvt = makeModKey('v', { ctrlKey: true })
+    await onKeydown(pasteEvt)
+    expect(pasteEvt.preventDefault).toHaveBeenCalled()
+    expect(onPaste).toHaveBeenCalledTimes(1)
+
+    const cmdPasteEvt = makeModKey('v', { ctrlKey: false, metaKey: true })
+    await onKeydown(cmdPasteEvt)
+    expect(cmdPasteEvt.preventDefault).toHaveBeenCalled()
+    expect(onPaste).toHaveBeenCalledTimes(2)
+
+    // Ctrl+Shift+C / Ctrl+Shift+V are ignored (terminal shortcuts)
+    await onKeydown(makeModKey('C', { shiftKey: true }))
+    await onKeydown(makeModKey('V', { shiftKey: true }))
+    expect(onCopySelected).toHaveBeenCalledTimes(2)
+    expect(onPaste).toHaveBeenCalledTimes(2)
+
+    // Guards: inputs, selects, contentEditable, .xterm, [role="dialog"], renaming, active text selection
+    const editable = new DummyHTMLElement()
+    editable.isContentEditable = true
+    for (const target of [
+      new DummyInputElement(),
+      new DummyTextAreaElement(),
+      new DummySelectElement(),
+      editable,
+      new DummyHTMLElement('.xterm'),
+      new DummyHTMLElement('[role="dialog"]')
+    ]) {
+      const evtC = makeModKey('c', { target })
+      const evtV = makeModKey('v', { target })
+      await onKeydown(evtC)
+      await onKeydown(evtV)
+      expect(evtC.preventDefault).not.toHaveBeenCalled()
+      expect(evtV.preventDefault).not.toHaveBeenCalled()
+    }
+    expect(onCopySelected).toHaveBeenCalledTimes(2)
+    expect(onPaste).toHaveBeenCalledTimes(2)
+
+    renamingPath.value = '/dir/file-0.txt'
+    await onKeydown(makeModKey('c'))
+    await onKeydown(makeModKey('v'))
+    expect(onCopySelected).toHaveBeenCalledTimes(2)
+    expect(onPaste).toHaveBeenCalledTimes(2)
+    renamingPath.value = null
+
+    vi.stubGlobal('window', { getSelection: () => ({ toString: () => 'selected text' }) })
+    try {
+      const textSelCopy = makeModKey('c')
+      await onKeydown(textSelCopy)
+      expect(textSelCopy.preventDefault).not.toHaveBeenCalled()
+      expect(onCopySelected).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

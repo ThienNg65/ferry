@@ -13,6 +13,7 @@ import {
   useUiStore
 } from '../../stores/ui.store'
 import { useEditSessionsStore } from '../../stores/editSessions.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { TERMINAL_SEARCH_EVENT } from '../../stores/terminalStreams.store'
 import { useDockState, type DockTab } from '../../composables/useDockState'
 import { onTablistKeydown, onTabStripWheel } from '../../utils/tablistKeys'
@@ -23,6 +24,7 @@ import TerminalView from '../terminal/TerminalView.vue'
 import ActivityPanel from '../activity/ActivityPanel.vue'
 import MonitorPanel from '../monitor/MonitorPanel.vue'
 import OpenEditsPanel from '../edits/OpenEditsPanel.vue'
+import CompanionTrigger from '../companion/CompanionTrigger.vue'
 
 const tailStreams = useTailStreamsStore()
 const sessions = useSessionsStore()
@@ -30,6 +32,7 @@ const transfers = useTransferQueueStore()
 const operations = useOperationsStore()
 const ui = useUiStore()
 const editSessions = useEditSessionsStore()
+const companion = useCompanionStore()
 
 // Dock open/tab state is shared via useDockState so other components (e.g.
 // the TitleBar busy indicator) can open the dock on a specific tab.
@@ -351,7 +354,7 @@ watch(
         class="flex flex-col items-center gap-1.5"
         @keydown="onTablistKeydown($event, false, true)"
       >
-        <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
+        <UTooltip v-for="(panel, idx) in dockTabs" :key="panel.id" :text="panel.tooltip" :content="{ side: 'left' }">
           <UChip :text="panel.badge" :show="panel.badge > 0" size="lg" color="primary">
             <UButton
               :icon="panel.icon"
@@ -361,10 +364,14 @@ watch(
               role="tab"
               :aria-selected="!collapsed && tab === panel.id"
               :aria-label="panel.label"
+              :tabindex="(!collapsed && tab === panel.id) || (collapsed && idx === 0) ? 0 : -1"
               @click="openDock(panel.id)"
             />
           </UChip>
         </UTooltip>
+      </div>
+      <div v-if="companion.showInDock" class="mt-auto pt-1">
+        <CompanionTrigger placement="dock-right-rail" :show-notice="sessions.status === 'connected'" />
       </div>
     </div>
 
@@ -382,7 +389,7 @@ watch(
           @keydown="onTablistKeydown($event)"
           @wheel="onTabStripWheel"
         >
-          <UTooltip v-for="panel in dockTabs" :key="panel.id" :text="panel.tooltip">
+          <UTooltip v-for="(panel, idx) in dockTabs" :key="panel.id" :text="panel.tooltip">
             <button
               type="button"
               class="ferry-dock-tab inline-flex min-h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-md text-xs transition-colors focus-visible:outline-2 focus-visible:outline-primary"
@@ -397,6 +404,7 @@ watch(
               role="tab"
               :aria-selected="!collapsed && tab === panel.id"
               :aria-label="panel.label"
+              :tabindex="(!collapsed && tab === panel.id) || (collapsed && idx === 0) ? 0 : -1"
               @click="onTabClick(panel.id)"
             >
               <UIcon
@@ -442,6 +450,11 @@ watch(
           >
             Ctrl+`
           </kbd>
+          <CompanionTrigger
+            v-if="companion.showInDock"
+            :placement="isRight ? 'dock-right-header' : 'dock-bottom'"
+            :show-notice="sessions.status === 'connected' && !(isRight && collapsed)"
+          />
           <UTooltip :text="isRight ? 'Dock to bottom' : 'Dock to right'">
             <UButton
               class="ferry-pressable"

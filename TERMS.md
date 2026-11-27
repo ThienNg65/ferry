@@ -1,15 +1,15 @@
 # Terms of Service for Ferry
 
-**Effective Date:** 2026-11-14  
-**Terms Version:** 1.0  
+**Effective Date:** 2026-11-27  
+**Terms Version:** 1.1  
 **Maintainer:** ThienNg65  
 **Contact:** [GitHub Issues](https://github.com/ThienNg65/ferry/issues) · [GitHub Security Advisories](https://github.com/ThienNg65/ferry/security)
 
 By downloading, installing, or using **Ferry**, you agree to these Terms of Service and the [MIT License](LICENSE).
 
-## 1. Open-Source License & Free Software
+## 1. Open-Source License, Starter Tier & Optional Pro Services
 
-Ferry is free, open-source software distributed under the **MIT License**. There are no fees, subscriptions, or paid tiers. Third-party open-source components bundled with Ferry remain subject to their respective licenses, listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
+Ferry's desktop client (the **Starter (Free)** tier) is free, open-source software distributed under the **MIT License**, including all local SSH/SFTP features, local Companion snippets, offline diagnostics, and Bring-Your-Own-Key (BYO) Google Gemini API integration. Optional managed services (such as a hosted **Ferry Pro** AI proxy) may be offered separately under their own subscription or service terms; using Ferry does not require a paid tier or account. When you configure a third-party AI provider (such as Google AI Studio / Gemini API) with your own API key, your use of that API is governed by the respective provider's terms. Third-party open-source components bundled with Ferry remain subject to their respective licenses, listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
 
 ## 2. Acceptable & Lawful Use
 

@@ -24,7 +24,9 @@ const props = defineProps<{
   transferIcon?: string
   showTail?: boolean
   allowExtract?: boolean
+  canCompare?: boolean
   renaming?: boolean
+  canPaste?: boolean
 }>()
 
 const { startDrag, clearDrag } = useDragAndDrop()
@@ -63,8 +65,11 @@ const emit = defineEmits<{
   chmod: [entry: FileEntry]
   edit: [entry: FileEntry]
   'edit-root': [entry: FileEntry]
+  diff: [entry: FileEntry]
   'hover-dir': [path: string]
   'drop-on': [entry: FileEntry, event: DragEvent]
+  copy: [entry: FileEntry]
+  paste: []
 }>()
 
 const dropHover = ref(false)
@@ -117,10 +122,15 @@ const contextMenuItems = computed<ContextMenuItem[]>(() => {
     if (props.side === 'remote') {
       items.push({ label: 'Edit as root', icon: 'i-lucide-shield-alert', onSelect: () => emit('edit-root', props.entry) })
     }
+    if (props.canCompare && !props.entry.symlinkBroken) {
+      items.push({ label: 'Compare with opposite pane', icon: 'i-lucide-file-diff', onSelect: () => emit('diff', props.entry) })
+    }
   }
   items.push({ label: 'Compress to .zip', icon: 'i-lucide-file-archive', onSelect: () => emit('compress', props.entry) })
+  items.push({ label: 'Copy', icon: 'i-lucide-copy', kbds: ['Ctrl+C'], onSelect: () => emit('copy', props.entry) })
+  items.push({ label: 'Paste', icon: 'i-lucide-clipboard-paste', kbds: ['Ctrl+V'], disabled: !props.canPaste, onSelect: () => emit('paste') })
   items.push({ label: 'Rename', icon: 'i-lucide-pencil', kbds: ['F2'], onSelect: () => emit('start-rename', props.entry) })
-  items.push({ label: 'Copy path', icon: 'i-lucide-copy', onSelect: () => void copyPath() })
+  items.push({ label: 'Copy path', icon: 'i-lucide-link', onSelect: () => void copyPath() })
   if (props.side === 'remote' && props.entry.permissions) {
     items.push({ label: 'Permissions…', icon: 'i-lucide-key-round', onSelect: () => emit('chmod', props.entry) })
   }
@@ -316,7 +326,7 @@ function onMouseLeave(): void {
     <span role="gridcell" v-if="!ui.columns.hidden.includes('size')" class="w-[var(--col-size)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].size">{{ entry.isDir ? '' : formatBytes(entry.size) }}</span>
     <span role="gridcell" v-if="!ui.columns.hidden.includes('modified')" class="w-[var(--col-modified)] shrink-0 text-right text-meta tabular-nums text-muted" :class="COLUMN_HIDE[side].modified" :title="formatDateTime(entry.modifiedAt)">{{ formatShortDate(entry.modifiedAt) }}</span>
     <div role="gridcell" v-if="showPermissions && !ui.columns.hidden.includes('permissions')" class="flex w-[var(--col-permissions)] shrink-0 justify-end" :class="COLUMN_HIDE.remote.permissions">
-      <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions}) — click to edit`">
+      <UTooltip :text="`Owner permissions: ${technicalPermissions} (${entry.permissions}). Click to edit`">
         <button
           type="button"
           class="max-w-full cursor-pointer truncate rounded px-1.5 py-0.5 text-2xs transition-colors hover:bg-muted hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"

@@ -2,7 +2,15 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ColorPicker from '@nuxt/ui/components/ColorPicker.vue'
 import USwitch from '@nuxt/ui/components/Switch.vue'
-import { INVOKE_CHANNELS, type KnownHostEntry, type ProxyType } from '@shared/contract'
+import {
+  DEFAULT_GEMINI_ENDPOINT,
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_OPTIONS,
+  INVOKE_CHANNELS,
+  type CompanionAiProvider,
+  type KnownHostEntry,
+  type ProxyType
+} from '@shared/contract'
 import privacyMarkdown from '../../../../../PRIVACY.md?raw'
 import termsMarkdown from '../../../../../TERMS.md?raw'
 import { invoke } from '../../api'
@@ -16,10 +24,18 @@ import { useSitesStore } from '../../stores/sites.store'
 import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useHistoryStore } from '../../stores/history.store'
 import { useUpdateStore } from '../../stores/update.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useNotify } from '../../composables/useNotify'
 import { useConfirm } from '../../composables/useConfirm'
 import { DEFAULT_ACCENT_COLOR, useUiStore, type Density } from '../../stores/ui.store'
 import { formatBytes, formatDateTime, formatSpeed } from '../../utils/format'
+import {
+  BANDWIDTH_UNIT_OPTIONS,
+  convertBandwidthValue,
+  splitBandwidthLimit,
+  toBandwidthKBps,
+  type BandwidthUnit
+} from '../../utils/bandwidth'
 import { onTablistKeydown } from '../../utils/tablistKeys'
 import { onDialogTabKeydown } from '../../composables/useDialogFocusTrap'
 
@@ -33,6 +49,7 @@ const sites = useSitesStore()
 const bookmarks = useBookmarksStore()
 const historyStore = useHistoryStore()
 const update = useUpdateStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 const confirm = useConfirm()
 const ui = useUiStore()
@@ -57,7 +74,8 @@ const retentionOptions = [
 ]
 
 const unlimited = ref(true)
-const limitInput = ref(1024)
+const limitInput = ref(1)
+const limitUnit = ref<BandwidthUnit>('MB/s')
 const saving = ref(false)
 const autoCheckUpdates = ref(true)
 const savingAutoCheck = ref(false)
@@ -95,6 +113,201 @@ const proxyTypeOptions: { label: string; value: ProxyType }[] = [
   { label: 'SOCKS5', value: 'socks5' },
   { label: 'HTTP CONNECT', value: 'http' }
 ]
+const aiProviderOptions: { label: string; value: CompanionAiProvider }[] = [
+  { label: 'Off (Local engine)', value: 'none' },
+  { label: 'Google Gemini (BYO Key · Free)', value: 'gemini' },
+  { label: 'Ferry Pro Managed AI', value: 'ferry-pro' }
+]
+const aiProvider = ref<CompanionAiProvider>('none')
+const aiEndpoint = ref('')
+const aiModel = ref('')
+const aiApiKey = ref('')
+const aiSaving = ref(false)
+const aiTesting = ref(false)
+const aiError = ref<string | null>(null)
+const aiTestStatus = ref<string | null>(null)
+
+const hasSavedKeyForSelectedProvider = computed(() => {
+  if (aiProvider.value === 'none') return false
+  const cfg = companion.aiConfig as typeof companion.aiConfig & {
+    hasGeminiApiKey?: boolean
+    hasFerryProApiKey?: boolean
+    hasApiKeyByProvider?: Partial<Record<CompanionAiProvider, boolean>>
+  }
+  if (cfg.hasApiKeyByProvider && typeof cfg.hasApiKeyByProvider[aiProvider.value] === 'boolean') {
+    return Boolean(cfg.hasApiKeyByProvider[aiProvider.value])
+  }
+  if (aiProvider.value === 'gemini' && typeof cfg.hasGeminiApiKey === 'boolean') {
+    return cfg.hasGeminiApiKey
+  }
+  if (aiProvider.value === 'ferry-pro' && typeof cfg.hasFerryProApiKey === 'boolean') {
+    return cfg.hasFerryProApiKey
+  }
+  return cfg.provider === aiProvider.value && cfg.hasApiKey
+})
+
+watch(aiProvider, (next) => {
+  aiError.value = null
+  aiTestStatus.value = null
+  if (next === 'gemini') {
+    if (!aiEndpoint.value.trim()) aiEndpoint.value = DEFAULT_GEMINI_ENDPOINT
+    if (!aiModel.value.trim()) aiModel.value = DEFAULT_GEMINI_MODEL
+  } else if (next === 'ferry-pro') {
+    if (aiEndpoint.value.trim() === DEFAULT_GEMINI_ENDPOINT) aiEndpoint.value = ''
+    if (!aiModel.value.trim()) aiModel.value = DEFAULT_GEMINI_MODEL
+  }
+})
+
+async function syncCompanionAiForm(): Promise<void> {
+  const cfg = await companion.loadAiConfig()
+  aiProvider.value = cfg.provider
+  aiEndpoint.value = cfg.endpoint || (cfg.provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : '')
+  aiModel.value = cfg.model || (cfg.provider !== 'none' ? DEFAULT_GEMINI_MODEL : '')
+  aiApiKey.value = ''
+  aiError.value = null
+  aiTestStatus.value = null
+}
+
+async function saveCompanionAi(clearKey = false, silent = false): Promise<void> {
+  aiSaving.value = true
+  aiError.value = null
+  aiTestStatus.value = null
+  try {
+    const endpoint =
+      aiProvider.value === 'gemini' && !aiEndpoint.value.trim()
+        ? DEFAULT_GEMINI_ENDPOINT
+        : aiEndpoint.value.trim()
+    const model =
+      aiProvider.value === 'none'
+        ? ''
+        : aiModel.value.trim() || DEFAULT_GEMINI_MODEL
+    await companion.saveAiConfig({
+      provider: aiProvider.value,
+      endpoint: aiProvider.value === 'none' ? '' : endpoint,
+      model,
+      apiKey: clearKey ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
+    })
+    aiApiKey.value = ''
+    if (!silent) {
+      notify.success(clearKey ? 'Saved API key cleared' : 'Companion AI settings saved')
+    }
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+async function testCompanionAi(): Promise<void> {
+  aiTesting.value = true
+  aiError.value = null
+  aiTestStatus.value = null
+  try {
+    if (aiProvider.value === 'none') return
+    const endpoint =
+      aiProvider.value === 'gemini' && !aiEndpoint.value.trim()
+        ? DEFAULT_GEMINI_ENDPOINT
+        : aiEndpoint.value.trim()
+    const model = aiModel.value.trim() || DEFAULT_GEMINI_MODEL
+    const res = await companion.testAiConnection({
+      provider: aiProvider.value,
+      endpoint,
+      model,
+      apiKey: aiApiKey.value ? aiApiKey.value : undefined
+    })
+    if (res.ok) {
+      aiTestStatus.value = `Connected (${res.provider ?? aiProvider.value}).`
+    } else {
+      aiError.value = res.error || 'Connection test failed.'
+    }
+  } catch (err) {
+    aiError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    aiTesting.value = false
+  }
+}
+
+const vaultMode = ref<'export' | 'import' | null>(null)
+const vaultPassphrase = ref('')
+const vaultPassphraseConfirm = ref('')
+const vaultBusy = ref(false)
+const vaultError = ref<string | null>(null)
+
+function openVaultAction(mode: 'export' | 'import'): void {
+  vaultMode.value = vaultMode.value === mode ? null : mode
+  vaultPassphrase.value = ''
+  vaultPassphraseConfirm.value = ''
+  vaultError.value = null
+}
+
+async function submitVaultAction(): Promise<void> {
+  if (!vaultMode.value || vaultBusy.value) return
+  vaultError.value = null
+  if (vaultPassphrase.value.length < 8) {
+    vaultError.value = 'Passphrase must be at least 8 characters.'
+    return
+  }
+  if (vaultMode.value === 'export' && vaultPassphrase.value !== vaultPassphraseConfirm.value) {
+    vaultError.value = 'Passphrases do not match.'
+    return
+  }
+  vaultBusy.value = true
+  try {
+    if (vaultMode.value === 'export') {
+      const savePath = await invoke<string | null>(INVOKE_CHANNELS.dialogPickSaveFile, 'ferry-backup.ferryvault')
+      if (!savePath) return
+      const res = await invoke<{ filePath: string; siteCount: number; snippetCount: number } | null>(
+        INVOKE_CHANNELS.sitesExportVault,
+        {
+          filePath: savePath,
+          passphrase: vaultPassphrase.value,
+          customSnippets: companion.customSnippets.map((s) => ({
+            id: s.id,
+            label: s.label,
+            command: s.command,
+            description: s.description
+          }))
+        }
+      )
+      if (res) {
+        notify.success('Encrypted vault exported', `Saved ${res.siteCount} site(s) and ${res.snippetCount} snippet(s).`)
+        vaultMode.value = null
+      }
+    } else {
+      const res = await invoke<{
+        imported: number
+        skipped: number
+        customSnippets: Array<{ label: string; command: string; description: string }>
+      } | null>(INVOKE_CHANNELS.sitesImportVault, {
+        passphrase: vaultPassphrase.value
+      })
+      if (res) {
+        const snippetsAdded = companion.mergeImportedSnippets(res.customSnippets)
+        await useSitesStore().fetchSites()
+        notify.success(
+          'Encrypted vault imported',
+          `Imported ${res.imported} site(s) (${res.skipped} duplicate skipped) and ${snippetsAdded} snippet(s).`
+        )
+        vaultMode.value = null
+      }
+    }
+  } catch (err) {
+    vaultError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    vaultBusy.value = false
+    vaultPassphrase.value = ''
+    vaultPassphraseConfirm.value = ''
+  }
+}
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (isOpen) {
+      void syncCompanionAiForm()
+    }
+  }
+)
 
 const ACCENT_PRESETS: { label: string; hex: string }[] = [
   { label: 'Blue', hex: DEFAULT_ACCENT_COLOR },
@@ -276,6 +489,7 @@ const draftKey = computed(() =>
   JSON.stringify([
     unlimited.value,
     limitInput.value,
+    limitUnit.value,
     proxyEnabled.value,
     proxyType.value,
     proxyHost.value,
@@ -286,21 +500,36 @@ const draftKey = computed(() =>
 )
 const dirty = computed(() => draftKey.value !== snapshot.value)
 
+const resolvedLimitKBps = computed(() => {
+  if (unlimited.value) return null
+  if (typeof limitInput.value === 'string' && String(limitInput.value).trim() === '') return undefined
+  return toBandwidthKBps(Number(limitInput.value), limitUnit.value)
+})
 const limitError = computed(() =>
-  !unlimited.value && !(Number(limitInput.value) >= 1) ? 'Enter a limit of at least 1 KB/s' : ''
+  !unlimited.value && resolvedLimitKBps.value === undefined
+    ? 'Enter 0 for unlimited or a limit of at least 1 KB/s'
+    : ''
 )
+
+function onBandwidthUnitChange(nextUnit: BandwidthUnit): void {
+  if (nextUnit === limitUnit.value) return
+  limitInput.value = convertBandwidthValue(Number(limitInput.value), limitUnit.value, nextUnit)
+  limitUnit.value = nextUnit
+}
 const hostError = computed(() => (proxyEnabled.value && !proxyHost.value.trim() ? 'Host is required' : ''))
 const portError = computed(() => {
   const port = Number(proxyPort.value)
   return proxyEnabled.value && !(Number.isInteger(port) && port >= 1 && port <= 65535)
-    ? 'Port must be 1–65535'
+    ? 'Port must be between 1 and 65535'
     : ''
 })
 const invalid = computed(() => Boolean(limitError.value || hostError.value || portError.value))
 
 function seedNetwork(): void {
   unlimited.value = settings.bandwidthLimitKBps === null
-  limitInput.value = settings.bandwidthLimitKBps ?? 1024
+  const seeded = splitBandwidthLimit(settings.bandwidthLimitKBps)
+  limitInput.value = seeded.value
+  limitUnit.value = seeded.unit
   proxyEnabled.value = Boolean(settings.defaultProxy)
   proxyType.value = settings.defaultProxy?.type ?? 'socks5'
   proxyHost.value = settings.defaultProxy?.host ?? ''
@@ -502,7 +731,11 @@ async function saveNetwork(): Promise<void> {
   }
   saving.value = true
   try {
-    await settings.setBandwidthLimitKBps(unlimited.value ? null : Math.round(Number(limitInput.value)))
+    const nextLimitKBps = resolvedLimitKBps.value ?? null
+    await settings.setBandwidthLimitKBps(nextLimitKBps)
+    if (nextLimitKBps === null) {
+      unlimited.value = true
+    }
     const host = proxyHost.value.trim()
     await settings.setDefaultProxy(
       proxyEnabled.value && host
@@ -517,7 +750,7 @@ async function saveNetwork(): Promise<void> {
     )
     proxyPassword.value = ''
     snapshot.value = draftKey.value
-    notify.success('Network settings saved', 'Your preferences have been updated')
+    notify.success('Network settings saved', 'Preferences updated')
   } catch (err) {
     notify.error('Failed to save settings', err instanceof Error ? err.message : String(err))
   } finally {
@@ -672,6 +905,151 @@ async function saveNetwork(): Promise<void> {
                   @update:model-value="(v: boolean) => ui.setShortenPath(v)"
                 />
               </SettingsRow>
+              <div class="mt-6 border-t border-muted pt-4">
+                <h3 class="text-sm font-semibold text-highlighted">Ferry Companion</h3>
+                <p class="mt-0.5 mb-2 text-xs text-muted">
+                  Optional workspace guide, release highlights, and guided issue reporting (Ctrl+Space).
+                </p>
+                <SettingsRow
+                  label="Quiet Mode"
+                  description="Mute all proactive bubbles, greetings, and tips. Companion stays available on click."
+                >
+                  <USwitch
+                    :model-value="companion.quietMode"
+                    aria-label="Companion Quiet Mode"
+                    @update:model-value="(v: boolean) => companion.setQuietMode(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Show Companion in bottom/right dock"
+                  description="Also show the companion avatar in the connected dock (the top-bar icon remains available)."
+                >
+                  <USwitch
+                    :model-value="companion.showInDock"
+                    aria-label="Show Companion in dock"
+                    @update:model-value="(v: boolean) => companion.setShowInDock(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Release announcements"
+                  description="Show a one-time What's New notice after Ferry updates to a new version."
+                >
+                  <USwitch
+                    :model-value="companion.showReleaseAnnouncements"
+                    aria-label="Companion release announcements"
+                    @update:model-value="(v: boolean) => companion.setShowReleaseAnnouncements(v)"
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label="Contextual tips"
+                  description="Offer non-blocking daily greetings and optional transfer-error help."
+                >
+                  <USwitch
+                    :model-value="companion.contextualTips"
+                    aria-label="Companion contextual tips"
+                    @update:model-value="(v: boolean) => companion.setContextualTips(v)"
+                  />
+                </SettingsRow>
+                <div class="mt-3 rounded-lg border border-default/80 bg-muted/20 p-3">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <p class="text-xs font-semibold text-highlighted">Google Gemini AI &amp; Companion Tiers</p>
+                        <UBadge color="success" variant="subtle" size="xs">Starter (Free)</UBadge>
+                        <UBadge color="primary" variant="subtle" size="xs">Pro</UBadge>
+                        <UBadge color="neutral" variant="outline" size="xs">Ultra · Team · Enterprise (Under Construction)</UBadge>
+                      </div>
+                      <p class="mt-1 text-2xs text-muted">
+                        Starter (Free) includes local Snippets, Command History, Pre-Flight Safety Guardrails, and unlimited BYO Google AI Studio Gemini keys (unlocking full AI Chat, Explain This Log, Diagnose Spike, and Action Cards). Pro adds a turnkey Managed AI Proxy with zero API-key setup. Prompts are locally redacted before transit.
+                      </p>
+                    </div>
+                  </div>
+                  <div class="mt-2.5 flex flex-col gap-2">
+                    <URadioGroup
+                      v-model="aiProvider"
+                      :items="aiProviderOptions"
+                      orientation="horizontal"
+                      :ui="{ fieldset: 'flex-wrap gap-y-1.5' }"
+                    />
+                    <template v-if="aiProvider !== 'none'">
+                      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <label class="flex flex-col gap-1 text-xs">
+                          <span class="text-muted">
+                            {{ aiProvider === 'ferry-pro' ? 'Ferry Pro Proxy URL' : 'Gemini API Endpoint' }}
+                          </span>
+                          <UInput
+                            v-model="aiEndpoint"
+                            size="xs"
+                            :placeholder="aiProvider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : 'https://api.ferry.example/companion'"
+                          />
+                        </label>
+                        <label class="flex flex-col gap-1 text-xs">
+                          <span class="text-muted">{{ aiProvider === 'ferry-pro' ? 'Model' : 'Gemini Model' }}</span>
+                          <UInput
+                            v-model="aiModel"
+                            size="xs"
+                            :placeholder="DEFAULT_GEMINI_MODEL"
+                            list="ferry-gemini-models"
+                          />
+                          <datalist id="ferry-gemini-models">
+                            <option v-for="m in GEMINI_MODEL_OPTIONS" :key="m" :value="m" />
+                          </datalist>
+                        </label>
+                      </div>
+                      <div class="flex flex-col gap-1 text-xs">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <label for="companion-ai-api-key" class="text-muted">
+                            {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
+                            {{ hasSavedKeyForSelectedProvider ? ' (saved, leave blank to keep)' : ' (encrypted via OS secret store)' }}
+                          </label>
+                          <button
+                            v-if="aiProvider === 'gemini'"
+                            type="button"
+                            class="inline-flex cursor-pointer items-center gap-1 text-2xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                            @click="openExternal('https://aistudio.google.com/apikey').catch(() => {})"
+                          >
+                            <span>Get a free Gemini API key</span>
+                            <UIcon name="i-lucide-external-link" class="size-3" />
+                          </button>
+                        </div>
+                        <PasswordInput
+                          id="companion-ai-api-key"
+                          v-model="aiApiKey"
+                          :placeholder="aiProvider === 'ferry-pro' ? 'ferry_pro_…' : 'AIza…'"
+                        />
+                      </div>
+                    </template>
+                    <p v-if="aiError" class="text-2xs text-error">{{ aiError }}</p>
+                    <p v-else-if="aiTestStatus" class="text-2xs text-success">{{ aiTestStatus }}</p>
+                    <div class="flex flex-wrap items-center justify-end gap-1.5">
+                      <UButton
+                        v-if="aiProvider !== 'none' && hasSavedKeyForSelectedProvider"
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="aiSaving || aiTesting"
+                        @click="saveCompanionAi(true)"
+                      >
+                        Clear key
+                      </UButton>
+                      <UButton
+                        v-if="aiProvider !== 'none'"
+                        size="xs"
+                        color="neutral"
+                        variant="outline"
+                        :loading="aiTesting"
+                        :disabled="aiSaving"
+                        @click="testCompanionAi"
+                      >
+                        Test connection
+                      </UButton>
+                      <UButton size="xs" color="primary" variant="soft" :loading="aiSaving" :disabled="aiTesting" @click="saveCompanionAi(false)">
+                        Save AI settings
+                      </UButton>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div
@@ -700,11 +1078,18 @@ async function saveNetwork(): Promise<void> {
                       id="settings-limit"
                       v-model.number="limitInput"
                       type="number"
-                      :min="1"
+                      :min="0"
+                      :step="limitUnit === 'MB/s' ? 0.5 : 1"
                       :aria-invalid="Boolean(limitError)"
                       class="w-28"
                     />
-                    <span class="text-xs text-muted">KB/s</span>
+                    <USelect
+                      :model-value="limitUnit"
+                      :items="BANDWIDTH_UNIT_OPTIONS"
+                      class="w-24"
+                      aria-label="Bandwidth limit unit"
+                      @update:model-value="(v: string) => onBandwidthUnitChange(v as BandwidthUnit)"
+                    />
                   </div>
                   <p v-if="limitError" class="text-xs text-error" role="alert">{{ limitError }}</p>
                 </div>
@@ -810,6 +1195,47 @@ async function saveNetwork(): Promise<void> {
                 />
               </SettingsRow>
 
+              <SettingsRow
+                label="Encrypted Vault (.ferryvault)"
+                description="Passphrase-encrypted portable backup including saved passwords, passphrases, and custom snippets."
+              >
+                <div class="flex flex-wrap gap-2">
+                  <UButton size="xs" variant="outline" color="primary" icon="i-lucide-lock" @click="openVaultAction('export')">
+                    Export Vault
+                  </UButton>
+                  <UButton size="xs" variant="outline" color="neutral" icon="i-lucide-unlock" @click="openVaultAction('import')">
+                    Import Vault
+                  </UButton>
+                </div>
+              </SettingsRow>
+              <div
+                v-if="vaultMode"
+                data-vault-passphrase-box
+                class="my-2 flex flex-col gap-2 rounded-md border border-primary/35 bg-primary/5 p-3 text-xs"
+              >
+                <p class="font-semibold text-highlighted">
+                  {{ vaultMode === 'export' ? 'Export Encrypted .ferryvault' : 'Import Encrypted .ferryvault' }}
+                </p>
+                <PasswordInput
+                  v-model="vaultPassphrase"
+                  placeholder="Vault passphrase (min 8 characters)"
+                />
+                <PasswordInput
+                  v-if="vaultMode === 'export'"
+                  v-model="vaultPassphraseConfirm"
+                  placeholder="Confirm vault passphrase"
+                />
+                <p v-if="vaultError" role="alert" class="text-2xs text-error">{{ vaultError }}</p>
+                <div class="flex justify-end gap-1.5">
+                  <UButton size="xs" color="neutral" variant="ghost" :disabled="vaultBusy" @click="vaultMode = null">
+                    Cancel
+                  </UButton>
+                  <UButton size="xs" color="primary" :loading="vaultBusy" @click="submitVaultAction">
+                    {{ vaultMode === 'export' ? 'Choose file & export' : 'Choose file & import' }}
+                  </UButton>
+                </div>
+              </div>
+
               <SettingsRow label="Data access & deletion" description="Export local data (excluding passwords) or erase all local Ferry data.">
                 <div class="flex flex-wrap gap-2">
                   <UButton size="xs" variant="outline" color="neutral" icon="i-lucide-download" @click="onExportData">
@@ -876,7 +1302,7 @@ async function saveNetwork(): Promise<void> {
               <div v-if="update.isAvailable" class="mt-3 flex items-center gap-2 rounded-md bg-muted/30 p-3 text-xs text-toned">
                 <UIcon name="i-lucide-download" class="size-4 shrink-0 text-primary" />
                 <span>
-                  {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'A new update' }} is available — starting download…
+                  {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'A new update' }} is available. Starting download…
                 </span>
               </div>
 

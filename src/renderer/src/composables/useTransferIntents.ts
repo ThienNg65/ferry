@@ -1,11 +1,20 @@
 import { ref } from 'vue'
-import { INVOKE_CHANNELS, type FileEntry } from '@shared/contract'
+import {
+  INVOKE_CHANNELS,
+  type FileEntry,
+  type LocalUploadScanResult,
+  type MonitorDiskUsage
+} from '@shared/contract'
 import { invoke } from '../api'
+import { useCompanionStore } from '../stores/companion.store'
 import { useLocalFsStore } from '../stores/localFs.store'
+import { useMonitorStore } from '../stores/monitor.store'
 import { useRemoteFsStore } from '../stores/remoteFs.store'
 import { useSessionsStore } from '../stores/sessions.store'
 import { useTransferQueueStore } from '../stores/transferQueue.store'
+import { evaluateTransferPreFlight } from '../utils/companionGuardrails'
 import { resolveConflicts, type ConflictChoice } from '../utils/resolveConflicts'
+import { useConfirm } from './useConfirm'
 import { useNotify } from './useNotify'
 
 export interface TransferIntent {
@@ -21,11 +30,14 @@ export interface TransferIntent {
 }
 
 export function useTransferIntents() {
+  const companion = useCompanionStore()
   const localFs = useLocalFsStore()
   const remoteFs = useRemoteFsStore()
   const sessions = useSessionsStore()
   const transfers = useTransferQueueStore()
+  const monitor = useMonitorStore()
   const notify = useNotify()
+  const confirm = useConfirm()
 
   const transferConflict = ref<{
     intents: TransferIntent[]
@@ -35,7 +47,7 @@ export function useTransferIntents() {
 
   function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string, targetDir?: string): TransferIntent | null {
     if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
-      notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
+      notify.error('Security warning', 'Invalid file name detected. Transfer aborted.')
       return null
     }
     const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
@@ -79,6 +91,44 @@ export function useTransferIntents() {
   }
 
   async function enqueueIntents(intents: TransferIntent[]): Promise<void> {
+    if (intents.length === 0) return
+    const uploads = intents.filter((i) => i.direction === 'upload')
+    let nestedScan: LocalUploadScanResult | null = null
+    let remoteDisk: MonitorDiskUsage | null | undefined = monitor.latest?.disk
+
+    if (uploads.length > 0 && !companion.quietMode) {
+      const dirPaths = uploads.filter((u) => u.isDir).map((u) => u.localPath)
+      const firstUpload = uploads[0]
+      const targetDir = firstUpload.remotePath.slice(0, Math.max(1, firstUpload.remotePath.lastIndexOf('/'))) || remoteFs.currentPath || '/'
+
+      const [scanRes, diskRes] = await Promise.all([
+        dirPaths.length > 0
+          ? invoke<LocalUploadScanResult>(INVOKE_CHANNELS.fsLocalScanUploadPaths, { paths: dirPaths }).catch(() => null)
+          : Promise.resolve(null),
+        firstUpload.sessionId
+          ? invoke<MonitorDiskUsage | null>(INVOKE_CHANNELS.fsRemoteDiskUsage, firstUpload.sessionId, targetDir).catch(() => null)
+          : Promise.resolve(null)
+      ])
+      nestedScan = scanRes
+      if (diskRes) {
+        remoteDisk = diskRes
+      }
+    }
+
+    const preFlight = evaluateTransferPreFlight(intents, remoteDisk, nestedScan)
+    if (preFlight.warnings.length > 0 && !companion.quietMode) {
+      const proceed = await confirm({
+        title: 'Ferry Companion: pre-flight safety check',
+        body: preFlight.warnings.join('\n\n'),
+        items: preFlight.sensitiveFiles.length > 0 ? preFlight.sensitiveFiles : undefined,
+        confirmLabel: 'Transfer anyway',
+        confirmColor: 'warning'
+      })
+      if (!proceed) {
+        cleanupUnusedStagedPaths(intents, [])
+        return
+      }
+    }
     for (const intent of intents) {
       await transfers.enqueue(intent.sessionId, intent.direction, intent.localPath, intent.remotePath, intent.isDir, intent.createParents)
     }

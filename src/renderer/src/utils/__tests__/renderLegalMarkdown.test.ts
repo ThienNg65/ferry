@@ -13,12 +13,12 @@ describe('renderLegalMarkdown', () => {
 
     expect(html).toContain('<h1>Privacy Policy for Ferry</h1>')
     expect(html).toContain('<h2>1. Data We Do Not Collect</h2>')
-    expect(html).toContain('<strong>Effective Date:</strong> 2026-11-14<br /><strong>Policy Version:</strong> 1.0<br />')
+    expect(html).toContain('<strong>Effective Date:</strong> 2026-11-27<br /><strong>Policy Version:</strong> 1.1<br />')
     expect(html).toContain('<p>Ferry does <strong>not</strong>:</p>\n<ul><li>Collect, transmit, or sell personal data')
     expect(html).toContain('<table><thead><tr><th scope="col">Data</th><th scope="col">Storage Location</th>')
-    expect(html).toContain('<tbody><tr><td>Saved Sites &amp; Proxy Settings</td>')
+    expect(html).toContain('<tbody><tr><td>Saved Sites, Proxy &amp; Companion AI Settings</td>')
     expect(html).toContain('<ol><li><strong>Your SSH / SFTP / Proxy Connections:</strong>')
-    expect(html).toContain('<code>https://github.com/ThienNg65/ferry-release/releases/latest/download</code>')
+    expect(html).toContain('<code>https://github.com/ThienNg65/ferry-release</code>')
     expect(html).toContain(
       '<a href="https://github.com/ThienNg65/ferry/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>'
     )

@@ -1,3 +1,5 @@
+import { readdirSync, rmSync } from 'fs'
+import * as path from 'path'
 import { handle } from './envelope'
 import { failValidation, requireBoolean, requireNonEmptyString, requireStringArray, validateProxyConfig } from './validation'
 import {
@@ -16,6 +18,39 @@ import { KnownHostsStore } from '../ssh/KnownHostsStore'
 import { TransferQueue } from '../transfer/TransferQueue'
 import { host } from '../host/host'
 import { initAutoUpdater } from '../update/AutoUpdater'
+
+const MIGRATION_BACKUP_RE = /^(?:sites|bookmarks|history|known_hosts|app-settings)\.v\d+\.bak\.json$/
+
+/** Best-effort removal of pre-upgrade snapshots and pre-migration `.bak.json` files from `dataDir`. */
+function removeLocalBackupFiles(): void {
+  let dataDir: string
+  try {
+    dataDir = host().dataDir
+  } catch {
+    // Host is not initialized in isolated IPC unit tests.
+    return
+  }
+  if (!dataDir) return
+
+  try {
+    rmSync(path.join(dataDir, 'upgrade-backups'), { recursive: true, force: true })
+  } catch {
+    // Best-effort cleanup; ignore missing or locked backup directory.
+  }
+
+  try {
+    for (const entry of readdirSync(dataDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !MIGRATION_BACKUP_RE.test(entry.name)) continue
+      try {
+        rmSync(path.join(dataDir, entry.name), { force: true })
+      } catch {
+        // Best-effort cleanup; continue removing remaining backup files.
+      }
+    }
+  } catch {
+    // Ignore when dataDir does not exist or cannot be read.
+  }
+}
 
 /** Registers handlers for small persisted app-wide settings and privacy/data controls. */
 export function registerSettingsHandlers(): void {
@@ -82,9 +117,14 @@ export function registerSettingsHandlers(): void {
     if (!key.startsWith('ferry:ui:') || key.length > 64) {
       failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a valid ferry:ui:* key')
     }
+    const maxLen =
+      key === 'ferry:ui:companionSnippets' || key === 'ferry:ui:companionCmdHistory' ? 131_072 : 4096
     const value = update?.value
-    if (value !== null && (typeof value !== 'string' || value.length > 4096)) {
-      failValidation(INVOKE_CHANNELS.settingsSetUiPref, 'settings:setUiPref requires a string value (<= 4096 chars) or null')
+    if (value !== null && (typeof value !== 'string' || value.length > maxLen)) {
+      failValidation(
+        INVOKE_CHANNELS.settingsSetUiPref,
+        `settings:setUiPref requires a string value (<= ${maxLen} chars) or null`
+      )
     }
     AppSettingsStore.getInstance().setUiPref(key, value)
   })
@@ -123,5 +163,6 @@ export function registerSettingsHandlers(): void {
     KnownHostsStore.getInstance().clear()
     AppSettingsStore.getInstance().reset()
     TransferQueue.getInstance().setBandwidthLimitKBps(null)
+    removeLocalBackupFiles()
   })
 }

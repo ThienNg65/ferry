@@ -537,13 +537,18 @@ export class RemoteShell {
     })
   }
 
-  /** Reads a remote file's content as text, capped at `maxBytes` (huge files are truncated, not rejected). */
-  async readFile(remotePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean; size: number }> {
+  /** Reads up to `maxBytes` of a remote file as a raw Buffer, reusing an optional `stat` result. */
+  async readFileBuffer(
+    remotePath: string,
+    maxBytes: number,
+    existingStats?: Stats
+  ): Promise<{ buffer: Buffer; truncated: boolean; size: number }> {
     const sftp = await this.sftp()
-    const stats = await this.stat(remotePath)
-    const length = Math.min(stats.size ?? 0, maxBytes)
+    const stats = existingStats ?? (await this.stat(remotePath))
+    const size = stats.size ?? 0
+    const length = Math.min(size, maxBytes)
     if (length === 0) {
-      return { content: '', truncated: (stats.size ?? 0) > length, size: stats.size ?? 0 }
+      return { buffer: Buffer.alloc(0), truncated: size > length, size }
     }
     return new Promise((resolve, reject) => {
       const stream = sftp.createReadStream(remotePath, { start: 0, end: length - 1 })
@@ -554,12 +559,22 @@ export class RemoteShell {
       })
       stream.on('close', () => {
         resolve({
-          content: Buffer.concat(chunks).toString('utf-8'),
-          truncated: (stats.size ?? 0) > maxBytes,
-          size: stats.size ?? 0
+          buffer: Buffer.concat(chunks),
+          truncated: size > maxBytes,
+          size
         })
       })
     })
+  }
+
+  /** Reads a remote file's content as text, capped at `maxBytes` (huge files are truncated, not rejected). */
+  async readFile(remotePath: string, maxBytes: number): Promise<{ content: string; truncated: boolean; size: number }> {
+    const { buffer, truncated, size } = await this.readFileBuffer(remotePath, maxBytes)
+    return {
+      content: buffer.toString('utf-8'),
+      truncated,
+      size
+    }
   }
 
   /** Creates a remote directory. */
