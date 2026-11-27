@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { CopyManyResult, FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import type {
+  CopyManyResult,
+  FileEntry,
+  FileListResult,
+  LocalCopyRequest,
+  RemoteCopyRequest,
+  StageDropBeginResult,
+  StageDropEntryInput,
+  UnzipResult
+} from '@shared/contract'
 import { collectDroppedEntry, recordCollectedDropEntry } from '../../utils/osDrop'
 import type { CollectedDropEntry, DropCollectionState, MinimalFsEntry } from '../../utils/osDrop'
 import { invoke, IpcError } from '../../api'
@@ -213,13 +222,21 @@ function onCopyFromRow(entry: FileEntry): void {
 async function onPaste(): Promise<void> {
   if (!canPaste.value || !clipboard.payload) return
   const { side: sourceSide, entries } = clipboard.payload
+  const targetDir = store.currentPath
+  const sessionId = sessions.activeSessionId
+  const refreshTarget = (): Promise<void> =>
+    props.side === 'local'
+      ? localFs.refreshIfViewing(targetDir)
+      : sessionId
+        ? remoteFs.refreshSessionIfViewing(sessionId, targetDir)
+        : Promise.resolve()
+
   try {
     if (sourceSide !== props.side) {
-      const sessionId = sessions.activeSessionId
       if (!sessionId) return
       const intents: TransferIntent[] = []
       for (const entry of entries) {
-        const intent = buildTransferIntent(sourceSide, entry, sessionId, store.currentPath)
+        const intent = buildTransferIntent(sourceSide, entry, sessionId, targetDir)
         if (intent) intents.push(intent)
       }
       if (intents.length > 0) {
@@ -228,18 +245,16 @@ async function onPaste(): Promise<void> {
       return
     }
     const sourcePaths = entries.map((e) => e.path)
-    const res =
-      props.side === 'local'
-        ? await invoke<CopyManyResult>(INVOKE_CHANNELS.fsLocalCopy, {
-            sourcePaths,
-            targetDir: store.currentPath
-          })
-        : await invoke<CopyManyResult>(INVOKE_CHANNELS.fsRemoteCopy, {
-            sessionId: sessions.activeSessionId,
-            sourcePaths,
-            targetDir: store.currentPath
-          })
-    await store.load(store.currentPath, { forceRefresh: true })
+    let res: CopyManyResult
+    if (props.side === 'local') {
+      const req: LocalCopyRequest = { sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsLocalCopy, req)
+    } else {
+      if (!sessionId) return
+      const req: RemoteCopyRequest = { sessionId, sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsRemoteCopy, req)
+    }
+    await refreshTarget()
     if (res.copied.length > 0) {
       notify.success('Pasted', res.copied.length === 1 ? res.copied[0].targetPath : `${res.copied.length} items`)
     }
@@ -252,6 +267,10 @@ async function onPaste(): Promise<void> {
       })
     }
   } catch (e) {
+    await refreshTarget().catch(() => undefined)
+    if (e instanceof IpcError && e.code === 'CANCELLED') {
+      return
+    }
     notify.error('Paste failed', e instanceof Error ? e.message : String(e))
   }
 }
@@ -1331,10 +1350,11 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           </button>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <div v-if="clipboard.hasItems" class="flex items-center gap-1.5">
+          <div v-if="clipboard.hasItems && clipboard.sourceSide === side" class="flex items-center gap-1.5">
             <span class="text-primary tabular-nums">Copied: {{ clipboard.count }}</span>
             <button
               type="button"
+              aria-label="Clear clipboard"
               class="text-muted hover:text-default hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
               @click="clipboard.clear()"
             >
@@ -1345,6 +1365,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
             <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
             <button
               type="button"
+              aria-label="Clear selection"
               class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
               @click="store.selectAll([])"
             >

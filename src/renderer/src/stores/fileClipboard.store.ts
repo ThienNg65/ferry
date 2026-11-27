@@ -15,7 +15,6 @@ export const useFileClipboardStore = defineStore('fileClipboard', () => {
   const hasItems = computed(() => (payload.value?.entries.length ?? 0) > 0)
   const count = computed(() => payload.value?.entries.length ?? 0)
   const sourceSide = computed(() => payload.value?.side ?? null)
-  const sourceSessionId = computed(() => payload.value?.sessionId ?? null)
 
   function copy(side: 'local' | 'remote', entries: FileEntry[], sessionId: string | null): void {
     if (entries.length === 0) return
@@ -52,7 +51,6 @@ export const useFileClipboardStore = defineStore('fileClipboard', () => {
     hasItems,
     count,
     sourceSide,
-    sourceSessionId,
     copy,
     clear,
     canPasteInto

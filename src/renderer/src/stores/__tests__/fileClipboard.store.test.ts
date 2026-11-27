@@ -34,7 +34,7 @@ describe('fileClipboard.store', () => {
     expect(store.hasItems).toBe(true)
     expect(store.count).toBe(2)
     expect(store.sourceSide).toBe('local')
-    expect(store.sourceSessionId).toBeNull()
+    expect(store.payload?.sessionId).toBeNull()
     expect(store.payload?.entries[0].name).toBe('notes.txt')
 
     store.clear()
@@ -54,7 +54,7 @@ describe('fileClipboard.store', () => {
     expect(store.canPasteInto('remote', 'sess-1', true)).toBe(true)
 
     store.copy('remote', [makeEntry('b.txt')], 'sess-1')
-    expect(store.sourceSessionId).toBe('sess-1')
+    expect(store.payload?.sessionId).toBe('sess-1')
     expect(store.canPasteInto('remote', 'sess-1', true)).toBe(true)
     expect(store.canPasteInto('local', 'sess-1', true)).toBe(true)
     expect(store.canPasteInto('remote', 'sess-2', true)).toBe(false)

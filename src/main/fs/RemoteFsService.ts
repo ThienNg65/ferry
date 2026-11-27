@@ -8,8 +8,8 @@ import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
 import type { CopyManyResult, FileEntry, FileListResult, FileReadResult, RemoteAdminRequest } from '../../shared/contract'
+import { pickUniqueName } from '../../shared/uniqueName'
 import { buildChmodCommand, buildChownCommand } from './permissionCommands'
-import { pickUniqueName } from './LocalFsService'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
@@ -493,14 +493,48 @@ export async function uploadForEdit(sessionId: string, localPath: string, remote
   }
 }
 
+const SFTP_OPEN_TIMEOUT_MS = 30_000
+const SFTP_CLOSE_TIMEOUT_MS = 10_000
+const SFTP_COPY_DATA_TIMEOUT_MS = 120_000
+
 function normalizePosixPath(p: string): string {
   const trimmed = (p ?? '').trim()
-  if (!trimmed) return ''
-  return trimmed === '/' ? '/' : trimmed.replace(/\/+$/, '') || '/'
+  if (!trimmed || !trimmed.startsWith('/')) return ''
+  const normalized = path.posix.normalize(trimmed)
+  return normalized === '/' ? '/' : normalized.replace(/\/+$/, '') || '/'
+}
+
+function withSftpOpTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  run: (resolve: (value: T) => void, reject: (err: unknown) => void) => void
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new SshError('SSH_TIMEOUT', `${label} timed out after ${timeoutMs}ms`, true))
+    }, timeoutMs)
+    run(
+      (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
 }
 
 function sftpOpen(sftp: SFTPWrapper, filePath: string, flags: 'r' | 'wx'): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
+  return withSftpOpTimeout<Buffer>(`SFTP open "${filePath}"`, SFTP_OPEN_TIMEOUT_MS, (resolve, reject) => {
     sftp.open(filePath, flags, (err, handle) => {
       if (err) reject(err)
       else resolve(handle)
@@ -510,12 +544,30 @@ function sftpOpen(sftp: SFTPWrapper, filePath: string, flags: 'r' | 'wx'): Promi
 
 function sftpClose(sftp: SFTPWrapper, handle: Buffer): Promise<void> {
   return new Promise((resolve) => {
-    sftp.close(handle, () => resolve())
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      resolve()
+    }, SFTP_CLOSE_TIMEOUT_MS)
+    sftp.close(handle, () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    })
   })
 }
 
-async function trySftpCopyData(sftp: SFTPWrapper, srcPath: string, destPath: string): Promise<boolean> {
-  if (typeof sftp.ext_copy_data !== 'function') {
+async function trySftpCopyData(
+  shell: RemoteShell,
+  sftp: SFTPWrapper,
+  srcPath: string,
+  destPath: string,
+  state: { copyDataSupported: boolean }
+): Promise<boolean> {
+  if (!state.copyDataSupported || typeof sftp.ext_copy_data !== 'function') {
+    state.copyDataSupported = false
     return false
   }
   let srcHandle: Buffer | null = null
@@ -525,16 +577,31 @@ async function trySftpCopyData(sftp: SFTPWrapper, srcPath: string, destPath: str
     srcHandle = await sftpOpen(sftp, srcPath, 'r')
     destHandle = await sftpOpen(sftp, destPath, 'wx')
     destCreated = true
-    await new Promise<void>((resolve, reject) => {
+    await withSftpOpTimeout<void>(`SFTP copy "${srcPath}"`, SFTP_COPY_DATA_TIMEOUT_MS, (resolve, reject) => {
       sftp.ext_copy_data(srcHandle!, 0, 0, destHandle!, 0, (err) => {
-        if (err) reject(err)
-        else resolve()
+        if (err) {
+          state.copyDataSupported = false
+          reject(err)
+        } else {
+          resolve()
+        }
       })
     })
     return true
   } catch {
+    // Close open handles before unlinking so Windows SFTP servers can delete destPath.
+    if (destHandle) {
+      const h = destHandle
+      destHandle = null
+      await sftpClose(sftp, h)
+    }
+    if (srcHandle) {
+      const h = srcHandle
+      srcHandle = null
+      await sftpClose(sftp, h)
+    }
     if (destCreated) {
-      await new Promise<void>((resolve) => sftp.unlink(destPath, () => resolve()))
+      await shell.unlink(destPath).catch(() => undefined)
     }
     return false
   } finally {
@@ -544,6 +611,7 @@ async function trySftpCopyData(sftp: SFTPWrapper, srcPath: string, destPath: str
 }
 
 async function streamRemoteFileCopy(
+  shell: RemoteShell,
   sftp: SFTPWrapper,
   srcPath: string,
   destPath: string,
@@ -566,7 +634,8 @@ async function streamRemoteFileCopy(
       if (settled) return
       settled = true
       cleanup()
-      sftp.unlink(destPath, () => reject(err))
+      void shell.unlink(destPath).catch(() => undefined)
+      reject(err)
     }
     const onAbort = (): void => fail(new SshError('CANCELLED', 'Copy cancelled'))
 
@@ -606,6 +675,7 @@ async function copyRemoteSftp(
   srcPath: string,
   destPath: string,
   srcStat: Stats,
+  state: { copyDataSupported: boolean },
   signal?: AbortSignal
 ): Promise<void> {
   if (signal?.aborted) {
@@ -614,7 +684,7 @@ async function copyRemoteSftp(
   const sftp = await shell.sftp()
   if (srcStat.isSymbolicLink()) {
     const target = await shell.readlink(srcPath)
-    await new Promise<void>((resolve, reject) => {
+    await withSftpOpTimeout<void>(`SFTP symlink "${destPath}"`, SFTP_OPEN_TIMEOUT_MS, (resolve, reject) => {
       sftp.symlink(target, destPath, (err) => {
         if (err) reject(new SshError('SFTP', `Failed to copy symlink "${srcPath}": ${err.message}`))
         else resolve()
@@ -633,14 +703,14 @@ async function copyRemoteSftp(
       const childSrc = `${srcPath === '/' ? '' : srcPath}/${entry.filename}`
       const childDest = `${destPath === '/' ? '' : destPath}/${entry.filename}`
       const childStat = await shell.lstat(childSrc)
-      await copyRemoteSftp(shell, childSrc, childDest, childStat, signal)
+      await copyRemoteSftp(shell, childSrc, childDest, childStat, state, signal)
     }
     return
   }
-  if (await trySftpCopyData(sftp, srcPath, destPath)) {
+  if (await trySftpCopyData(shell, sftp, srcPath, destPath, state)) {
     return
   }
-  await streamRemoteFileCopy(sftp, srcPath, destPath, signal)
+  await streamRemoteFileCopy(shell, sftp, srcPath, destPath, signal)
 }
 
 /**
@@ -655,7 +725,7 @@ export async function copyRemote(
 ): Promise<CopyManyResult> {
   const resolvedTargetDir = normalizePosixPath(targetDir)
   if (!resolvedTargetDir) {
-    throw new SshError('VALIDATION', 'Target directory is required')
+    throw new SshError('VALIDATION', 'Target directory must be an absolute remote path')
   }
   const shell = SessionManager.getInstance().shell(sessionId)
   const targetStat = await shell.stat(resolvedTargetDir)
@@ -664,6 +734,7 @@ export async function copyRemote(
   }
   const existing = await shell.readdir(resolvedTargetDir)
   const taken = new Set(existing.filter((e) => e.filename !== '.' && e.filename !== '..').map((e) => e.filename))
+  const copyState = { copyDataSupported: true }
 
   const result: CopyManyResult = { copied: [], failures: [] }
   let done = 0
@@ -674,14 +745,17 @@ export async function copyRemote(
     try {
       const src = normalizePosixPath(rawSource)
       if (!src || src === '/') {
-        throw new SshError('VALIDATION', `Refusing to copy root or empty path "${rawSource}"`)
+        throw new SshError('VALIDATION', `Refusing to copy root, relative, or empty path "${rawSource}"`)
+      }
+      const baseName = path.posix.basename(src)
+      if (!baseName || baseName === '.' || baseName === '..') {
+        throw new SshError('VALIDATION', `Invalid source path "${rawSource}"`)
       }
       const srcStat = await shell.lstat(src)
       const isDir = srcStat.isDirectory()
       if (isDir && (resolvedTargetDir === src || resolvedTargetDir.startsWith(`${src}/`))) {
         throw new SshError('VALIDATION', 'Cannot copy a folder into itself or one of its subdirectories.')
       }
-      const baseName = path.posix.basename(src)
       const prefix = resolvedTargetDir === '/' ? '' : resolvedTargetDir
       let destName = pickUniqueName(baseName, isDir, taken, false)
       let destPath = `${prefix}/${destName}`
@@ -700,7 +774,7 @@ export async function copyRemote(
 
       let copied = false
       if (!isDir && !srcStat.isSymbolicLink()) {
-        copied = await trySftpCopyData(await shell.sftp(), src, destPath)
+        copied = await trySftpCopyData(shell, await shell.sftp(), src, destPath, copyState)
       }
       if (!copied) {
         try {
@@ -710,15 +784,17 @@ export async function copyRemote(
           })
           if (execRes.code === 0) {
             copied = true
+          } else if (execRes.code !== 126 && execRes.code !== 127) {
+            throw new SshError('SSH_EXEC', execRes.stderr.trim() || `Remote copy exited with code ${execRes.code}`)
           }
         } catch (e) {
-          if (e instanceof SshError && e.code === 'CANCELLED') {
+          if (e instanceof SshError && (e.code === 'CANCELLED' || e.code === 'SSH_TIMEOUT' || e.code === 'SSH_EXEC')) {
             throw e
           }
         }
       }
       if (!copied) {
-        await copyRemoteSftp(shell, src, destPath, srcStat, options?.signal)
+        await copyRemoteSftp(shell, src, destPath, srcStat, copyState, options?.signal)
       }
       result.copied.push({ sourcePath: src, targetPath: destPath })
     } catch (e) {

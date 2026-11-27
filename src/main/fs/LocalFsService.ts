@@ -5,6 +5,7 @@ import * as os from 'os'
 import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
 import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
+import { pickUniqueName } from '../../shared/uniqueName'
 import type {
   CopyManyResult,
   FileEntry,
@@ -185,34 +186,6 @@ export async function remove(targetPath: string, isDir: boolean): Promise<void> 
   } catch (e) {
     throw new SshError('UNKNOWN', `Cannot delete "${targetPath}": ${(e as Error).message}`)
   }
-}
-
-/**
- * Picks a collision-free filename in `taken` (reserving it in-place).
- * Returns `baseName` unchanged when unused, or `stem (1).ext`, `stem (2).ext`, ... on collision.
- */
-export function pickUniqueName(
-  baseName: string,
-  isDir: boolean,
-  taken: Set<string>,
-  caseInsensitive: boolean
-): string {
-  const keyOf = (name: string): string => (caseInsensitive ? name.toLowerCase() : name)
-  if (!taken.has(keyOf(baseName))) {
-    taken.add(keyOf(baseName))
-    return baseName
-  }
-  const dot = baseName.lastIndexOf('.')
-  const stem = !isDir && dot > 0 ? baseName.slice(0, dot) : baseName
-  const ext = !isDir && dot > 0 ? baseName.slice(dot) : ''
-  let index = 1
-  let candidate = `${stem} (${index})${ext}`
-  while (taken.has(keyOf(candidate))) {
-    index += 1
-    candidate = `${stem} (${index})${ext}`
-  }
-  taken.add(keyOf(candidate))
-  return candidate
 }
 
 /** Copies local files/folders recursively into `targetDir` with non-destructive collision naming. */
