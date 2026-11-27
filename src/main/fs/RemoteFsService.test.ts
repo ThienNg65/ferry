@@ -169,7 +169,7 @@ describe('RemoteFsService.downloadForEdit stream completion', () => {
 
       expect(await readLocalFile(localPath, 'utf8')).toBe(content)
       expect(onProgress).toHaveBeenLastCalledWith(Buffer.byteLength(content))
-      expect(shell.stat).toHaveBeenCalledWith('/srv/remote.txt')
+      expect(shell.stat).toHaveBeenCalledWith('/srv/remote.txt', { signal: undefined })
       expect(sftp.createReadStream).toHaveBeenCalledWith('/srv/remote.txt')
     } finally {
       await rm(dir, { recursive: true, force: true })
