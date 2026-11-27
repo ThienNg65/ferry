@@ -768,6 +768,12 @@ export class RemoteShell {
     if (inputPath.includes('\0') || remoteCwd?.includes('\0')) {
       throw new SshError('VALIDATION', 'Refusing to delete a path containing a null byte')
     }
+    // A final dot component targets the current or parent directory itself.
+    // `rm` refuses these operands, but an SFTP walk could otherwise delete their contents.
+    const finalComponent = inputPath.split('/').filter(Boolean).at(-1)
+    if (finalComponent === '.' || finalComponent === '..') {
+      throw new SshError('VALIDATION', 'Refusing to delete current or parent directory aliases')
+    }
 
     const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
       ? remoteCwd.replace(/\/+$/, '') || '/'
