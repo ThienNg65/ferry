@@ -842,8 +842,9 @@ export class RemoteShell {
       'rm -rf -- "$target"'
     ].join('; ')
     // Run the POSIX preflight explicitly; the account shell may be fish or csh.
-    // The path is octal-encoded, so the outer single-quoted wrapper contains no user data.
+    // The path is octal-encoded, so the outer single-quoted wrapper contains no raw user data.
     const shellCommand = `/bin/sh -c '${command}'`
+
     try {
       const result = await this.exec(shellCommand, { timeoutMs: 5 * 60 * 1000 })
       if (result.code === 0) {
