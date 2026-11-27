@@ -18,13 +18,12 @@ function isElementVisible(el: HTMLElement, root: HTMLElement): boolean {
   return el.offsetParent !== null || getComputedStyle(el).position === 'fixed'
 }
 
-export function onDialogTabKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return
-  const dialog = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('[role="dialog"]')
-  if (!dialog) return
+/** Traps Tab / Shift+Tab focus cycling inside `container` (for modal dialogs and modal drawers). */
+export function trapTabWithinElement(event: KeyboardEvent, container: HTMLElement | null): void {
+  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || !container) return
 
-  const candidates = [...dialog.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)].filter(
-    (el) => el.tabIndex >= 0 && isElementVisible(el, dialog)
+  const candidates = [...container.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)].filter(
+    (el) => el.tabIndex >= 0 && isElementVisible(el, container)
   )
   if (candidates.length === 0) {
     event.preventDefault()
@@ -35,7 +34,7 @@ export function onDialogTabKeydown(event: KeyboardEvent): void {
   const last = candidates[candidates.length - 1]
   const active = document.activeElement as HTMLElement | null
 
-  if (!active || !dialog.contains(active)) {
+  if (!active || !container.contains(active)) {
     event.preventDefault()
     ;(event.shiftKey ? last : first).focus()
     return
@@ -44,8 +43,14 @@ export function onDialogTabKeydown(event: KeyboardEvent): void {
   if (!event.shiftKey && active === last) {
     event.preventDefault()
     first.focus()
-  } else if (event.shiftKey && (active === first || active === dialog)) {
+  } else if (event.shiftKey && (active === first || active === container)) {
     event.preventDefault()
     last.focus()
   }
+}
+
+export function onDialogTabKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return
+  const dialog = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('[role="dialog"]')
+  trapTabWithinElement(event, dialog ?? null)
 }

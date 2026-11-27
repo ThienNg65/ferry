@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, type ComponentPublicInstance } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useNotify } from '../../composables/useNotify'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useSettingsStore } from '../../stores/settings.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { BANDWIDTH_PRESETS, formatBandwidthCap } from '../../utils/bandwidth'
 import TransferItem from './TransferItem.vue'
 
 const store = useTransferQueueStore()
+const companion = useCompanionStore()
 const settings = useSettingsStore()
 const notify = useNotify()
 
@@ -137,6 +139,14 @@ const bandwidthMenuItems = computed(() => {
             @cancel="store.cancel(store.list[row.index].transferId)"
             @retry="store.retry(store.list[row.index].transferId, store.list[row.index].restartRequired)"
             @pause="store.pause(store.list[row.index].transferId)"
+            @troubleshoot="companion.troubleshootWorkspaceError({
+              scopeKey: store.list[row.index].sessionId,
+              category: 'transfer',
+              direction: store.list[row.index].kind,
+              localPath: store.list[row.index].localPath,
+              remotePath: store.list[row.index].remotePath,
+              error: store.list[row.index].error || 'Transfer failed'
+            })"
           />
         </div>
       </div>

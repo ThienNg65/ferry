@@ -18,7 +18,7 @@ const props = defineProps<{
   now: number
 }>()
 
-const emit = defineEmits<{ cancel: [] }>()
+const emit = defineEmits<{ cancel: []; troubleshoot: [] }>()
 
 const KIND_ICONS: Record<OperationKind, string> = {
   'extract-remote': 'i-lucide-package-open',
@@ -94,10 +94,23 @@ const statusIcon = computed(() => {
         <UIcon :name="KIND_ICONS[kind]" class="size-3.5 shrink-0 text-muted" />
         <span class="truncate">{{ label }}</span>
       </span>
-      <UTooltip v-if="cancellable && running" text="Cancel">
-        <UButton aria-label="Cancel" icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
-      </UTooltip>
-      <UIcon v-if="statusIcon" :name="statusIcon.name" class="size-3.5 shrink-0" :class="statusIcon.class" />
+      <div class="flex shrink-0 items-center gap-1">
+        <UTooltip v-if="cancellable && running" text="Cancel">
+          <UButton aria-label="Cancel" icon="i-lucide-x" color="neutral" variant="ghost" size="xs" @click="emit('cancel')" />
+        </UTooltip>
+        <UTooltip v-if="state === 'error'" text="Troubleshoot with Ferry Companion">
+          <UButton
+            aria-label="Troubleshoot operation"
+            icon="i-lucide-sparkles"
+            color="warning"
+            variant="ghost"
+            size="xs"
+            data-troubleshoot-operation
+            @click="emit('troubleshoot')"
+          />
+        </UTooltip>
+        <UIcon v-if="statusIcon" :name="statusIcon.name" class="size-3.5 shrink-0" :class="statusIcon.class" />
+      </div>
     </div>
     <!-- Determinate when the op reports totals; indeterminate (animated) otherwise. -->
     <UProgress v-if="determinate" :model-value="percent" :color="statusColor" size="xs" />

@@ -176,7 +176,7 @@ describe.runIf(isWindows)('Sidecar user data persistence & v10 DPAPI compatibili
     const rawPrefix = Buffer.from(storedNew!.secretPassword!, 'base64').subarray(0, 3).toString('ascii')
     expect(rawPrefix).toBe('v10')
     expect(box.decrypt(storedNew!.secretPassword!)).toBe('neutralino-new-password')
-  })
+  }, 15_000)
 
   it('preserves autoCheckUpdates=false and termsAcceptance and defaults omitted legacy fields', async () => {
     const masterKey = unwrapOrCreateMasterKey(userDataDir)

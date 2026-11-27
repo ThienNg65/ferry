@@ -45,7 +45,11 @@ const onBlur = (): void => {
   windowActive.value = false
 }
 const running = computed(
-  () => windowActive.value && (props.live || props.state === 'thinking' || props.state === 'streaming')
+  () =>
+    windowActive.value &&
+    (props.state === 'thinking' ||
+      props.state === 'streaming' ||
+      (props.live && (props.size > 24 || props.state !== 'idle')))
 )
 
 const lifting = ref(false)
@@ -136,8 +140,8 @@ onBeforeUnmount(() => {
             vector-effect="non-scaling-stroke"
           />
           <g v-if="prod" data-orb-prod>
-            <path :d="ARC" fill="none" :stroke="`url(#${uid}-prod)`" stroke-width="4" :filter="`url(#${uid}-b2)`" />
-            <path :d="ARC" fill="none" :stroke="`url(#${uid}-prod)`" stroke-width="1.6" stroke-linecap="round" />
+            <path :d="ARC" fill="none" :stroke="`url(#${uid}-prod)`" stroke-width="3" vector-effect="non-scaling-stroke" :filter="`url(#${uid}-b2)`" />
+            <path :d="ARC" fill="none" :stroke="`url(#${uid}-prod)`" stroke-width="1.6" stroke-linecap="round" vector-effect="non-scaling-stroke" />
           </g>
         </g>
       </template>
@@ -178,7 +182,12 @@ onBeforeUnmount(() => {
         />
       </g>
     </svg>
-    <span v-if="noticing" data-orb-notice class="orb-notice absolute -top-0.5 -right-0.5 size-2 rounded-full ring-2 ring-default" />
+    <span
+      v-if="noticing"
+      data-orb-notice
+      class="orb-notice absolute -top-0.5 -right-0.5 rounded-full ring-default"
+      :class="full ? 'size-2 ring-2' : 'size-1.5 ring-1'"
+    />
   </span>
 </template>
 
@@ -233,21 +242,23 @@ onBeforeUnmount(() => {
   --orb-dot: var(--orb-accent);
 }
 .orb[data-companion-state='error'] {
-  --orb-b0: #f4f4f5;
-  --orb-b1: #d4d4d8;
-  --orb-l1: #a1a1aa;
-  --orb-l2: #d4d4d8;
+  --orb-b0: #fef3c7;
+  --orb-b1: #f59e0b;
+  --orb-l1: #d97706;
+  --orb-l2: #b45309;
+  --orb-keyline: rgb(180 83 9 / 0.45);
   --orb-glow: var(--ui-warning);
   --orb-dot: var(--ui-warning);
   --orb-glow-dur: 2.6s;
-  --orb-glow-lo: 0.3;
-  --orb-glow-hi: 0.5;
+  --orb-glow-lo: 0.35;
+  --orb-glow-hi: 0.55;
 }
 .dark .orb[data-companion-state='error'] {
-  --orb-b0: #3f3f46;
+  --orb-b0: #52525b;
   --orb-b1: #27272a;
-  --orb-l1: #71717a;
-  --orb-l2: #52525b;
+  --orb-l1: #f59e0b;
+  --orb-l2: #b45309;
+  --orb-keyline: rgb(245 158 11 / 0.4);
 }
 
 .orb :is(stop, circle) {

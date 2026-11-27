@@ -127,6 +127,25 @@ const aiTesting = ref(false)
 const aiError = ref<string | null>(null)
 const aiTestStatus = ref<string | null>(null)
 
+const hasSavedKeyForSelectedProvider = computed(() => {
+  if (aiProvider.value === 'none') return false
+  const cfg = companion.aiConfig as typeof companion.aiConfig & {
+    hasGeminiApiKey?: boolean
+    hasFerryProApiKey?: boolean
+    hasApiKeyByProvider?: Partial<Record<CompanionAiProvider, boolean>>
+  }
+  if (cfg.hasApiKeyByProvider && typeof cfg.hasApiKeyByProvider[aiProvider.value] === 'boolean') {
+    return Boolean(cfg.hasApiKeyByProvider[aiProvider.value])
+  }
+  if (aiProvider.value === 'gemini' && typeof cfg.hasGeminiApiKey === 'boolean') {
+    return cfg.hasGeminiApiKey
+  }
+  if (aiProvider.value === 'ferry-pro' && typeof cfg.hasFerryProApiKey === 'boolean') {
+    return cfg.hasFerryProApiKey
+  }
+  return cfg.provider === aiProvider.value && cfg.hasApiKey
+})
+
 watch(aiProvider, (next) => {
   aiError.value = null
   aiTestStatus.value = null
@@ -166,7 +185,7 @@ async function saveCompanionAi(clearKey = false, silent = false): Promise<void> 
       provider: aiProvider.value,
       endpoint: aiProvider.value === 'none' ? '' : endpoint,
       model,
-      apiKey: clearKey || aiProvider.value === 'none' ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
+      apiKey: clearKey ? '' : (aiApiKey.value ? aiApiKey.value : undefined)
     })
     aiApiKey.value = ''
     if (!silent) {
@@ -205,6 +224,79 @@ async function testCompanionAi(): Promise<void> {
     aiError.value = err instanceof Error ? err.message : String(err)
   } finally {
     aiTesting.value = false
+  }
+}
+
+const vaultMode = ref<'export' | 'import' | null>(null)
+const vaultPassphrase = ref('')
+const vaultPassphraseConfirm = ref('')
+const vaultBusy = ref(false)
+const vaultError = ref<string | null>(null)
+
+function openVaultAction(mode: 'export' | 'import'): void {
+  vaultMode.value = vaultMode.value === mode ? null : mode
+  vaultPassphrase.value = ''
+  vaultPassphraseConfirm.value = ''
+  vaultError.value = null
+}
+
+async function submitVaultAction(): Promise<void> {
+  if (!vaultMode.value || vaultBusy.value) return
+  vaultError.value = null
+  if (vaultPassphrase.value.length < 8) {
+    vaultError.value = 'Passphrase must be at least 8 characters.'
+    return
+  }
+  if (vaultMode.value === 'export' && vaultPassphrase.value !== vaultPassphraseConfirm.value) {
+    vaultError.value = 'Passphrases do not match.'
+    return
+  }
+  vaultBusy.value = true
+  try {
+    if (vaultMode.value === 'export') {
+      const savePath = await invoke<string | null>(INVOKE_CHANNELS.dialogPickSaveFile, 'ferry-backup.ferryvault')
+      if (!savePath) return
+      const res = await invoke<{ filePath: string; siteCount: number; snippetCount: number } | null>(
+        INVOKE_CHANNELS.sitesExportVault,
+        {
+          filePath: savePath,
+          passphrase: vaultPassphrase.value,
+          customSnippets: companion.customSnippets.map((s) => ({
+            id: s.id,
+            label: s.label,
+            command: s.command,
+            description: s.description
+          }))
+        }
+      )
+      if (res) {
+        notify.success('Encrypted vault exported', `Saved ${res.siteCount} site(s) and ${res.snippetCount} snippet(s).`)
+        vaultMode.value = null
+      }
+    } else {
+      const res = await invoke<{
+        imported: number
+        skipped: number
+        customSnippets: Array<{ label: string; command: string; description: string }>
+      } | null>(INVOKE_CHANNELS.sitesImportVault, {
+        passphrase: vaultPassphrase.value
+      })
+      if (res) {
+        const snippetsAdded = companion.mergeImportedSnippets(res.customSnippets)
+        await useSitesStore().fetchSites()
+        notify.success(
+          'Encrypted vault imported',
+          `Imported ${res.imported} site(s) (${res.skipped} duplicate skipped) and ${snippetsAdded} snippet(s).`
+        )
+        vaultMode.value = null
+      }
+    }
+  } catch (err) {
+    vaultError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    vaultBusy.value = false
+    vaultPassphrase.value = ''
+    vaultPassphraseConfirm.value = ''
   }
 }
 
@@ -868,7 +960,7 @@ async function saveNetwork(): Promise<void> {
                         <UBadge color="neutral" variant="outline" size="xs">Ultra · Team · Enterprise (Under Construction)</UBadge>
                       </div>
                       <p class="mt-1 text-2xs text-muted">
-                        Free includes local Snippets, Command History, offline commands, and unlimited BYO Google AI Studio Gemini keys. Pro adds managed proxy routing plus workspace log &amp; monitor diagnostics. Prompts are locally redacted before transit.
+                        Starter (Free) includes local Snippets, Command History, Pre-Flight Safety Guardrails, and unlimited BYO Google AI Studio Gemini keys (unlocking full AI Chat, Explain This Log, Diagnose Spike, and Action Cards). Pro adds a turnkey Managed AI Proxy with zero API-key setup. Prompts are locally redacted before transit.
                       </p>
                     </div>
                   </div>
@@ -904,22 +996,34 @@ async function saveNetwork(): Promise<void> {
                           </datalist>
                         </label>
                       </div>
-                      <label class="flex flex-col gap-1 text-xs">
-                        <span class="text-muted">
-                          {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
-                          {{ companion.aiConfig.hasApiKey ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
-                        </span>
+                      <div class="flex flex-col gap-1 text-xs">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <label for="companion-ai-api-key" class="text-muted">
+                            {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
+                            {{ hasSavedKeyForSelectedProvider ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
+                          </label>
+                          <button
+                            v-if="aiProvider === 'gemini'"
+                            type="button"
+                            class="inline-flex cursor-pointer items-center gap-1 text-2xs font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                            @click="openExternal('https://aistudio.google.com/apikey').catch(() => {})"
+                          >
+                            <span>Get a free Gemini API key</span>
+                            <UIcon name="i-lucide-external-link" class="size-3" />
+                          </button>
+                        </div>
                         <PasswordInput
+                          id="companion-ai-api-key"
                           v-model="aiApiKey"
                           :placeholder="aiProvider === 'ferry-pro' ? 'ferry_pro_…' : 'AIza…'"
                         />
-                      </label>
+                      </div>
                     </template>
                     <p v-if="aiError" class="text-2xs text-error">{{ aiError }}</p>
                     <p v-else-if="aiTestStatus" class="text-2xs text-success">{{ aiTestStatus }}</p>
                     <div class="flex flex-wrap items-center justify-end gap-1.5">
                       <UButton
-                        v-if="aiProvider !== 'none' && companion.aiConfig.hasApiKey"
+                        v-if="aiProvider !== 'none' && hasSavedKeyForSelectedProvider"
                         size="xs"
                         color="neutral"
                         variant="ghost"
@@ -1090,6 +1194,47 @@ async function saveNetwork(): Promise<void> {
                   @update:model-value="(v: number) => onRetentionChange(Number(v))"
                 />
               </SettingsRow>
+
+              <SettingsRow
+                label="Encrypted Vault (.ferryvault)"
+                description="Passphrase-encrypted portable backup including saved passwords, passphrases, and custom snippets."
+              >
+                <div class="flex flex-wrap gap-2">
+                  <UButton size="xs" variant="outline" color="primary" icon="i-lucide-lock" @click="openVaultAction('export')">
+                    Export Vault
+                  </UButton>
+                  <UButton size="xs" variant="outline" color="neutral" icon="i-lucide-unlock" @click="openVaultAction('import')">
+                    Import Vault
+                  </UButton>
+                </div>
+              </SettingsRow>
+              <div
+                v-if="vaultMode"
+                data-vault-passphrase-box
+                class="my-2 flex flex-col gap-2 rounded-md border border-primary/35 bg-primary/5 p-3 text-xs"
+              >
+                <p class="font-semibold text-highlighted">
+                  {{ vaultMode === 'export' ? 'Export Encrypted .ferryvault' : 'Import Encrypted .ferryvault' }}
+                </p>
+                <PasswordInput
+                  v-model="vaultPassphrase"
+                  placeholder="Vault passphrase (min 8 characters)"
+                />
+                <PasswordInput
+                  v-if="vaultMode === 'export'"
+                  v-model="vaultPassphraseConfirm"
+                  placeholder="Confirm vault passphrase"
+                />
+                <p v-if="vaultError" role="alert" class="text-2xs text-error">{{ vaultError }}</p>
+                <div class="flex justify-end gap-1.5">
+                  <UButton size="xs" color="neutral" variant="ghost" :disabled="vaultBusy" @click="vaultMode = null">
+                    Cancel
+                  </UButton>
+                  <UButton size="xs" color="primary" :loading="vaultBusy" @click="submitVaultAction">
+                    {{ vaultMode === 'export' ? 'Choose file & export' : 'Choose file & import' }}
+                  </UButton>
+                </div>
+              </div>
 
               <SettingsRow label="Data access & deletion" description="Export local data (excluding passwords) or erase all local Ferry data.">
                 <div class="flex flex-wrap gap-2">

@@ -99,4 +99,46 @@ describe('companionEngine', () => {
     })
     expect(reply.commandCards?.some((c) => c.command === 'df -h' && c.risk === 'read_only')).toBe(true)
   })
+
+  it('marks DevOps/error/sync/filter queries as isFallback when AI is enabled so AI handles them', () => {
+    const aiCtx = {
+      currentVersion: '1.5.0',
+      previousVersion: '1.4.0',
+      releases: SAMPLE_RELEASES,
+      offlineFallback: false,
+      isConnected: true,
+      aiEnabled: true
+    }
+    expect(answerCompanionQuery('why is cpu high on my ubuntu node right now', aiCtx).isFallback).toBe(true)
+    expect(answerCompanionQuery('find errors in /var/log/nginx/error.log', aiCtx).isFallback).toBe(true)
+    expect(answerCompanionQuery('Help me troubleshoot a failed transfer', aiCtx).isFallback).toBe(true)
+    expect(answerCompanionQuery('Review this folder sync pre-flight warning', aiCtx).isFallback).toBe(true)
+    expect(answerCompanionQuery('how do I filter *.log files', aiCtx).isFallback).toBe(true)
+    // Explicit local app-help / whats-new intents remain local
+    expect(answerCompanionQuery("What's new?", aiCtx).isFallback).toBeUndefined()
+    expect(answerCompanionQuery('Start the tour', aiCtx).isFallback).toBeUndefined()
+  })
+
+  it('parses explicit semver in What changed since X.Y.Z prompts', () => {
+    const reply = answerCompanionQuery('What changed since 1.3.0?', {
+      currentVersion: '1.3.1',
+      previousVersion: null,
+      releases: SAMPLE_RELEASES,
+      offlineFallback: false,
+      isConnected: true
+    })
+    expect(reply.releaseCard?.title).toBe('Changes since v1.3.0')
+    expect(reply.releaseCard?.highlights).toContain('Restore Site Management after closing tabs')
+  })
+
+  it('prioritizes EACCES over generic auth and adapts advice to download direction', () => {
+    const eaccesAuthPath = diagnoseErrorText('EACCES: permission denied on /etc/auth/config', 'upload')
+    expect(eaccesAuthPath).toContain('permissions')
+    expect(eaccesAuthPath).toContain('/tmp')
+
+    const downloadDenied = diagnoseErrorText('EACCES: permission denied', 'download')
+    expect(downloadDenied).toContain('permissions')
+    expect(downloadDenied).not.toContain('uploading to')
+    expect(downloadDenied).not.toContain('/tmp')
+  })
 })

@@ -814,6 +814,53 @@ export interface MonitorStartRequest {
   intervalMs?: number
 }
 
+/** Disk usage (bytes + optional mount point & inode stats) from `df -Pk` / `df -Pi`. */
+export interface MonitorDiskUsage {
+  totalBytes: number
+  usedBytes: number
+  availableBytes: number
+  mountPoint?: string
+  inodesTotal?: number
+  inodesUsed?: number
+  inodesAvailable?: number
+}
+
+/** Capped recursive local folder scan result for upload pre-flight safety & size checks. */
+export interface LocalUploadScanResult {
+  relativePaths: string[]
+  totalBytes: number
+  truncated: boolean
+}
+
+export type RemoteInitSystem = 'systemd' | 'openrc' | 'sysvinit' | 'launchd' | 'unknown'
+
+/** Automatically probed remote host OS, distro, shell, and init system metadata. */
+export interface RemoteHostInfo {
+  os: string
+  distro?: string
+  kernel?: string
+  arch?: string
+  shell?: string
+  initSystem: RemoteInitSystem
+}
+
+/** Formats a {@link RemoteHostInfo} into a concise diagnostic string for Companion AI context. */
+export function formatRemoteOsLabel(info: RemoteHostInfo): string {
+  const head = info.distro || info.os
+  const meta = [
+    info.distro && info.os && !info.distro.toLowerCase().includes(info.os.toLowerCase()) ? info.os : null,
+    info.arch ?? null,
+    info.initSystem && info.initSystem !== 'unknown' ? `init: ${info.initSystem}` : null
+  ].filter(Boolean)
+  return meta.length > 0 ? `${head} (${meta.join(', ')})` : head
+}
+
+/** Push-event payload for `session:host-info`. */
+export interface SessionHostInfoEvent {
+  sessionId: string
+  info: RemoteHostInfo
+}
+
 /**
  * One remote resource sample (Monitor dock tab). `cpu` is null on the very
  * first tick after a (re)start — CPU% needs two consecutive /proc/stat
@@ -843,11 +890,7 @@ export interface MonitorSample {
     usedBytes: number
   }
   /** Root filesystem ("/") usage — null if `df` failed/unavailable (not fatal, unlike a missing /proc/stat). */
-  disk: {
-    totalBytes: number
-    usedBytes: number
-    availableBytes: number
-  } | null
+  disk: MonitorDiskUsage | null
   /** Top processes by combined CPU+RAM score, capped at MAX_PROCESSES — see procParse.ts's capProcesses. */
   processes: MonitorProcessSample[]
   /** Full process count before capping, so the UI can show "showing top N of M". */
@@ -861,6 +904,8 @@ export interface MonitorProcessSample {
   pid: number
   /** comm — process name, truncated to 15 chars by the kernel like `ps`/`top` show. */
   name: string
+  /** Optional truncated `/proc/[pid]/cmdline` for top hot processes. */
+  cmdline?: string
   /** 0–100, on the same scale as MonitorSample.cpu.aggregatePct — null until a second consecutive sample exists for this pid. */
   cpuPct: number | null
   rssBytes: number
@@ -1085,6 +1130,8 @@ export const INVOKE_CHANNELS = {
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
   sitesImportJson: 'sites:import-json',
+  sitesExportVault: 'sites:exportVault',
+  sitesImportVault: 'sites:importVault',
   // app settings
   settingsGet: 'settings:get',
   settingsSetOpenTabs: 'settings:setOpenTabs',
@@ -1116,8 +1163,10 @@ export const INVOKE_CHANNELS = {
   fsLocalStageDropFinish: 'fs:local:stage-drop-finish',
   fsLocalStageDropAbort: 'fs:local:stage-drop-abort',
   fsLocalCleanupStagedDrop: 'fs:local:cleanup-staged-drop',
+  fsLocalScanUploadPaths: 'fs:local:scanUploadPaths',
   // remote filesystem (SFTP)
   fsRemoteList: 'fs:remote:list',
+  fsRemoteDiskUsage: 'fs:remote:diskUsage',
   fsRemoteMkdir: 'fs:remote:mkdir',
   fsLocalTouch: 'fs:local:touch',
   fsRemoteTouch: 'fs:remote:touch',
@@ -1203,6 +1252,7 @@ export const INVOKE_CHANNELS = {
   companionAiSetConfig: 'companion:ai:setConfig',
   companionAiTest: 'companion:ai:test',
   companionAiChat: 'companion:ai:chat',
+  companionAiCancel: 'companion:ai:cancel',
   // profiling
   profileReport: 'profile:report'
 } as const
@@ -1216,13 +1266,24 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen'
 export const GEMINI_MODEL_OPTIONS = [
   'gemini-4-hydrogen',
   'gemini-3.5-flash-lite',
-  'gemini-4-argon'
+  'gemini-3.8-flash',
+  'gemini-4-argon',
+  'gemini-4-neon',
+  'gemini-4-carbon'
 ] as const
 
-/** Upgrades deprecated legacy Gemini 1.5/2.0/2.5 model identifiers to current gemini-4-hydrogen. */
+/**
+ * Upgrades empty or retired/retiring legacy Gemini models (1.0, 1.5, 2.0, 2.5-pro, 2.5-flash)
+ * to current `gemini-4-hydrogen`, while preserving still-active `gemini-2.5-flash-lite` and all 3.x/4.x models.
+ */
 export function normalizeGeminiModel(raw: string): string {
   const trimmed = raw.trim()
-  if (!trimmed || /^gemini-(?:1\.5|2\.0|2\.5)-/i.test(trimmed)) {
+  if (
+    !trimmed ||
+    /^gemini-(?:1\.0|1\.5|2\.0)-/i.test(trimmed) ||
+    /^gemini-2\.5-pro(?:$|-)/i.test(trimmed) ||
+    /^gemini-2\.5-flash(?!-lite(?:$|-))(?:$|-)/i.test(trimmed)
+  ) {
     return DEFAULT_GEMINI_MODEL
   }
   return trimmed
@@ -1246,11 +1307,83 @@ export interface CompanionStructuredOutput {
   uiActionCards?: CompanionUiActionCard[]
 }
 
+/**
+ * Normalizes a shell command for deterministic risk classification:
+ * - Strips single-quoted literal contents (POSIX shells never expand inside `'...'`).
+ * - Strips plain text inside double-quoted strings while preserving `$(...)` and backtick substitutions.
+ * - Unescapes backslash-obfuscated word characters (e.g. `r\m` -> `rm`).
+ */
+function normalizeCommandForRiskCheck(command: string): string {
+  let out = ''
+  let i = 0
+  const len = command.length
+  while (i < len) {
+    const ch = command[i]
+    if (ch === "'") {
+      // Single-quoted literal: preserve quotes as empty literal
+      out += "''"
+      i += 1
+      while (i < len && command[i] !== "'") i += 1
+      if (i < len) i += 1
+      continue
+    }
+    if (ch === '"') {
+      // Double-quoted string: strip inert text, keep $(...) and `...` command substitutions
+      out += '"'
+      i += 1
+      while (i < len && command[i] !== '"') {
+        if (command[i] === '\\' && i + 1 < len) {
+          i += 2
+          continue
+        }
+        if (command[i] === '$' && command[i + 1] === '(') {
+          let depth = 1
+          out += '$('
+          i += 2
+          while (i < len && depth > 0) {
+            if (command[i] === '(') depth += 1
+            else if (command[i] === ')') depth -= 1
+            out += command[i]
+            i += 1
+          }
+          continue
+        }
+        if (command[i] === '`') {
+          out += '`'
+          i += 1
+          while (i < len && command[i] !== '`') {
+            out += command[i]
+            i += 1
+          }
+          if (i < len) {
+            out += '`'
+            i += 1
+          }
+          continue
+        }
+        i += 1
+      }
+      out += '"'
+      if (i < len) i += 1
+      continue
+    }
+    if (ch === '\\' && i + 1 < len && /[A-Za-z0-9_/-]/.test(command[i + 1])) {
+      // Unescape backslash-obfuscated tokens like `r\m -rf /`
+      out += command[i + 1]
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
 const DESTRUCTIVE_COMMAND_RE =
-  /(\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\b|--recursive\b|--force\b)|\bfind\b[^\r\n]*\s-delete\b|\bshred\b|\bwipefs\b|\bmkfs(?:\.\w+)?\b|\bfdisk\b|\bparted\b|\bdd\s+if=|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\binit\s+[06]\b|\bkill\s+-9\b|\bkillall\b|\bpkill\b|\btruncate\b|\biptables\s+-F\b|\bufw\s+disable\b|\bsystemctl\s+(?:stop|disable|mask)\b|\bdocker\s+(?:rm|rmi|system\s+prune)\b|\bchmod\s+(?:-R\s+)?777\b|\b(?:curl|wget)\b[^\r\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b|>\s*\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/)|\bdrop\s+(?:table|database|schema)\b|:\(\)\s*\{)/i
+  /(\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\b|--recursive\b|--force\b)|\bunlink\b|\bfind\b[^\r\n]*\s-delete\b|\bfind\b[^\r\n]*\s-exec(?:dir)?\b[^\r\n]*\b(?:rm|unlink|shred|truncate|dd|kill|chmod\s+(?:-R\s+)?000|(?:ba|z|da|k)?sh)\b|\bxargs\b[^\r\n]*\b(?:rm|unlink|shred|truncate|kill)\b|\bshred\b|\bwipefs\b|\bmkfs(?:\.\w+)?\b|\bfdisk\b|\bparted\b|\bdd\s+if=|\bshutdown\b|\breboot\b|\bpoweroff\b|\bhalt\b|\binit\s+[06]\b|\bkill\s+(?:-(?:9|KILL|SIGKILL)\b|-s\s*(?:9|KILL|SIGKILL)\b)|\bkillall\b|\bpkill\b|\btruncate\b|\biptables\s+-F\b|\bufw\s+disable\b|\bsystemctl\s+(?:stop|disable|mask)\b|\bservice\s+\S+\s+stop\b|\bdocker\s+(?:rm|rmi|system\s+prune)\b|\bdocker(?:[\s-]+)compose\b[^\r\n]*\bdown\b[^\r\n]*(?:-v\b|--volumes\b)|\bchmod\s+(?:-R\s+)?(?:777|000)\b|\bgit\s+push\b[^\r\n]*(?:--force(?:-with-lease)?\b|-f\b)|\brsync\b[^\r\n]*--delete(?:-(?:before|during|after|delay|excluded))?\b|\bkubectl\s+delete\b|\bterraform\s+destroy\b|\b(?:ba|z|da|k)?sh\s+-[a-zA-Z]*c\b|\beval\b|<\(|\|\s*(?:sudo\s+)?(?:env\s+)?(?:ba|z|da|k)?sh\b|\bcurl\b[^\r\n]*(?:(?:-d|--data(?:-(?:raw|binary|urlencode|ascii))?)\s*@|(?:-F|--form)\s+\S+=@|(?:-T|--upload-file)\s+)|(?:^|[;&|]\s*):\s*>\s*(?!\/dev\/null\b)|\b(?:echo|printf|cat)\b[^\r\n]*>\s*\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/|var\/log\/|root\/)|>\s*(?:\/(?:dev\/(?!null\b)|etc\/|boot\/|usr\/|bin\/|sbin\/|lib\/|var\/log\/|root\/)|~\/\.ssh\/)|\bdrop\s+(?:table|database|schema)\b|:\(\)\s*\{)/i
 
 const MUTATING_COMMAND_RE =
-  /(\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bchgrp\b|\bln\b|\bsed\s+-i\b|\btee\b|\bcrontab\b|\buseradd\b|\busermod\b|\buserdel\b|\bpasswd\b|\bufw\b|\biptables\b|\bsysctl\s+-w\b|\bsystemctl\s+(?:restart|reload|start|enable)\b|\bservice\s+\S+\s+(?:restart|reload|start|stop)\b|\b(?:apt|apt-get|yum|dnf|apk|pacman|brew|npm|pnpm|yarn|pip)\s+(?:install|remove|purge|update|upgrade|add)\b|\bgit\s+(?:push|reset|clean|checkout|merge|rebase)\b|\bdocker\s+(?:restart|stop|start|run|exec)\b|\btar\s+-[a-zA-Z]*x|\bunzip\b)/i
+  /(\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bchgrp\b|\bln\b|\bsed\s+-i\b|\btee\b|\bcrontab\b|\buseradd\b|\busermod\b|\buserdel\b|\bpasswd\b|\bufw\b|\biptables\b|\bsysctl\s+-w\b|\bkill\s+(?:-\S+\s+)*\d+\b|\bfind\b[^\r\n]*\s-exec(?:dir)?\b|\bsystemctl\s+(?:restart|reload|start|enable)\b|\bservice\s+\S+\s+(?:restart|reload|start)\b|\b(?:apt|apt-get|yum|dnf|apk|pacman|brew|npm|pnpm|yarn|pip)\s+(?:install|remove|purge|update|upgrade|add)\b|\bgit\s+(?:push|reset|clean|checkout|merge|rebase)\b|\bdocker\s+(?:restart|stop|start|run|exec)\b|\btar\s+-[a-zA-Z]*x|\bunzip\b|\$\(|`[^`]+`|(?:^|[^0-9>&])>>?\s*(?!&)(?!\/dev\/null\b)\S+)/i
 
 const RISK_ORDER: Record<CompanionCommandRisk, number> = {
   read_only: 0,
@@ -1260,8 +1393,9 @@ const RISK_ORDER: Record<CompanionCommandRisk, number> = {
 
 /** Classifies a shell command's safety risk deterministically without trusting model labels alone. */
 export function classifyCommandRisk(command: string): CompanionCommandRisk {
-  if (DESTRUCTIVE_COMMAND_RE.test(command)) return 'destructive'
-  if (MUTATING_COMMAND_RE.test(command)) return 'mutating'
+  const normalized = normalizeCommandForRiskCheck(command)
+  if (DESTRUCTIVE_COMMAND_RE.test(normalized)) return 'destructive'
+  if (MUTATING_COMMAND_RE.test(normalized)) return 'mutating'
   return 'read_only'
 }
 
@@ -1297,13 +1431,25 @@ export interface CompanionAiConfigInput {
 
 export type CompanionAiIntent = 'chat' | 'command' | 'explain-log' | 'diagnose-spike'
 
+export type CompanionSiteEnvironment = 'prod' | 'staging' | 'dev' | 'other'
+
 export interface CompanionWorkspaceSignal {
+  siteName?: string
+  siteEnvironment?: CompanionSiteEnvironment
+  remoteOs?: string
+  remoteShell?: string
+  remoteCwd?: string
+  terminalTail?: string
+  sftpSummary?: string
+  lastTransferError?: string
+  logBasename?: string
   logSnippet?: string
   logPath?: string
   monitorSummary?: string
 }
 
 export interface CompanionAiChatRequest {
+  requestId?: string
   prompt: string
   history?: Array<{ role: 'user' | 'assistant'; text: string }>
   intent?: CompanionAiIntent
@@ -1313,6 +1459,20 @@ export interface CompanionAiChatRequest {
     isConnected: boolean
     theme: string
   }
+}
+
+export interface CompanionAiCancelRequest {
+  requestId?: string
+}
+
+export interface CompanionAiCancelResult {
+  cancelled: boolean
+}
+
+export interface CompanionAiStreamEvent {
+  requestId: string
+  /** Full accumulated clean summary text so far. */
+  summaryText: string
 }
 
 export interface CompanionAiChatResult {
@@ -1371,6 +1531,7 @@ export const HOST_INVOKE_CHANNELS: readonly InvokeChannel[] = [
 export const EVENT_CHANNELS = {
   sessionStatus: 'session:status-change',
   sessionProgress: 'session:progress',
+  sessionHostInfo: 'session:host-info',
   keyboardInteractivePrompt: 'session:keyboard-interactive-prompt',
   hostKeyPrompt: 'session:host-key-prompt',
   transferEvent: 'transfer:event',
@@ -1387,7 +1548,8 @@ export const EVENT_CHANNELS = {
   windowStateChange: 'window:state-change',
   updateAvailable: 'update:available',
   updateDownloaded: 'update:downloaded',
-  updateStatus: 'update:status'
+  updateStatus: 'update:status',
+  companionAiStream: 'companion:ai:stream'
 } as const
 
 export const SEND_CHANNELS = {

@@ -15,6 +15,7 @@ import { useNotify } from '../../composables/useNotify'
 import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
 import { getPaneActions } from '../../composables/usePaneActions'
 import { useFileClipboardStore } from '../../stores/fileClipboard.store'
+import { extractSnippetParams } from '../../utils/snippetParams'
 
 interface PaletteItem {
   id: string
@@ -228,6 +229,46 @@ const groups = computed<PaletteGroup[]>(() => {
     })
   }
 
+  const snippetItems: PaletteItem[] = companion.allSnippets.map((snip) => ({
+    id: `snip-${snip.id}`,
+    label: snip.label,
+    suffix: snip.command.length > 44 ? `${snip.command.slice(0, 44)}…` : snip.command,
+    icon: 'i-lucide-terminal',
+    onSelect: () =>
+      run(async () => {
+        if (sessions.status !== 'connected') {
+          try {
+            await navigator.clipboard.writeText(snip.command)
+            notify.success('Snippet copied', snip.label)
+          } catch {
+            notify.error('Copy failed', 'Could not access clipboard.')
+          }
+          return
+        }
+        if (extractSnippetParams(snip.command).length > 0) {
+          companion.openPanel('snippets')
+          return
+        }
+        const msg = await companion.insertCommandInTerminal(snip.command)
+        notify.success('Snippet staged', msg)
+      })
+  }))
+
+  const historyItems: PaletteItem[] = companion.commandHistory.slice(0, 5).map((entry) => ({
+    id: `cmdhist-${entry.id}`,
+    label: entry.command,
+    suffix: entry.hostLabel ?? 'Recent',
+    icon: 'i-lucide-history',
+    onSelect: () =>
+      run(async () => {
+        if (sessions.status === 'connected') {
+          await companion.insertCommandInTerminal(entry.command)
+        } else {
+          await navigator.clipboard.writeText(entry.command).catch(() => {})
+        }
+      })
+  }))
+
   return [
     ...(fileItems.length > 0 ? [{ id: 'files', label: 'Selected files', items: fileItems }] : []),
     {
@@ -235,6 +276,8 @@ const groups = computed<PaletteGroup[]>(() => {
       label: 'Actions',
       items: actionItems
     },
+    ...(snippetItems.length > 0 ? [{ id: 'snippets', label: 'Snippets', items: snippetItems }] : []),
+    ...(historyItems.length > 0 ? [{ id: 'recent-commands', label: 'Recent commands', items: historyItems }] : []),
     {
       id: 'sites',
       label: 'Connect to site',

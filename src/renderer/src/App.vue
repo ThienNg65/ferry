@@ -61,6 +61,9 @@ const connectionPhase = computed(() => {
 const isResizingPane = ref(false)
 const viewportWidth = ref(window.innerWidth)
 const effectiveLocalWidth = computed(() => clampLocalPaneWidth(ui.localPaneWidth, viewportWidth.value))
+const effectiveCompanionMode = computed<'split' | 'overlay'>(() =>
+  ui.companionLayoutMode === 'split' && viewportWidth.value >= 1024 && !companion.forceOverlay ? 'split' : 'overlay'
+)
 const onWindowResize = (): void => {
   viewportWidth.value = window.innerWidth
 }
@@ -320,15 +323,12 @@ watch(
   }
 )
 
-const promoToastActive = ref(false)
-
 watch(
-  [() => settingsStore.loaded, needsLegalConsent],
-  ([loaded, consentNeeded]) => {
-    if (!loaded || consentNeeded || promoToastShown) return
+  [() => settingsStore.loaded, needsLegalConsent, () => companion.onboarded],
+  ([loaded, consentNeeded, onboarded]) => {
+    if (!loaded || consentNeeded || !onboarded || promoToastShown) return
     if (ui.glassUiEnabled || ui.glassUiPromoDismissed) return
     promoToastShown = true
-    promoToastActive.value = true
 
     const { id } = toast.add({
       title: 'Modern Glass UI (In Development)',
@@ -339,7 +339,6 @@ watch(
       'onUpdate:open': (open: boolean) => {
         if (!open) {
           promoToastId = null
-          promoToastActive.value = false
           ui.dismissGlassUiPromo()
         }
       },
@@ -353,7 +352,6 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
-            promoToastActive.value = false
             notify.success(
               'Modern Glass UI enabled',
               'You can switch back anytime in Settings → Appearance.'
@@ -368,7 +366,6 @@ watch(
             ui.dismissGlassUiPromo()
             toast.remove(id)
             promoToastId = null
-            promoToastActive.value = false
           }
         }
       ]
@@ -378,16 +375,18 @@ watch(
   { immediate: true }
 )
 
-// Initialize Ferry Companion lifecycle after legal consent, settings hydration, and any promo toast dismissal.
+// Initialize Ferry Companion lifecycle after legal consent and settings hydration
+// (decoupled from Glass UI promo toast so currentVersion populates immediately on boot).
 watch(
-  [() => settingsStore.loaded, needsLegalConsent, promoToastActive],
-  ([loaded, consentNeeded, promoActive]) => {
-    if (!loaded || consentNeeded || promoActive || companion.lifecycleInitialized) return
+  [() => settingsStore.loaded, needsLegalConsent],
+  ([loaded, consentNeeded]) => {
+    if (!loaded || consentNeeded || companion.lifecycleInitialized) return
     const resolveAndInit = async (): Promise<void> => {
       let version = updateStore.currentVersion
       if (!version) {
         try {
-          version = await invoke<string>(INVOKE_CHANNELS.systemGetAppVersion)
+          const res = await invoke<string | { version?: string }>(INVOKE_CHANNELS.systemGetAppVersion)
+          version = typeof res === 'string' ? res : (res?.version ?? '')
         } catch {
           version = ''
         }
@@ -414,7 +413,13 @@ watch(
       const prevState = transferStateById.get(item.transferId)
       transferStateById.set(item.transferId, item.state)
       if (item.state === 'error' && prevState !== 'error' && item.error) {
-        companion.notifyTransferFailure(item.error)
+        companion.notifyTransferFailure({
+          sessionId: item.sessionId,
+          direction: item.kind,
+          localPath: item.localPath,
+          remotePath: item.remotePath,
+          error: item.error
+        })
       }
     }
     for (const id of transferStateById.keys()) {
@@ -442,7 +447,8 @@ watch(
       :class="ui.glassUiEnabled ? 'bg-transparent' : 'bg-default'"
     >
       <SiteTabBar />
-      <main class="relative min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+      <main class="relative min-h-0 min-w-0 flex-1">
         <!--
           The connected view is hoisted out of the Transition/v-if instead of toggling with
           v-if/v-else — BottomDock renders TerminalView, which owns long-lived xterm.js
@@ -517,6 +523,8 @@ watch(
           <BottomDock />
         </div>
       </main>
+      <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'split'" mode="split" />
+      </div>
     </div>
     <SettingsDialog v-model:open="settingsDialog.isOpen.value" />
     <HistoryDialog v-model:open="historyDialog.isOpen.value" />
@@ -524,6 +532,6 @@ watch(
     <LegalConsentDialog :open="needsLegalConsent" />
     <CommandPalette />
     <ConnectionModals />
-    <CompanionPanel v-if="companion.hasOpenedOnce" />
+    <CompanionPanel v-if="companion.hasOpenedOnce && effectiveCompanionMode === 'overlay'" mode="overlay" />
   </UApp>
 </template>

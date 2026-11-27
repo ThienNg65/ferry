@@ -12,7 +12,8 @@ const appSettingsMock = {
 
 const aiServiceMock = {
   testConnection: vi.fn(),
-  chat: vi.fn()
+  chat: vi.fn(),
+  cancel: vi.fn()
 }
 
 const releasesServiceMock = {
@@ -84,5 +85,52 @@ describe('companion.ipc & settingsSetUiPref', () => {
       value: 'X'.repeat(5_000)
     })
     expect(rejectedRes).toMatchObject({ ok: false, code: 'VALIDATION' })
+  })
+
+  it('forwards v2 workspaceSignal + requestId on chat and wires companion:ai:cancel', async () => {
+    aiServiceMock.chat.mockResolvedValue({ ok: true, text: 'ok' })
+    aiServiceMock.cancel.mockReturnValue(true)
+
+    const chatRes = await invoke(INVOKE_CHANNELS.companionAiChat, {
+      requestId: 'req-1',
+      prompt: 'Inspect host',
+      workspaceSignal: {
+        siteName: 'prod-box',
+        siteEnvironment: 'prod',
+        remoteOs: 'Ubuntu 22.04',
+        remoteShell: '/bin/bash',
+        remoteCwd: '/var/log',
+        terminalTail: 'last lines',
+        sftpSummary: '2 files',
+        lastTransferError: 'EACCES',
+        logBasename: 'error.log'
+      },
+      context: { appVersion: '1.5.0', isConnected: true, theme: 'dark' }
+    })
+    expect(chatRes).toMatchObject({ ok: true })
+    expect(aiServiceMock.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'req-1',
+        workspaceSignal: expect.objectContaining({
+          siteName: 'prod-box',
+          siteEnvironment: 'prod',
+          remoteOs: 'Ubuntu 22.04',
+          remoteShell: '/bin/bash',
+          remoteCwd: '/var/log',
+          terminalTail: 'last lines',
+          sftpSummary: '2 files',
+          lastTransferError: 'EACCES',
+          logBasename: 'error.log'
+        })
+      }),
+      undefined,
+      expect.objectContaining({ stream: true, onStreamSummary: expect.any(Function) })
+    )
+
+    const cancelRes = await invoke(INVOKE_CHANNELS.companionAiCancel, { requestId: 'req-1' })
+    expect(cancelRes).toEqual({ ok: true, data: { cancelled: true } })
+    expect(aiServiceMock.cancel).toHaveBeenCalledWith('req-1')
+
+    expect(await invoke(INVOKE_CHANNELS.companionAiCancel, 'bad')).toMatchObject({ ok: false, code: 'VALIDATION' })
   })
 })

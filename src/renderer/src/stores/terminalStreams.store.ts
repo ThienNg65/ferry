@@ -27,6 +27,8 @@ interface TerminalInstance {
   scrollMarkerLastLine: number
   decoder: TextDecoder
   pendingUtf8Bytes: number
+  bufferChangeSub?: { dispose: () => void }
+  osc133Sub?: { dispose: () => void }
 }
 
 const ACK_BATCH_BYTES = 100 * 1024
@@ -35,6 +37,7 @@ const PREDICTIVE_UNDERLINE_MS = 100
 const PREDICTIVE_UNDERLINE_RETRY_MS = 10
 const textEncoder = new TextEncoder()
 export const TERMINAL_SEARCH_EVENT = 'ferry:terminal-search'
+export const TERMINAL_QUICK_BAR_EVENT = 'ferry:terminal-quick-bar'
 
 /**
  * Live xterm.js instances, kept OUTSIDE Pinia's reactive state (a plain
@@ -353,19 +356,59 @@ function ensureSubscriptions(): void {
   })
 }
 
+export interface TerminalLastError {
+  snippet: string
+  exitCode?: number
+  detectedAt: number
+}
+
 interface TerminalStreamsState {
   /** Reactive mirror of `instances`' keys, so components can `v-for` over known sessions. */
   knownSessionIds: string[]
   exitedSessionIds: string[]
+  /** Sessions currently displaying an alternate screen buffer (e.g. vim, htop, less). */
+  alternateScreenSessionIds: string[]
+  /** Latest detected non-zero shell command error per session (for 1-click "Fix last command"). */
+  lastErrorBySession: Record<string, TerminalLastError>
 }
 
 export const useTerminalStreamsStore = defineStore('terminalStreams', {
-  state: (): TerminalStreamsState => ({ knownSessionIds: [], exitedSessionIds: [] }),
+  state: (): TerminalStreamsState => ({
+    knownSessionIds: [],
+    exitedSessionIds: [],
+    alternateScreenSessionIds: [],
+    lastErrorBySession: {}
+  }),
 
   actions: {
     markExited(sessionId: string): void {
       if (!this.exitedSessionIds.includes(sessionId)) {
         this.exitedSessionIds.push(sessionId)
+      }
+    },
+
+    setAlternateScreen(sessionId: string, active: boolean): void {
+      const has = this.alternateScreenSessionIds.includes(sessionId)
+      if (active && !has) {
+        this.alternateScreenSessionIds.push(sessionId)
+      } else if (!active && has) {
+        this.alternateScreenSessionIds = this.alternateScreenSessionIds.filter((id) => id !== sessionId)
+      }
+    },
+
+    isAlternateScreen(sessionId: string): boolean {
+      const inst = instances.get(sessionId)
+      if (inst?.term.buffer?.active) {
+        return inst.term.buffer.active.type === 'alternate'
+      }
+      return this.alternateScreenSessionIds.includes(sessionId)
+    },
+
+    dismissLastError(sessionId: string): void {
+      if (sessionId in this.lastErrorBySession) {
+        const next = { ...this.lastErrorBySession }
+        delete next[sessionId]
+        this.lastErrorBySession = next
       }
     },
 
@@ -429,11 +472,17 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
       return instances.get(sessionId)
     },
 
-    /** Opens (or returns the existing/in-flight) terminal for `sessionId`. */
+    /** Opens (or returns the existing/in-flight) terminal for `sessionId`, restarting an exited PTY automatically. */
     async ensureTerminal(sessionId: string): Promise<string> {
       const existing = instances.get(sessionId)
       if (existing) {
-        return existing.terminalId
+        if (this.exitedSessionIds.includes(sessionId)) {
+          await this.restart(sessionId)
+        }
+        const current = instances.get(sessionId)
+        if (current) {
+          return current.terminalId
+        }
       }
       const inFlight = pending.get(sessionId)
       if (inFlight) {
@@ -498,6 +547,9 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             pendingUtf8Bytes: 0
           }
           term.onData((data) => {
+            if (data.includes('\r') && sessionId in this.lastErrorBySession) {
+              this.dismissLastError(sessionId)
+            }
             const input: TerminalInputEvent = { terminalId: inst.terminalId, data }
             window.api.send(SEND_CHANNELS.terminalInput, input)
             if (!useUiStore().terminalPredictiveEcho) {
@@ -506,11 +558,49 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
             const res = inst.predictor.onInput(data, snapshotBuffer(inst))
             applyPredictionResult(sessionId, inst, res)
           })
+          // Track alternate-screen transitions (vim/htop/less) reactively via official xterm API.
+          if (typeof term.buffer?.onBufferChange === 'function') {
+            inst.bufferChangeSub = term.buffer.onBufferChange((buf) => {
+              this.setAlternateScreen(sessionId, buf.type === 'alternate')
+            })
+          }
+          // Capture OSC 133;D;<exitCode> shell integration markers for 1-click "Fix last command".
+          if (typeof term.parser?.registerOscHandler === 'function') {
+            inst.osc133Sub = term.parser.registerOscHandler(133, (payload) => {
+              const match = /^D;(\d+)/.exec(payload.trim())
+              if (match) {
+                const code = Number(match[1])
+                if (Number.isInteger(code) && code > 0 && code !== 130) {
+                  this.lastErrorBySession = {
+                    ...this.lastErrorBySession,
+                    [sessionId]: {
+                      exitCode: code,
+                      snippet: this.getRecentOutput(sessionId, 12),
+                      detectedAt: Date.now()
+                    }
+                  }
+                } else if (code === 0) {
+                  this.dismissLastError(sessionId)
+                }
+              }
+              return false
+            })
+          }
           // Clipboard shortcuts (Ctrl+C copies only when a selection exists —
           // otherwise it stays a SIGINT; Ctrl+V/Ctrl+Shift+V/Shift+Insert paste).
           // Returning false stops xterm's own processing; preventDefault stops
           // Chromium's native paste from double-firing into the hidden textarea.
           term.attachCustomKeyEventHandler((ev) => {
+            if (
+              ev.type === 'keydown' &&
+              ev.code === 'Space' &&
+              ((ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) ||
+                (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey))
+            ) {
+              ev.preventDefault()
+              window.dispatchEvent(new CustomEvent(TERMINAL_QUICK_BAR_EVENT))
+              return false
+            }
             if (ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.code === 'Backquote') {
               return false
             }
@@ -566,7 +656,73 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
 
     /** Moves keyboard focus into a session's terminal (no-op if none is open). */
     focus(sessionId: string): void {
-      instances.get(sessionId)?.term.focus()
+      const inst = instances.get(sessionId)
+      if (inst) {
+        inst.term.focus()
+        return
+      }
+      if (typeof document !== 'undefined') {
+        ;(document.querySelector('.xterm-helper-textarea') as HTMLElement | null)?.focus()
+      }
+    },
+
+    /** Reads the last `maxLines` non-empty lines from the active xterm buffer safely. */
+    getRecentOutput(sessionId: string, maxLines = 30): string {
+      const inst = instances.get(sessionId)
+      if (!inst) return ''
+      try {
+        const active = inst.term.buffer?.active
+        if (!active || active.length <= 0) return ''
+        const limit = Math.max(1, Math.min(maxLines, 200))
+        const collected: string[] = []
+        for (let y = active.length - 1; y >= 0 && collected.length < limit; y -= 1) {
+          const line = active.getLine(y)?.translateToString(true) ?? ''
+          if (collected.length === 0 && !line.trim()) continue
+          collected.push(line)
+        }
+        return collected.reverse().join('\n').trim()
+      } catch {
+        return ''
+      }
+    },
+
+    /**
+     * Stages `text` onto the active terminal prompt without executing (`\r` stripped),
+     * restarting an exited PTY if needed and returning focus to `.xterm`.
+     */
+    async insertText(sessionId: string, text: string): Promise<boolean> {
+      const staged = text.replace(/[\r\n]+/g, ' ').trim()
+      if (!staged) return false
+      if (typeof window === 'undefined' || typeof window.api?.send !== 'function') {
+        return false
+      }
+      const terminalId = await this.ensureTerminal(sessionId)
+      if (!terminalId || this.exitedSessionIds.includes(sessionId)) {
+        return false
+      }
+      const input: TerminalInputEvent = { terminalId, data: staged }
+      window.api.send(SEND_CHANNELS.terminalInput, input)
+      this.focus(sessionId)
+      return true
+    },
+
+    /**
+     * Sends raw `data` to the session's PTY, ensuring a live (restarted if exited) shell
+     * and returning focus to `.xterm`. Returns `true` only when input was actually written.
+     */
+    async write(sessionId: string, data: string): Promise<boolean> {
+      if (!data) return false
+      if (typeof window === 'undefined' || typeof window.api?.send !== 'function') {
+        return false
+      }
+      const terminalId = await this.ensureTerminal(sessionId)
+      if (!terminalId || this.exitedSessionIds.includes(sessionId)) {
+        return false
+      }
+      const input: TerminalInputEvent = { terminalId, data }
+      window.api.send(SEND_CHANNELS.terminalInput, input)
+      this.focus(sessionId)
+      return true
     },
 
     /**
@@ -642,11 +798,15 @@ export const useTerminalStreamsStore = defineStore('terminalStreams', {
         }
         instances.delete(sessionId)
         clearUnderlineTimer(inst)
+        inst.bufferChangeSub?.dispose()
+        inst.osc133Sub?.dispose()
         inst.predictor.reset()
         resetScrollTracker(inst)
         inst.writeGeneration++
         this.knownSessionIds = this.knownSessionIds.filter((id) => id !== sessionId)
         this.exitedSessionIds = this.exitedSessionIds.filter((id) => id !== sessionId)
+        this.setAlternateScreen(sessionId, false)
+        this.dismissLastError(sessionId)
         try {
           await invoke<void>(INVOKE_CHANNELS.terminalClose, inst.terminalId)
         } finally {

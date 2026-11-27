@@ -177,24 +177,48 @@ export function parseUptime(text: string): number | null {
   return value
 }
 
-/** Root-filesystem usage figures parsed from `df -Pk /`. */
+/** Filesystem usage figures parsed from `df -Pk` (and optional `df -Pi`). */
 export interface DiskUsage {
   totalBytes: number
   usedBytes: number
   availableBytes: number
+  mountPoint?: string
+  inodesTotal?: number
+  inodesUsed?: number
+  inodesAvailable?: number
+}
+
+/** Parses `df -Pi`'s inode columns (`Inodes`, `IUsed`, `IFree`). Returns null if unavailable or unsupported. */
+export function parseInodeUsage(text: string): {
+  inodesTotal: number
+  inodesUsed: number
+  inodesAvailable: number
+} | null {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length < 2) {
+    return null
+  }
+  const tokens = lines.slice(1).join(' ').split(/\s+/)
+  if (tokens.length < 5) {
+    return null
+  }
+  const total = Number(tokens[tokens.length - 5])
+  const used = Number(tokens[tokens.length - 4])
+  const available = Number(tokens[tokens.length - 3])
+  if (![total, used, available].every(Number.isFinite) || total <= 0) {
+    return null
+  }
+  return { inodesTotal: total, inodesUsed: used, inodesAvailable: available }
 }
 
 /**
- * Parses `df -Pk /`'s output (POSIX format, 1024-byte blocks — stable across
- * GNU coreutils and BusyBox). POSIX `df` wraps the device name onto its own
- * line when it's long, pushing the numeric columns onto the next line — this
- * is tolerated by dropping the header line, joining every remaining line
- * with a space, and walking backward from the last token, which is always
- * the queried mount point ("/"), regardless of how many tokens the device
- * name itself contributed. Returns null on garbage/missing `df` — not fatal
- * to the tick, unlike a missing /proc/stat.
+ * Parses `df -Pk`'s output (POSIX format, 1024-byte blocks — stable across
+ * GNU coreutils and BusyBox) plus optional `df -Pi` inode output.
  */
-export function parseDiskUsage(text: string): DiskUsage | null {
+export function parseDiskUsage(text: string, dfPiText?: string): DiskUsage | null {
   const lines = text
     .split('\n')
     .map((line) => line.trim())
@@ -209,14 +233,39 @@ export function parseDiskUsage(text: string): DiskUsage | null {
   const totalKb = Number(tokens[tokens.length - 5])
   const usedKb = Number(tokens[tokens.length - 4])
   const availableKb = Number(tokens[tokens.length - 3])
+  const mountPoint = tokens[tokens.length - 1]
   if (![totalKb, usedKb, availableKb].every(Number.isFinite) || totalKb <= 0) {
     return null
   }
+  const inodes = dfPiText ? parseInodeUsage(dfPiText) : null
   return {
     totalBytes: totalKb * KB,
     usedBytes: usedKb * KB,
-    availableBytes: availableKb * KB
+    availableBytes: availableKb * KB,
+    ...(mountPoint ? { mountPoint } : {}),
+    ...(inodes ?? {})
   }
+}
+
+/** Marker prefixing each per-process cmdline record (`@C@<pid>\t<cmdline>`). */
+export const CMDLINE_MARKER = '@C@'
+
+/** Parses batched `@C@<pid>\t<cmdline>` records into a map of pid -> trimmed cmdline. */
+export function parseProcessCmdlines(text: string): Map<number, string> {
+  const map = new Map<number, string>()
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim()
+    if (!line.startsWith(CMDLINE_MARKER)) continue
+    const body = line.slice(CMDLINE_MARKER.length)
+    const tabIdx = body.indexOf('\t')
+    if (tabIdx <= 0) continue
+    const pid = Number(body.slice(0, tabIdx).trim())
+    const cmdline = body.slice(tabIdx + 1).replace(/\s+/g, ' ').trim().slice(0, 180)
+    if (Number.isInteger(pid) && pid > 0 && cmdline) {
+      map.set(pid, cmdline)
+    }
+  }
+  return map
 }
 
 /** Marker prefixing each per-process record, followed by the raw /proc/[pid]/stat line. */

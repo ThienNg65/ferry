@@ -633,6 +633,14 @@ html.ferry-glass .ferry-glass-overlay {
   box-shadow: var(--ferry-glass-overlay-shadow);
 }
 
+/* Higher-opacity scrim for the docked Companion sheet so underlying terminal/SFTP text never bleeds through */
+html.ferry-glass [data-companion-panel] {
+  background-color: rgba(255, 255, 255, 0.96);
+}
+html.dark.ferry-glass [data-companion-panel] {
+  background-color: rgba(15, 23, 42, 0.95);
+}
+
 html.ferry-glass .ferry-glass-active-tab {
   background-color: var(--ferry-glass-tab-active-bg);
   box-shadow: var(--ferry-glass-tab-highlight);
@@ -762,5 +770,10 @@ html.ferry-glass .ferry-glass-overlay [role="combobox"] {
     --ferry-glass-menu-nested-bg: #0f172a;
     --ferry-glass-overlay-blur: none;
     --ferry-surface-subtle: #1e293b;
+  }
+
+  html.ferry-glass [data-companion-panel],
+  html.dark.ferry-glass [data-companion-panel] {
+    background-color: var(--ferry-glass-overlay-bg);
   }
 }

@@ -26,11 +26,45 @@ interface StoredProxy {
   secretPassword?: string
 }
 
+type ActiveCompanionAiProvider = Exclude<CompanionAiProvider, 'none'>
+
 interface StoredCompanionAi {
   provider: CompanionAiProvider
   endpoint: string
   model: string
+  /** Legacy single-slot encrypted key, migrated into `secretApiKeys`. */
   secretApiKey?: string
+  /** Per-provider encrypted keys so switching gemini <-> ferry-pro <-> none preserves saved keys. */
+  secretApiKeys?: Partial<Record<ActiveCompanionAiProvider, string>>
+}
+
+function collectProviderSecrets(
+  stored: StoredCompanionAi | null | undefined
+): Partial<Record<ActiveCompanionAiProvider, string>> {
+  const keys: Partial<Record<ActiveCompanionAiProvider, string>> = {}
+  if (stored?.secretApiKeys) {
+    if (typeof stored.secretApiKeys.gemini === 'string' && stored.secretApiKeys.gemini) {
+      keys.gemini = stored.secretApiKeys.gemini
+    }
+    if (typeof stored.secretApiKeys['ferry-pro'] === 'string' && stored.secretApiKeys['ferry-pro']) {
+      keys['ferry-pro'] = stored.secretApiKeys['ferry-pro']
+    }
+  }
+  const storedProvider = normalizeProvider(stored?.provider)
+  if (storedProvider !== 'none' && typeof stored?.secretApiKey === 'string' && stored.secretApiKey && !keys[storedProvider]) {
+    keys[storedProvider] = stored.secretApiKey
+  }
+  return keys
+}
+
+function tryDecryptApiKey(cipher: string | undefined): string | undefined {
+  if (!cipher) return undefined
+  try {
+    const plain = decrypt(cipher)
+    return plain && plain.trim() ? plain : undefined
+  } catch {
+    return undefined
+  }
 }
 
 type StoreSchema = {
@@ -163,43 +197,52 @@ export class AppSettingsStore {
     if (!stored || provider === 'none') {
       return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
     }
+    const keys = collectProviderSecrets(stored)
+    const hasApiKey = Boolean(tryDecryptApiKey(keys[provider]))
     return {
       provider,
       endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
       model: normalizeGeminiModel(stored.model),
-      hasApiKey: Boolean(stored.secretApiKey)
+      hasApiKey
     }
   }
 
   setCompanionAiConfig(input: CompanionAiConfigInput): CompanionAiConfigInfo {
     const provider = normalizeProvider(input.provider)
+    const existing = this.store.get('companionAi')
+    const secretApiKeys = collectProviderSecrets(existing)
+
     if (provider === 'none') {
-      this.store.set('companionAi', null)
+      const hasAnyKeys = Object.keys(secretApiKeys).length > 0
+      this.store.set(
+        'companionAi',
+        hasAnyKeys ? { provider: 'none', endpoint: '', model: '', secretApiKeys } : null
+      )
       return { provider: 'none', endpoint: '', model: '', hasApiKey: false }
     }
-    const existing = this.store.get('companionAi')
-    const secretApiKey =
-      input.apiKey !== undefined
-        ? input.apiKey.trim()
-          ? encrypt(input.apiKey.trim())
-          : undefined
-        : normalizeProvider(existing?.provider) === provider
-          ? existing?.secretApiKey
-          : undefined // a key belongs to its provider; never send it as another's credential
+
+    if (input.apiKey !== undefined) {
+      const trimmedKey = input.apiKey.trim()
+      if (trimmedKey) {
+        secretApiKeys[provider] = encrypt(trimmedKey)
+      } else {
+        delete secretApiKeys[provider]
+      }
+    }
 
     const rawEndpoint = input.endpoint.trim()
     const next: StoredCompanionAi = {
       provider,
       endpoint: rawEndpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
       model: normalizeGeminiModel(input.model),
-      secretApiKey
+      secretApiKeys
     }
     this.store.set('companionAi', next)
     return {
       provider: next.provider,
       endpoint: next.endpoint,
       model: next.model,
-      hasApiKey: Boolean(next.secretApiKey)
+      hasApiKey: Boolean(tryDecryptApiKey(secretApiKeys[provider]))
     }
   }
 
@@ -207,12 +250,14 @@ export class AppSettingsStore {
     const stored = this.store.get('companionAi')
     const provider = normalizeProvider(stored?.provider)
     if (!stored || provider === 'none') return null
+    const keys = collectProviderSecrets(stored)
+    const apiKey = tryDecryptApiKey(keys[provider])
     return {
       provider,
       endpoint: stored.endpoint || (provider === 'gemini' ? DEFAULT_GEMINI_ENDPOINT : ''),
       model: normalizeGeminiModel(stored.model),
-      hasApiKey: Boolean(stored.secretApiKey),
-      apiKey: stored.secretApiKey ? decrypt(stored.secretApiKey) : undefined
+      hasApiKey: Boolean(apiKey),
+      apiKey
     }
   }
 

@@ -5,17 +5,28 @@ import USwitch from '@nuxt/ui/components/Switch.vue'
 import type { CompanionCommandCard, CompanionCommandRisk, CompanionUiActionCard } from '@shared/contract'
 import { openExternal } from '../../bridge/neutralinoApi'
 import { useCompanionStore, type CompanionView } from '../../stores/companion.store'
+import { useRemoteFsStore } from '../../stores/remoteFs.store'
 import { useSessionsStore } from '../../stores/sessions.store'
 import { useUiStore } from '../../stores/ui.store'
 import { OFFICIAL_RELEASES_URL } from '../../utils/companionChangelogFallback'
 import type { CompanionActionChip } from '../../utils/companionEngine'
-import { classifyCommandRisk } from '../../utils/companionSnippets'
+import { classifyCommandRisk, type CompanionSnippet } from '../../utils/companionSnippets'
+import {
+  defaultSnippetParamValues,
+  extractSnippetParams,
+  interpolateSnippetCommand
+} from '../../utils/snippetParams'
 import { COMPANION_TOUR_STEPS } from '../../utils/companionTour'
 import { onTablistKeydown } from '../../utils/tablistKeys'
+import { trapTabWithinElement } from '../../composables/useDialogFocusTrap'
 import CompanionAvatar from './CompanionAvatar.vue'
 import CompanionIssueForm from './CompanionIssueForm.vue'
 
+const props = withDefaults(defineProps<{ mode?: 'split' | 'overlay' }>(), { mode: 'overlay' })
+const isSplitMode = computed(() => props.mode === 'split')
+
 const companion = useCompanionStore()
+const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
 const ui = useUiStore()
 
@@ -30,7 +41,7 @@ const subtitle = computed(() => {
 })
 
 function isRevealing(msg: { id: string }): boolean {
-  return companion.reveal?.messageId === msg.id
+  return companion.reveal?.messageId === msg.id || companion.streamingMessageId === msg.id
 }
 function displayText(msg: { id: string; text: string }): string {
   const r = companion.reveal
@@ -41,11 +52,27 @@ const inputRef = ref<HTMLInputElement | null>(null)
 const scrollContainerRef = ref<HTMLElement | null>(null)
 const actionFeedback = ref<string | null>(null)
 const prefsOpen = ref(false)
+const pendingRunCard = ref<CompanionCommandCard | null>(null)
+const runConfirmOpen = computed({
+  get: () => pendingRunCard.value !== null,
+  set: (v: boolean) => {
+    if (!v) pendingRunCard.value = null
+  }
+})
 const snippetFilter = ref('')
 const showSnippetForm = ref(false)
+const editingSnippetId = ref<string | null>(null)
 const newSnippetLabel = ref('')
 const newSnippetCommand = ref('')
 const newSnippetDescription = ref('')
+const aiSnippetPrompt = ref('')
+const aiSnippetDrafting = ref(false)
+const pendingParamSnippet = ref<{
+  snippet: CompanionSnippet
+  action: 'run' | 'insert'
+  params: string[]
+  values: Record<string, string>
+} | null>(null)
 let previouslyFocused: HTMLElement | null = null
 
 const currentTourStep = computed(() =>
@@ -75,10 +102,25 @@ const draftSnippetRisk = computed(() => classifyCommandRisk(newSnippetCommand.va
 
 const quickStarters = computed(() => {
   const items: Array<{ label: string; prompt: string; icon: string }> = []
-  if (companion.lastTransferError) {
+  const errRec = companion.lastTransferErrorRecord
+  if (errRec) {
+    const isConn =
+      errRec.category === 'ssh-connect' ||
+      errRec.category === 'host-key' ||
+      errRec.category === 'proxy' ||
+      errRec.category === 'bastion'
+    const isOp = errRec.category === 'operation'
     items.push({
-      label: 'Investigate failed transfer',
-      prompt: 'Help me troubleshoot the failed transfer',
+      label: isConn
+        ? 'Troubleshoot connection failure'
+        : isOp
+          ? 'Investigate failed operation'
+          : 'Investigate failed transfer',
+      prompt: isConn
+        ? 'Help me troubleshoot the SSH connection failure'
+        : isOp
+          ? 'Help me troubleshoot the failed remote operation'
+          : 'Help me troubleshoot the failed transfer',
       icon: 'i-lucide-alert-triangle'
     })
   }
@@ -121,6 +163,9 @@ watch(
       const active = document.activeElement
       if (
         active instanceof HTMLElement &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        !active.closest('[data-companion-trigger]') &&
         !active.closest('[data-command-palette]') &&
         !active.closest('[role="dialog"]')
       ) {
@@ -173,12 +218,22 @@ watch(
   }
 )
 
-function onKeydown(e: KeyboardEvent): void {
-  if (e.key !== 'Escape' || e.defaultPrevented || !companion.open) return
-  if (prefsOpen.value) {
+function onPanelTabKeydown(e: KeyboardEvent): void {
+  // WAI-ARIA APG: trap Tab only in modal overlay mode, never in split/complementary mode.
+  if (isSplitMode.value || !companion.open || prefsOpen.value || pendingRunCard.value) return
+  if (document.querySelector('[role="dialog"]:not([data-state="closed"]):not([data-companion-panel])')) {
     return
   }
-  if (document.querySelector('[role="dialog"]:not([data-state="closed"])')) {
+  trapTabWithinElement(e, panelRef.value)
+}
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape' || e.defaultPrevented || !companion.open) return
+  if (e.target instanceof HTMLElement && e.target.closest('.xterm')) return
+  if (prefsOpen.value || pendingRunCard.value) {
+    return
+  }
+  if (document.querySelector('[role="dialog"]:not([data-state="closed"]):not([data-companion-panel])')) {
     return
   }
   e.preventDefault()
@@ -213,8 +268,106 @@ async function onActionClick(action: CompanionActionChip): Promise<void> {
   actionFeedback.value = await companion.executeAction(action)
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function formatInlineMarkdown(text: string): string {
+  const parts = text.split(/(`[^`]+`)/g)
+  let out = ''
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]
+    if (!part) continue
+    if (i % 2 === 1 && part.startsWith('`') && part.endsWith('`')) {
+      out += `<code class="rounded bg-default/70 px-1 py-0.5 font-mono text-2xs">${escapeHtml(part.slice(1, -1))}</code>`
+    } else {
+      out += escapeHtml(part).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    }
+  }
+  return out
+}
+
+function renderSafeChatMarkdown(raw: string): string {
+  const lines = raw.replace(/\r\n?/g, '\n').split('\n')
+  const blocks: string[] = []
+  let listItems: string[] = []
+  let textLines: string[] = []
+
+  const flushList = (): void => {
+    if (listItems.length > 0) {
+      blocks.push(`<ul class="my-1 list-disc space-y-0.5 pl-4">${listItems.join('')}</ul>`)
+      listItems = []
+    }
+  }
+  const flushText = (): void => {
+    if (textLines.length > 0) {
+      blocks.push(`<p class="my-0.5 first:mt-0 last:mb-0">${textLines.join('<br />')}</p>`)
+      textLines = []
+    }
+  }
+
+  for (const line of lines) {
+    const bulletMatch = line.match(/^\s*[-*•]\s+(.+)$/)
+    if (bulletMatch) {
+      flushText()
+      listItems.push(`<li>${formatInlineMarkdown(bulletMatch[1])}</li>`)
+    } else if (line.trim() === '') {
+      flushList()
+      flushText()
+    } else {
+      flushList()
+      textLines.push(formatInlineMarkdown(line))
+    }
+  }
+  flushList()
+  flushText()
+  return blocks.join('')
+}
+
+function uiActionCardTarget(card: CompanionUiActionCard): string {
+  if (card.kind === 'apply-filter') return `${card.mode}: ${card.pattern}`
+  return card.remotePath
+}
+
+const activeHostLabel = computed(
+  () => sessions.activeTab?.label || sessions.activeTab?.hostLabel || 'active server'
+)
+
+const pendingRunRisk = computed<CompanionCommandRisk>(() => {
+  const card = pendingRunCard.value
+  if (!card) return 'read_only'
+  const detected = classifyCommandRisk(card.command)
+  const rank: Record<CompanionCommandRisk, number> = { read_only: 0, mutating: 1, destructive: 2 }
+  return rank[detected] > rank[card.risk] ? detected : card.risk
+})
+
 async function onRunCommandCard(card: CompanionCommandCard): Promise<void> {
-  actionFeedback.value = await companion.runCommandCard(card)
+  if (sessions.status !== 'connected' || !sessions.activeSessionId) {
+    actionFeedback.value = await companion.runCommandCard(card)
+    return
+  }
+  pendingRunCard.value = card
+}
+
+async function confirmPendingRunCommand(): Promise<void> {
+  const card = pendingRunCard.value
+  pendingRunCard.value = null
+  if (!card) return
+  actionFeedback.value = await companion.runCommandCard(card, { skipConfirm: true })
+}
+
+async function onInsertCommand(command: string): Promise<void> {
+  actionFeedback.value = await companion.insertCommandInTerminal(command)
+}
+
+function onStopAi(): void {
+  void companion.cancelAiRequest()
+  actionFeedback.value = 'Stopped response.'
 }
 
 async function onUiActionCardClick(card: CompanionUiActionCard): Promise<void> {
@@ -240,20 +393,120 @@ function saveCardAsSnippet(card: CompanionCommandCard): void {
 }
 
 function onCreateSnippet(): void {
-  const saved = companion.saveCustomSnippet({
-    label: newSnippetLabel.value,
-    command: newSnippetCommand.value,
-    description: newSnippetDescription.value
-  })
+  const saved = editingSnippetId.value
+    ? companion.updateCustomSnippet(editingSnippetId.value, {
+        label: newSnippetLabel.value,
+        command: newSnippetCommand.value,
+        description: newSnippetDescription.value
+      })
+    : companion.saveCustomSnippet({
+        label: newSnippetLabel.value,
+        command: newSnippetCommand.value,
+        description: newSnippetDescription.value
+      })
   if (!saved) {
     actionFeedback.value = 'Enter a valid label and shell command.'
     return
   }
+  const wasEdit = Boolean(editingSnippetId.value)
+  editingSnippetId.value = null
   newSnippetLabel.value = ''
   newSnippetCommand.value = ''
   newSnippetDescription.value = ''
+  aiSnippetPrompt.value = ''
   showSnippetForm.value = false
-  actionFeedback.value = `Saved snippet "${saved.label}".`
+  actionFeedback.value = wasEdit ? `Updated snippet "${saved.label}".` : `Saved snippet "${saved.label}".`
+}
+
+function startEditSnippet(snip: CompanionSnippet): void {
+  editingSnippetId.value = snip.id
+  newSnippetLabel.value = snip.label
+  newSnippetCommand.value = snip.command
+  newSnippetDescription.value = snip.description
+  showSnippetForm.value = true
+}
+
+function toggleNewSnippetForm(): void {
+  if (showSnippetForm.value) {
+    showSnippetForm.value = false
+    editingSnippetId.value = null
+    newSnippetLabel.value = ''
+    newSnippetCommand.value = ''
+    newSnippetDescription.value = ''
+    aiSnippetPrompt.value = ''
+  } else {
+    editingSnippetId.value = null
+    showSnippetForm.value = true
+  }
+}
+
+async function draftSnippetWithAi(): Promise<void> {
+  const prompt = aiSnippetPrompt.value.trim()
+  if (!prompt || aiSnippetDrafting.value) return
+  aiSnippetDrafting.value = true
+  try {
+    const res = await companion.requestQuickCommand(prompt)
+    if (res.card) {
+      if (!newSnippetLabel.value.trim()) {
+        newSnippetLabel.value = res.card.description.slice(0, 50) || prompt.slice(0, 50)
+      }
+      newSnippetCommand.value = res.card.command
+      newSnippetDescription.value = res.card.description
+      actionFeedback.value = 'Drafted snippet command — review and save.'
+    } else {
+      actionFeedback.value = res.message || 'Could not draft snippet.'
+    }
+  } finally {
+    aiSnippetDrafting.value = false
+  }
+}
+
+function invokeSnippetAction(snip: CompanionSnippet, action: 'run' | 'insert'): void {
+  const params = extractSnippetParams(snip.command)
+  if (params.length > 0) {
+    const selected = Array.from(remoteFs.selected ?? [])
+    const firstSelected = selected[0] ?? null
+    const entry = firstSelected ? remoteFs.entries.find((e) => e.path === firstSelected) : null
+    pendingParamSnippet.value = {
+      snippet: snip,
+      action,
+      params,
+      values: defaultSnippetParamValues(params, {
+        remoteCwd: remoteFs.currentPath,
+        selectedPath: firstSelected,
+        selectedName: entry?.name ?? null,
+        siteName: sessions.activeTab?.label ?? null
+      })
+    }
+    return
+  }
+  if (action === 'run') {
+    void onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })
+  } else {
+    void onInsertCommand(snip.command)
+  }
+}
+
+const resolvedParamSnippetCommand = computed(() => {
+  if (!pendingParamSnippet.value) return ''
+  return interpolateSnippetCommand(pendingParamSnippet.value.snippet.command, pendingParamSnippet.value.values)
+})
+
+function submitParamSnippet(): void {
+  const pending = pendingParamSnippet.value
+  if (!pending) return
+  const resolved = resolvedParamSnippetCommand.value
+  pendingParamSnippet.value = null
+  if (!resolved) return
+  if (pending.action === 'run') {
+    void onRunCommandCard({
+      command: resolved,
+      description: pending.snippet.description || pending.snippet.label,
+      risk: classifyCommandRisk(resolved)
+    })
+  } else {
+    void onInsertCommand(resolved)
+  }
 }
 
 function riskBadgeLabel(risk: CompanionCommandRisk): string {
@@ -280,20 +533,26 @@ function openFullNotes(url?: string): void {
 </script>
 
 <template>
-  <Transition name="slide-right">
+  <Teleport to="body" :disabled="isSplitMode">
+  <Transition :name="isSplitMode ? '' : 'slide-right'">
     <aside
       v-if="companion.open"
       ref="panelRef"
       tabindex="-1"
-      role="complementary"
+      :role="isSplitMode ? 'complementary' : 'dialog'"
+      :aria-modal="isSplitMode ? undefined : 'true'"
       aria-label="Ferry Companion"
-      class="fixed top-9 right-0 bottom-0 z-40 flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none"
-      :class="
+      :class="[
+        isSplitMode
+          ? 'relative z-20 flex h-full w-[380px] shrink-0 flex-col border-l border-default focus:outline-none'
+          : 'pointer-events-auto fixed top-9 right-0 bottom-0 z-[60] flex w-[380px] max-w-[calc(100vw-0.5rem)] flex-col border-l border-default shadow-xl focus:outline-none',
         ui.glassUiEnabled
           ? 'ferry-glass-overlay rounded-l-[var(--ferry-radius-overlay)] rounded-r-none border-r-0 border-b-0'
           : 'bg-default'
-      "
+      ]"
       data-companion-panel
+      :data-companion-mode="props.mode"
+      @keydown.tab="onPanelTabKeydown"
     >
       <!-- Header -->
       <div class="flex items-center justify-between gap-2 border-b border-muted px-3 py-2 select-none">
@@ -389,6 +648,17 @@ function openFullNotes(url?: string): void {
             </template>
           </Popover>
 
+          <UTooltip :text="ui.companionLayoutMode === 'split' ? 'Float as overlay' : 'Dock side-by-side'">
+            <UButton
+              :icon="ui.companionLayoutMode === 'split' ? 'i-lucide-picture-in-picture-2' : 'i-lucide-panel-right'"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="ui.companionLayoutMode === 'split' ? 'Float Companion as overlay' : 'Dock Companion side-by-side'"
+              data-companion-layout-toggle
+              @click="ui.toggleCompanionLayoutMode()"
+            />
+          </UTooltip>
           <UTooltip text="Close (Esc)">
             <UButton
               icon="i-lucide-x"
@@ -537,16 +807,16 @@ function openFullNotes(url?: string): void {
               :class="msg.role === 'user' ? 'items-end' : 'items-start'"
             >
               <div
-                class="max-w-[92%] rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-line"
+                class="max-w-[92%] rounded-lg px-3 py-2 text-xs leading-relaxed"
                 :class="
                   msg.role === 'user'
-                    ? 'bg-primary text-inverted'
+                    ? 'whitespace-pre-line bg-primary text-inverted'
                     : 'border border-default bg-muted/35 text-default'
                 "
               >
-                <template v-if="isRevealing(msg)">
+                <template v-if="msg.role === 'assistant'">
                   <span class="sr-only">{{ msg.text }}</span>
-                  <span aria-hidden="true">{{ displayText(msg) }}</span>
+                  <div aria-hidden="true" data-companion-md v-html="renderSafeChatMarkdown(displayText(msg))" />
                 </template>
                 <template v-else>{{ msg.text }}</template>
               </div>
@@ -597,6 +867,16 @@ function openFullNotes(url?: string): void {
                     <UButton
                       size="xs"
                       color="neutral"
+                      variant="outline"
+                      icon="i-lucide-terminal"
+                      data-insert-command
+                      @click="onInsertCommand(card.command)"
+                    >
+                      Insert
+                    </UButton>
+                    <UButton
+                      size="xs"
+                      color="neutral"
                       variant="ghost"
                       icon="i-lucide-copy"
                       @click="copyCommandText(card.command)"
@@ -626,11 +906,17 @@ function openFullNotes(url?: string): void {
                   v-for="(uiAct, uIdx) in msg.uiActionCards"
                   :key="uiAct.kind + uiAct.label + uIdx"
                   type="button"
-                  class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary"
+                  :title="uiActionCardTarget(uiAct)"
+                  class="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-2xs font-medium text-primary transition-colors hover:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary"
                   @click="onUiActionCardClick(uiAct)"
                 >
                   <UIcon :name="uiActionCardIcon(uiAct.kind)" class="size-3 shrink-0" />
-                  <span>{{ uiAct.label }}</span>
+                  <span class="shrink-0">{{ uiAct.label }}</span>
+                  <code
+                    v-if="uiActionCardTarget(uiAct)"
+                    data-ui-action-target
+                    class="truncate rounded bg-primary/10 px-1 font-mono text-3xs text-primary/90"
+                  >{{ uiActionCardTarget(uiAct) }}</code>
                 </button>
               </div>
 
@@ -695,15 +981,23 @@ function openFullNotes(url?: string): void {
               </div>
               </template>
             </div>
-            <div v-if="companion.aiBusy" class="flex items-center gap-1.5 text-xs text-muted">
-              <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
-              <span>Thinking…</span>
+            <div v-if="companion.aiBusy" class="flex items-center justify-between gap-2 text-xs text-muted">
+              <div class="flex items-center gap-1.5">
+                <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin text-primary motion-reduce:animate-none" />
+                <span>Thinking…</span>
+              </div>
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="soft"
+                icon="i-lucide-square"
+                data-stop-ai
+                @click="onStopAi"
+              >
+                Stop
+              </UButton>
             </div>
           </div>
-
-          <p role="status" aria-live="polite" class="text-3xs text-muted" :class="actionFeedback ? '' : 'sr-only'">
-            {{ actionFeedback ?? '' }}
-          </p>
         </div>
 
         <!-- SNIPPETS & COMMAND HISTORY VIEW -->
@@ -721,7 +1015,7 @@ function openFullNotes(url?: string): void {
               color="primary"
               variant="soft"
               :icon="showSnippetForm ? 'i-lucide-x' : 'i-lucide-plus'"
-              @click="showSnippetForm = !showSnippetForm"
+              @click="toggleNewSnippetForm"
             >
               {{ showSnippetForm ? 'Cancel' : 'New' }}
             </UButton>
@@ -733,7 +1027,9 @@ function openFullNotes(url?: string): void {
             @submit.prevent="onCreateSnippet"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="font-semibold text-highlighted">Save Local Snippet</span>
+              <span class="font-semibold text-highlighted">
+                {{ editingSnippetId ? 'Edit Local Snippet' : 'Save Local Snippet' }}
+              </span>
               <span
                 v-if="newSnippetCommand.trim()"
                 class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
@@ -741,6 +1037,27 @@ function openFullNotes(url?: string): void {
               >
                 {{ riskBadgeLabel(draftSnippetRisk) }}
               </span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <input
+                v-model="aiSnippetPrompt"
+                type="text"
+                aria-label="Draft snippet with AI"
+                placeholder="Draft with AI (e.g. tail {{service}} logs)…"
+                class="min-w-0 flex-1 rounded border border-default bg-default/80 px-2 py-1 text-2xs text-default"
+              />
+              <UButton
+                type="button"
+                size="xs"
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-sparkles"
+                :loading="aiSnippetDrafting"
+                :disabled="!aiSnippetPrompt.trim()"
+                @click="draftSnippetWithAi"
+              >
+                Draft
+              </UButton>
             </div>
             <input
               v-model="newSnippetLabel"
@@ -753,7 +1070,7 @@ function openFullNotes(url?: string): void {
               v-model="newSnippetCommand"
               type="text"
               aria-label="Snippet command"
-              placeholder="Shell command (e.g. nginx -t)"
+              placeholder="Shell command (supports {{service}}, {{path}})"
               class="rounded border border-default bg-default/80 px-2 py-1 font-mono text-xs text-default"
             />
             <input
@@ -770,10 +1087,42 @@ function openFullNotes(url?: string): void {
                 color="primary"
                 :disabled="!newSnippetLabel.trim() || !newSnippetCommand.trim()"
               >
-                Save Snippet
+                {{ editingSnippetId ? 'Update Snippet' : 'Save Snippet' }}
               </UButton>
             </div>
           </form>
+
+          <!-- Inline {{param}} prompt for parameterized snippets -->
+          <div
+            v-if="pendingParamSnippet"
+            data-snippet-param-prompt
+            class="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/8 p-2.5 text-xs"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold text-highlighted">Fill parameters · {{ pendingParamSnippet.snippet.label }}</span>
+              <button
+                type="button"
+                class="cursor-pointer text-2xs text-muted hover:text-default"
+                @click="pendingParamSnippet = null"
+              >
+                Cancel
+              </button>
+            </div>
+            <label v-for="param in pendingParamSnippet.params" :key="param" class="flex flex-col gap-0.5 text-2xs">
+              <span class="font-mono text-muted">{{ param }}</span>
+              <input
+                v-model="pendingParamSnippet.values[param]"
+                type="text"
+                class="rounded border border-default bg-default px-2 py-1 font-mono text-2xs text-default"
+              />
+            </label>
+            <pre class="overflow-x-auto rounded bg-default px-2 py-1 font-mono text-2xs text-default">{{ resolvedParamSnippetCommand }}</pre>
+            <div class="flex justify-end gap-1.5">
+              <UButton size="xs" color="primary" :disabled="!resolvedParamSnippetCommand" @click="submitParamSnippet">
+                {{ pendingParamSnippet.action === 'run' ? 'Continue to Run' : 'Insert in Terminal' }}
+              </UButton>
+            </div>
+          </div>
 
           <div class="flex flex-col gap-2">
             <div
@@ -793,6 +1142,15 @@ function openFullNotes(url?: string): void {
                   <button
                     v-if="!snip.builtIn"
                     type="button"
+                    aria-label="Edit snippet"
+                    class="cursor-pointer rounded p-0.5 text-muted hover:text-primary"
+                    @click="startEditSnippet(snip)"
+                  >
+                    <UIcon name="i-lucide-pencil" class="size-3" />
+                  </button>
+                  <button
+                    v-if="!snip.builtIn"
+                    type="button"
                     aria-label="Delete snippet"
                     class="cursor-pointer rounded p-0.5 text-muted hover:text-error"
                     @click="companion.deleteCustomSnippet(snip.id)"
@@ -803,15 +1161,25 @@ function openFullNotes(url?: string): void {
               </div>
               <pre class="mt-1.5 overflow-x-auto rounded bg-default/80 px-2 py-1 font-mono text-2xs text-default select-text">{{ snip.command }}</pre>
               <p v-if="snip.description" class="mt-1 text-2xs text-muted">{{ snip.description }}</p>
-              <div class="mt-2 flex items-center gap-1.5">
+              <div class="mt-2 flex flex-wrap items-center gap-1.5">
                 <UButton
                   size="xs"
                   color="primary"
                   variant="soft"
                   icon="i-lucide-play"
-                  @click="onRunCommandCard({ command: snip.command, description: snip.description || snip.label, risk: snip.risk })"
+                  @click="invokeSnippetAction(snip, 'run')"
                 >
                   Run in Terminal
+                </UButton>
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="outline"
+                  icon="i-lucide-terminal"
+                  data-insert-command
+                  @click="invokeSnippetAction(snip, 'insert')"
+                >
+                  Insert
                 </UButton>
                 <UButton
                   size="xs"
@@ -992,6 +1360,16 @@ function openFullNotes(url?: string): void {
         </div>
       </div>
 
+      <!-- Shared action feedback status (visible across Chat, Snippets, etc.) -->
+      <p
+        role="status"
+        aria-live="polite"
+        class="border-t border-muted/60 px-3 py-1 text-3xs text-muted"
+        :class="actionFeedback ? '' : 'sr-only'"
+      >
+        {{ actionFeedback ?? '' }}
+      </p>
+
       <!-- Footer input (Chat view) -->
       <form
         v-if="companion.activeView === 'chat'"
@@ -1009,15 +1387,81 @@ function openFullNotes(url?: string): void {
           class="min-w-0 flex-1 rounded-md border border-default bg-default/70 px-2.5 py-1.5 text-xs text-default placeholder:text-muted focus:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         />
         <UButton
+          v-if="companion.aiBusy"
+          type="button"
+          size="xs"
+          color="neutral"
+          variant="soft"
+          icon="i-lucide-square"
+          aria-label="Stop response"
+          data-stop-ai-footer
+          @click="onStopAi"
+        />
+        <UButton
+          v-else
           type="submit"
           size="xs"
           color="primary"
           icon="i-lucide-send"
           aria-label="Send message"
-          :loading="companion.aiBusy"
-          :disabled="!draftInput.trim() || companion.aiBusy"
+          :disabled="!draftInput.trim()"
         />
       </form>
     </aside>
   </Transition>
+  </Teleport>
+
+  <!-- Run in Terminal Confirmation Modal -->
+  <UModal
+    v-model:open="runConfirmOpen"
+    :title="`Run command on ${activeHostLabel}?`"
+    :ui="{ overlay: 'z-[70]', content: 'z-[70] max-w-md', footer: 'justify-end' }"
+  >
+    <template #body>
+      <div v-if="pendingRunCard" class="flex flex-col gap-3">
+        <div
+          v-if="companion.isProd"
+          role="alert"
+          data-prod-warning-banner
+          class="flex items-start gap-2 rounded-md border border-error/50 bg-error/15 px-3 py-2 text-xs text-error"
+        >
+          <UIcon name="i-lucide-shield-alert" class="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p class="font-semibold">Production Environment</p>
+            <p class="mt-0.5 text-2xs">
+              You are connected to {{ companion.prodSiteLabel || activeHostLabel }}. Verify this command carefully before executing.
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span
+            class="rounded-full px-1.5 py-0.5 font-mono text-3xs font-semibold"
+            :class="riskBadgeClass(pendingRunRisk)"
+          >
+            {{ riskBadgeLabel(pendingRunRisk) }}
+          </span>
+          <span class="text-muted">
+            {{
+              pendingRunRisk === 'destructive'
+                ? 'Can delete data or interrupt services.'
+                : pendingRunRisk === 'mutating'
+                  ? 'Modifies files or service state.'
+                  : 'Inspects remote state without modifying files.'
+            }}
+          </span>
+        </div>
+        <pre class="max-h-48 overflow-auto rounded-md bg-muted p-2.5 font-mono text-xs text-default select-text">{{ pendingRunCard.command }}</pre>
+      </div>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="outline" @click="pendingRunCard = null">Cancel</UButton>
+      <UButton
+        :color="pendingRunRisk === 'destructive' ? 'error' : pendingRunRisk === 'mutating' ? 'warning' : 'primary'"
+        data-confirm-run-command
+        @click="confirmPendingRunCommand"
+      >
+        Run in Terminal
+      </UButton>
+    </template>
+  </UModal>
 </template>

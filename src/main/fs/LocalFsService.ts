@@ -12,6 +12,7 @@ import type {
   FileListResult,
   FileReadResult,
   IpcErrorCode,
+  LocalUploadScanResult,
   StageDropBeginRequest,
   StageDropBeginResult,
   StageDropRequest
@@ -907,4 +908,79 @@ export async function stageDroppedEntries(req: StageDropRequest): Promise<FileEn
     await removeOwnedStageRoot(stageRoot).catch(() => false)
     throw err
   }
+}
+
+const DEFAULT_SCAN_MAX_DEPTH = 4
+const DEFAULT_SCAN_MAX_ENTRIES = 500
+const DEFAULT_SCAN_BUDGET_MS = 400
+
+/**
+ * Recursively walks local upload directories (capped by depth, entry count, and time budget;
+ * never follows symlinks) so pre-flight guardrails can detect nested secrets (e.g. `.env`, keys)
+ * and estimate total upload bytes.
+ */
+export async function scanUploadPaths(
+  dirPaths: string[],
+  limits?: { maxDepth?: number; maxEntries?: number; budgetMs?: number }
+): Promise<LocalUploadScanResult> {
+  const maxDepth = Math.max(1, Math.min(limits?.maxDepth ?? DEFAULT_SCAN_MAX_DEPTH, 8))
+  const maxEntries = Math.max(1, Math.min(limits?.maxEntries ?? DEFAULT_SCAN_MAX_ENTRIES, 2000))
+  const deadline = Date.now() + Math.max(50, Math.min(limits?.budgetMs ?? DEFAULT_SCAN_BUDGET_MS, 2000))
+
+  const relativePaths: string[] = []
+  let totalBytes = 0
+  let truncated = false
+
+  const walk = async (dirPath: string, relPrefix: string, depth: number): Promise<void> => {
+    if (truncated) return
+    if (Date.now() > deadline || relativePaths.length >= maxEntries) {
+      truncated = true
+      return
+    }
+    let dirents
+    try {
+      dirents = await fs.readdir(dirPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const dirent of dirents) {
+      if (Date.now() > deadline || relativePaths.length >= maxEntries) {
+        truncated = true
+        return
+      }
+      if (dirent.isSymbolicLink()) continue
+      const full = path.join(dirPath, dirent.name)
+      const rel = relPrefix ? `${relPrefix}/${dirent.name}` : dirent.name
+      if (dirent.isDirectory()) {
+        if (depth < maxDepth) {
+          await walk(full, rel, depth + 1)
+        } else {
+          truncated = true
+        }
+      } else if (dirent.isFile()) {
+        relativePaths.push(rel)
+        try {
+          const st = await fs.lstat(full)
+          if (st.size > 0) totalBytes += st.size
+        } catch {
+          // Ignore races on vanishing files.
+        }
+      }
+    }
+  }
+
+  for (const rawDir of dirPaths.slice(0, 50)) {
+    if (truncated) break
+    const resolved = path.resolve(rawDir)
+    try {
+      const st = await fs.lstat(resolved)
+      if (!st.isDirectory() || st.isSymbolicLink()) continue
+    } catch {
+      continue
+    }
+    const rootName = path.basename(resolved) || resolved
+    await walk(resolved, rootName, 1)
+  }
+
+  return { relativePaths, totalBytes, truncated }
 }

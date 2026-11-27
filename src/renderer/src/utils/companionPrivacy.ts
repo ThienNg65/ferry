@@ -17,6 +17,12 @@ export interface SafeDiagnostics {
   lastErrorSummary?: string | null
 }
 
+export type RedactionMode = 'strict' | 'diagnostic'
+
+export interface RedactOptions {
+  mode?: RedactionMode
+}
+
 export interface RedactionResult {
   text: string
   redactionCount: number
@@ -36,7 +42,19 @@ export interface BuiltIssueDraft {
 export const PUBLIC_ISSUE_TRACKER_URL = 'https://github.com/ThienNg65/ferry-release/issues/new'
 const MAX_SAFE_URL_LENGTH = 6_000
 
-const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: string }> = [
+interface RedactionRule {
+  label: string
+  pattern: RegExp
+  replacement: string
+  /** When true, only applied in `'strict'` mode (skipped in `'diagnostic'` mode). */
+  strictOnly?: boolean
+  /** Optional predicate to skip redacting a specific match in `'diagnostic'` mode. */
+  skipInDiagnostic?: (match: string) => boolean
+}
+
+const SAFE_DIAGNOSTIC_PATH_RE = /^["']?\/(?:var\/log|etc|config)(?:\/|$)/
+
+const REDACTION_RULES: RedactionRule[] = [
   {
     label: 'private key',
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----|[\s\S]*)/g,
@@ -44,7 +62,7 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'auth token',
-    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b|\bAIza[0-9A-Za-z_-]{30,}\b|\bxox[a-z]-[A-Za-z0-9-]{10,}\b|\bya29\.[A-Za-z0-9_-]{20,}\b|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
+    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b|\bAIza[0-9A-Za-z_-]{30,}\b|\bxox[a-z]-[A-Za-z0-9-]{10,}\b|\bya29\.[A-Za-z0-9_-]{20,}\b|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
     replacement: '[REDACTED_TOKEN]'
   },
   {
@@ -54,7 +72,17 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'credential',
-    pattern: /(?<![A-Za-z0-9])(["']?[A-Za-z0-9_]*(?:password|passwd|passphrase|secret|token|api[_-]?key|authorization)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+    pattern: /(?<![A-Za-z0-9])(["']?[A-Za-z0-9_-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|authorization|(?:^|_)pass(?:_[A-Za-z0-9_-]*)?)[A-Za-z0-9_-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+    replacement: '$1[REDACTED]'
+  },
+  {
+    label: 'credential',
+    pattern: /(?<![A-Za-z0-9_-])(--?(?:[A-Za-z0-9_-]*(?:password|passwd|passphrase|secret|token|api[-_]?key|auth[-_]?key|credential)|pass(?:[-_][A-Za-z0-9_-]*)?)\s+)(?!--)(?:"[^"]*"|'[^']*'|[^\s,;"']+)/gi,
+    replacement: '$1[REDACTED]'
+  },
+  {
+    label: 'credential',
+    pattern: /(?<![A-Za-z0-9_-])(-u\s+[^\s:'"\\]+:)(?:"[^"]*"|'[^']*'|[^\s,;"']+)/g,
     replacement: '$1[REDACTED]'
   },
   {
@@ -64,13 +92,14 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'connection string',
-    pattern: /\b(?:sftp|ssh|ftp|ftps|socks5?|https?):\/\/[^\s@/'"]+:[^\s@/'"]+@[^\s'"<>]+/gi,
+    pattern: /\b(?:sftp|ssh|ftp|ftps|socks5?|https?):\/\/[^\s@/'"]+:[^\s@/'"]+@[^\s'"<>]+|\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver|clickhouse|cockroachdb):\/\/[^\s'"<>]+/gi,
     replacement: '[REDACTED_CONNECTION_URL]'
   },
   {
     label: 'absolute path',
-    pattern: /(?:"[A-Za-z]:[\\/][^"\r\n]+"|'[A-Za-z]:[\\/][^'\r\n]+'|[A-Za-z]:[\\/](?:[^\\/\s"'<>|:*?]+[\\/])*[^\\/\s"'<>|:*?]+|\\\\[A-Za-z0-9._$-]+\\[^\s"'<>]+|"(?:\/[^"\r\n]+)"|'(?:\/[^'\r\n]+)'|(?<![A-Za-z0-9.:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+)/g,
-    replacement: '[REDACTED_PATH]'
+    pattern: /(?:"[A-Za-z]:[\\/][^"\r\n]+"|'[A-Za-z]:[\\/][^'\r\n]+'|[A-Za-z]:\\(?:[^\\/\r\n"'<>|:*?,;]+\\)+[^\\/\s"'<>|:*?,;]+|[A-Za-z]:\/(?:[^\\/\r\n"'<>|:*?,;]+\/)+[^\\/\s"'<>|:*?,;]+|[A-Za-z]:[\\/][^\\/\s"'<>|:*?,;]+|\\\\[A-Za-z0-9._$-]+\\[^\s"'<>]+|"(?:\/[^"\r\n]+)"|'(?:\/[^'\r\n]+)'|(?<![A-Za-z0-9.:/])\/(?:[A-Za-z0-9._-]+(?: [A-Za-z0-9._-]+){0,2}\/)+[A-Za-z0-9._-]+)/g,
+    replacement: '[REDACTED_PATH]',
+    skipInDiagnostic: (match) => SAFE_DIAGNOSTIC_PATH_RE.test(match)
   },
   {
     label: 'SSH target',
@@ -79,8 +108,9 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
   },
   {
     label: 'hostname',
-    pattern: /(?<![A-Za-z0-9@/:._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,63}(?![A-Za-z0-9_-])|(?<![A-Za-z0-9@/:._-])(?!utf-\d+\b|sha-\d+\b|tls-\d|http-\d)[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]*\d[A-Za-z0-9-]*(?![A-Za-z0-9_-])/gi,
-    replacement: '[REDACTED_HOST]'
+    pattern: /(?<![A-Za-z0-9@/:._-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.){2,}[A-Za-z]{2,63}(?![A-Za-z0-9_-])|(?<![A-Za-z0-9@/:._-])(?!utf-\d+\b|sha-\d+\b|tls-\d|http-\d)(?:[A-Za-z][A-Za-z0-9]*-)+[A-Za-z0-9]*\d[A-Za-z0-9-]*(?![A-Za-z0-9_-])/gi,
+    replacement: '[REDACTED_HOST]',
+    strictOnly: true
   },
   {
     label: 'IPv6 address',
@@ -96,18 +126,29 @@ const REDACTION_RULES: Array<{ label: string; pattern: RegExp; replacement: stri
 
 /**
  * Redacts credentials (including natural-language forms), common provider tokens,
- * private keys, connection strings, hostnames, IP addresses, and absolute paths.
+ * JWTs, private keys, connection strings, hostnames, IP addresses, and absolute paths.
+ *
+ * - `mode: 'strict'` (default): full redaction for public issue drafts and exports.
+ * - `mode: 'diagnostic'`: preserves safe OS paths (`/var/log/*`, `/etc/*`, `/config/*`),
+ *   Java/Python namespaces, and process/pod names for AI diagnostics while still redacting
+ *   all secrets, tokens, keys, credentials, IPs, SSH targets, and user paths.
  */
-export function redactSensitiveText(input: string): RedactionResult {
+export function redactSensitiveText(input: string, options?: RedactOptions): RedactionResult {
   if (!input) return { text: '', redactionCount: 0, categories: [] }
 
+  const mode: RedactionMode = options?.mode ?? 'strict'
   let text = input
   let redactionCount = 0
   const categories: string[] = []
 
   for (const rule of REDACTION_RULES) {
+    if (mode === 'diagnostic' && rule.strictOnly) continue
     let matched = false
     text = text.replace(rule.pattern, (...args) => {
+      const fullMatch = args[0] as string
+      if (mode === 'diagnostic' && rule.skipInDiagnostic?.(fullMatch)) {
+        return fullMatch
+      }
       matched = true
       redactionCount += 1
       if (rule.replacement.includes('$1') && typeof args[1] === 'string') {

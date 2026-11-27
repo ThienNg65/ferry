@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
-import type { OperationEvent, SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
+import type { MonitorDiskUsage, OperationEvent, SyncDirection, SyncOptions, SyncPlan } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../../api'
 import { useCompanionStore } from '../../stores/companion.store'
 import { useMonitorStore } from '../../stores/monitor.store'
@@ -35,11 +35,18 @@ const deleteExtras = ref(false)
 const previewing = ref(false)
 const error = ref<string | null>(null)
 const approval = shallowRef<{ options: SyncOptions; plan: SyncPlan } | null>(null)
+const previewDisk = shallowRef<MonitorDiskUsage | null>(null)
 const plan = computed(() => approval.value?.plan)
 const preFlight = computed(() =>
   plan.value && approval.value
-    ? evaluateSyncPreFlight(plan.value, approval.value.options, monitor.latest?.disk)
+    ? evaluateSyncPreFlight(plan.value, approval.value.options, previewDisk.value ?? monitor.latest?.disk)
     : null
+)
+const isProdPushDelete = computed(
+  () =>
+    companion.isProd &&
+    approval.value?.options.direction === 'push' &&
+    Boolean(plan.value?.toDelete.length)
 )
 let generation = 0
 
@@ -72,6 +79,7 @@ const directionOptions: { label: string; value: SyncDirection }[] = [
 function invalidatePreview(): void {
   generation++
   approval.value = null
+  previewDisk.value = null
   previewing.value = false
   diffOpen.value = false
   diffTarget.value = null
@@ -133,7 +141,17 @@ async function preview(): Promise<void> {
   previewing.value = true
   try {
     const reviewedPlan = await sync.preview(options)
-    if (version === generation) approval.value = { options, plan: reviewedPlan }
+    if (version !== generation) return
+    approval.value = { options, plan: reviewedPlan }
+    if (options.direction === 'push' && reviewedPlan.toTransfer.length > 0) {
+      void invoke<MonitorDiskUsage | null>(INVOKE_CHANNELS.fsRemoteDiskUsage, options.sessionId, options.remotePath)
+        .then((disk) => {
+          if (version === generation && disk) {
+            previewDisk.value = disk
+          }
+        })
+        .catch(() => undefined)
+    }
   } catch (e) {
     if (version === generation) error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -207,9 +225,19 @@ function deletionPath(relPath: string): string {
 
 function askCompanionAboutSync(): void {
   if (!preFlight.value || preFlight.value.warnings.length === 0) return
-  companion.openPanel('chat')
+  const currentPlan = plan.value
+  const dir = approval.value?.options.direction ?? 'push'
+  const summaryParts: string[] = [
+    `direction: ${dir}`,
+    `toTransfer: ${currentPlan?.toTransfer.length ?? 0}`,
+    `toDelete: ${currentPlan?.toDelete.length ?? 0}`
+  ]
+  if (preFlight.value.sensitiveFiles.length > 0) {
+    summaryParts.push(`flaggedSecrets: ${preFlight.value.sensitiveFiles.slice(0, 10).join(', ')}`)
+  }
+  companion.openPanel('chat', { overlay: true })
   void companion.ask(
-    `Review this folder sync pre-flight warning (${approval.value?.options.direction ?? 'push'}): ${preFlight.value.warnings.join(' ')}`
+    `Review this folder sync pre-flight check (${summaryParts.join('; ')}). Warnings: ${preFlight.value.warnings.join(' ')}`
   )
 }
 
@@ -332,6 +360,17 @@ function close(): void {
             </li>
           </ul>
         </div>
+
+        <UAlert
+          v-if="isProdPushDelete"
+          data-sync-prod-warning
+          role="alert"
+          color="error"
+          variant="soft"
+          icon="i-lucide-shield-alert"
+          title="Production Deletion Warning"
+          :description="`Connected to ${companion.prodSiteLabel}. Running this mirror sync will permanently delete ${plan?.toDelete.length ?? 0} destination item(s) on Production.`"
+        />
 
         <div
           v-if="preFlight && preFlight.warnings.length > 0"
