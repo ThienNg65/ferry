@@ -211,6 +211,15 @@ describe('AppSettingsStore', () => {
     expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBe('AIza-live-secret')
     expect(store.getCompanionAiConfig().model).toBe('gemini-4-argon')
 
+    // Switching provider with the key left blank must not carry the old provider's secret over
+    const switched = store.setCompanionAiConfig({
+      provider: 'ferry-pro',
+      endpoint: 'https://proxy.ferry.example',
+      model: 'gemini-4-hydrogen'
+    })
+    expect(switched.hasApiKey).toBe(false)
+    expect(store.getDecryptedCompanionAiConfig()?.apiKey).toBeUndefined()
+
     // Legacy stored providers normalize safely to 'none'
     disks.get('app-settings')!.companionAi = {
       provider: 'ollama',

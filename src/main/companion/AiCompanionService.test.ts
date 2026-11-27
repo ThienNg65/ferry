@@ -115,6 +115,26 @@ describe('AiCompanionService', () => {
     expect(ping.ok).toBe(true)
   })
 
+  it('reuses the saved key when testing an unsaved config only for the same provider', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 401 })
+    const svc = new AiCompanionService({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      getConfig: () => ({
+        provider: 'gemini',
+        endpoint: DEFAULT_GEMINI_ENDPOINT,
+        model: DEFAULT_GEMINI_MODEL,
+        hasApiKey: true,
+        apiKey: 'AIza-saved-key'
+      })
+    })
+
+    await svc.testConnection({ provider: 'ferry-pro', endpoint: 'https://proxy.ferry.example', model: DEFAULT_GEMINI_MODEL })
+    expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain('AIza-saved-key')
+
+    await svc.testConnection({ provider: 'gemini', endpoint: DEFAULT_GEMINI_ENDPOINT, model: DEFAULT_GEMINI_MODEL })
+    expect(fetchImpl.mock.calls.at(-1)?.[1].headers['x-goog-api-key']).toBe('AIza-saved-key')
+  })
+
   it('calls Managed Ferry Pro proxy with Bearer token and strips secrets on error', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 429 })
     const svc = new AiCompanionService({

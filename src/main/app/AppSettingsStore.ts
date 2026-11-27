@@ -183,7 +183,9 @@ export class AppSettingsStore {
         ? input.apiKey.trim()
           ? encrypt(input.apiKey.trim())
           : undefined
-        : existing?.secretApiKey
+        : normalizeProvider(existing?.provider) === provider
+          ? existing?.secretApiKey
+          : undefined // a key belongs to its provider; never send it as another's credential
 
     const rawEndpoint = input.endpoint.trim()
     const next: StoredCompanionAi = {

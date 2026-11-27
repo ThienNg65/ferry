@@ -483,7 +483,8 @@ export class AiCompanionService {
     if (override) {
       let savedKey: string | undefined
       try {
-        savedKey = this.getConfig()?.apiKey
+        const saved = this.getConfig()
+        savedKey = saved?.provider === override.provider ? saved.apiKey : undefined
       } catch {
         savedKey = undefined
       }
