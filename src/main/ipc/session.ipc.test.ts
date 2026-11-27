@@ -11,6 +11,13 @@ const sessionManagerMock = {
   respondKeyboardInteractive: vi.fn()
 }
 
+const logSecurityEvent = vi.hoisted(() => vi.fn())
+
+vi.mock('../host/securityLog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../host/securityLog')>()),
+  logSecurityEvent
+}))
+
 vi.mock('../ssh/SessionManager', () => ({
   SessionManager: {
     getInstance: () => sessionManagerMock
@@ -50,6 +57,7 @@ describe('session.ipc', () => {
     it('rejects a request with neither siteId nor quickConnect', async () => {
       const result = await invoke('session:open', { sessionId: 's3' })
       expect(result).toMatchObject({ ok: false, code: 'VALIDATION' })
+      expect(logSecurityEvent).toHaveBeenCalledWith('ipc.validation_rejected', expect.objectContaining({ channel: 'session:open' }))
       expect(sessionManagerMock.openFromSite).not.toHaveBeenCalled()
       expect(sessionManagerMock.openQuickConnect).not.toHaveBeenCalled()
     })
