@@ -28,6 +28,18 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.6.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.5.0...ferry-v1.6.0) (2026-11-27)
+
+
+### Features
+
+* **companion:** audit remediation, SSE streaming, quick bar, snippets & split layout ([#267](https://github.com/ThienNg65/ferry/issues/267)) ([ac623e2](https://github.com/ThienNg65/ferry/commit/ac623e26ab23388c57013779072cfe91763cea8b))
+
+
+### Documentation
+
+* tighten wording in docs and UI copy ([#269](https://github.com/ThienNg65/ferry/issues/269)) ([c5bf05d](https://github.com/ThienNg65/ferry/commit/c5bf05d7b35045a6ecbd05d7c151983176262411))
+
 ## [1.5.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.4.0...ferry-v1.5.0) (2026-11-27)
 
 
