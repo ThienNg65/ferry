@@ -358,6 +358,7 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('/tmp/report\0backup')).rejects.toMatchObject({ code: 'VALIDATION' })
     expect(exec).not.toHaveBeenCalled()
   })
+
   it('keeps a final symlink as a leaf in the shell deletion path', async () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
