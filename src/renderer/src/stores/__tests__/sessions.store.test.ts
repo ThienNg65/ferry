@@ -687,6 +687,8 @@ describe('sessions.store quick connect and promotion', () => {
     expect(store.activeTab.hostLabel).toBeNull()
     expect(store.activeTab.quickConnectInput).toBeUndefined()
     expect(mockTerminalStreams.disposeForSession).toHaveBeenCalledWith(sid)
+    expect(mockMonitor.clearSession).toHaveBeenCalledWith(sid)
+    expect(mockTailStreams.closeForSession).toHaveBeenCalledWith(sid)
   })
 
   it('finishes SSH authentication while the initial remote listing is still pending', async () => {

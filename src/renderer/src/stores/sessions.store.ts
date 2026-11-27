@@ -45,6 +45,19 @@ const MAX_RECENT_QUICK_CONNECTS = 8
 /** Volatile in-memory Quick Connect credentials keyed by tabId — never persisted to localStorage. */
 const ephemeralQuickSecrets = new Map<string, { password?: string; passphrase?: string }>()
 
+function teardownSession(sessionId: string, rebindTailsTo?: string): Promise<void> {
+  useRemoteFsStore().clearSession(sessionId)
+  useFileFiltersStore().clearEphemeralSession(sessionId)
+  useMonitorStore().clearSession(sessionId)
+  void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
+  const tails = useTailStreamsStore()
+  if (rebindTailsTo) {
+    tails.rebindSession?.(sessionId, rebindTailsTo)
+    return Promise.resolve()
+  }
+  return tails.closeForSession(sessionId)
+}
+
 function sanitizeQuickConnectInput(
   input: QuickConnectInput
 ): Omit<QuickConnectInput, 'password' | 'passphrase'> {
@@ -443,12 +456,8 @@ export const useSessionsStore = defineStore('sessions', {
       const nextSessionId = crypto.randomUUID()
       tab.sessionId = nextSessionId
       if (previousSessionId) {
-        useTailStreamsStore().rebindSession?.(previousSessionId, nextSessionId)
         this.clearPromptsForSession(previousSessionId)
-        useRemoteFsStore().clearSession(previousSessionId)
-        useFileFiltersStore().clearEphemeralSession(previousSessionId)
-        useMonitorStore().clearSession(previousSessionId)
-        void useTerminalStreamsStore().disposeForSession(previousSessionId).catch(() => {})
+        void teardownSession(previousSessionId, nextSessionId)
         void invoke<void>(INVOKE_CHANNELS.sessionClose, previousSessionId).catch(() => {})
       }
       tab.progressMessages = []
@@ -537,7 +546,7 @@ export const useSessionsStore = defineStore('sessions', {
       } catch (e) {
         if (startedSessionId) {
           this.clearPromptsForSession(startedSessionId)
-          void useTerminalStreamsStore().disposeForSession(startedSessionId).catch(() => {})
+          void teardownSession(startedSessionId).catch(() => {})
         }
         if (isAbandoned()) {
           return
@@ -758,10 +767,7 @@ export const useSessionsStore = defineStore('sessions', {
       try {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
       } finally {
-        useRemoteFsStore().clearSession(sessionId)
-        useFileFiltersStore().clearEphemeralSession(sessionId)
-        await useTailStreamsStore().closeForSession(sessionId)
-        void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
+        await teardownSession(sessionId)
       }
     },
 
@@ -785,11 +791,7 @@ export const useSessionsStore = defineStore('sessions', {
         try {
           await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
         } finally {
-          useRemoteFsStore().clearSession(sid)
-          useFileFiltersStore().clearEphemeralSession(sid)
-          useMonitorStore().clearSession(sid)
-          await useTailStreamsStore().closeForSession(sid)
-          void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
+          await teardownSession(sid)
         }
       }
     },
@@ -940,19 +942,14 @@ export const useSessionsStore = defineStore('sessions', {
           error instanceof Error ? error.message : String(error)
         )
       } finally {
-        useRemoteFsStore().clearSession(sid)
-        useFileFiltersStore().clearEphemeralSession(sid)
-        useMonitorStore().clearSession(sid)
         try {
-          await useTailStreamsStore().closeForSession(sid)
+          await teardownSession(sid)
         } catch (error) {
           useNotify().error(
             'Could not clean up session streams',
             error instanceof Error ? error.message : String(error)
           )
         }
-        // Terminal disposal stays asynchronous to avoid blocking other tabs.
-        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
       }
     }
   }
