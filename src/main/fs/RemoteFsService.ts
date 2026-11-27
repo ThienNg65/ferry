@@ -23,7 +23,7 @@ import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
-function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
+function toFileEntry(basePath: string, entry: SftpEntry): FileEntry | null {
   if (
     !entry.filename ||
     entry.filename === '.' ||
@@ -31,7 +31,7 @@ function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
     entry.filename.includes('/') ||
     entry.filename.includes('\\')
   ) {
-    throw new SshError('SFTP', `Refusing to expose unsafe remote entry name "${entry.filename}" under "${basePath}"`)
+    return null
   }
   const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')
   return {
@@ -89,6 +89,7 @@ async function listRemoteSftp(shell: RemoteShell, rawPath: string): Promise<File
   const rawEntries = (await shell.readdir(resolved))
     .filter((e) => e.filename !== '.' && e.filename !== '..')
     .map((e) => toFileEntry(resolved, e))
+    .filter((entry): entry is FileEntry => entry !== null)
   const entries = await Promise.all(
     rawEntries.map((e) => (e.isSymlink ? resolveSymlink(shell, e) : e))
   )
