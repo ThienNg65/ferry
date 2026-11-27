@@ -98,7 +98,8 @@ Release Please relies on [Conventional Commits](https://www.conventionalcommits.
 #### Job 1: `release-please` (`ubuntu-latest`)
 - Runs only when `github.event_name == 'push'`.
 - Runs `googleapis/release-please-action@v4` using `release-please-config.json` and `.release-please-manifest.json` with `secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN`.
-- Maintains the open Release PR with updated `package.json`, `package-lock.json`, `neutralino.config.json`, `VERSION`, and `CHANGELOG.md`.
+- Maintains the open Release PR with updated `package.json`, `package-lock.json`, `neutralino.config.json`, and `CHANGELOG.md`.
+- When `release_created != 'true'`, checks out `main`, sets up Node `22.23.5`, and runs `node .github/scripts/sync-release-pr-version.mjs` to keep the plain-text `VERSION` file on any open `release-please--branches--main--*` PR branch synchronized with `package.json` and `.release-please-manifest.json` (since `release-please`'s generic updater skips plain unannotated files).
 - When the Release PR merges, creates the `ferry-vX.Y.Z` tag and source GitHub Release, outputting `release_created = true`, `tag_name`, and `version`.
 
 #### Job 2: `sync-public-readme` (`ubuntu-latest`)
