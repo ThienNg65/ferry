@@ -124,7 +124,7 @@ async function generateCommand(): Promise<void> {
 
 async function insertAndClose(command: string): Promise<void> {
   if (isAlternateScreen.value) {
-    statusText.value = 'Full-screen app active — copy command instead.'
+    statusText.value = 'A full-screen app is active. Copy the command instead.'
     return
   }
   statusText.value = await companion.insertCommandInTerminal(command)
@@ -133,7 +133,7 @@ async function insertAndClose(command: string): Promise<void> {
 
 async function runAndClose(card: CompanionCommandCard): Promise<void> {
   if (isAlternateScreen.value) {
-    statusText.value = 'Full-screen app active — copy command instead.'
+    statusText.value = 'A full-screen app is active. Copy the command instead.'
     return
   }
   const msg = await companion.runCommandCard(card)
@@ -210,7 +210,7 @@ function riskClass(risk: CompanionCommandRisk): string {
       class="mb-2 flex items-center gap-1.5 rounded bg-warning/15 px-2 py-1 text-2xs font-medium text-warning"
     >
       <UIcon name="i-lucide-shield-alert" class="size-3.5 shrink-0" />
-      <span>Full-screen terminal app active (alternate buffer) — Insert/Run disabled; Copy only.</span>
+      <span>A full-screen terminal app is active. Insert and Run are disabled; use Copy.</span>
     </div>
 
     <div class="flex items-center gap-1.5">

@@ -69,7 +69,7 @@ export const useEditSessionsStore = defineStore('editSessions', {
             ])
             break
           case 'session-closed':
-            notify.error('Session closed', `${name} — further changes won't be uploaded`)
+            notify.error('Session closed', `${name}: further changes won't be uploaded`)
             break
           default:
             break

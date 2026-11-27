@@ -231,7 +231,7 @@ it.each(['close', 'external editor'])('does not discard newer text with a stale 
   if (action === 'close') {
     wrapper.getComponent({ name: 'UModal' }).vm.$emit('update:open', false)
   } else {
-    await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+    await wrapper.get('button[aria-label="Open in external editor"]').trigger('click')
   }
   await wrapper.get('textarea').setValue('newer edit')
   approval.resolve(true)
@@ -249,7 +249,7 @@ it('keeps the built-in editor open when text changes during external handoff', a
     global: { stubs }
   })
   await flushPromises()
-  await wrapper.get('button[aria-label="Open in External Editor"]').trigger('click')
+  await wrapper.get('button[aria-label="Open in external editor"]').trigger('click')
   expect(invoke).toHaveBeenCalledWith(INVOKE_CHANNELS.editOpenExternal, { editId: 'edit' })
   await wrapper.get('textarea').setValue('edit during handoff')
   opened.resolve()

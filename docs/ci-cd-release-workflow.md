@@ -1,18 +1,18 @@
 # CI/CD & Release Engineering Workflow
 
-This document explains the CI/CD pipeline and release engineering architecture for **Ferry**.
+This document describes the CI/CD pipeline and release process for Ferry.
 
 ---
 
-## 1. Overview & Core Philosophy
+## 1. Overview
 
-Ferry is a Neutralinojs + Node.js sidecar desktop application. Desktop releases are **immutable client deployments** accompanied by auto-update metadata (`latest.yml`).
+Ferry is a Neutralinojs + Node.js sidecar desktop application. Each desktop release is an immutable client deployment published with auto-update metadata (`latest.yml`).
 
-To guarantee safety, predictability, and compliance with repository workflow rules:
-- **Zero CI Direct-Pushes to `main`**: CI workflows never commit or push back to `main`.
-- **Pre-Release Versioning via Google Release Please**: Versions and changelogs are updated *before* release via an automated, accumulating Release PR.
-- **Human-Gated Releases & Exact-Tag Verification**: Desktop installers (`.exe`) and portable archives (`.zip`) are packaged and published only when a maintainer merges the Release PR or triggers manual recovery (`workflow_dispatch`) for an existing `ferry-vX.Y.Z` tag, and the release job verifies that the checked-out commit matches the tag SHA before publishing.
-- **Full Packaging Verification in CI**: Every PR and push to `main` runs typechecking, unit tests, automation script tests, Vite builds, NSIS packaging, canonical artifact checks, and the Neutralino smoke test.
+The pipeline follows these rules:
+- CI never pushes to `main`. CI workflows never commit or push back to it.
+- Google Release Please sets versions and changelogs before release, through an automated Release PR that accumulates changes.
+- A maintainer gates every release. Desktop installers (`.exe`) and portable archives (`.zip`) are packaged and published only when a maintainer merges the Release PR or triggers manual recovery (`workflow_dispatch`) for an existing `ferry-vX.Y.Z` tag. The release job checks that the checked-out commit matches the tag SHA before publishing.
+- Every PR and push to `main` runs typechecking, unit tests, automation script tests, Vite builds, NSIS packaging, canonical artifact checks, and the Neutralino smoke test.
 
 ---
 
@@ -68,7 +68,7 @@ Release Please relies on [Conventional Commits](https://www.conventionalcommits.
 | `BREAKING CHANGE:` or `!` | **Major** (`x.0.0`) | Breaking Changes | `feat!: redesign entire IPC contract protocol` |
 
 > [!TIP]
-> If a pull request contains multiple commits, ensure the **PR Title** or the **Squash & Merge commit message** follows Conventional Commits format, as Release Please reads the commits that land on `main`.
+> If a pull request contains multiple commits, make sure the PR title or the squash-merge commit message follows Conventional Commits format, because Release Please reads the commits that land on `main`.
 
 ---
 
@@ -152,7 +152,7 @@ If `publish-assets` fails after Release Please has already created `ferry-vX.Y.Z
 Specifies package release type (`node`), tracks `VERSION` and `neutralino.config.json` (`$.version`) in `extra-files`, and maps commit types to human-readable changelog sections.
 
 ### `.release-please-manifest.json`
-The single source of truth for the current released version (e.g. `{".": "1.4.0"}`). Release Please uses this manifest rather than scanning remote git tags, preventing any historical tag inconsistencies from corrupting SemVer.
+The source of truth for the current released version (e.g. `{".": "1.4.0"}`). Release Please reads this manifest instead of scanning remote git tags, so historical tag inconsistencies cannot corrupt SemVer.
 
 ---
 
@@ -167,7 +167,7 @@ To allow `release-please` to manage pull requests automatically:
 
 ## 7. Manual Release Smoke Checklist
 
-Automated CI covers unit tests, automation script tests, packaging, and `npm run smoke:neutralino`, but does not exercise interactive WebView2 UI flows. Before or immediately after shipping a release, verify the packaged Windows app manually:
+Automated CI covers unit tests, automation script tests, packaging, and `npm run smoke:neutralino`. It does not exercise interactive WebView2 UI flows. Before a release, or right after shipping it, check the packaged Windows app by hand:
 1. Connect to an SSH/SFTP site and close the last connected tab via **X**, **middle-click**, and **`Ctrl+W`**; confirm **Site Management** returns in each case.
 2. Open multiple tabs and verify closing individual and multiple tabs behaves cleanly.
 3. Verify active-dialog behavior while closing tabs or disconnecting.

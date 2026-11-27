@@ -1041,7 +1041,7 @@ watchEffect(() => {
             <UIcon v-else-if="streamStatus === 'connecting'" name="i-lucide-loader-2" class="size-6 animate-spin text-primary" />
             <UIcon v-else name="i-lucide-scroll-text" class="size-6 text-muted" />
             <p class="text-xs text-muted">
-              <template v-if="error">Unable to stream this file — see error below</template>
+              <template v-if="error">Can't stream this file. See the error below.</template>
               <template v-else-if="ended">Stream ended with no output</template>
               <template v-else-if="streamStatus === 'connecting'">Connecting to remote log stream…</template>
               <template v-else>Waiting for output…</template>

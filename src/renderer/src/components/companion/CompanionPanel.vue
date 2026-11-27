@@ -452,7 +452,7 @@ async function draftSnippetWithAi(): Promise<void> {
       }
       newSnippetCommand.value = res.card.command
       newSnippetDescription.value = res.card.description
-      actionFeedback.value = 'Drafted snippet command — review and save.'
+      actionFeedback.value = 'Snippet drafted. Review it, then save.'
     } else {
       actionFeedback.value = res.message || 'Could not draft snippet.'
     }
@@ -775,7 +775,7 @@ function openFullNotes(url?: string): void {
             <div class="space-y-1">
               <p class="text-sm font-semibold text-highlighted">Hi! I'm your Ferry Companion.</p>
               <p class="max-w-xs text-xs leading-relaxed text-muted">
-                Ask what's new after an update, jump straight to a Ferry feature, troubleshoot a transfer, or draft a privacy-checked bug report — all locally, no AI account needed.
+                Ask what's new after an update, find a Ferry feature, troubleshoot a transfer, or draft a bug report with private details removed. Works locally, no AI account needed.
               </p>
             </div>
             <div class="mt-1 flex w-full flex-col gap-1.5">

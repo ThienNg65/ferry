@@ -336,14 +336,14 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
         v-if="updateStore.isDownloaded"
         :text="
           updateStore.availableVersion
-            ? `Ferry v${updateStore.availableVersion} is ready — click to restart`
-            : 'Update ready — click to restart'
+            ? `Ferry v${updateStore.availableVersion} is ready. Click to restart`
+            : 'Update ready. Click to restart'
         "
       >
         <button
           type="button"
           :disabled="updateStore.installing"
-          :aria-label="updateStore.installing ? 'Installing update…' : 'Update ready — restart to update'"
+          :aria-label="updateStore.installing ? 'Installing update…' : 'Update ready, restart to update'"
           class="flex min-h-6 items-center gap-1 rounded bg-success/20 px-2 py-0.5 text-xs font-medium text-success transition-colors hover:bg-success/30 disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary"
           @click="updateStore.installNow()"
         >
@@ -358,7 +358,7 @@ function onCloseTab(event: MouseEvent, tabId: string): void {
       <UTooltip text="Command palette (Ctrl+K)">
         <button
           type="button"
-          aria-label="Search commands — open command palette"
+          aria-label="Open command palette"
           class="ferry-pressable flex min-h-6 items-center gap-1.5 border border-default/70 bg-default/50 px-2 py-0.5 text-xs text-muted transition-colors hover:border-accented hover:bg-default hover:text-highlighted focus-visible:outline-2 focus-visible:outline-primary"
           :class="ui.glassUiEnabled ? 'rounded-lg' : 'rounded-md'"
           @click="commandPalette.open()"

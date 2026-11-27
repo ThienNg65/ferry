@@ -126,9 +126,9 @@ async function submitToGitHub(): Promise<void> {
       kind: 'opened',
       message: builtDraft.value.truncatedForUrl
         ? clipboardOk
-          ? 'Opened GitHub in your browser and copied the full markdown to your clipboard. Paste and submit on GitHub to create the public issue.'
-          : 'Opened GitHub in your browser, but automatic clipboard copy failed. Click "Copy markdown" below and paste it on GitHub.'
-        : 'Opened a prefilled draft on ferry-release in your browser. Review and click "Submit new issue" on GitHub to create the ticket.'
+          ? 'Opened GitHub in your browser and copied the markdown. Paste it there and submit to create the public issue.'
+          : 'Opened GitHub in your browser, but copying to the clipboard failed. Click "Copy markdown" below and paste it on GitHub.'
+        : 'Opened a prefilled draft on ferry-release in your browser. Review it and click "Submit new issue" on GitHub.'
     }
   } catch (err) {
     submitOutcome.value = {

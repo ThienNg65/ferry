@@ -47,7 +47,7 @@ export function useTransferIntents() {
 
   function buildTransferIntent(sourceSide: 'local' | 'remote', entry: { path: string; name: string; isDir: boolean; size?: number; modifiedAt?: string | null }, sessionId: string, targetDir?: string): TransferIntent | null {
     if (entry.name.includes('/') || entry.name.includes('\\') || entry.name === '..' || entry.name === '.') {
-      notify.error('Security Warning', 'Invalid file name detected. Transfer aborted.')
+      notify.error('Security warning', 'Invalid file name detected. Transfer aborted.')
       return null
     }
     const source = { sourceSize: entry.size ?? null, sourceModifiedAt: entry.modifiedAt ?? null }
@@ -118,7 +118,7 @@ export function useTransferIntents() {
     const preFlight = evaluateTransferPreFlight(intents, remoteDisk, nestedScan)
     if (preFlight.warnings.length > 0 && !companion.quietMode) {
       const proceed = await confirm({
-        title: 'Ferry Companion — Pre-Flight Safety Check',
+        title: 'Ferry Companion: pre-flight safety check',
         body: preFlight.warnings.join('\n\n'),
         items: preFlight.sensitiveFiles.length > 0 ? preFlight.sensitiveFiles : undefined,
         confirmLabel: 'Transfer anyway',

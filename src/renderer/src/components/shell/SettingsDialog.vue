@@ -520,7 +520,7 @@ const hostError = computed(() => (proxyEnabled.value && !proxyHost.value.trim() 
 const portError = computed(() => {
   const port = Number(proxyPort.value)
   return proxyEnabled.value && !(Number.isInteger(port) && port >= 1 && port <= 65535)
-    ? 'Port must be 1–65535'
+    ? 'Port must be between 1 and 65535'
     : ''
 })
 const invalid = computed(() => Boolean(limitError.value || hostError.value || portError.value))
@@ -750,7 +750,7 @@ async function saveNetwork(): Promise<void> {
     )
     proxyPassword.value = ''
     snapshot.value = draftKey.value
-    notify.success('Network settings saved', 'Your preferences have been updated')
+    notify.success('Network settings saved', 'Preferences updated')
   } catch (err) {
     notify.error('Failed to save settings', err instanceof Error ? err.message : String(err))
   } finally {
@@ -1000,7 +1000,7 @@ async function saveNetwork(): Promise<void> {
                         <div class="flex flex-wrap items-center justify-between gap-2">
                           <label for="companion-ai-api-key" class="text-muted">
                             {{ aiProvider === 'ferry-pro' ? 'Ferry Pro License Token' : 'Google AI Studio Gemini API Key' }}
-                            {{ hasSavedKeyForSelectedProvider ? ' (saved — leave blank to keep)' : ' (encrypted via OS secret store)' }}
+                            {{ hasSavedKeyForSelectedProvider ? ' (saved, leave blank to keep)' : ' (encrypted via OS secret store)' }}
                           </label>
                           <button
                             v-if="aiProvider === 'gemini'"
@@ -1302,7 +1302,7 @@ async function saveNetwork(): Promise<void> {
               <div v-if="update.isAvailable" class="mt-3 flex items-center gap-2 rounded-md bg-muted/30 p-3 text-xs text-toned">
                 <UIcon name="i-lucide-download" class="size-4 shrink-0 text-primary" />
                 <span>
-                  {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'A new update' }} is available — starting download…
+                  {{ update.availableVersion ? `Ferry v${update.availableVersion}` : 'A new update' }} is available. Starting download…
                 </span>
               </div>
 

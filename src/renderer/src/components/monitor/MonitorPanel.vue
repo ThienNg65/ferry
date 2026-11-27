@@ -353,7 +353,7 @@ const spikeAlertColor = computed<'error' | 'warning' | 'neutral'>(() => {
       >
         <div class="flex min-w-0 items-center gap-1.5">
           <UIcon name="i-lucide-circle-alert" class="size-3.5 shrink-0" />
-          <span class="truncate">{{ monitor.statusMessage || 'Resource monitoring failed — showing last known sample.' }}</span>
+          <span class="truncate">{{ monitor.statusMessage || 'Resource monitoring failed. Showing the last known sample.' }}</span>
         </div>
         <UButton
           label="Retry"

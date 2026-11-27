@@ -1,19 +1,19 @@
 # Ferry 14-Day Go-To-Market & First 1,000 Users Launch Playbook
 
-**Goal:** Convert Ferry's existing product strength (`v1.3.2`) into its first 1,000 active Windows users by fixing high-intent discovery and removing install friction.  
+**Goal:** Turn Ferry's existing product strength (`v1.3.2`) into its first 1,000 active Windows users by fixing high-intent discovery and removing install friction.  
 **Primary Conversion Target:** [Microsoft Store (`9PJPWK568P53`)](https://apps.microsoft.com/detail/9PJPWK568P53) · Secondary: `winget install ThienNg65.Ferry` & Portable `.zip`
 
 ---
 
-## 1. The 3 Core Positioning Wedges
+## 1. The 3 positioning wedges
 
-Stop pitching Ferry as *"a lightweight WinSCP alternative"* in isolation. Lead with the specific pain your reader feels right now:
+Don't pitch Ferry only as *"a lightweight WinSCP alternative"*. Lead with the specific pain the reader has right now:
 
 | Wedge | Target Audience | Core Pain | Ferry Hook |
 |---|---|---|---|
-| **1. "The 6 PM Broken Deploy"** | Full-stack, backend & indie devs on Windows | When production breaks, you open 4 tools: WinSCP for files, PuTTY for commands, a terminal for `tail -F`, and `htop` for CPU/RAM. | **"Files, terminal, live `tail -F` logs, and CPU/RAM monitor in one tab — over a single SSH connection."** |
+| **1. "The 6 PM Broken Deploy"** | Full-stack, backend & indie devs on Windows | When production breaks, you open 4 tools: WinSCP for files, PuTTY for commands, a terminal for `tail -F`, and `htop` for CPU/RAM. | **"Files, terminal, live `tail -F` logs, and CPU/RAM monitor in one tab, over a single SSH connection."** |
 | **2. "Anti-$120/yr Subscription"** | Termius Free/Pro users & solo ops engineers | Termius locks workflows behind a mandatory account and ~$10/mo (~$120/yr) subscription while treating SFTP as a secondary tab. | **"Local-first on Windows with DPAPI encryption, zero cloud accounts, dual-pane SFTP, and live logs — free."** |
-| **3. "30-Second WinSCP / PuTTY Upgrade"** | WinSCP, PuTTY, and FileZilla users | Legacy 2000s UI, no integrated terminal in WinSCP, and manual PuTTY window juggling — but nobody wants to re-type 30 saved server configs. | **"Keep your dual-pane muscle memory. Import WinSCP, PuTTY, and `~/.ssh/config` sites in one click."** |
+| **3. "30-Second WinSCP / PuTTY Upgrade"** | WinSCP, PuTTY, and FileZilla users | Legacy 2000s UI, no integrated terminal in WinSCP, and manual PuTTY window juggling. Nobody wants to re-type 30 saved server configs, though. | **"Keep your dual-pane muscle memory. Import WinSCP, PuTTY, and `~/.ssh/config` sites in one click."** |
 
 ---
 
@@ -31,7 +31,7 @@ Stop pitching Ferry as *"a lightweight WinSCP alternative"* in isolation. Lead w
 
 ---
 
-## 3. Ready-to-Paste Launch Assets
+## 3. Ready-to-paste launch assets
 
 ### 3.1 AlternativeTo.net Listing Metadata
 
@@ -51,7 +51,7 @@ Stop pitching Ferry as *"a lightweight WinSCP alternative"* in isolation. Lead w
 
 ### 3.2 Hacker News (`Show HN`) Post
 
-**Title (79 chars — factual, zero hype):**
+**Title (79 chars, factual, no hype):**
 ```text
 Show HN: Ferry – 23MB Windows SSH/SFTP workspace (files, terminal, logs, monitor)
 ```
@@ -154,7 +154,7 @@ Instead of bundling another 200+ MB Chromium copy with Electron, Ferry pairs Win
 
 ## 4. Bottom-of-Funnel SEO Comparison Page Specs
 
-Create 4 dedicated static routes on `ferry-website` to capture developers actively searching for alternatives. Every page must keep Ferry's honest, no-BS tone (explicitly stating when the competitor is still the better tool).
+Create 4 static routes on `ferry-website` for developers who are searching for alternatives. Every page keeps Ferry's honest tone and says outright when the competitor is still the better tool.
 
 | Route | Target Keywords | H1 Headline | Key Comparison Angle | "When to Stick With Competitor" Block | Primary CTA |
 |---|---|---|---|---|---|
@@ -167,9 +167,9 @@ Create 4 dedicated static routes on `ferry-website` to capture developers active
 
 ## 5. In-App Microsoft Store Rating Trigger Spec (Future UI PR)
 
-Getting the first **10–25 genuine 5-star reviews** on Microsoft Store (`9PJPWK568P53`) significantly boosts organic Store search placement for `SFTP` and `SSH`.
+The first **10 to 25 genuine 5-star reviews** on Microsoft Store (`9PJPWK568P53`) should improve organic Store search placement for `SFTP` and `SSH`.
 
-### Trigger Rules (Strict Non-Annoyance Policy)
+### Trigger rules (keep it unobtrusive)
 - **Eligibility Condition:** User has completed **either** `>= 5` successful file transfers **or** `>= 3` successful SSH sessions across at least 2 distinct app launches.
 - **Suppression Guards (Never show when):**
   - Any modal dialog, error banner, host-key prompt, or 2FA prompt is open.

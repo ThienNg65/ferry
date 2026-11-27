@@ -189,13 +189,13 @@ describe('Auto-update renderer UI', () => {
     const installSpy = vi.spyOn(update, 'installNow').mockResolvedValue()
 
     const w = trackMount(mount(SiteTabBar, { global: { stubs: commonStubs } }))
-    expect(w.find('[aria-label="Update ready — restart to update"]').exists()).toBe(false)
+    expect(w.find('[aria-label="Update ready, restart to update"]').exists()).toBe(false)
 
     update.status = 'downloaded'
     update.availableVersion = '0.30.0'
     await nextTick()
 
-    const pill = w.get('[aria-label="Update ready — restart to update"]')
+    const pill = w.get('[aria-label="Update ready, restart to update"]')
     expect(pill.text()).toContain('Update ready')
     await pill.trigger('click')
     expect(installSpy).toHaveBeenCalledOnce()

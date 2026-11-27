@@ -368,7 +368,7 @@ function close(): void {
           color="error"
           variant="soft"
           icon="i-lucide-shield-alert"
-          title="Production Deletion Warning"
+          title="Production deletion warning"
           :description="`Connected to ${companion.prodSiteLabel}. Running this mirror sync will permanently delete ${plan?.toDelete.length ?? 0} destination item(s) on Production.`"
         />
 
@@ -381,7 +381,7 @@ function close(): void {
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-1.5 font-semibold text-warning">
               <UIcon name="i-lucide-shield-alert" class="size-4 shrink-0" />
-              <span>Companion Pre-Flight Safety Check</span>
+              <span>Companion pre-flight safety check</span>
             </div>
             <UButton size="xs" color="warning" variant="soft" icon="i-lucide-sparkles" @click="askCompanionAboutSync">
               Ask Companion
