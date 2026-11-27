@@ -7,13 +7,10 @@ import type { SFTPWrapper, Stats } from 'ssh2'
 import { SessionManager } from '../ssh/SessionManager'
 import { SshError } from '../ssh/errors'
 import type { RemoteShell, SftpEntry } from '../ssh/RemoteShell'
-import type { CopyManyResult, FileEntry, FileListResult, FileReadResult, RemoteAdminRequest } from '../../shared/contract'
+import { MAX_TEXT_PREVIEW_BYTES, type CopyManyResult, type FileEntry, type FileListResult, type FileReadResult, type RemoteAdminRequest } from '../../shared/contract'
 import { pickUniqueName } from '../../shared/uniqueName'
 import { buildChmodCommand, buildChownCommand } from './permissionCommands'
 import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
-
-/** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
-const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
   const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')

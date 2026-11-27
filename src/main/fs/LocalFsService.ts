@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
-import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
+import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES, MAX_TEXT_EDITOR_BYTES, MAX_TEXT_PREVIEW_BYTES } from '../../shared/contract'
 import { pickUniqueName } from '../../shared/uniqueName'
 import type {
   CopyManyResult,
@@ -29,9 +29,6 @@ function isRootOrEmpty(p: string): boolean {
   const resolved = path.resolve(trimmed)
   return resolved === path.parse(resolved).root
 }
-
-/** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
-const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
 /** Lists a local directory. Falls back to the OS home directory when no path is given. */
 export async function list(dirPath?: string): Promise<FileListResult> {
@@ -141,10 +138,13 @@ export async function rename(fromPath: string, toPath: string, replace?: boolean
   }
 }
 
-/** Reads a local file's content as text, capped at MAX_TEXT_PREVIEW_BYTES. */
-export async function readFileText(filePath: string): Promise<FileReadResult> {
+/** Reads a local text file with a bounded byte limit; previews use the smaller default. */
+export async function readFileText(filePath: string, maxBytes = MAX_TEXT_PREVIEW_BYTES): Promise<FileReadResult> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_TEXT_EDITOR_BYTES) {
+    throw new SshError('VALIDATION', `maxBytes must be an integer between 1 and ${MAX_TEXT_EDITOR_BYTES}`)
+  }
   const stats = await fs.stat(filePath)
-  const length = Math.min(stats.size, MAX_TEXT_PREVIEW_BYTES)
+  const length = Math.min(stats.size, maxBytes)
   const handle = await fs.open(filePath, 'r')
   try {
     const buffer = Buffer.alloc(length)
@@ -152,7 +152,7 @@ export async function readFileText(filePath: string): Promise<FileReadResult> {
     return {
       path: filePath,
       content: buffer.subarray(0, bytesRead).toString('utf-8'),
-      truncated: stats.size > MAX_TEXT_PREVIEW_BYTES,
+      truncated: stats.size > maxBytes,
       size: stats.size
     }
   } finally {

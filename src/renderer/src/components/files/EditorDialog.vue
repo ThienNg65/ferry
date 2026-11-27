@@ -3,7 +3,7 @@ import { computed, ref, watch, shallowRef } from 'vue'
 import { Codemirror } from 'vue-codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { basicSetup } from 'codemirror'
-import { INVOKE_CHANNELS } from '@shared/contract'
+import { INVOKE_CHANNELS, MAX_TEXT_EDITOR_BYTES } from '@shared/contract'
 import type { FileReadResult } from '@shared/contract'
 import { invoke } from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
@@ -78,7 +78,7 @@ watch(
     if (isOpen && tempPath) {
       loading.value = true
       try {
-        const res = await invoke<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, tempPath)
+        const res = await invoke<FileReadResult>(INVOKE_CHANNELS.fsLocalReadFile, tempPath, MAX_TEXT_EDITOR_BYTES)
         if (token !== loadToken || !props.open) return
         if (res.truncated) {
           notify.error('File too large', 'This file is too large to edit in the built-in editor. Opening externally...')

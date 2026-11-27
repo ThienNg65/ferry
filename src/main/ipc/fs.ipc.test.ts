@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { handlers } from './envelope'
-import type { IpcResult } from '../../shared/contract'
+import { MAX_TEXT_EDITOR_BYTES, type IpcResult } from '../../shared/contract'
 
 const registered = handlers as unknown as Map<string, (...args: unknown[]) => Promise<unknown>>
 
@@ -96,6 +96,11 @@ describe('fs.ipc', () => {
     })
     const result = await invoke('fs:local:readFile', '/tmp/a.txt')
     expect(result).toEqual({ ok: true, data: { path: '/tmp/a.txt', content: 'hi', truncated: false, size: 2 } })
+  })
+
+  it('fs:local:readFile forwards an optional byte limit', async () => {
+    await invoke('fs:local:readFile', '/tmp/a.txt', MAX_TEXT_EDITOR_BYTES)
+    expect(LocalFs.readFileText).toHaveBeenCalledWith('/tmp/a.txt', MAX_TEXT_EDITOR_BYTES)
   })
 
   it('fs:local:writeFile forwards the request object', async () => {
