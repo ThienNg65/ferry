@@ -15,7 +15,7 @@ import {
   type TunnelStatusEvent
 } from './PortForwardingManager'
 
-interface MockSshClient extends EventEmitter, PortForwardingSshClient {
+type MockSshClient = EventEmitter & {
   forwardOut: ReturnType<typeof vi.fn>
   forwardIn: ReturnType<typeof vi.fn>
   unforwardIn: ReturnType<typeof vi.fn>
@@ -23,7 +23,7 @@ interface MockSshClient extends EventEmitter, PortForwardingSshClient {
 
 function createMockSshClient(): MockSshClient {
   const emitter = new EventEmitter()
-  const client = Object.assign(emitter, {
+  const client: MockSshClient = Object.assign(emitter, {
     forwardOut: vi.fn(
       (
         _srcIP: string,
@@ -45,7 +45,9 @@ function createMockSshClient(): MockSshClient {
       cb?.(undefined)
     })
   })
-  return client as unknown as MockSshClient
+  const _typeCheck: PortForwardingSshClient = client
+  void _typeCheck
+  return client
 }
 
 function sendTcpMessage(port: number, payload: string, halfClose = false): Promise<string> {
@@ -275,7 +277,6 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     expect(started.data.localAddress).toBe(`localhost:${boundPort}`)
     expect(started.data.exposedExternally).toBe(false)
 
-    // Half-closed request (client sends FIN immediately after payload) still receives full response.
     const [reply1, reply2] = await Promise.all([
       sendTcpMessage(boundPort, 'SELECT 1', true),
       sendTcpMessage(boundPort, 'SELECT 2', false)
@@ -397,7 +398,6 @@ describe('PortForwardingManager local (-L) tunnels', () => {
     await vi.waitFor(() => expect(resolveForwardOut).toBeDefined())
     sock.destroy()
     await new Promise<void>((resolve) => sock.once('close', () => resolve()))
-    // Yield one tick so server-side socket close propagates before forwardOut completes.
     await new Promise((resolve) => setTimeout(resolve, 15))
 
     const lateChannel = new PassThrough() as unknown as SshForwardChannel

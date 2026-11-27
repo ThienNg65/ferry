@@ -131,9 +131,19 @@ export interface PortForwardingManagerOptions {
 
 const DEFAULT_BIND_HOST = '127.0.0.1'
 const DEFAULT_UNFORWARD_TIMEOUT_MS = 3_000
-const INVALID_HOST_CHARS_RE = /[\s\r\n\0\x01-\x1f\x7f"'`$;\\[\]]/
+const INVALID_HOST_PUNCTUATION_RE = /[\s"'`$;\\[\]]/
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '*'])
+
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f) {
+      return true
+    }
+  }
+  return false
+}
 
 function stripIpv6Brackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
@@ -154,7 +164,7 @@ function isValidHostToken(host: string, allowWildcard = true): boolean {
   if (!allowWildcard && host === '*') {
     return false
   }
-  return !INVALID_HOST_CHARS_RE.test(host)
+  return !hasControlChar(host) && !INVALID_HOST_PUNCTUATION_RE.test(host)
 }
 
 function formatHostForEndpoint(host: string): string {
