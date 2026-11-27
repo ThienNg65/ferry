@@ -53,6 +53,16 @@ function createSftpHarness() {
   return { shell: new RemoteShell(client), sftp }
 }
 
+function encodeShellTarget(value: string): string {
+  return Array.from(Buffer.from(value, 'utf8'), (byte) =>
+    `\\${byte.toString(8).padStart(3, '0')}`
+  ).join('')
+}
+
+function encodedTargetAssignment(value: string): string {
+  return `target=$(printf %b "${encodeShellTarget(value)}"; printf .)`
+}
+
 function splitBuffer(value: string, split: number): [Buffer, Buffer] {
   const bytes = Buffer.from(value)
   return [bytes.subarray(0, split), bytes.subarray(split)]
@@ -258,7 +268,8 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
 
     const command = exec.mock.calls[0][0]
-    expect(command).toContain('then\ncanonical=')
+    expect(command.startsWith("/bin/sh -c '")).toBe(true)
+    expect(command).toContain('canonical=$(CDPATH= cd -P "$target"')
     expect(command).not.toContain('then;')
     expect(command).toContain('CDPATH= cd -P "$target"')
     expect(command).toContain('[ "$canonical" != "/" ] || exit 73')
@@ -322,9 +333,31 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('/tmp/report ', '/home/user')).resolves.toBeUndefined()
 
-    expect(exec.mock.calls[0][0]).toContain("target='/tmp/report '")
+    expect(exec.mock.calls[0][0]).toContain(encodedTargetAssignment('/tmp/report '))
   })
 
+  it('runs the preflight in POSIX sh without exposing shell-special path bytes', async () => {
+    const { shell } = createHarness()
+    const remotePath = "/tmp/report '$(touch /tmp/unsafe)\n"
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+    await expect(shell.deleteRecursive(remotePath)).resolves.toBeUndefined()
+
+    const command = exec.mock.calls[0][0]
+    expect(command.startsWith("/bin/sh -c '")).toBe(true)
+    expect(command.endsWith("'")).toBe(true)
+    const script = command.slice("/bin/sh -c '".length, -1)
+    expect(script).not.toContain("'")
+    expect(command).toContain(encodedTargetAssignment(remotePath))
+  })
+
+  it('rejects NUL bytes before starting shell deletion', async () => {
+    const { shell } = createHarness()
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
+
+    await expect(shell.deleteRecursive('/tmp/report\0backup')).rejects.toMatchObject({ code: 'VALIDATION' })
+    expect(exec).not.toHaveBeenCalled()
+  })
   it('keeps a final symlink as a leaf in the shell deletion path', async () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
@@ -332,7 +365,7 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('/tmp/link/', '/home/user')).resolves.toBeUndefined()
 
     const command = exec.mock.calls[0][0]
-    expect(command).toContain("target='/tmp/link/'")
+    expect(command).toContain(encodedTargetAssignment('/tmp/link/'))
     expect(command).toContain('target_entry=$target')
     expect(command).toContain('[ -L "$target_entry" ] || [ -d "$target_entry" ]')
     expect(command).toContain('target=$target_entry')
@@ -350,7 +383,7 @@ describe('RemoteShell recursive delete', () => {
     await expect(shell.deleteRecursive('/tmp/report/')).rejects.toMatchObject({ code: 'VALIDATION' })
 
     const command = exec.mock.calls[0][0]
-    expect(command).toContain("target='/tmp/report/'")
+    expect(command).toContain(encodedTargetAssignment('/tmp/report/'))
     expect(command).toContain('elif [ -e "$target_entry" ]; then')
     expect(command.indexOf('exit 75')).toBeLessThan(command.indexOf('rm -rf -- "$target"'))
     expect(fallback).not.toHaveBeenCalled()
