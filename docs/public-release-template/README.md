@@ -43,7 +43,7 @@ Requires **Windows 10 or Windows 11 (64-bit)**. Pick one of these installation c
 <details>
 <summary>Upgrading from legacy versions (v0.18.0 or earlier)</summary>
 
-Updates are delivered through this repository's GitHub Releases (`ThienNg65/ferry-release`). Existing users of `v0.18.0` or earlier should upgrade to the `v0.18.1` bridge release or install the latest release manually so future update checks point to `ferry-release`.
+Updates are delivered through this repository's GitHub Releases (`ThienNg65/ferry-release`). Existing users of `v0.18.0` or earlier should install the latest release from [GitHub Releases](../../releases/latest) or the [Microsoft Store](https://apps.microsoft.com/detail/9PJPWK568P53) so future update checks point to `ferry-release`.
 
 </details>
 

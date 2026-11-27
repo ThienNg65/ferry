@@ -51,6 +51,9 @@ test('validatePublicReadme accepts the checked-in template and rejects private r
   assert.doesNotMatch(validated, /\r\n/)
   assert.match(validated, /9PJPWK568P53/)
   assert.match(validated, /https:\/\/www\.ferryssh\.com/)
+  assert.doesNotMatch(validated, /v0\.18\.1\s+bridge\s+release/i)
+  assert.match(validated, /\[GitHub Releases\]\(\.\.\/\.\.\/releases\/latest\)/)
+  assert.match(validated, /\[Microsoft Store\]\(https:\/\/apps\.microsoft\.com\/detail\/9PJPWK568P53\)/)
   for (const [, remotePath] of PUBLIC_ASSET_FILES) {
     assert.ok(validated.includes(remotePath), `Expected public README to reference ${remotePath}`)
   }
