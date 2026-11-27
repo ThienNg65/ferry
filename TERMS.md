@@ -1,7 +1,7 @@
 # Terms of Service for Ferry
 
-**Effective Date:** 2026-11-14  
-**Terms Version:** 1.0  
+**Effective Date:** 2026-11-27  
+**Terms Version:** 1.1  
 **Maintainer:** ThienNg65  
 **Contact:** [GitHub Issues](https://github.com/ThienNg65/ferry/issues) · [GitHub Security Advisories](https://github.com/ThienNg65/ferry/security)
 
