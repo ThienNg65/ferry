@@ -1,7 +1,7 @@
 {
   "name": "ferry",
   "version": "1.6.0",
-  "description": "Ferry — a lightweight SFTP client with live remote log tailing",
+  "description": "Ferry \u2014 a lightweight SFTP client with live remote log tailing",
   "main": "out/sidecar/index.cjs",
   "engines": {
     "node": ">=22.22.2"
@@ -25,7 +25,9 @@
     "typecheck": "vue-tsc --build --noEmit && tsc --build tsconfig.node.json --noEmit",
     "licenses:generate": "node scripts/generate-third-party-licenses.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pack:macos": "node scripts/pack-macos.mjs",
+    "smoke:macos": "node scripts/smoke-macos-package.mjs"
   },
   "dependencies": {
     "@codemirror/theme-one-dark": "^6.1.3",

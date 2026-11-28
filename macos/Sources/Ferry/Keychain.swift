@@ -3,7 +3,12 @@ import Security
 
 /// Master key for the credential store, kept in the app's own Keychain item (no `security` CLI).
 enum MasterKey {
-  private static let service = "js.ferry.app"
+  /// The smoke test points this at a throwaway item so a freshly signed build never prompts.
+  private static var service: String {
+    let env = ProcessInfo.processInfo.environment
+    if env["FERRY_SELFTEST"] != nil, let custom = env["FERRY_KEYCHAIN_SERVICE"], !custom.isEmpty { return custom }
+    return "js.ferry.app"
+  }
   private static let account = "master-key"
 
   static func load() -> Data? {
