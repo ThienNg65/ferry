@@ -6,9 +6,11 @@ final class Bridge: NSObject, WKScriptMessageHandler {
   weak var webView: WKWebView?
   weak var window: NSWindow?
   let sidecar: Sidecar
+  let bookmarks: BookmarkStore
 
-  init(sidecar: Sidecar) {
+  init(sidecar: Sidecar, bookmarks: BookmarkStore) {
     self.sidecar = sidecar
+    self.bookmarks = bookmarks
     super.init()
     sidecar.onMessage = { [weak self] object, line in self?.forward(object, line) }
   }
@@ -96,9 +98,9 @@ final class Bridge: NSObject, WKScriptMessageHandler {
       if let x = args["x"] as? Double, let y = args["y"] as? Double { win?.setFrameOrigin(NSPoint(x: x, y: y)) }
       done(nil, nil)
     case "app.exit": NSApp.terminate(nil); done(nil, nil)
-    case "dialog.open": Dialogs.open(args, folders: false, window: win) { done($0, nil) }
-    case "dialog.folder": Dialogs.open(args, folders: true, window: win) { done($0.first ?? "", nil) }
-    case "dialog.save": Dialogs.save(args, window: win) { done($0, nil) }
+    case "dialog.open": Dialogs.open(args, folders: false, window: win, store: bookmarks) { done($0, nil) }
+    case "dialog.folder": Dialogs.open(args, folders: true, window: win, store: bookmarks) { done($0.first ?? "", nil) }
+    case "dialog.save": Dialogs.save(args, window: win, store: bookmarks) { done($0, nil) }
     case "clipboard.readText": done(NSPasteboard.general.string(forType: .string) ?? "", nil)
     case "path.get":
       let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? ""
@@ -110,7 +112,7 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 }
 
 enum Dialogs {
-  static func open(_ args: [String: Any], folders: Bool, window: NSWindow?, _ done: @escaping ([String]) -> Void) {
+  static func open(_ args: [String: Any], folders: Bool, window: NSWindow?, store: BookmarkStore, _ done: @escaping ([String]) -> Void) {
     let panel = NSOpenPanel()
     panel.title = (args["title"] as? String) ?? ""
     panel.canChooseDirectories = folders
@@ -118,12 +120,14 @@ enum Dialogs {
     panel.allowsMultipleSelection = (args["multiSelections"] as? Bool) ?? false
     if let path = args["defaultPath"] as? String, !path.isEmpty { panel.directoryURL = URL(fileURLWithPath: path) }
     let finish: (NSApplication.ModalResponse) -> Void = { response in
-      done(response == .OK ? panel.urls.map { $0.path } : [])
+      guard response == .OK else { return done([]) }
+      panel.urls.forEach(store.remember)
+      done(panel.urls.map { $0.path })
     }
     if let window { panel.beginSheetModal(for: window, completionHandler: finish) } else { finish(panel.runModal()) }
   }
 
-  static func save(_ args: [String: Any], window: NSWindow?, _ done: @escaping (String) -> Void) {
+  static func save(_ args: [String: Any], window: NSWindow?, store: BookmarkStore, _ done: @escaping (String) -> Void) {
     let panel = NSSavePanel()
     panel.title = (args["title"] as? String) ?? ""
     if let path = args["defaultPath"] as? String, !path.isEmpty {
@@ -131,7 +135,11 @@ enum Dialogs {
       panel.directoryURL = url.deletingLastPathComponent()
       panel.nameFieldStringValue = url.lastPathComponent
     }
-    let finish: (NSApplication.ModalResponse) -> Void = { done($0 == .OK ? (panel.url?.path ?? "") : "") }
+    let finish: (NSApplication.ModalResponse) -> Void = { response in
+      guard response == .OK, let url = panel.url else { return done("") }
+      store.remember(url)
+      done(url.path)
+    }
     if let window { panel.beginSheetModal(for: window, completionHandler: finish) } else { finish(panel.runModal()) }
   }
 }

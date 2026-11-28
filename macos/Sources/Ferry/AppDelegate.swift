@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var webView: WKWebView!
   private let sidecar = Sidecar()
   private var bridge: Bridge!
+  private var bookmarks: BookmarkStore!
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     guard let res = ResourceLocator.resolve() else { fail("Ferry resources are missing."); return }
@@ -15,7 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       .appendingPathComponent("Ferry")
     try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 
-    bridge = Bridge(sidecar: sidecar)
+    bookmarks = BookmarkStore(directory: support)
+    bookmarks.restoreAll()
+    bridge = Bridge(sidecar: sidecar, bookmarks: bookmarks)
     let config = WKWebViewConfiguration()
     config.userContentController.add(bridge, name: "ferry")
     config.setURLSchemeHandler(AppSchemeHandler(root: res.rendererDir), forURLScheme: "ferry")
@@ -45,10 +48,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     FileHandle.standardError.write(Data("SELFTEST armed\n".utf8))
     DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [self] in
       FileHandle.standardError.write(Data("SELFTEST fire\n".utf8))
+      let env = ProcessInfo.processInfo.environment
+      let pick = env["FERRY_SELFTEST_PICK"] != nil
+      let list = env["FERRY_SELFTEST_LIST"] ?? "/tmp"
       let js = """
       return (async () => {
-        const r = { api: typeof window.api, text: document.body.innerText.slice(0, 200) }
-        try { r.invoke = JSON.stringify(await window.api.invoke('fs:local:list', '/tmp')).slice(0, 160) } catch (e) { r.invokeError = String(e) }
+        const r = { api: typeof window.api, text: document.body.innerText.slice(0, 120) }
+        let path = \(String(reflecting: list))
+        if (\(pick)) {
+          const picked = await window.api.invoke('dialog:pickFolder')
+          r.picked = JSON.stringify(picked)
+          path = picked?.data ?? picked
+        }
+        try { r.list = JSON.stringify(await window.api.invoke('fs:local:list', path)).slice(0, 200) } catch (e) { r.listError = String(e) }
+        try { r.update = JSON.stringify(await window.api.invoke('update:getStatus')).slice(0, 200) } catch (e) { r.updateError = String(e) }
         return JSON.stringify(r)
       })()
       """
@@ -67,5 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-  func applicationWillTerminate(_ notification: Notification) { sidecar.shutdown() }
+  func applicationWillTerminate(_ notification: Notification) {
+    sidecar.shutdown()
+    bookmarks.stopAll()
+  }
 }
