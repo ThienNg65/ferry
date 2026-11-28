@@ -12,6 +12,26 @@ permissions:
   contents: read
 
 jobs:
+  verify-macos-external-links:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.5
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Test external URL bridge
+        run: npm test -- src/renderer/src/bridge/neutralinoApi.test.ts src/renderer/src/bridge/wkwebviewTransport.test.ts src/renderer/src/bridge/openExternal.test.ts
+
+      - name: Build native macOS shell
+        run: swift build --package-path macos
+
   verify:
     runs-on: windows-latest
     steps:
