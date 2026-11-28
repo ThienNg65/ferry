@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/281-platform-open-path
   pull_request:
     branches:
       - main
@@ -68,3 +69,19 @@ jobs:
 
       - name: Smoke test Neutralino package
         run: npm run smoke:neutralino
+
+  verify-macos-open-path:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.5
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Verify platform opener and macOS Launch Services
+        run: npm test -- src/sidecar/nodeHost.test.ts
