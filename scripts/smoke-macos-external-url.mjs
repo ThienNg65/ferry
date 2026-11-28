@@ -23,6 +23,12 @@ const selfTestJs = `return (async () => {
   } catch (error) {
     result.openError = String(error)
   }
+  try {
+    await window.api.openExternal('http://example.com/')
+    result.insecureRejected = false
+  } catch {
+    result.insecureRejected = true
+  }
   return JSON.stringify(result)
 })()`
 
@@ -82,6 +88,9 @@ if (payload.api !== 'object') {
 }
 if (payload.opened !== true) {
   throw new Error(`Native HTTPS URL opening failed: ${payload.openError ?? 'no success result'}`)
+}
+if (payload.insecureRejected !== true) {
+  throw new Error('Native bridge accepted a non-HTTPS URL')
 }
 
 console.log('PASS  packaged macOS WKWebView opened an HTTPS URL through Launch Services')
