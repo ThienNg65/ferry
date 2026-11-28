@@ -57,6 +57,7 @@ function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar'
     readClipboardText: vi.fn(async () => 'pasted text'),
     getKnownPath: vi.fn(async () => 'C:\\Users\\test\\Downloads'),
     logDebug: vi.fn(async () => {}),
+    openExternal: vi.fn(async (_url: string) => {}),
     getAppVersion: vi.fn(() => '0.22.0')
   }
 
@@ -72,6 +73,14 @@ function createFakeTransport(connectedExtensions: string[] = ['js.ferry.sidecar'
 }
 
 describe('neutralinoApi', () => {
+  it('exposes the native external URL opener when supported by the transport', async () => {
+    const { transport } = createFakeTransport()
+    const api = createNeutralinoApi(transport)
+
+    await expect(api.openExternal?.('https://example.com/path')).resolves.toBeUndefined()
+    expect(transport.openExternal).toHaveBeenCalledWith('https://example.com/path')
+  })
+
   it('enforces invoke, send, and on channel whitelists', async () => {
     const { transport } = createFakeTransport()
     const api = createNeutralinoApi(transport)
