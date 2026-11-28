@@ -17,6 +17,11 @@ final class Sidecar {
     process.standardInput = stdin
     process.standardOutput = stdout
     process.standardError = FileHandle.nullDevice
+    var env = ProcessInfo.processInfo.environment
+    env["FERRY_PACKAGED"] = "1"
+    // The native shell is only shipped through the Mac App Store, which owns updates.
+    env["FERRY_DISTRIBUTION"] = "mas"
+    process.environment = env
     stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let chunk = handle.availableData
       guard let self, !chunk.isEmpty else { return }

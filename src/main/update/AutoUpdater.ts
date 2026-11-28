@@ -38,7 +38,8 @@ function ensureState(): UpdateState {
   if (!currentState) {
     currentState = {
       status: isAutoUpdateEnabled() ? 'idle' : 'disabled',
-      currentVersion: getAppVersion()
+      currentVersion: getAppVersion(),
+      ...(isStoreManaged() ? { managedBy: storeName() } : {})
     }
   }
   return currentState

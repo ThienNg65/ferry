@@ -934,6 +934,7 @@ describe('SidecarUpdater', () => {
       const res = await checkForUpdates(true)
       expect(res.status).toBe('disabled')
       expect(getUpdateState().status).toBe('disabled')
+      expect(getUpdateState().managedBy).toBeTruthy()
     } finally {
       if (prev === undefined) {
         delete process.env['FERRY_STORE_BUILD']

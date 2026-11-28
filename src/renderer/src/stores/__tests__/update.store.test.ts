@@ -187,3 +187,14 @@ describe('update.store', () => {
     expect(api.invoke).toHaveBeenNthCalledWith(3, INVOKE_CHANNELS.windowClose)
   })
 })
+
+describe('update store with a store-managed build', () => {
+  it('cannot check for updates when an app store owns them', () => {
+    setActivePinia(createPinia())
+    const store = useUpdateStore()
+    expect(store.canCheck).toBe(true)
+    store.applyState({ status: 'disabled', currentVersion: '1.0.0', managedBy: 'the Mac App Store' })
+    expect(store.managedBy).toBe('the Mac App Store')
+    expect(store.canCheck).toBe(false)
+  })
+})

@@ -21,6 +21,7 @@ interface UpdateStoreState {
   progress: UpdateProgress | null
   error: string | null
   lastCheckedAt: string | null
+  managedBy: string | null
   initialized: boolean
   installing: boolean
   unsubscribe: (() => void) | null
@@ -43,6 +44,7 @@ export const useUpdateStore = defineStore('update', {
     progress: null,
     error: null,
     lastCheckedAt: null,
+    managedBy: null,
     initialized: false,
     installing: false,
     unsubscribe: null,
@@ -55,6 +57,7 @@ export const useUpdateStore = defineStore('update', {
     isDownloading: (state) => state.status === 'downloading',
     isDownloaded: (state) => state.status === 'downloaded',
     canCheck: (state) =>
+      !state.managedBy &&
       !state.installing &&
       state.status !== 'checking' &&
       state.status !== 'available' &&
@@ -70,6 +73,7 @@ export const useUpdateStore = defineStore('update', {
       this.progress = s.progress ?? null
       this.error = s.error ?? null
       this.lastCheckedAt = s.lastCheckedAt ?? this.lastCheckedAt
+      this.managedBy = s.managedBy ?? null
     },
 
     async init(): Promise<void> {
