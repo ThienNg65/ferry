@@ -23,6 +23,43 @@ function readFallbackPackageVersion(): string {
 
 export const BUNDLED_APP_VERSION = readFallbackPackageVersion()
 
+export function createPlatformOpenPath(
+  platform: NodeJS.Platform = process.platform,
+  spawnProcess: typeof spawn = spawn
+): Host['openPath'] {
+  return async (p) => {
+    if (!existsSync(p)) {
+      return `Could not open ${p}: not found`
+    }
+
+    const command = platform === 'darwin'
+      ? 'open'
+      : platform === 'linux'
+        ? 'xdg-open'
+        : platform === 'win32'
+          ? 'explorer.exe'
+          : null
+
+    if (!command) {
+      return `Could not open ${p}: unsupported platform ${platform}`
+    }
+
+    return new Promise<string>((resolve) => {
+      try {
+        const child = spawnProcess(command, [p], { detached: true, stdio: 'ignore' })
+        child.once('error', (error) => resolve(`Could not open ${p}: ${error.message}`))
+        child.once('spawn', () => {
+          child.unref()
+          resolve('')
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        resolve(`Could not open ${p}: ${message}`)
+      }
+    })
+  }
+}
+
 export function createNodeHost(
   key: Buffer,
   dataDir: string,
@@ -39,15 +76,7 @@ export function createNodeHost(
     dataDir,
     isPackaged: process.argv.includes('--nl-mode') || process.env['FERRY_PACKAGED'] === '1',
     appVersion: process.env['FERRY_APP_VERSION'] || BUNDLED_APP_VERSION,
-    openPath: async (p) => {
-      if (!existsSync(p)) {
-        return `Could not open ${p}: not found`
-      }
-      const child = spawn('explorer.exe', [p], { detached: true, stdio: 'ignore' })
-      child.on('error', () => {})
-      child.unref()
-      return ''
-    },
+    openPath: createPlatformOpenPath(),
     pickOpenFile
   }
 }
