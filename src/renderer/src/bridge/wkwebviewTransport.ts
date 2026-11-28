@@ -17,6 +17,16 @@ interface NativeBridge {
 interface NativeHook {
   emit: (event: string, detail: unknown) => void
   reply: (id: number, result: unknown, error?: string) => void
+  /** Called by the shell when files are dragged over the window, before the drop event fires. */
+  setDropFiles: (files: DropFile[]) => void
+}
+
+interface DropFile {
+  name: string
+  path: string
+  size: number
+  mtime: number
+  isDir: boolean
 }
 
 declare global {
@@ -39,7 +49,12 @@ export function createWKWebViewTransport(bridge?: NativeBridge): NeutralinoTrans
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   let nextId = 1
 
+  let dropFiles: DropFile[] = []
+
   const hook: NativeHook = {
+    setDropFiles: (files) => {
+      dropFiles = Array.isArray(files) ? files : []
+    },
     emit: (event, detail) => {
       for (const handler of [...(listeners.get(event) ?? [])]) {
         handler(detail)
@@ -74,6 +89,11 @@ export function createWKWebViewTransport(bridge?: NativeBridge): NeutralinoTrans
   const fire = (op: string, args?: unknown): Promise<void> => call<void>(op, args).then(() => undefined)
 
   return {
+    pathForFile: (file) => {
+      const sameName = dropFiles.filter((f) => f.name === file.name)
+      const exact = sameName.find((f) => f.size === file.size && f.mtime === file.lastModified)
+      return (exact ?? (sameName.length === 1 ? sameName[0] : undefined))?.path ?? ''
+    },
     init: () => {
       window.__ferryNative = hook
       void call('init').catch(() => undefined)

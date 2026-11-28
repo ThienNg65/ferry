@@ -71,6 +71,8 @@ export interface NeutralinoTransport {
   getKnownPath: (name: 'downloads') => Promise<string>
   logDebug: (message: string) => Promise<void>
   getAppVersion: () => string
+  /** Resolves a dropped File to its host path when the webview itself doesn't expose one (WKWebView). */
+  pathForFile?: (file: File) => string
   waitForDirectEndpoint?: (timeoutMs?: number) => Promise<{ port: number; token: string } | null>
 }
 
@@ -797,7 +799,7 @@ export function createNeutralinoApi(
     on,
     off,
     send,
-    getPathForFile: (file: File) => (file as File & { path?: string }).path ?? '',
+    getPathForFile: (file: File) => (file as File & { path?: string }).path ?? transport.pathForFile?.(file) ?? '',
     ...(transport.waitForDirectEndpoint ? { stageDroppedFile } : {}),
     getPreloadTime: () => ({ start: apiStartTime, timeOrigin: apiTimeOrigin })
   }

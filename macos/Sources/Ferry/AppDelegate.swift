@@ -3,7 +3,7 @@ import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var window: NSWindow!
-  private var webView: WKWebView!
+  private var webView: DropWebView!
   private let sidecar = Sidecar()
   private var bridge: Bridge!
   private var bookmarks: BookmarkStore!
@@ -23,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let config = WKWebViewConfiguration()
     config.userContentController.add(bridge, name: "ferry")
     config.setURLSchemeHandler(AppSchemeHandler(root: res.rendererDir), forURLScheme: "ferry")
-    webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), configuration: config)
+    webView = DropWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), configuration: config)
+    webView.bookmarks = bookmarks
     if #available(macOS 13.3, *) { webView.isInspectable = ProcessInfo.processInfo.environment["FERRY_OUT"] != nil }
     window = NSWindow(contentRect: webView.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable],
                       backing: .buffered, defer: false)

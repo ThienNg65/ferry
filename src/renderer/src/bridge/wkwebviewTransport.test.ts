@@ -45,4 +45,19 @@ describe('wkwebviewTransport', () => {
     window.__ferryNative!.reply(call.id, null)
     await expect(p).resolves.toBeUndefined()
   })
+
+  it('resolves dropped files to host paths announced by the shell', () => {
+    const { transport } = setup()
+    window.__ferryNative!.setDropFiles([
+      { name: 'a.txt', path: '/Users/x/a.txt', size: 3, mtime: 1000, isDir: false },
+      { name: 'b.txt', path: '/Users/x/b.txt', size: 4, mtime: 2000, isDir: false },
+      { name: 'b.txt', path: '/Users/y/b.txt', size: 9, mtime: 3000, isDir: false }
+    ])
+    const file = (name: string, size: number, mtime: number) =>
+      ({ name, size, lastModified: mtime }) as unknown as File
+    expect(transport.pathForFile!(file('a.txt', 99, 1))).toBe('/Users/x/a.txt')
+    expect(transport.pathForFile!(file('b.txt', 9, 3000))).toBe('/Users/y/b.txt')
+    expect(transport.pathForFile!(file('b.txt', 1, 1))).toBe('')
+    expect(transport.pathForFile!(file('zzz', 1, 1))).toBe('')
+  })
 })

@@ -300,16 +300,17 @@ export function parseSshConfig(
   }))
 }
 
-export async function scanSshConfig(): Promise<ImportedSessionCandidate[]> {
-  return parseSshConfig(await readFile(path.join(os.homedir(), '.ssh', 'config'), 'utf-8'))
+/** `filePath` is a user-picked config: in the Mac App Store sandbox `os.homedir()` is the app container, not the real home. */
+export async function scanSshConfig(filePath?: string): Promise<ImportedSessionCandidate[]> {
+  return parseSshConfig(await readFile(filePath ?? path.join(os.homedir(), '.ssh', 'config'), 'utf-8'))
 }
 
 /** Scans every supported source. One source failing (e.g. a locked-down registry) doesn't hide results from the other. */
-export async function scanImportCandidates(): Promise<ImportedSessionCandidate[]> {
+export async function scanImportCandidates(sshConfigPath?: string): Promise<ImportedSessionCandidate[]> {
   const [putty, winscp, sshConfig] = await Promise.all([
     scanPuttySessions().catch(() => []),
     scanWinScpSessions().catch(() => []),
-    scanSshConfig().catch(() => [])
+    scanSshConfig(sshConfigPath).catch(() => [])
   ])
   return [...winscp, ...putty, ...sshConfig]
 }
