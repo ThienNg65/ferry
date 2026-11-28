@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let sidecar = Sidecar()
   private var bridge: Bridge!
   private var bookmarks: BookmarkStore!
+  private var restored: [String] = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     guard let res = ResourceLocator.resolve() else { fail("Ferry resources are missing."); return }
@@ -17,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
 
     bookmarks = BookmarkStore(directory: support)
-    bookmarks.restoreAll()
+    restored = bookmarks.restoreAll()
     bridge = Bridge(sidecar: sidecar, bookmarks: bookmarks)
     let config = WKWebViewConfiguration()
     config.userContentController.add(bridge, name: "ferry")
@@ -40,7 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     webView.load(URLRequest(url: URL(string: "ferry://app/index.html")!))
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    if ProcessInfo.processInfo.environment["FERRY_SELFTEST"] != nil { runSelfTest() }
+    if ProcessInfo.processInfo.environment["FERRY_SELFTEST"] != nil {
+      let dir = ProcessInfo.processInfo.environment["FERRY_SELFTEST_LIST"] ?? "/tmp"
+      let f = dir + "/file1.txt"
+      var msg = "PARENT restored=\(restored)"
+      do { let d = try Data(contentsOf: URL(fileURLWithPath: f)); msg += " read=\(d.count)" } catch { msg += " readError=\(error)" }
+      msg += " ls=\((try? FileManager.default.contentsOfDirectory(atPath: dir).count) ?? -1)"
+      FileHandle.standardError.write(Data((msg + "\n").utf8))
+      runSelfTest()
+    }
   }
 
   /// Development aid: report what the page rendered and whether sidecar RPC answers.
@@ -65,7 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return JSON.stringify(r)
       })()
       """
-      webView.callAsyncJavaScript(js, in: nil, in: .page) { result in
+      let custom = env["FERRY_SELFTEST_JS"]
+      webView.callAsyncJavaScript(custom ?? js, in: nil, in: .page) { result in
         FileHandle.standardError.write(Data("SELFTEST \(result)\n".utf8))
       }
     }

@@ -9,7 +9,7 @@ final class BookmarkStore {
   private let lock = NSLock()
 
   init(directory: URL) {
-    file = directory.appendingPathComponent("bookmarks.json")
+    file = directory.appendingPathComponent("fs-access.json")
     if let data = try? Data(contentsOf: file),
        let raw = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
       for (path, b64) in raw { if let d = Data(base64Encoded: b64) { entries[path] = d } }
