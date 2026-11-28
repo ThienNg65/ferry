@@ -257,9 +257,9 @@ describe('RemoteShell recursive delete', () => {
     }
   )
 
-  it('rejects a parent-symlink root path during the non-destructive shell preflight', async () => {
+  it('rejects parent-directory operands before starting shell deletion', async () => {
     const { shell } = createHarness()
-    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 73 })
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
     const fallback = vi.spyOn(
       shell as unknown as { deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void> },
       'deleteRecursiveSftp'
@@ -267,17 +267,30 @@ describe('RemoteShell recursive delete', () => {
 
     await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
 
+    expect(exec).not.toHaveBeenCalled()
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('rejects a directory canonicalized to root by the shell preflight', async () => {
+    const { shell } = createHarness()
+    const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 73 })
+    const fallback = vi.spyOn(
+      shell as unknown as { deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void> },
+      'deleteRecursiveSftp'
+    ).mockResolvedValue(undefined)
+
+    await expect(shell.deleteRecursive('/tmp/root-alias')).rejects.toMatchObject({ code: 'VALIDATION' })
+
     const command = exec.mock.calls[0][0]
     expect(command.startsWith("/bin/sh -c '")).toBe(true)
     expect(command).toContain('canonical=$(CDPATH= cd -P "$target"')
-    expect(command).not.toContain('then;')
     expect(command).toContain('CDPATH= cd -P "$target"')
     expect(command).toContain('[ "$canonical" != "/" ] || exit 73')
     expect(command).toContain('rm -rf -- "$target"')
     expect(fallback).not.toHaveBeenCalled()
   })
 
-  it('independently blocks parent-symlink root paths in the SFTP fallback', async () => {
+  it('rejects a directory whose SFTP canonical path is root before traversal', async () => {
     const { shell, sftp } = createSftpHarness()
     const directoryStats = { isDirectory: () => true, isSymbolicLink: () => false }
     sftp.lstat.mockImplementation((_path, callback) => callback(null, directoryStats))
@@ -286,8 +299,10 @@ describe('RemoteShell recursive delete', () => {
       deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
     }).deleteRecursiveSftp
 
-    await expect(fallback.call(shell, 'link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(fallback.call(shell, '/tmp/root-alias')).rejects.toMatchObject({ code: 'VALIDATION' })
 
+    expect(sftp.lstat).toHaveBeenCalledWith('/tmp/root-alias', expect.any(Function))
+    expect(sftp.realpath).toHaveBeenCalledWith('/tmp/root-alias', expect.any(Function))
     expect(sftp.readdir).not.toHaveBeenCalled()
     expect(sftp.unlink).not.toHaveBeenCalled()
     expect(sftp.rmdir).not.toHaveBeenCalled()
