@@ -1,6 +1,7 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { randomUUID } from 'crypto'
 import { host } from '../host/host'
+import { openSafeConf } from '../host/storeHelpers'
 import type { HistoryEntry, HistoryQuery } from '../../shared/contract'
 
 /** Ring-buffer cap — oldest entries are dropped once exceeded, so this file never grows unbounded for a heavy user. */
@@ -20,7 +21,8 @@ const MAX_HISTORY_ENTRIES = 2000
  */
 const FLUSH_DEBOUNCE_MS = 1000
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   entries: HistoryEntry[]
 }
 
@@ -38,10 +40,11 @@ export class HistoryStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({
+      this._store = openSafeConf<StoreSchema>({
         cwd: host().dataDir,
         configName: 'history',
-        defaults: { entries: [] }
+        schemaVersion: 1,
+        defaults: { schemaVersion: 1, entries: [] }
       })
     }
     return this._store

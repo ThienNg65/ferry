@@ -1,3 +1,7 @@
+import { uniqueName } from '@shared/uniqueName'
+
+export { uniqueName }
+
 export type ConflictChoice = 'overwrite' | 'skip' | 'newer' | 'rename'
 
 export interface ConflictIntent {
@@ -12,20 +16,6 @@ export interface ConflictIntent {
 export interface ConflictTarget {
   name: string
   modifiedAt: string | null
-}
-
-export function uniqueName(name: string, taken: Set<string>, isDir: boolean, caseInsensitive = false): string {
-  const dot = name.lastIndexOf('.')
-  const stem = !isDir && dot > 0 ? name.slice(0, dot) : name
-  const ext = !isDir && dot > 0 ? name.slice(dot) : ''
-  const hasName = (candidate: string): boolean => taken.has(caseInsensitive ? candidate.toLowerCase() : candidate)
-  let i = 1
-  let candidate = `${stem} (${i})${ext}`
-  while (hasName(candidate)) {
-    i += 1
-    candidate = `${stem} (${i})${ext}`
-  }
-  return candidate
 }
 
 function renameTarget<T extends ConflictIntent>(intent: T, newName: string): T {

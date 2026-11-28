@@ -190,9 +190,19 @@ async function copyText(label: string, value: string): Promise<void> {
           @keydown.enter="selectRow(sortedProcesses[virtualRow.index].pid)"
           @keydown.space.prevent="selectRow(sortedProcesses[virtualRow.index].pid)"
         >
-          <div class="flex min-w-28 flex-1 items-center gap-1.5">
-            <span class="truncate font-medium" :title="sortedProcesses[virtualRow.index].name">
+          <div class="flex min-w-28 flex-1 items-center gap-1.5 overflow-hidden">
+            <span
+              class="shrink-0 truncate font-medium"
+              :title="sortedProcesses[virtualRow.index].cmdline || sortedProcesses[virtualRow.index].name"
+            >
               {{ sortedProcesses[virtualRow.index].name }}
+            </span>
+            <span
+              v-if="sortedProcesses[virtualRow.index].cmdline && sortedProcesses[virtualRow.index].cmdline !== sortedProcesses[virtualRow.index].name"
+              class="hidden min-w-0 flex-1 truncate font-mono text-3xs text-muted @[620px]:inline"
+              :title="sortedProcesses[virtualRow.index].cmdline"
+            >
+              {{ sortedProcesses[virtualRow.index].cmdline }}
             </span>
             <div
               class="flex shrink-0 items-center gap-0.5 transition-opacity"

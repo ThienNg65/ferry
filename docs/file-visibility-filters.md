@@ -3,7 +3,7 @@
 **File Visibility Filters** let you show or hide files in Ferry's remote SFTP file explorer using standard filename glob patterns (`*`, `?`).
 
 > [!NOTE]
-> File Visibility Filters are a **non-destructive view filter**. Hiding files only omits them from the directory listing — Ferry never deletes, renames, moves, or modifies files on the remote server.
+> File Visibility Filters are a **non-destructive view filter**. Hiding files only omits them from the directory listing. Ferry never deletes, renames, moves, or modifies files on the remote server.
 
 ## How it works
 
@@ -32,13 +32,13 @@ Earlier Ferry versions stored Quick Connect filters under `username@host` withou
 
 ## Pattern helper (paste a filename)
 
-If you are unsure how to write a glob pattern, paste an example filename (or remote path) into the **Pattern helper** box inside the **Filter files** popover—for example:
+If you are unsure how to write a glob pattern, paste an example filename (or remote path) into the **Pattern helper** box inside the **Filter files** popover, for example:
 
 ```text
 cob-address-verification-adapter-service.log.2026-06-17
 ```
 
-Ferry suggests ready-to-use patterns such as `*.log.????-??-??` and `cob-address-verification-adapter-service.log.????-??-??` with one-click **+ Include** and **+ Exclude** buttons.
+Ferry suggests patterns such as `*.log.????-??-??` and `cob-address-verification-adapter-service.log.????-??-??` with one-click **+ Include** and **+ Exclude** buttons.
 
 ## Common patterns
 

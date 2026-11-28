@@ -55,16 +55,30 @@ function stepEnv(stepLines) {
 function assertNoReleaseCredentials(envLines, context) {
   assert.doesNotMatch(
     envLines.join('\n'),
-    /^\s*(?:GH_TOKEN|PUBLIC_RELEASE_TOKEN|SOURCE_RELEASE_TOKEN|SIGNPATH_API_TOKEN|LEGACY_TOKEN):/m,
+    /^\s*(?:GH_TOKEN|PUBLIC_RELEASE_TOKEN|SOURCE_RELEASE_TOKEN|SIGNPATH_API_TOKEN|LEGACY_TOKEN|RELEASE_SYNC_TOKEN):/m,
     `${context} must not inherit release credentials`
   )
 }
 
 test('release jobs do not expose publishing credentials at job scope', () => {
-  for (const name of ['sync-public-readme', 'publish-assets']) {
+  for (const name of ['release-please', 'sync-public-readme', 'publish-assets']) {
     const env = findBlock(job(name), 'env', 4)
     assertNoReleaseCredentials(env, `${name} job environment`)
   }
+})
+
+test('release PR VERSION sync receives token only in its dedicated step', () => {
+  const releasePleaseJob = job('release-please')
+  for (const action of ['actions/checkout@v4', 'actions/setup-node@v4']) {
+    assertNoReleaseCredentials(stepUsing(releasePleaseJob, action), `${action} in release-please`)
+  }
+
+  const sync = step(releasePleaseJob, 'Sync VERSION file on release PR')
+  assert.match(
+    stepEnv(sync).join('\n'),
+    /^\s+RELEASE_SYNC_TOKEN: \$\{\{ secrets\.RELEASE_TOKEN \|\| secrets\.GITHUB_TOKEN \}\}$/m
+  )
+  assert.doesNotMatch(stepEnv(sync).join('\n'), /^\s+PUBLIC_RELEASE_TOKEN:/m)
 })
 
 test('public repository visibility checks use an unauthenticated read', () => {

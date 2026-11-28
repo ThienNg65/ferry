@@ -236,7 +236,7 @@ const privateKeyError = computed(() =>
 )
 const portError = computed(() => {
   if (!touched.port && !showValidation.value) return ''
-  return isValidPort(form.port) ? '' : 'Port must be 1–65535'
+  return isValidPort(form.port) ? '' : 'Port must be between 1 and 65535'
 })
 const proxyHostError = computed(() =>
   proxyMode.value === 'custom' && (touched.proxyHost || showValidation.value) && !proxyHost.value.trim()
@@ -245,7 +245,7 @@ const proxyHostError = computed(() =>
 )
 const proxyPortError = computed(() => {
   if (proxyMode.value !== 'custom' || (!touched.proxyPort && !showValidation.value)) return ''
-  return !isValidPort(proxyPort.value) ? 'Port must be 1–65535' : ''
+  return !isValidPort(proxyPort.value) ? 'Port must be between 1 and 65535' : ''
 })
 const canSave = computed(
   () =>
@@ -461,7 +461,7 @@ async function save(andConnect = false): Promise<void> {
             </div>
           </UFormField>
         </div>
-        <UFormField label="Environment" hint="Optional — colors the tab">
+        <UFormField label="Environment" hint="Optional. Colors the tab">
           <USelect v-model="environment" :items="ENVIRONMENT_OPTIONS" class="w-full" />
         </UFormField>
         <div class="flex flex-col gap-3 sm:flex-row">

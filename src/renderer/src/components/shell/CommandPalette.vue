@@ -10,9 +10,12 @@ import { useHistoryDialog } from '../../composables/useHistoryDialog'
 import { useCommandPalette } from '../../composables/useCommandPalette'
 import { useDockState } from '../../composables/useDockState'
 import { useUpdateStore } from '../../stores/update.store'
+import { useCompanionStore } from '../../stores/companion.store'
 import { useNotify } from '../../composables/useNotify'
 import { useShortcutsDialog } from '../../composables/useShortcutsDialog'
 import { getPaneActions } from '../../composables/usePaneActions'
+import { useFileClipboardStore } from '../../stores/fileClipboard.store'
+import { extractSnippetParams } from '../../utils/snippetParams'
 
 interface PaletteItem {
   id: string
@@ -37,6 +40,7 @@ const settingsDialog = useSettingsDialog()
 const historyDialog = useHistoryDialog()
 const { openDock } = useDockState()
 const updateStore = useUpdateStore()
+const companion = useCompanionStore()
 const notify = useNotify()
 const shortcutsDialog = useShortcutsDialog()
 
@@ -103,6 +107,25 @@ const groups = computed<PaletteGroup[]>(() => {
       onSelect: () => run(() => ui.toggleLocalPane())
     },
     { id: 'act-shortcuts', label: 'Keyboard shortcuts', icon: 'i-lucide-keyboard', onSelect: () => run(() => shortcutsDialog.open()) },
+    {
+      id: 'act-companion',
+      label: 'Open Ferry Companion',
+      icon: 'i-lucide-ship',
+      suffix: 'Ctrl+Space',
+      onSelect: () => run(() => companion.openPanel('chat'))
+    },
+    {
+      id: 'act-companion-whats-new',
+      label: "What's New in Ferry",
+      icon: 'i-lucide-sparkles',
+      onSelect: () => run(() => companion.openPanel('whats-new'))
+    },
+    {
+      id: 'act-companion-report',
+      label: 'Report a Bug / Send Feedback',
+      icon: 'i-lucide-bug',
+      onSelect: () => run(() => companion.openPanel('report'))
+    },
     {
       id: 'act-fullscreen',
       label: 'Toggle full screen (F11)',
@@ -178,12 +201,16 @@ const groups = computed<PaletteGroup[]>(() => {
 
   const side = ui.activePane
   const paneActions = getPaneActions(side)
+  const fileClipboard = useFileClipboardStore()
   const count = paneActions?.selectedCount() ?? 0
   const fileItems: PaletteItem[] = []
-  if (paneActions && count > 0) {
+  if (sessions.status === 'connected' && paneActions && count > 0) {
     if (count === 1) {
       fileItems.push({ id: 'file-rename', label: 'Rename selected', icon: 'i-lucide-pencil', onSelect: () => run(paneActions.rename) })
       fileItems.push({ id: 'file-edit', label: 'Edit selected', icon: 'i-lucide-file-pen', onSelect: () => run(paneActions.edit) })
+    }
+    if (paneActions.copy) {
+      fileItems.push({ id: 'file-copy', label: `Copy ${count} selected`, icon: 'i-lucide-copy', onSelect: () => run(paneActions.copy!) })
     }
     fileItems.push({
       id: 'file-transfer',
@@ -193,6 +220,54 @@ const groups = computed<PaletteGroup[]>(() => {
     })
     fileItems.push({ id: 'file-delete', label: `Delete ${count} selected`, icon: 'i-lucide-trash-2', onSelect: () => run(paneActions.remove) })
   }
+  if (sessions.status === 'connected' && paneActions?.canPaste?.() && paneActions.paste) {
+    fileItems.push({
+      id: 'file-paste',
+      label: `Paste ${fileClipboard.count} copied`,
+      icon: 'i-lucide-clipboard-paste',
+      onSelect: () => run(paneActions.paste!)
+    })
+  }
+
+  const snippetItems: PaletteItem[] = companion.allSnippets.map((snip) => ({
+    id: `snip-${snip.id}`,
+    label: snip.label,
+    suffix: snip.command.length > 44 ? `${snip.command.slice(0, 44)}…` : snip.command,
+    icon: 'i-lucide-terminal',
+    onSelect: () =>
+      run(async () => {
+        if (sessions.status !== 'connected') {
+          try {
+            await navigator.clipboard.writeText(snip.command)
+            notify.success('Snippet copied', snip.label)
+          } catch {
+            notify.error('Copy failed', 'Could not access clipboard.')
+          }
+          return
+        }
+        if (extractSnippetParams(snip.command).length > 0) {
+          companion.openPanel('snippets')
+          return
+        }
+        const msg = await companion.insertCommandInTerminal(snip.command)
+        notify.success('Snippet staged', msg)
+      })
+  }))
+
+  const historyItems: PaletteItem[] = companion.commandHistory.slice(0, 5).map((entry) => ({
+    id: `cmdhist-${entry.id}`,
+    label: entry.command,
+    suffix: entry.hostLabel ?? 'Recent',
+    icon: 'i-lucide-history',
+    onSelect: () =>
+      run(async () => {
+        if (sessions.status === 'connected') {
+          await companion.insertCommandInTerminal(entry.command)
+        } else {
+          await navigator.clipboard.writeText(entry.command).catch(() => {})
+        }
+      })
+  }))
 
   return [
     ...(fileItems.length > 0 ? [{ id: 'files', label: 'Selected files', items: fileItems }] : []),
@@ -201,6 +276,8 @@ const groups = computed<PaletteGroup[]>(() => {
       label: 'Actions',
       items: actionItems
     },
+    ...(snippetItems.length > 0 ? [{ id: 'snippets', label: 'Snippets', items: snippetItems }] : []),
+    ...(historyItems.length > 0 ? [{ id: 'recent-commands', label: 'Recent commands', items: historyItems }] : []),
     {
       id: 'sites',
       label: 'Connect to site',

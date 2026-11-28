@@ -185,7 +185,7 @@ export class EditSessionManager {
         this.edits.set(editId, entry)
         this.watch(entry)
 
-        this.broadcast({ editId, sessionId, remotePath, localTempPath, state: 'opened' })
+        this.broadcast({ editId, sessionId, remotePath, localTempPath, state: 'opened', viaSudo })
         return { editId, localTempPath }
       } catch (e) {
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
@@ -220,7 +220,8 @@ export class EditSessionManager {
         remotePath: entry.remotePath,
         localTempPath: entry.localTempPath,
         dirty,
-        sessionClosed: entry.sessionClosed
+        sessionClosed: entry.sessionClosed,
+        viaSudo: entry.viaSudo
       })
     }
     return result

@@ -78,7 +78,7 @@ async function onContinue(): Promise<void> {
     :dismissible="false"
     :close="false"
     title="Privacy Policy & Terms of Service"
-    description="Please review and accept Ferry's Privacy Policy and Terms of Service before continuing."
+    description="Review and accept Ferry's Privacy Policy and Terms of Service before continuing."
     :ui="{ content: 'max-w-xl' }"
   >
     <template #title>

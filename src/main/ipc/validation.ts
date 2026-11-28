@@ -13,6 +13,18 @@ export function failValidation(channel: string, message: string): never {
   throw new SshError('VALIDATION', message)
 }
 
+export function optionalBoolean(value: unknown, field: string, channel: string): boolean | undefined {
+  if (value === undefined) return undefined
+  return requireBoolean(value, field, channel)
+}
+
+export function requireStringArray(value: unknown, field: string, channel: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    failValidation(channel, `${channel} requires "${field}" to be a string array`)
+  }
+  return value
+}
+
 export function requireObject(value: unknown, channel: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     failValidation(channel, `${channel} requires an object payload`)

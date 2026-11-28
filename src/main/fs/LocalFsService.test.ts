@@ -8,12 +8,14 @@ import {
   cleanupAllStagedDrops,
   cleanupStagedDropPath,
   cleanupStagedDropPaths,
+  copyLocal,
   finishStageDrop,
   list,
   MAX_STAGE_DROP_BYTES,
   MAX_STAGE_DROP_DEPTH,
   MAX_STAGE_DROP_ENTRIES,
   openStageDropWriteStream,
+  remove,
   rename,
   stageDroppedEntries,
   touchStageDropSession
@@ -565,4 +567,79 @@ it('keeps both files when inline rename has no replacement approval', async () =
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+describe('LocalFsService.copyLocal', () => {
+  it('copies files and nested folders recursively into another directory', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-copy-'))
+    try {
+      const srcDir = path.join(root, 'src')
+      const destDir = path.join(root, 'dest')
+      mkdirSync(path.join(srcDir, 'folder', 'sub'), { recursive: true })
+      mkdirSync(destDir, { recursive: true })
+      writeFileSync(path.join(srcDir, 'alpha.txt'), 'hello')
+      writeFileSync(path.join(srcDir, 'folder', 'sub', 'nested.txt'), 'world')
+
+      const res = await copyLocal([path.join(srcDir, 'alpha.txt'), path.join(srcDir, 'folder')], destDir)
+      expect(res.failures).toEqual([])
+      expect(res.copied).toHaveLength(2)
+      expect(readFileSync(path.join(destDir, 'alpha.txt'), 'utf8')).toBe('hello')
+      expect(readFileSync(path.join(destDir, 'folder', 'sub', 'nested.txt'), 'utf8')).toBe('world')
+      expect(existsSync(path.join(srcDir, 'alpha.txt'))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates non-destructive numbered duplicates when pasting into the same directory', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-copy-dup-'))
+    try {
+      const file = path.join(root, 'notes.txt')
+      const folder = path.join(root, 'bundle')
+      writeFileSync(file, 'v1')
+      mkdirSync(folder)
+      writeFileSync(path.join(folder, 'item.txt'), 'inside')
+
+      const first = await copyLocal([file, folder], root)
+      expect(first.failures).toEqual([])
+      expect(first.copied.map((c) => path.basename(c.targetPath))).toEqual(['notes (1).txt', 'bundle (1)'])
+
+      const second = await copyLocal([file, folder], root)
+      expect(second.failures).toEqual([])
+      expect(second.copied.map((c) => path.basename(c.targetPath))).toEqual(['notes (2).txt', 'bundle (2)'])
+      expect(readFileSync(file, 'utf8')).toBe('v1')
+      expect(readFileSync(path.join(root, 'notes (2).txt'), 'utf8')).toBe('v1')
+      expect(readFileSync(path.join(root, 'bundle (2)', 'item.txt'), 'utf8')).toBe('inside')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects copying a folder into itself or a descendant and isolates per-item failures', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ferry-copy-guard-'))
+    try {
+      const folder = path.join(root, 'parent')
+      const child = path.join(folder, 'child')
+      const goodFile = path.join(root, 'good.txt')
+      mkdirSync(child, { recursive: true })
+      writeFileSync(goodFile, 'ok')
+
+      const selfRes = await copyLocal([folder], folder)
+      expect(selfRes.copied).toEqual([])
+      expect(selfRes.failures[0].error).toMatch(/itself or one of its subdirectories/i)
+
+      const descRes = await copyLocal([folder, goodFile], child)
+      expect(descRes.copied.map((c) => path.basename(c.targetPath))).toEqual(['good.txt'])
+      expect(descRes.failures).toHaveLength(1)
+      expect(descRes.failures[0].error).toMatch(/itself or one of its subdirectories/i)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('LocalFsService.remove', () => {
+  it('rejects an empty path with INVALID_TARGET', async () => {
+    await expect(remove('', true)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
+  })
 })

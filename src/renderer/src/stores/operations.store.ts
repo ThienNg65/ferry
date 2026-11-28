@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { OperationEvent, OperationKind, OperationState } from '@shared/contract'
 import { invoke, onEvent } from '../api'
+import { useCompanionStore } from './companion.store'
 
 /** How long a successfully-finished row lingers in the Activity list before auto-dropping. */
 const DONE_ROW_TTL_MS = 10_000
@@ -85,6 +86,19 @@ export const useOperationsStore = defineStore('operations', {
           error: evt.error,
           ...(evt.summary ? { summary: evt.summary } : {})
         })
+        if (evt.state === 'error' && existing?.state !== 'error' && evt.error) {
+          try {
+            useCompanionStore().notifyWorkspaceError({
+              scopeKey: evt.sessionId ?? '__global__',
+              category: 'operation',
+              operationKind: evt.kind,
+              label: evt.label,
+              error: evt.error
+            })
+          } catch {
+            // Non-fatal in isolated store tests.
+          }
+        }
         if (evt.state === 'done') {
           // Successful rows self-clean; error/cancelled rows stay until
           // clearFinished() so the user can read what happened.

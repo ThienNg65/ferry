@@ -6,8 +6,10 @@ import { HistoryStore } from '../main/history/HistoryStore'
 import { EditSessionManager } from '../main/edit/EditSessionManager'
 import { TailManager } from '../main/tail/TailManager'
 import { AppSettingsStore } from '../main/app/AppSettingsStore'
+import { BookmarkStore } from '../main/bookmarks/BookmarkStore'
 import { TransferQueue } from '../main/transfer/TransferQueue'
 import { KnownHostsStore } from '../main/ssh/KnownHostsStore'
+import { SiteStore } from '../main/sites/SiteStore'
 import { initAutoUpdater } from '../main/update/AutoUpdater'
 import { registerUpdaterExitHandler } from '../main/update/SidecarUpdater'
 import { cleanupAllStagedDrops } from '../main/fs/LocalFsService'
@@ -32,9 +34,19 @@ export function initSidecarServices(): void {
     console.error('sidecar: history.json unreadable at startup:', e)
   }
   try {
-    KnownHostsStore.getInstance()
+    KnownHostsStore.getInstance().list()
   } catch (e) {
     console.error('sidecar: known_hosts.json unreadable at startup:', e)
+  }
+  try {
+    SiteStore.getInstance().list()
+  } catch (e) {
+    console.error('sidecar: sites.json unreadable at startup:', e)
+  }
+  try {
+    BookmarkStore.getInstance().list()
+  } catch (e) {
+    console.error('sidecar: bookmarks.json unreadable at startup:', e)
   }
   void cleanupAllStagedDrops().catch(() => undefined)
   if (host().isPackaged && settings && settings.termsAcceptance !== null) {

@@ -6,7 +6,7 @@
   font-family: 'Plus Jakarta Sans Variable';
   font-style: normal;
   font-weight: 400 700;
-  font-display: block;
+  font-display: swap;
   src: url('./fonts/PlusJakartaSans-Variable.woff2') format('woff2-variations');
 }
 
@@ -14,7 +14,7 @@
   font-family: 'JetBrains Mono Variable';
   font-style: normal;
   font-weight: 400 700;
-  font-display: block;
+  font-display: swap;
   src: url('./fonts/JetBrainsMono-Variable.woff2') format('woff2-variations');
 }
 
@@ -633,6 +633,14 @@ html.ferry-glass .ferry-glass-overlay {
   box-shadow: var(--ferry-glass-overlay-shadow);
 }
 
+/* Higher-opacity scrim for the docked Companion sheet so underlying terminal/SFTP text never bleeds through */
+html.ferry-glass [data-companion-panel] {
+  background-color: rgba(255, 255, 255, 0.96);
+}
+html.dark.ferry-glass [data-companion-panel] {
+  background-color: rgba(15, 23, 42, 0.95);
+}
+
 html.ferry-glass .ferry-glass-active-tab {
   background-color: var(--ferry-glass-tab-active-bg);
   box-shadow: var(--ferry-glass-tab-highlight);
@@ -682,10 +690,10 @@ html.ferry-glass [data-slot="viewport"] > li {
   background-color: var(--ferry-glass-menu-bg) !important;
 }
 
-/* Blink skips nested backdrop-filter over an already-filtered dialog sheet; use an opaque menu surface to prevent text bleed-through. */
-html.ferry-glass:has([role="dialog"]) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
-html.ferry-glass:has([role="dialog"]) [role="listbox"],
-html.ferry-glass:has([role="dialog"]) [role="menu"] {
+/* Blink skips nested backdrop-filter over an already-filtered dialog/companion sheet; use an opaque menu surface to prevent text bleed-through. */
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [data-reka-popper-content-wrapper] > :not([role="tooltip"]):not(:has([role="tooltip"])),
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [role="listbox"],
+html.ferry-glass:is(:has([role="dialog"]), :has([data-companion-panel])) [role="menu"] {
   background-color: var(--ferry-glass-menu-nested-bg) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -728,6 +736,7 @@ html.ferry-glass [role="alert"][aria-label="loading"][aria-busy="true"] {
 
 html.ferry-glass .ferry-glass-card input,
 html.ferry-glass .ferry-glass-overlay input,
+html.ferry-glass .ferry-glass-overlay textarea,
 html.ferry-glass .ferry-glass-card [role="combobox"],
 html.ferry-glass .ferry-glass-overlay [role="combobox"] {
   background-color: var(--ferry-surface-subtle);
@@ -761,5 +770,10 @@ html.ferry-glass .ferry-glass-overlay [role="combobox"] {
     --ferry-glass-menu-nested-bg: #0f172a;
     --ferry-glass-overlay-blur: none;
     --ferry-surface-subtle: #1e293b;
+  }
+
+  html.ferry-glass [data-companion-panel],
+  html.dark.ferry-glass [data-companion-panel] {
+    background-color: var(--ferry-glass-overlay-bg);
   }
 }

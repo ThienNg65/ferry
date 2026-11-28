@@ -7,7 +7,9 @@ import type {
   HostKeyPromptEvent,
   KeyboardInteractiveRequestEvent,
   QuickConnectInput,
+  RemoteHostInfo,
   Site,
+  SessionHostInfoEvent,
   SessionOpenResult,
   SessionStatus,
   SessionStatusEvent,
@@ -15,6 +17,8 @@ import type {
 } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { MAX_UI_PREF_LENGTH, migrateLegacyPref, readStored, writeStored } from '../utils/uiPref'
+import { useCompanionStore } from './companion.store'
 import { useLocalFsStore } from './localFs.store'
 import { useRemoteFsStore } from './remoteFs.store'
 import { useTerminalStreamsStore } from './terminalStreams.store'
@@ -36,11 +40,25 @@ export interface RecentQuickConnect {
   proxyMode?: 'inherit' | 'none' | 'custom'
 }
 
-const RECENT_QUICK_CONNECT_KEY = 'ferry:recentQuickConnect'
+const RECENT_QUICK_CONNECT_KEY = 'ferry:ui:recentQuickConnect'
+const LEGACY_RECENT_QUICK_CONNECT_KEY = 'ferry:recentQuickConnect'
 const MAX_RECENT_QUICK_CONNECTS = 8
 
 /** Volatile in-memory Quick Connect credentials keyed by tabId — never persisted to localStorage. */
 const ephemeralQuickSecrets = new Map<string, { password?: string; passphrase?: string }>()
+
+function teardownSession(sessionId: string, rebindTailsTo?: string): Promise<void> {
+  useRemoteFsStore().clearSession(sessionId)
+  useFileFiltersStore().clearEphemeralSession(sessionId)
+  useMonitorStore().clearSession(sessionId)
+  void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
+  const tails = useTailStreamsStore()
+  if (rebindTailsTo) {
+    tails.rebindSession?.(sessionId, rebindTailsTo)
+    return Promise.resolve()
+  }
+  return tails.closeForSession(sessionId)
+}
 
 function sanitizeQuickConnectInput(
   input: QuickConnectInput
@@ -64,8 +82,8 @@ function toRecentEntry(
 
 function loadRecentQuickConnects(): RecentQuickConnect[] {
   try {
-    if (typeof localStorage === 'undefined') return []
-    const raw = localStorage.getItem(RECENT_QUICK_CONNECT_KEY)
+    migrateLegacyPref(LEGACY_RECENT_QUICK_CONNECT_KEY, RECENT_QUICK_CONNECT_KEY)
+    const raw = readStored(RECENT_QUICK_CONNECT_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -99,13 +117,14 @@ function loadRecentQuickConnects(): RecentQuickConnect[] {
   }
 }
 
+export function serializeRecentQuickConnects(entries: RecentQuickConnect[]): string {
+  const kept = entries.slice(0, MAX_RECENT_QUICK_CONNECTS)
+  while (kept.length > 0 && JSON.stringify(kept).length > MAX_UI_PREF_LENGTH) kept.pop()
+  return JSON.stringify(kept)
+}
+
 function saveRecentQuickConnects(entries: RecentQuickConnect[]): void {
-  try {
-    if (typeof localStorage === 'undefined') return
-    localStorage.setItem(RECENT_QUICK_CONNECT_KEY, JSON.stringify(entries.slice(0, MAX_RECENT_QUICK_CONNECTS)))
-  } catch {
-    // Ignore storage quota / disabled localStorage errors.
-  }
+  writeStored(RECENT_QUICK_CONNECT_KEY, serializeRecentQuickConnects(entries))
 }
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
@@ -142,6 +161,8 @@ export interface SessionTab {
   pendingHostKeyMismatch: PendingHostKeyMismatch | null
   /** Sanitized Quick Connect parameters (secrets stripped) for promoting an active Quick Connect session to a saved site. */
   quickConnectInput?: Omit<QuickConnectInput, 'password' | 'passphrase'>
+  /** Automatically probed remote OS/distro/shell/init metadata for this connected session. */
+  remoteHostInfo?: RemoteHostInfo | null
 }
 
 type ConnectRequest = { siteId: string } | { quickConnect: QuickConnectInput }
@@ -162,6 +183,7 @@ interface SessionsState {
   recentQuickConnects: RecentQuickConnect[]
   unsubscribeStatus: (() => void) | null
   unsubscribeProgress: (() => void) | null
+  unsubscribeHostInfo: (() => void) | null
   unsubscribeKeyboardInteractive: (() => void) | null
   /** Per-session queue of live keyboard-interactive (2FA/OTP) prompts so concurrent tab connects never overwrite each other. */
   pendingKeyboardPrompts: KeyboardInteractiveRequestEvent[]
@@ -199,6 +221,7 @@ export const useSessionsStore = defineStore('sessions', {
       recentQuickConnects: loadRecentQuickConnects(),
       unsubscribeStatus: null,
       unsubscribeProgress: null,
+      unsubscribeHostInfo: null,
       unsubscribeKeyboardInteractive: null,
       pendingKeyboardPrompts: [],
       unsubscribeHostKey: null,
@@ -313,12 +336,27 @@ export const useSessionsStore = defineStore('sessions', {
         tab.statusMessage = evt.message ?? null
         if (wasConnected && evt.status === 'error') {
           notify.error('Connection lost', tab.label ? `${tab.label}: ${evt.message ?? ''}` : evt.message)
+          try {
+            useCompanionStore().notifyWorkspaceError({
+              scopeKey: evt.sessionId,
+              category: 'ssh-connect',
+              hostLabel: tab.hostLabel ?? tab.label ?? undefined,
+              error: evt.message || 'SSH connection dropped unexpectedly'
+            })
+          } catch {
+            // Non-fatal in isolated store tests.
+          }
         }
       })
       this.unsubscribeProgress = onEvent<SessionProgressEvent>(EVENT_CHANNELS.sessionProgress, (evt) => {
         const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
         if (!tab) return
         tab.progressMessages.push(evt.message)
+      })
+      this.unsubscribeHostInfo = onEvent<SessionHostInfoEvent>(EVENT_CHANNELS.sessionHostInfo, (evt) => {
+        const tab = this.tabs.find((t) => t.sessionId === evt.sessionId)
+        if (!tab) return
+        tab.remoteHostInfo = evt.info
       })
     },
 
@@ -421,17 +459,14 @@ export const useSessionsStore = defineStore('sessions', {
       const nextSessionId = crypto.randomUUID()
       tab.sessionId = nextSessionId
       if (previousSessionId) {
-        useTailStreamsStore().rebindSession?.(previousSessionId, nextSessionId)
         this.clearPromptsForSession(previousSessionId)
-        useRemoteFsStore().clearSession(previousSessionId)
-        useFileFiltersStore().clearEphemeralSession(previousSessionId)
-        useMonitorStore().clearSession(previousSessionId)
-        void useTerminalStreamsStore().disposeForSession(previousSessionId).catch(() => {})
+        void teardownSession(previousSessionId, nextSessionId)
         void invoke<void>(INVOKE_CHANNELS.sessionClose, previousSessionId).catch(() => {})
       }
       tab.progressMessages = []
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
+      tab.remoteHostInfo = null
       tab.label = label
       tab.hostLabel = hostLabel
       tab.siteId = siteId
@@ -479,6 +514,13 @@ export const useSessionsStore = defineStore('sessions', {
         else void remoteFs.loadForSession(result.sessionId)
         tab.status = result.status
         tab.hadConnected = result.status === 'connected'
+        if (result.status === 'connected') {
+          try {
+            useCompanionStore().clearWorkspaceError(tab.tabId)
+          } catch {
+            // Non-fatal in isolated store tests.
+          }
+        }
         tab.connecting = false
         tab.preConnectSnapshot = null
         notify.success(`Connected to ${label}`)
@@ -507,7 +549,7 @@ export const useSessionsStore = defineStore('sessions', {
       } catch (e) {
         if (startedSessionId) {
           this.clearPromptsForSession(startedSessionId)
-          void useTerminalStreamsStore().disposeForSession(startedSessionId).catch(() => {})
+          void teardownSession(startedSessionId).catch(() => {})
         }
         if (isAbandoned()) {
           return
@@ -515,6 +557,25 @@ export const useSessionsStore = defineStore('sessions', {
         tab.status = 'error'
         tab.statusMessage = e instanceof Error ? e.message : String(e)
         tab.preConnectSnapshot = null
+        const errMsg = tab.statusMessage
+        const category =
+          e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH'
+            ? 'host-key'
+            : /\b(proxy|socks5?)\b/i.test(errMsg)
+              ? 'proxy'
+              : /\b(jump\s*host|bastion|hop\s*\d)\b/i.test(errMsg)
+                ? 'bastion'
+                : 'ssh-connect'
+        try {
+          useCompanionStore().notifyWorkspaceError({
+            scopeKey: tab.tabId,
+            category,
+            hostLabel: hostLabel || label,
+            error: errMsg
+          })
+        } catch {
+          // Non-fatal in isolated store tests.
+        }
         if (e instanceof IpcError && e.code === 'HOST_KEY_MISMATCH') {
           tab.pendingHostKeyMismatch = { message: e.message, request, label, hostLabel, siteId, hostKey: e.hostKey }
         } else {
@@ -527,6 +588,10 @@ export const useSessionsStore = defineStore('sessions', {
           tab.connectPromise = null
         }
       }
+    },
+
+    reloadRecentQuickConnects(): void {
+      this.recentQuickConnects = loadRecentQuickConnects()
     },
 
     recordRecentQuickConnect(input: Omit<QuickConnectInput, 'password' | 'passphrase'>): void {
@@ -709,10 +774,7 @@ export const useSessionsStore = defineStore('sessions', {
       try {
         await invoke<void>(INVOKE_CHANNELS.sessionClose, sessionId)
       } finally {
-        useRemoteFsStore().clearSession(sessionId)
-        useFileFiltersStore().clearEphemeralSession(sessionId)
-        await useTailStreamsStore().closeForSession(sessionId)
-        void useTerminalStreamsStore().disposeForSession(sessionId).catch(() => {})
+        await teardownSession(sessionId)
       }
     },
 
@@ -730,16 +792,13 @@ export const useSessionsStore = defineStore('sessions', {
       tab.connectPromise = null
       tab.statusMessage = null
       tab.pendingHostKeyMismatch = null
+      tab.remoteHostInfo = null
       tab.preConnectSnapshot = null
       if (sid) {
         try {
           await invoke<void>(INVOKE_CHANNELS.sessionClose, sid)
         } finally {
-          useRemoteFsStore().clearSession(sid)
-          useFileFiltersStore().clearEphemeralSession(sid)
-          useMonitorStore().clearSession(sid)
-          await useTailStreamsStore().closeForSession(sid)
-          void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
+          await teardownSession(sid)
         }
       }
     },
@@ -890,19 +949,14 @@ export const useSessionsStore = defineStore('sessions', {
           error instanceof Error ? error.message : String(error)
         )
       } finally {
-        useRemoteFsStore().clearSession(sid)
-        useFileFiltersStore().clearEphemeralSession(sid)
-        useMonitorStore().clearSession(sid)
         try {
-          await useTailStreamsStore().closeForSession(sid)
+          await teardownSession(sid)
         } catch (error) {
           useNotify().error(
             'Could not clean up session streams',
             error instanceof Error ? error.message : String(error)
           )
         }
-        // Terminal disposal stays asynchronous to avoid blocking other tabs.
-        void useTerminalStreamsStore().disposeForSession(sid).catch(() => {})
       }
     }
   }

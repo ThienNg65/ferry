@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, type WindowThemeSyncInput } from '@shared/contract'
 import { invoke } from '../api'
+import { clearDirtyUiPrefs, isDirtyUiPref, readStored, writeStored } from '../utils/uiPref'
 import { clampColumnWidth, parseColumnPrefs, type ColumnKey, type ColumnPrefs } from '../utils/columnPrefs'
-import { generateShadeRamp } from '../utils/colorRamp'
+import { generateShadeRamp, isWarmAccent } from '../utils/colorRamp'
 import {
   DEFAULT_FONT_ID,
   DEFAULT_FONT_SIZE,
@@ -35,28 +36,6 @@ function loadScrollback(): number {
   return SCROLLBACK_OPTIONS.includes(stored) ? stored : 5000
 }
 
-function readStored(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function writeStored(key: string, value: string, dirtyKeys?: Set<string>): void {
-  dirtyKeys?.add(key)
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // Ignore storage quota / restricted context errors.
-  }
-  if (typeof window !== 'undefined' && window.api) {
-    void invoke<void>(INVOKE_CHANNELS.settingsSetUiPref, { key, value }).catch(() => {
-      // Non-fatal in isolated unit tests or disconnected contexts.
-    })
-  }
-}
-
 const STORAGE_KEY = 'ferry:ui:showLocalPane'
 const PERMISSIONS_DISPLAY_KEY = 'ferry:ui:permissionsDisplay'
 const DENSITY_KEY = 'ferry:ui:density'
@@ -74,6 +53,7 @@ const ACCENT_KEY = 'ferry:ui:accentColor'
 const LOCAL_PANE_WIDTH_KEY = 'ferry:ui:localPaneWidth'
 const GLASS_UI_KEY = 'ferry:ui:glassUi'
 const GLASS_PROMO_DISMISSED_KEY = 'ferry:ui:glassUiPromoDismissed'
+const COMPANION_LAYOUT_KEY = 'ferry:ui:companionLayoutMode'
 /** Matches this app's own default `--color-brand-500` (see main.css) — picking this preset is a no-op vs. today's look. */
 export const DEFAULT_ACCENT_COLOR = '#0a84ff'
 export const DEFAULT_LOCAL_PANE_WIDTH = 50
@@ -82,6 +62,7 @@ export type PermissionsDisplay = 'technical' | 'friendly'
 export type Theme = 'light' | 'dark'
 export type Density = 'compact' | 'comfortable'
 export type DockPosition = 'bottom' | 'right'
+export type CompanionLayoutMode = 'split' | 'overlay'
 
 /** The dock's pre-resize default (matches the old fixed `h-56`) — zero regression for existing users. */
 export const MIN_DOCK_HEIGHT = 224
@@ -149,6 +130,7 @@ interface UiState {
   localPaneWidth: number
   glassUiEnabled: boolean
   glassUiPromoDismissed: boolean
+  companionLayoutMode: CompanionLayoutMode
   terminalScheme: string
   terminalFont: string
   terminalFontCustom: string
@@ -156,8 +138,6 @@ interface UiState {
   terminalLineHeight: number
   /** Which file pane the user last interacted with — per-launch layout state, not persisted. */
   activePane: 'local' | 'remote'
-  /** Keys modified locally during this session so delayed initial hydration cannot clobber newer edits. */
-  dirtyPrefKeys: Set<string>
 }
 
 function loadPermissionsDisplay(): PermissionsDisplay {
@@ -252,6 +232,7 @@ function clearAccentThemeSyncTimer(): void {
 
 async function applyTheme(theme: Theme): Promise<void> {
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.style.colorScheme = theme
   if (typeof window !== 'undefined' && window.api) {
     try {
       const payload: WindowThemeSyncInput = { theme, captionColor: resolveCaptionColorRef(theme) }
@@ -275,6 +256,11 @@ function applyAccentColor(hex: string): void {
   for (const [shade, value] of Object.entries(ramp)) {
     document.documentElement.style.setProperty(`--ui-color-primary-${shade}`, value)
   }
+  // The Companion orb follows the accent unless it is warm enough to read as production/failure.
+  document.documentElement.style.setProperty(
+    '--ferry-companion-accent',
+    isWarmAccent(hex) ? '#3a7ce8' : 'var(--ui-color-primary-500)'
+  )
 }
 
 function loadLocalPaneWidth(): number {
@@ -328,13 +314,13 @@ export const useUiStore = defineStore('ui', {
     localPaneWidth: loadLocalPaneWidth(),
     glassUiEnabled: loadGlassUiEnabled(),
     glassUiPromoDismissed: loadGlassUiPromoDismissed(),
+    companionLayoutMode: readStored(COMPANION_LAYOUT_KEY) === 'overlay' ? 'overlay' : 'split',
     terminalScheme: loadTerminalScheme(),
     terminalFont: loadTerminalFont(),
     terminalFontCustom: (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60),
     terminalFontSize: loadTerminalNumber(TERM_FONT_SIZE_KEY, DEFAULT_FONT_SIZE, clampFontSize),
     terminalLineHeight: loadTerminalNumber(TERM_LINE_HEIGHT_KEY, DEFAULT_LINE_HEIGHT, clampLineHeight),
-    activePane: 'remote',
-    dirtyPrefKeys: new Set()
+    activePane: 'remote'
   }),
 
   getters: {
@@ -349,27 +335,27 @@ export const useUiStore = defineStore('ui', {
   actions: {
     setTerminalScheme(id: string): void {
       this.terminalScheme = isSchemeId(id) ? id : DEFAULT_SCHEME_ID
-      writeStored(TERM_SCHEME_KEY, this.terminalScheme, this.dirtyPrefKeys)
+      writeStored(TERM_SCHEME_KEY, this.terminalScheme)
     },
 
     setTerminalFont(id: string): void {
       this.terminalFont = isFontId(id) ? id : DEFAULT_FONT_ID
-      writeStored(TERM_FONT_KEY, this.terminalFont, this.dirtyPrefKeys)
+      writeStored(TERM_FONT_KEY, this.terminalFont)
     },
 
     setTerminalFontCustom(name: string): void {
       this.terminalFontCustom = name.slice(0, 60)
-      writeStored(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom, this.dirtyPrefKeys)
+      writeStored(TERM_FONT_CUSTOM_KEY, this.terminalFontCustom)
     },
 
     setTerminalFontSize(size: number): void {
       this.terminalFontSize = clampFontSize(size)
-      writeStored(TERM_FONT_SIZE_KEY, String(this.terminalFontSize), this.dirtyPrefKeys)
+      writeStored(TERM_FONT_SIZE_KEY, String(this.terminalFontSize))
     },
 
     setTerminalLineHeight(height: number): void {
       this.terminalLineHeight = clampLineHeight(height)
-      writeStored(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight), this.dirtyPrefKeys)
+      writeStored(TERM_LINE_HEIGHT_KEY, String(this.terminalLineHeight))
     },
 
     resetTerminalAppearance(): void {
@@ -382,12 +368,12 @@ export const useUiStore = defineStore('ui', {
 
     toggleLocalPane(): void {
       this.showLocalPane = !this.showLocalPane
-      writeStored(STORAGE_KEY, String(this.showLocalPane), this.dirtyPrefKeys)
+      writeStored(STORAGE_KEY, String(this.showLocalPane))
     },
 
     togglePermissionsDisplay(): void {
       this.permissionsDisplay = this.permissionsDisplay === 'friendly' ? 'technical' : 'friendly'
-      writeStored(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay, this.dirtyPrefKeys)
+      writeStored(PERMISSIONS_DISPLAY_KEY, this.permissionsDisplay)
     },
 
     setColumnVisible(key: ColumnKey, visible: boolean): void {
@@ -402,7 +388,7 @@ export const useUiStore = defineStore('ui', {
 
     persistColumns(): void {
       try {
-        writeStored(COLUMNS_KEY, JSON.stringify(this.columns), this.dirtyPrefKeys)
+        writeStored(COLUMNS_KEY, JSON.stringify(this.columns))
       } catch {
         return
       }
@@ -410,27 +396,27 @@ export const useUiStore = defineStore('ui', {
 
     setTerminalScrollback(lines: number): void {
       this.terminalScrollback = SCROLLBACK_OPTIONS.includes(lines) ? lines : 5000
-      writeStored(TERM_SCROLLBACK_KEY, String(this.terminalScrollback), this.dirtyPrefKeys)
+      writeStored(TERM_SCROLLBACK_KEY, String(this.terminalScrollback))
     },
 
     setTerminalPredictiveEcho(enabled: boolean): void {
       this.terminalPredictiveEcho = enabled
-      writeStored(TERM_PREDICTIVE_ECHO_KEY, String(enabled), this.dirtyPrefKeys)
+      writeStored(TERM_PREDICTIVE_ECHO_KEY, String(enabled))
     },
 
     toggleShowHidden(): void {
       this.showHidden = !this.showHidden
-      writeStored(SHOW_HIDDEN_KEY, String(this.showHidden), this.dirtyPrefKeys)
+      writeStored(SHOW_HIDDEN_KEY, String(this.showHidden))
     },
 
     setDensity(density: Density): void {
       this.density = density
-      writeStored(DENSITY_KEY, density, this.dirtyPrefKeys)
+      writeStored(DENSITY_KEY, density)
     },
 
     setShortenPath(shorten: boolean): void {
       this.shortenPath = shorten
-      writeStored(SHORTEN_PATH_KEY, String(shorten), this.dirtyPrefKeys)
+      writeStored(SHORTEN_PATH_KEY, String(shorten))
     },
 
     /** Applies the persisted theme to the document and OS window frame — call once on app start. */
@@ -441,7 +427,7 @@ export const useUiStore = defineStore('ui', {
     toggleTheme(): void {
       clearAccentThemeSyncTimer()
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
-      writeStored(THEME_KEY, this.theme, this.dirtyPrefKeys)
+      writeStored(THEME_KEY, this.theme)
       void applyTheme(this.theme)
     },
 
@@ -452,20 +438,20 @@ export const useUiStore = defineStore('ui', {
     setGlassUiEnabled(enabled: boolean): void {
       clearAccentThemeSyncTimer()
       this.glassUiEnabled = enabled
-      writeStored(GLASS_UI_KEY, String(enabled), this.dirtyPrefKeys)
+      writeStored(GLASS_UI_KEY, String(enabled))
       applyGlassUiClass(enabled)
       void applyTheme(this.theme)
     },
 
     dismissGlassUiPromo(): void {
       this.glassUiPromoDismissed = true
-      writeStored(GLASS_PROMO_DISMISSED_KEY, 'true', this.dirtyPrefKeys)
+      writeStored(GLASS_PROMO_DISMISSED_KEY, 'true')
     },
 
     /** Resets Glass UI state and root class after `localStorage.clear()` without re-writing storage keys. */
     resetGlassUi(): void {
       clearAccentThemeSyncTimer()
-      this.dirtyPrefKeys.clear()
+      clearDirtyUiPrefs()
       this.glassUiEnabled = false
       this.glassUiPromoDismissed = false
       applyGlassUiClass(false)
@@ -475,7 +461,7 @@ export const useUiStore = defineStore('ui', {
     /** Hydrates UI preferences from sidecar `app-settings.json` (survives Neutralino ephemeral ports). */
     hydrateFromPrefs(prefs: Record<string, string>): void {
       const entries = Object.entries(prefs).filter(
-        ([key, value]) => key.startsWith('ferry:ui:') && typeof value === 'string' && !this.dirtyPrefKeys.has(key)
+        ([key, value]) => key.startsWith('ferry:ui:') && typeof value === 'string' && !isDirtyUiPref(key)
       )
       if (entries.length === 0) return
 
@@ -503,6 +489,7 @@ export const useUiStore = defineStore('ui', {
       this.localPaneWidth = loadLocalPaneWidth()
       this.glassUiEnabled = loadGlassUiEnabled()
       this.glassUiPromoDismissed = loadGlassUiPromoDismissed()
+      this.companionLayoutMode = readStored(COMPANION_LAYOUT_KEY) === 'overlay' ? 'overlay' : 'split'
       this.terminalScheme = loadTerminalScheme()
       this.terminalFont = loadTerminalFont()
       this.terminalFontCustom = (readStored(TERM_FONT_CUSTOM_KEY) ?? '').slice(0, 60)
@@ -521,7 +508,7 @@ export const useUiStore = defineStore('ui', {
 
     setAccentColor(hex: string): void {
       this.accentColor = hex
-      writeStored(ACCENT_KEY, hex, this.dirtyPrefKeys)
+      writeStored(ACCENT_KEY, hex)
       applyAccentColor(hex)
       if (this.glassUiEnabled) {
         clearAccentThemeSyncTimer()
@@ -535,19 +522,19 @@ export const useUiStore = defineStore('ui', {
     /** Clamps + persists a new dock height — call once at drag-end, and again on window resize to re-clamp against the new viewport. */
     setDockHeight(px: number): void {
       this.dockHeight = clampDockHeight(px, window.innerHeight)
-      writeStored(DOCK_HEIGHT_KEY, String(this.dockHeight), this.dirtyPrefKeys)
+      writeStored(DOCK_HEIGHT_KEY, String(this.dockHeight))
     },
 
     toggleDockPosition(): void {
       this.dockPosition = this.dockPosition === 'bottom' ? 'right' : 'bottom'
-      writeStored(DOCK_POSITION_KEY, this.dockPosition, this.dirtyPrefKeys)
+      writeStored(DOCK_POSITION_KEY, this.dockPosition)
     },
 
     /** Clamps + persists a new right-dock width. */
     setDockWidth(px: number): void {
       const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : 1280
       this.dockWidth = clampDockWidth(px, width)
-      writeStored(DOCK_WIDTH_KEY, String(this.dockWidth), this.dirtyPrefKeys)
+      writeStored(DOCK_WIDTH_KEY, String(this.dockWidth))
     },
 
     setLocalPaneWidth(percent: number): void {
@@ -555,7 +542,16 @@ export const useUiStore = defineStore('ui', {
     },
 
     saveLocalPaneWidth(): void {
-      writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth), this.dirtyPrefKeys)
+      writeStored(LOCAL_PANE_WIDTH_KEY, String(this.localPaneWidth))
+    },
+
+    setCompanionLayoutMode(mode: CompanionLayoutMode): void {
+      this.companionLayoutMode = mode
+      writeStored(COMPANION_LAYOUT_KEY, mode)
+    },
+
+    toggleCompanionLayoutMode(): void {
+      this.setCompanionLayoutMode(this.companionLayoutMode === 'split' ? 'overlay' : 'split')
     }
   }
 })

@@ -15,24 +15,22 @@ import { evaluateHostKey, fingerprintHostKey, KnownHostsStore } from './KnownHos
 import { mergeAnswers, partitionPrompts } from './keyboardInteractive'
 import { SiteStore } from '../sites/SiteStore'
 import { AppSettingsStore } from '../app/AppSettingsStore'
-import { TailManager } from '../tail/TailManager'
-import { TerminalManager } from '../terminal/TerminalManager'
-import { OperationRegistry } from '../operations/OperationRegistry'
-import { MonitorManager } from '../monitor/MonitorManager'
-import { EditSessionManager } from '../edit/EditSessionManager'
+import { parseRemoteHostInfo, REMOTE_HOST_PROBE_COMMAND } from './remoteHostProbe'
 import {
   EVENT_CHANNELS,
   type AuthMethod,
-  type IpcErrorCode,
   type JumpHostConfig,
   type HostKeyPromptEvent,
   type KeyboardInteractiveRequestEvent,
   type ProxyConfig,
   type QuickConnectInput,
+  type SessionHostInfoEvent,
   type SessionOpenResult,
   type SessionStatus,
   type SessionStatusEvent
 } from '../../shared/contract'
+
+export type SessionClosePhase = 'pre' | 'post'
 
 interface SessionEntry {
   sessionId: string
@@ -138,6 +136,7 @@ export class SessionManager {
   private readonly sessions = new Map<string, SessionEntry>()
   /** Resolvers for keyboard-interactive prompts currently awaiting a renderer response, keyed by requestId. */
   private readonly pendingConnects = new Map<string, () => void>()
+  private readonly closeHooks: Record<SessionClosePhase, Array<(sessionId: string) => void>> = { pre: [], post: [] }
   private readonly connectTimers = new Map<string, { pause: () => void; resume: () => void }>()
   private readonly pendingHostKeys = new Map<string, { sessionId: string; resolve: (accept: boolean) => void }>()
   private readonly pendingKeyboardInteractive = new Map<string, { sessionId: string; resolve: (responses: string[]) => void }>()
@@ -261,7 +260,20 @@ export class SessionManager {
   ): Promise<boolean> {
     return new Promise((resolve) => {
       const requestId = randomUUID()
-      this.pendingHostKeys.set(requestId, { sessionId, resolve })
+      const timer = setTimeout(() => {
+        if (this.pendingHostKeys.delete(requestId)) {
+          logSecurityEvent('ssh.host_key_prompt_timeout', { sessionId, host, port })
+          resolve(false)
+        }
+      }, 5 * 60_000)
+      timer.unref?.()
+      this.pendingHostKeys.set(requestId, {
+        sessionId,
+        resolve: (accept) => {
+          clearTimeout(timer)
+          resolve(accept)
+        }
+      })
       const payload: HostKeyPromptEvent = {
         requestId,
         sessionId,
@@ -286,7 +298,20 @@ export class SessionManager {
     this.pauseConnectTimer(sessionId)
     return new Promise<string[]>((resolve) => {
       const requestId = randomUUID()
-      this.pendingKeyboardInteractive.set(requestId, { sessionId, resolve })
+      const timer = setTimeout(() => {
+        if (this.pendingKeyboardInteractive.delete(requestId)) {
+          logSecurityEvent('ssh.kbi_prompt_timeout', { sessionId, name })
+          resolve([])
+        }
+      }, 5 * 60_000)
+      timer.unref?.()
+      this.pendingKeyboardInteractive.set(requestId, {
+        sessionId,
+        resolve: (responses) => {
+          clearTimeout(timer)
+          resolve(responses)
+        }
+      })
       const payload: KeyboardInteractiveRequestEvent = { requestId, sessionId, name, instructions, prompts }
       getHost().broadcast(EVENT_CHANNELS.keyboardInteractivePrompt, payload)
     }).finally(() => this.resumeConnectTimer(sessionId))
@@ -582,7 +607,7 @@ export class SessionManager {
   ): Promise<{ sessionId: string; status: SessionStatus }> {
     if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
       throw new SshError(
-        'INVALID_PORT' as unknown as IpcErrorCode,
+        'INVALID_PORT',
         'Port must be an integer between 1 and 65535'
       )
     }
@@ -845,24 +870,54 @@ export class SessionManager {
       ]))
     }
     entry.status = 'connected'
-    client.on('close', () => {
-      const current = this.sessions.get(sessionId)
-      if (current && current === entry && current.status === 'connected') {
-        current.status = 'error'
-        TailManager.getInstance().stopAllForSession(sessionId)
-        TerminalManager.getInstance().closeAllForSession(sessionId)
-        OperationRegistry.getInstance().cancelAllForSession(sessionId)
-        MonitorManager.getInstance().stopAllForSession(sessionId)
-        EditSessionManager.getInstance().closeAllForSession(sessionId)
-        for (let i = current.jumpClients.length - 1; i >= 0; i--) {
-          current.jumpClients[i].end()
-          current.jumpClients[i].destroy()
-        }
-        this.broadcastStatus(sessionId, 'error', 'Connection closed unexpectedly')
-      }
-    })
+    client.on('close', () => this.handleUnexpectedClose(sessionId, entry))
     this.broadcastStatus(sessionId, 'connected')
+    void this.probeHostInfo(sessionId, entry)
     return { sessionId, status: 'connected' }
+  }
+
+  /** Non-blocking post-connect probe for remote OS/distro/shell/init metadata. */
+  private async probeHostInfo(sessionId: string, entry: SessionEntry): Promise<void> {
+    try {
+      const res = await entry.shell.exec(REMOTE_HOST_PROBE_COMMAND, { timeoutMs: 4_000 })
+      if (this.sessions.get(sessionId) !== entry || entry.status !== 'connected') {
+        return
+      }
+      const info = parseRemoteHostInfo(res.stdout)
+      if (!info) return
+      const payload: SessionHostInfoEvent = { sessionId, info }
+      getHost().broadcast(EVENT_CHANNELS.sessionHostInfo, payload)
+    } catch {
+      // Non-fatal on restricted SFTP-only accounts or hosts without shell exec.
+    }
+  }
+
+  private handleUnexpectedClose(sessionId: string, entry: SessionEntry): void {
+    if (this.sessions.get(sessionId) !== entry || entry.status !== 'connected') return
+    const attempt = (step: () => void): void => {
+      try {
+        step()
+      } catch {
+        return
+      }
+    }
+    attempt(() => this.clearPendingPrompts(sessionId))
+    this.runCloseHooks('pre', sessionId, attempt)
+    entry.status = 'error'
+    this.runCloseHooks('post', sessionId, attempt)
+    for (let i = entry.jumpClients.length - 1; i >= 0; i--) {
+      attempt(() => entry.jumpClients[i].end())
+      attempt(() => entry.jumpClients[i].destroy())
+    }
+    attempt(() => this.broadcastStatus(sessionId, 'error', 'Connection closed unexpectedly'))
+  }
+
+  onSessionClosed(phase: SessionClosePhase, hook: (sessionId: string) => void): void {
+    this.closeHooks[phase].push(hook)
+  }
+
+  private runCloseHooks(phase: SessionClosePhase, sessionId: string, attempt: (step: () => void) => void): void {
+    for (const hook of this.closeHooks[phase]) attempt(() => hook(sessionId))
   }
 
   /** Releases all resources even if one shutdown step fails; safe on repeated close. */
@@ -886,12 +941,9 @@ export class SessionManager {
     // Stop tails before flipping status so remote kill commands can still run.
     if (entry.status === 'connecting') attempt(() => entry.abort())
     attempt(() => this.clearPendingPrompts(sessionId))
-    attempt(() => TailManager.getInstance().stopAllForSession(sessionId))
+    this.runCloseHooks('pre', sessionId, attempt)
     entry.status = 'disconnected'
-    attempt(() => TerminalManager.getInstance().closeAllForSession(sessionId))
-    attempt(() => OperationRegistry.getInstance().cancelAllForSession(sessionId))
-    attempt(() => MonitorManager.getInstance().stopAllForSession(sessionId))
-    attempt(() => EditSessionManager.getInstance().closeAllForSession(sessionId))
+    this.runCloseHooks('post', sessionId, attempt)
 
     // Close every socket, including bastions, even when an earlier step threw.
     // Prefer the SSH graceful disconnect; force-destroy only when end() fails.

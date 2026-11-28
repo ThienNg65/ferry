@@ -1,5 +1,6 @@
 import { handle } from './envelope'
 import {
+  failValidation,
   optionalSecretString,
   optionalString,
   requireEnum,
@@ -18,7 +19,6 @@ import {
   type SessionOpenResult
 } from '../../shared/contract'
 import { SessionManager } from '../ssh/SessionManager'
-import { SshError } from '../ssh/errors'
 
 function parseTrustedHostKey(value: unknown, channel: string): SessionOpenRequest['trustedHostKey'] {
   if (value === undefined) return undefined
@@ -75,7 +75,7 @@ export function registerSessionHandlers(): void {
       const qc = validateQuickConnect(request.quickConnect, INVOKE_CHANNELS.sessionOpen)
       return SessionManager.getInstance().openQuickConnect(qc, sessionId, trustedHostKey)
     }
-    throw new SshError('VALIDATION', 'session:open requires siteId or quickConnect')
+    failValidation(INVOKE_CHANNELS.sessionOpen, 'session:open requires siteId or quickConnect')
   })
 
   handle<void>(INVOKE_CHANNELS.sessionClose, (sessionId) => {
@@ -86,7 +86,7 @@ export function registerSessionHandlers(): void {
     const obj = requireObject(req, INVOKE_CHANNELS.sessionKeyboardInteractiveRespond) as unknown as KeyboardInteractiveRespondRequest
     const requestId = requireNonEmptyString(obj.requestId, 'requestId', INVOKE_CHANNELS.sessionKeyboardInteractiveRespond)
     if (!Array.isArray(obj.responses) || obj.responses.some((r) => typeof r !== 'string')) {
-      throw new SshError('VALIDATION', 'session:keyboardInteractiveRespond requires responses to be a string array')
+      failValidation(INVOKE_CHANNELS.sessionKeyboardInteractiveRespond, 'session:keyboardInteractiveRespond requires responses to be a string array')
     }
     SessionManager.getInstance().respondKeyboardInteractive(requestId, obj.responses)
   })

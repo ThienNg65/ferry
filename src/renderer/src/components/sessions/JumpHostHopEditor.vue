@@ -69,7 +69,7 @@ const hopKeyError = computed(() =>
 const hopPortError = computed(() => {
   if (!touched.value.port && !props.showValidation) return ''
   const port = Number(props.modelValue.port)
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be 1–65535'
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? '' : 'Port must be between 1 and 65535'
 })
 
 async function browsePrivateKey(): Promise<void> {

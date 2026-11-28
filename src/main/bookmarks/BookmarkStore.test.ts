@@ -23,7 +23,8 @@ vi.mock('conf', () => {
       // delete()/deleteForSite() all read the array, mutate/rebuild it, then
       // `.set()` it back; a shared reference here would mask bugs a real
       // disk-backed store wouldn't.
-      return JSON.parse(JSON.stringify(disks.get(this.name)![key]))
+      const val = disks.get(this.name)![key]
+      return val === undefined ? undefined : JSON.parse(JSON.stringify(val))
     }
     set(key: string, value: unknown): void {
       disks.get(this.name)![key] = JSON.parse(JSON.stringify(value))

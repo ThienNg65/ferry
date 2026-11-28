@@ -31,6 +31,23 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.release_created != 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.release_created != 'true'
+        with:
+          node-version: 22.23.5
+
+      - name: Sync VERSION file on release PR
+        if: steps.release.outputs.release_created != 'true'
+        env:
+          RELEASE_SYNC_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.ref_name }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: node .github/scripts/sync-release-pr-version.mjs
+
   sync-public-readme:
     needs: release-please
     if: ${{ github.event_name == 'push' && needs.release-please.outputs.release_created != 'true' }}

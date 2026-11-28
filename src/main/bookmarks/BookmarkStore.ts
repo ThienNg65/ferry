@@ -1,9 +1,11 @@
-import Conf from 'conf'
+import type Conf from 'conf'
 import { randomUUID } from 'crypto'
 import { host } from '../host/host'
+import { openSafeConf } from '../host/storeHelpers'
 import type { Bookmark, BookmarkInput } from '../../shared/contract'
 
-interface StoreSchema {
+type StoreSchema = {
+  schemaVersion?: number
   bookmarks: Bookmark[]
 }
 
@@ -14,10 +16,11 @@ export class BookmarkStore {
 
   private get store(): Conf<StoreSchema> {
     if (!this._store) {
-      this._store = new Conf<StoreSchema>({
+      this._store = openSafeConf<StoreSchema>({
         cwd: host().dataDir,
         configName: 'bookmarks',
-        defaults: { bookmarks: [] }
+        schemaVersion: 1,
+        defaults: { schemaVersion: 1, bookmarks: [] }
       })
     }
     return this._store
