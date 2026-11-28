@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - refactor/integration
   pull_request:
     branches:
       - main
+      - refactor/integration
 
 permissions:
   contents: read

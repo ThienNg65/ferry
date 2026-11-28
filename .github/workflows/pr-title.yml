@@ -3,7 +3,7 @@ name: PR title
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize, ready_for_review]
-    branches: [main]
+    branches: [main, refactor/integration]
 
 permissions:
   contents: read
