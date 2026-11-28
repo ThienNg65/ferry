@@ -21,6 +21,10 @@ final class Sidecar {
     env["FERRY_PACKAGED"] = "1"
     // The native shell is only shipped through the Mac App Store, which owns updates.
     env["FERRY_DISTRIBUTION"] = "mas"
+    // The sandbox home is the empty app container; start the local pane somewhere useful.
+    if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+      env["FERRY_DEFAULT_LOCAL_DIR"] = downloads.path
+    }
     process.environment = env
     stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
       let chunk = handle.availableData

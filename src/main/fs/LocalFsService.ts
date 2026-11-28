@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { SshError } from '../ssh/errors'
 import { logSecurityEvent } from '../host/securityLog'
+import { isStoreManaged } from '../host/distribution'
 import { MAX_STAGE_DROP_DEPTH, MAX_STAGE_DROP_ENTRIES } from '../../shared/contract'
 import { pickUniqueName } from '../../shared/uniqueName'
 import type {
@@ -33,9 +34,18 @@ function isRootOrEmpty(p: string): boolean {
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
-/** Lists a local directory. Falls back to the OS home directory when no path is given. */
+/**
+ * Where the local pane starts when no path is given. Store-managed macOS builds run sandboxed, so
+ * `os.homedir()` is the empty app container; the shell passes a sandbox-readable folder (Downloads) instead.
+ */
+function defaultLocalDir(): string {
+  const override = process.env['FERRY_DEFAULT_LOCAL_DIR']
+  return isStoreManaged() && override ? override : os.homedir()
+}
+
+/** Lists a local directory. Falls back to the default local directory when no path is given. */
 export async function list(dirPath?: string): Promise<FileListResult> {
-  const resolved = dirPath && dirPath.length > 0 ? path.resolve(dirPath) : os.homedir()
+  const resolved = dirPath && dirPath.length > 0 ? path.resolve(dirPath) : defaultLocalDir()
   let dirents
   try {
     dirents = await fs.readdir(resolved, { withFileTypes: true })

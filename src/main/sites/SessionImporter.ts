@@ -3,6 +3,7 @@ import { readFile } from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { promisify } from 'util'
+import { isStoreManaged } from '../host/distribution'
 import type { ImportedSessionCandidate, JumpHostConfig } from '../../shared/contract'
 import { decodeSessionName, listRegSubkeyPaths, parseDword, parseRegValues } from './regQuery'
 
@@ -302,6 +303,8 @@ export function parseSshConfig(
 
 /** `filePath` is a user-picked config: in the Mac App Store sandbox `os.homedir()` is the app container, not the real home. */
 export async function scanSshConfig(filePath?: string): Promise<ImportedSessionCandidate[]> {
+  // Store builds never scan `~/.ssh` on their own: the user must pick the file (sandbox + guideline 5.1.1).
+  if (!filePath && isStoreManaged()) return []
   return parseSshConfig(await readFile(filePath ?? path.join(os.homedir(), '.ssh', 'config'), 'utf-8'))
 }
 

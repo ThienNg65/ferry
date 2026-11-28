@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { parseSshConfig, scanPuttySessions, scanWinScpSessions } from './SessionImporter'
 
 // `reg query "<key>"`'s echoed header line uses whatever alias was passed
@@ -268,5 +268,14 @@ describe('parseSshConfig wildcard inheritance', () => {
   it('does not apply directives from unsupported Match sections', () => {
     const out = parseSshConfig('Host one\n User valid\nMatch all\n User invalid\nHost two\n HostName two.example', '/home/me', 'local')
     expect(out.map((c) => c.username)).toEqual(['valid', 'local'])
+  })
+})
+
+describe('scanSshConfig on store builds', () => {
+  it('does not read ~/.ssh/config unless the user picked a file', async () => {
+    vi.stubEnv('FERRY_DISTRIBUTION', 'mas')
+    const { scanSshConfig } = await import('./SessionImporter')
+    await expect(scanSshConfig()).resolves.toEqual([])
+    vi.unstubAllEnvs()
   })
 })
