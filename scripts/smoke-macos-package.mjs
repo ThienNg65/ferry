@@ -58,7 +58,7 @@ const openPathTestFile = join(openPathTestDir, 'external-editor.txt')
 writeFileSync(openPathTestFile, 'Ferry external-editor smoke test\\n')
 const selfTestJs = `return (async () => {
   const r = { api: typeof window.api, text: document.body.innerText.slice(0, 120) }
-  const path = ${JSON.stringify(openPathTestDir)}
+  const path = '/tmp'
   try { r.list = JSON.stringify(await window.api.invoke('fs:local:list', path)).slice(0, 200) } catch (e) { r.listError = String(e) }
   try { r.update = JSON.stringify(await window.api.invoke('update:getStatus')).slice(0, 200) } catch (e) { r.updateError = String(e) }
   try { r.openPath = await window.api.invoke('edit:openLocal', ${JSON.stringify(openPathTestFile)}) } catch (e) { r.openPathError = String(e) }
@@ -74,7 +74,7 @@ const result = await new Promise((resolveRun) => {
       ...process.env,
       FERRY_SELFTEST: '1',
       FERRY_KEYCHAIN_SERVICE: keychainService,
-      FERRY_SELFTEST_LIST: openPathTestDir,
+      FERRY_SELFTEST_LIST: '/tmp',
       FERRY_SELFTEST_JS: selfTestJs
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -110,7 +110,7 @@ if (result.ok) {
   }
   check('renderer exposes window.api', payload?.api === 'object')
   check('UI rendered', /Sites|New Tab/.test(payload?.text ?? ''))
-  check('sidecar RPC answered (fs:local:list)', typeof payload?.list === 'string' && payload.list.includes('"ok":true'))
+  check('sidecar RPC answered (fs:local:list)', typeof payload?.list === 'string' && payload.list.includes('"ok":true'), String(payload?.list ?? payload?.listError))
   check('updates reported as store-managed', typeof payload?.update === 'string' && payload.update.includes('the Mac App Store'))
   check(
     'packaged sidecar opened a local file in the default app',
