@@ -102,6 +102,20 @@ final class Bridge: NSObject, WKScriptMessageHandler {
     case "dialog.folder": Dialogs.open(args, folders: true, window: win, store: bookmarks) { done($0.first ?? "", nil) }
     case "dialog.save": Dialogs.save(args, window: win, store: bookmarks) { done($0, nil) }
     case "clipboard.readText": done(NSPasteboard.general.string(forType: .string) ?? "", nil)
+    case "openExternal":
+      guard let rawURL = args["url"] as? String,
+            let components = URLComponents(string: rawURL),
+            components.scheme?.lowercased() == "https",
+            let host = components.host, !host.isEmpty,
+            let url = components.url else {
+        done(nil, "Only absolute HTTPS URLs can be opened")
+        return
+      }
+      guard NSWorkspace.shared.open(url) else {
+        done(nil, "Could not open the external URL")
+        return
+      }
+      done(nil, nil)
     case "path.get":
       let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? ""
       done(dir, nil)

@@ -19,6 +19,8 @@ interface FerryAPI {
   on: (channel: OnChannel, listener: IpcListener) => () => void
   off: (channel: OnChannel, listener: IpcListener) => void
   send: (channel: string, ...args: unknown[]) => void
+  /** Opens a validated external HTTPS URL through the native host when supported. */
+  openExternal?: (url: string) => Promise<void>
   /** Resolves a dropped/selected `File`'s absolute path when available on the File object. */
   getPathForFile: (file: File) => string
   /** Streams a dropped `File` directly to the sidecar's staging directory over authenticated localhost HTTP. */

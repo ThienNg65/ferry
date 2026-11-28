@@ -70,6 +70,7 @@ export interface NeutralinoTransport {
   readClipboardText: () => Promise<string>
   getKnownPath: (name: 'downloads') => Promise<string>
   logDebug: (message: string) => Promise<void>
+  openExternal?: (url: string) => Promise<void>
   getAppVersion: () => string
   /** Resolves a dropped File to its host path when the webview itself doesn't expose one (WKWebView). */
   pathForFile?: (file: File) => string
@@ -799,6 +800,7 @@ export function createNeutralinoApi(
     on,
     off,
     send,
+    ...(transport.openExternal ? { openExternal: transport.openExternal } : {}),
     getPathForFile: (file: File) => (file as File & { path?: string }).path ?? transport.pathForFile?.(file) ?? '',
     ...(transport.waitForDirectEndpoint ? { stageDroppedFile } : {}),
     getPreloadTime: () => ({ start: apiStartTime, timeOrigin: apiTimeOrigin })
@@ -810,7 +812,7 @@ export function isNeutralinoRuntime(): boolean {
   return typeof window !== 'undefined' && typeof (window as unknown as { NL_PORT?: unknown }).NL_PORT === 'number'
 }
 
-/** Opens an external `https://` URL in the user's default browser (Neutralino `os.open`, falling back to `window.open`). */
+/** Opens an external `https://` URL in the user's default browser. */
 export async function openExternal(url: string): Promise<void> {
   let parsed: URL
   try {
@@ -829,6 +831,10 @@ export async function openExternal(url: string): Promise<void> {
     } catch {
       // Fall through to window.open if host does not support os.open
     }
+  }
+  if (typeof window !== 'undefined' && isWKWebViewHost() && window.api?.openExternal) {
+    await window.api.openExternal(safeUrl)
+    return
   }
   if (typeof window !== 'undefined') {
     window.open(safeUrl, '_blank', 'noopener,noreferrer')
