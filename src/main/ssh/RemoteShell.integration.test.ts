@@ -291,7 +291,7 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
       const rmdirSpy = vi.spyOn(shell, 'rmdir').mockRejectedValue(new Error('Unexpected SFTP rmdir'))
 
       try {
-        await expect(shell.deleteRecursive(remotePath, testDir)).rejects.toMatchObject({ code: 'VALIDATION' })
+        await expect(shell.deleteRecursive(remotePath, testDir)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
         expect(execSpy).not.toHaveBeenCalled()
         expect(lstatSpy).not.toHaveBeenCalled()
         expect(realpathSpy).not.toHaveBeenCalled()
@@ -322,7 +322,7 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
       }).deleteRecursiveSftp
 
       try {
-        await expect(fallback.call(shell, remotePath, testDir)).rejects.toMatchObject({ code: 'VALIDATION' })
+        await expect(fallback.call(shell, remotePath, testDir)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
         expect(lstatSpy).not.toHaveBeenCalled()
         expect(realpathSpy).not.toHaveBeenCalled()
         expect(readdirSpy).not.toHaveBeenCalled()
