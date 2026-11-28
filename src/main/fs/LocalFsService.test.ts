@@ -643,3 +643,31 @@ describe('LocalFsService.remove', () => {
     await expect(remove('', true)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
   })
 })
+
+describe('LocalFsService.list default directory', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('starts in the shell-provided folder for store-managed builds', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'ferry-default-'))
+    try {
+      writeFileSync(path.join(dir, 'marker.txt'), 'x')
+      vi.stubEnv('FERRY_DISTRIBUTION', 'mas')
+      vi.stubEnv('FERRY_DEFAULT_LOCAL_DIR', dir)
+      const res = await list()
+      expect(res.path).toBe(dir)
+      expect(res.entries.map((e) => e.name)).toContain('marker.txt')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores the override outside store builds', async () => {
+    vi.stubEnv('FERRY_DISTRIBUTION', '')
+    vi.stubEnv('FERRY_STORE_BUILD', '')
+    vi.stubEnv('FERRY_DEFAULT_LOCAL_DIR', '/nonexistent-ferry-dir')
+    const res = await list()
+    expect(res.path).toBe(os.homedir())
+  })
+})

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>js.ferry.app</string>
+  <key>CFBundleName</key><string>Ferry</string>
+  <key>CFBundleDisplayName</key><string>Ferry</string>
+  <key>CFBundleExecutable</key><string>Ferry</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>Ferry</string>
+  <key>CFBundleShortVersionString</key><string>{{VERSION}}</string>
+  <key>CFBundleVersion</key><string>{{BUILD}}</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- Ferry only uses standard SSH/SFTP encryption. Confirm the exemption answer for your jurisdiction (Phase 1 runbook, section 4) before submitting. -->
+  <key>ITSAppUsesNonExemptEncryption</key><false/>
+</dict>
+</plist>

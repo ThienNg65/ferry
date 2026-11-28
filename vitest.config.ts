@@ -21,6 +21,6 @@ export default defineConfig({
     // the same time. Sequential file execution trades some wall-clock time
     // for determinism, which matters more here than speed.
     fileParallelism: false,
-    setupFiles: ['src/main/host/testHost.setup.ts']
+    setupFiles: ['src/main/host/testHost.setup.ts', 'src/renderer/localStorage.setup.ts']
   }
 })

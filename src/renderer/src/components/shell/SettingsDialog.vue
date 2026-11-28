@@ -1290,7 +1290,7 @@ async function saveNetwork(): Promise<void> {
               <SettingsRow label="Ferry" description="Lightweight SFTP client.">
                 <span class="text-sm text-toned">{{ update.currentVersion ? `v${update.currentVersion}` : '' }}</span>
               </SettingsRow>
-              <SettingsRow label="Automatically check for updates">
+              <SettingsRow v-if="!update.managedBy" label="Automatically check for updates">
                 <USwitch
                   :model-value="autoCheckUpdates"
                   :disabled="savingAutoCheck"
@@ -1367,7 +1367,11 @@ async function saveNetwork(): Promise<void> {
                 </UButton>
               </div>
 
-              <div class="mt-3 flex flex-wrap items-center gap-3">
+              <p v-if="update.managedBy" class="mt-3 text-sm text-muted">
+                Updates are managed by {{ update.managedBy }}.
+              </p>
+
+              <div v-else class="mt-3 flex flex-wrap items-center gap-3">
                 <UButton
                   size="sm"
                   variant="outline"

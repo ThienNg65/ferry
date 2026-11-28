@@ -1016,6 +1016,8 @@ export interface UpdateState {
   progress?: UpdateProgress
   error?: string
   lastCheckedAt?: string
+  /** Set when an app store owns updates (e.g. "the Mac App Store"); the UI hides update controls. */
+  managedBy?: string
 }
 
 export interface CheckUpdateResult {

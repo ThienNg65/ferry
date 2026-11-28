@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import type { ImportedSessionCandidate, SiteInput } from '@shared/contract'
+import { INVOKE_CHANNELS, type ImportedSessionCandidate, type SiteInput } from '@shared/contract'
+import { invoke } from '../../api'
 import { useSitesStore } from '../../stores/sites.store'
+import { useUpdateStore } from '../../stores/update.store'
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ChmodDialog.vue/FileRow.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
@@ -10,6 +12,9 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const sites = useSitesStore()
+// The Mac App Store sandbox hides the real ~/.ssh, so the config must be picked explicitly.
+const sandboxed = computed(() => useUpdateStore().managedBy !== null)
+const sshConfigPath = ref<string | undefined>(undefined)
 const loading = ref(false)
 const scanned = ref<ImportedSessionCandidate[]>([])
 const selected = reactive(new Set<number>())
@@ -51,26 +56,37 @@ function toggleSelectAll(): void {
   }
 }
 
+async function scan(): Promise<void> {
+  error.value = null
+  selected.clear()
+  loading.value = true
+  try {
+    scanned.value = await sites.scanImportCandidates(sshConfigPath.value)
+    rows.value.forEach((r) => {
+      if (!r.alreadySaved) {
+        selected.add(r.index)
+      }
+    })
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function chooseSshConfig(): Promise<void> {
+  const picked = await invoke<string | null>(INVOKE_CHANNELS.dialogPickFile)
+  if (picked) {
+    sshConfigPath.value = picked
+    await scan()
+  }
+}
+
 watch(
   () => props.open,
-  async (isOpen) => {
-    if (!isOpen) {
-      return
-    }
-    error.value = null
-    selected.clear()
-    loading.value = true
-    try {
-      scanned.value = await sites.scanImportCandidates()
-      rows.value.forEach((r) => {
-        if (!r.alreadySaved) {
-          selected.add(r.index)
-        }
-      })
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
-    } finally {
-      loading.value = false
+  (isOpen) => {
+    if (isOpen) {
+      void scan()
     }
   },
   { immediate: true }
@@ -145,6 +161,16 @@ async function importSelected(): Promise<void> {
         </div>
         <div v-else-if="scanned.length === 0" role="status" aria-live="polite" class="py-4 text-center text-xs text-muted">
           No WinSCP, PuTTY or ~/.ssh/config sessions found on this machine.
+        </div>
+        <div v-if="sandboxed && !loading" class="flex justify-center">
+          <UButton
+            label="Choose ~/.ssh/config…"
+            icon="i-lucide-file-search"
+            size="xs"
+            color="neutral"
+            variant="subtle"
+            @click="chooseSshConfig"
+          />
         </div>
         <template v-else>
           <div v-if="selectableCount > 0" class="flex items-center justify-between text-xs text-muted">

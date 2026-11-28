@@ -108,8 +108,8 @@ export const useSitesStore = defineStore('sites', {
     },
 
     /** Scans WinSCP/PuTTY's saved sessions (Windows only) — read-only, does not create anything. */
-    async scanImportCandidates(): Promise<ImportedSessionCandidate[]> {
-      return invoke<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan)
+    async scanImportCandidates(sshConfigPath?: string): Promise<ImportedSessionCandidate[]> {
+      return invoke<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan, sshConfigPath)
     },
 
     async exportSshConfig(req?: ExportSshConfigRequest): Promise<ExportSshConfigResult> {

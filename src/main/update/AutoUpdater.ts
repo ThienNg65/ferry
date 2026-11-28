@@ -6,6 +6,7 @@ import {
   type UpdateState
 } from '../../shared/contract'
 import { AppSettingsStore } from '../app/AppSettingsStore'
+import { isStoreManaged, storeName } from '../host/distribution'
 import { host } from '../host/host'
 import {
   compareSemver,
@@ -25,13 +26,6 @@ function getIsPackaged(): boolean {
   return Boolean(host().isPackaged)
 }
 
-function isStoreManaged(): boolean {
-  return (
-    process.env['FERRY_STORE_BUILD'] === '1' ||
-    (process.platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(process.execPath))
-  )
-}
-
 function isAutoUpdateEnabled(): boolean {
   return getIsPackaged() && !isStoreManaged() && process.env['FERRY_DISABLE_AUTO_UPDATE'] !== '1'
 }
@@ -44,7 +38,8 @@ function ensureState(): UpdateState {
   if (!currentState) {
     currentState = {
       status: isAutoUpdateEnabled() ? 'idle' : 'disabled',
-      currentVersion: getAppVersion()
+      currentVersion: getAppVersion(),
+      ...(isStoreManaged() ? { managedBy: storeName() } : {})
     }
   }
   return currentState
@@ -188,7 +183,7 @@ export async function checkForUpdates(isManual = false): Promise<CheckUpdateResu
     return {
       status: 'disabled',
       error: isStoreManaged()
-        ? 'Updates are managed by the Microsoft Store'
+        ? `Updates are managed by ${storeName()}`
         : 'Updates are disabled in development mode'
     }
   }

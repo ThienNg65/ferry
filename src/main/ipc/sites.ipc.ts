@@ -40,8 +40,8 @@ export function registerSitesHandlers(): void {
     return SiteStore.getInstance().duplicate(requireNonEmptyString(id, 'id', INVOKE_CHANNELS.sitesDuplicate))
   })
 
-  handle<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan, () => {
-    return scanImportCandidates()
+  handle<ImportedSessionCandidate[]>(INVOKE_CHANNELS.sitesImportScan, (sshConfigPath?: unknown) => {
+    return scanImportCandidates(typeof sshConfigPath === 'string' && sshConfigPath.length > 0 ? sshConfigPath : undefined)
   })
 
   handle<string>(INVOKE_CHANNELS.sitesExport, () => {

@@ -146,7 +146,7 @@ const groups = computed<PaletteGroup[]>(() => {
     },
     { id: 'act-history', label: 'Transfer History…', icon: 'i-lucide-history', onSelect: () => run(() => historyDialog.open()) },
     { id: 'act-settings', label: 'Settings…', icon: 'i-lucide-settings', onSelect: () => run(() => settingsDialog.open()) },
-    {
+    ...(updateStore.managedBy ? [] : [{
       id: 'act-updates',
       label: 'Check for updates…',
       icon: 'i-lucide-refresh-cw',
@@ -175,7 +175,7 @@ const groups = computed<PaletteGroup[]>(() => {
             notify.error('Update check failed', res.error)
           }
         })
-    }
+    }])
   ]
 
   if (updateStore.isDownloaded) {
