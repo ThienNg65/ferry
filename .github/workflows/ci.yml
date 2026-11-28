@@ -96,7 +96,7 @@ jobs:
             -e USER_NAME=ferrytest \
             -e USER_PASSWORD=ferrytest123 \
             -e SUDO_ACCESS=false \
-            lscr.io/linuxserver/openssh-server:latest
+            lscr.io/linuxserver/openssh-server@sha256:c8431b8982e7eb3935ebf9c46607d19c6417e39c12ce884cc66945df2e9334e8
 
       - name: Wait for SSH server
         shell: bash
