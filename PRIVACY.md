@@ -1,7 +1,7 @@
 # Privacy Policy for Ferry
 
-**Effective Date:** 2026-11-27  
-**Policy Version:** 1.1  
+**Effective Date:** 2026-11-28  
+**Policy Version:** 1.2  
 **Maintainer / Data Controller:** ThienNg65  
 **Contact:** [GitHub Issues](https://github.com/ThienNg65/ferry/issues) · [GitHub Security Advisories](https://github.com/ThienNg65/ferry/security)
 
