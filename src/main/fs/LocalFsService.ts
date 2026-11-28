@@ -11,7 +11,6 @@ import type {
   FileEntry,
   FileListResult,
   FileReadResult,
-  IpcErrorCode,
   LocalUploadScanResult,
   StageDropBeginRequest,
   StageDropBeginResult,
@@ -174,7 +173,7 @@ export async function writeFileText(filePath: string, content: string): Promise<
 export async function remove(targetPath: string, isDir: boolean): Promise<void> {
   if (isRootOrEmpty(targetPath)) {
     throw new SshError(
-      'INVALID_TARGET' as unknown as IpcErrorCode,
+      'INVALID_TARGET',
       `Refusing to delete root or empty path "${targetPath}"`
     )
   }

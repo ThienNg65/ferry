@@ -17,8 +17,10 @@ import { registerMonitorHandlers } from './monitor.ipc'
 import { registerUpdateHandlers } from './update.ipc'
 import { registerWindowHandlers } from './window.ipc'
 import { registerCompanionHandlers } from './companion.ipc'
+import { registerSessionTeardown } from '../ssh/registerSessionTeardown'
 
 export function registerSidecarHandlers(): void {
+  registerSessionTeardown()
   registerSitesHandlers()
   registerSettingsHandlers()
   registerSessionHandlers()

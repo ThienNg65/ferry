@@ -1,6 +1,5 @@
 import { StringDecoder } from 'node:string_decoder'
 import type { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2'
-import type { IpcErrorCode } from '../../shared/contract'
 import { BoundedLineBuffer } from './BoundedLineBuffer'
 import { SshError } from './errors'
 import { withRetry } from './retry'
@@ -758,7 +757,7 @@ export class RemoteShell {
     const trimmed = (remotePath ?? '').trim()
     if (!trimmed || trimmed === '/' || trimmed === '/*') {
       throw new SshError(
-        'INVALID_TARGET' as unknown as IpcErrorCode,
+        'INVALID_TARGET',
         `Refusing to delete remote root or empty path "${remotePath}"`
       )
     }

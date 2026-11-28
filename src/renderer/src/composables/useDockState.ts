@@ -1,25 +1,18 @@
 import { ref, watch } from 'vue'
+import { migrateLegacyPref, readStored, writeStored } from '../utils/uiPref'
 
 export type DockTab = 'transfers' | 'tail' | 'terminal' | 'activity' | 'monitor' | 'edits'
 
-const COLLAPSED_KEY = 'ferry:dock:collapsed'
+const COLLAPSED_KEY = 'ferry:ui:dockCollapsed'
+const LEGACY_COLLAPSED_KEY = 'ferry:dock:collapsed'
 
 function loadCollapsed(): boolean {
-  try {
-    return localStorage.getItem(COLLAPSED_KEY) !== 'false'
-  } catch {
-    return true
-  }
+  migrateLegacyPref(LEGACY_COLLAPSED_KEY, COLLAPSED_KEY)
+  return readStored(COLLAPSED_KEY) !== 'false'
 }
 
 const collapsed = ref(loadCollapsed())
-watch(collapsed, (value) => {
-  try {
-    localStorage.setItem(COLLAPSED_KEY, String(value))
-  } catch {
-    return
-  }
-})
+watch(collapsed, (value) => writeStored(COLLAPSED_KEY, String(value)))
 const tab = ref<DockTab>('transfers')
 const isMaximized = ref(false)
 /**
@@ -50,5 +43,8 @@ export function useDockState() {
     isMaximized.value = !isMaximized.value
   }
 
-  return { collapsed, tab, terminalEverShown, isMaximized, openDock, toggleMaximize }
+  const reloadCollapsed = (): void => {
+    collapsed.value = loadCollapsed()
+  }
+  return { collapsed, tab, terminalEverShown, isMaximized, openDock, toggleMaximize, reloadCollapsed }
 }

@@ -179,6 +179,11 @@ describe('RemoteShell UTF-8 output', () => {
 })
 
 describe('RemoteShell recursive delete', () => {
+  it('rejects a root target with INVALID_TARGET', async () => {
+    const { shell } = createHarness()
+    await expect(shell.deleteRecursive('/')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
+  })
+
   it.each(['SSH_TIMEOUT', 'CANCELLED'] as const)(
     'rethrows %s without starting the SFTP fallback',
     async (code) => {
