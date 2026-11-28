@@ -25,28 +25,6 @@ Real signing, the `.pkg` and CI are Phase 3 of the store epic (#211).
 | Keychain | Master key lives in the login Keychain under service `js.ferry.app`. |
 | Monitor | Needs a Linux `/proc` on the remote host (same as other platforms). |
 
-## Local signing identity (avoids repeated Keychain prompts)
+## Keychain prompts on development builds
 
-Ad-hoc signed builds get a new code hash on every rebuild. The master key's Keychain item trusts specific hashes, so each rebuild asks for your Mac password again (sometimes twice: once to read the key, once to authorize "Always Allow"). The prompt takes the account password only; Touch ID needs the data-protection keychain, which requires a real Team ID and provisioning profile (Phase 3).
-
-For development, sign with a stable certificate so the trust rule follows the certificate, not the hash:
-
-1. Open **Keychain Access → Certificate Assistant → Create a Certificate…**
-2. Name it (for example `Ferry Local Dev`), Identity Type **Self Signed Root**, Certificate Type **Code Signing**, then Create.
-3. Check it is usable:
-
-   ```bash
-   security find-identity -v -p codesigning
-   ```
-
-4. Build with it:
-
-   ```bash
-   node scripts/pack-macos.mjs --sign "Ferry Local Dev"
-   ```
-
-5. On the first launch enter your password and choose **Always Allow**. Later rebuilds signed with the same certificate should not ask again. Items already trusted by hash (older ad-hoc builds) are not migrated; the first run with the new identity prompts once.
-
-A self-signed certificate is for local development only. It cannot be used for the Mac App Store; Phase 3 uses Apple's certificates, where a store-signed build keeps its key in its own keychain access group and does not prompt at all.
-
-`FERRY_SELFTEST=1` with a throwaway `FERRY_KEYCHAIN_SERVICE` uses a separate Keychain item that never prompts; the smoke test relies on this.
+Ad-hoc signed builds (`pack-macos.mjs` default) get a new code hash on every rebuild, so macOS asks for the login password when the app reads its master key. This only affects developers rebuilding locally. Release builds are signed with a stable Apple identity (Phase 3), so end users are not prompted. Touch ID is not offered for this read: it needs the data-protection keychain, which requires a provisioning profile.
