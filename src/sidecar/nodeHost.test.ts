@@ -72,11 +72,11 @@ describe('createPlatformOpenPath', () => {
     await expect(createPlatformOpenPath('darwin', spawnProcess)(existingPath))
       .resolves.toBe(`Could not open ${existingPath}: spawn denied`)
   })
-  
+
   it.skipIf(process.platform !== 'darwin')('launches a real file through macOS Launch Services', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'ferry-open-path-'))
     const target = path.join(directory, 'ferry-open-path.txt')
-    writeFileSync(target, 'Ferry macOS open-path smoke test\\n')
+    writeFileSync(target, 'Ferry macOS open-path smoke test\n')
 
     let childExit: Promise<number | null> | null = null
     const spawnProcess = ((command: string, args: string[], options: SpawnOptions) => {
