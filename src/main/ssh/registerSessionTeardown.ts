@@ -6,7 +6,11 @@ import { TailManager } from '../tail/TailManager'
 import { TerminalManager } from '../terminal/TerminalManager'
 import { SessionManager } from './SessionManager'
 
+let registered = false
+
 export function registerSessionTeardown(): void {
+  if (registered) return
+  registered = true
   const sessions = SessionManager.getInstance()
   sessions.onSessionClosed('pre', (id) => TailManager.getInstance().stopAllForSession(id))
   sessions.onSessionClosed('post', (id) => TerminalManager.getInstance().closeAllForSession(id))

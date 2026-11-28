@@ -66,6 +66,7 @@ describe.skipIf(!serverAvailable)('EditSessionManager against a real SFTP server
     ;({ SessionManager } = await import('../ssh/SessionManager'))
     SessionManager.getInstance().setHostKeyPrompter(async () => true)
     ;({ EditSessionManager } = await import('./EditSessionManager'))
+    ;(await import('../ssh/registerSessionTeardown')).registerSessionTeardown()
     remote = await import('../fs/RemoteFsService')
     sessionId = (
       await SessionManager.getInstance().openQuickConnect(
