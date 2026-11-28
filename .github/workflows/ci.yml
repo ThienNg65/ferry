@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - fix/281-platform-open-path
   pull_request:
     branches:
       - main
