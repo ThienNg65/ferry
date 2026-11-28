@@ -56,14 +56,6 @@ check('node has no extra entitlements', !childEnt.includes('network.client') && 
 const openPathTestDir = mkdtempSync(join(tmpdir(), 'ferry-open-path-smoke-'))
 const openPathTestFile = join(openPathTestDir, 'external-editor.txt')
 writeFileSync(openPathTestFile, 'Ferry external-editor smoke test\\n')
-const selfTestJs = `return (async () => {
-  const r = { api: typeof window.api, text: document.body.innerText.slice(0, 120) }
-  const path = '/tmp'
-  try { r.list = JSON.stringify(await window.api.invoke('fs:local:list', path)).slice(0, 200) } catch (e) { r.listError = String(e) }
-  try { r.update = JSON.stringify(await window.api.invoke('update:getStatus')).slice(0, 200) } catch (e) { r.updateError = String(e) }
-  try { r.openPath = await window.api.invoke('edit:openLocal', ${JSON.stringify(openPathTestFile)}) } catch (e) { r.openPathError = String(e) }
-  return JSON.stringify(r)
-})()`
 
 // Launch for real: the shell reports what the page rendered and whether sidecar RPC answers.
 const cmd = arch ? '/usr/bin/arch' : exe
@@ -74,8 +66,7 @@ const result = await new Promise((resolveRun) => {
       ...process.env,
       FERRY_SELFTEST: '1',
       FERRY_KEYCHAIN_SERVICE: keychainService,
-      FERRY_SELFTEST_LIST: '/tmp',
-      FERRY_SELFTEST_JS: selfTestJs
+      FERRY_SELFTEST_OPEN_PATH: openPathTestFile
     },
     stdio: ['ignore', 'pipe', 'pipe']
   })
