@@ -48,12 +48,12 @@ const result = await new Promise((resolveRun) => {
   const timer = setTimeout(() => finish({ ok: false, log }), 60_000)
   const onData = (data) => {
     log += data
-    const match = log.match(/SELFTEST success\\((.*)\\)\\r?\\n/s)
+    const match = log.match(/SELFTEST success\((.*)\)\r?\n/s)
     if (match) finish({ ok: true, log, payload: match[1] })
   }
   child.stderr.on('data', onData)
   child.stdout.on('data', onData)
-  child.on('error', (error) => finish({ ok: false, log: `${log}\\n${error}` }))
+  child.on('error', (error) => finish({ ok: false, log: `${log}\n${error}` }))
   child.on('exit', () => finish({ ok: false, log }))
 })
 
@@ -74,7 +74,7 @@ try {
   const decoded = JSON.parse(result.payload)
   payload = typeof decoded === 'string' ? JSON.parse(decoded) : decoded
 } catch (error) {
-  throw new Error(`Invalid external URL self-test payload: ${error}\\n${result.payload}`)
+  throw new Error(`Invalid external URL self-test payload: ${error}\n${result.payload}`)
 }
 
 if (payload.api !== 'object') {
