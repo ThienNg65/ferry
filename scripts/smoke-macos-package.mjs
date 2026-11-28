@@ -3,7 +3,8 @@
 // launch that renders the UI and answers sidecar RPC. Run after `node scripts/pack-macos.mjs`.
 //   node scripts/smoke-macos-package.mjs [--app <path>] [--arch arm64|x86_64]
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -52,12 +53,21 @@ const childEnt = sh('codesign', ['-d', '--entitlements', '-', '--xml', nodeBin])
 check('node inherits the sandbox', childEnt.includes('app-sandbox') && childEnt.includes('inherit'))
 check('node has no extra entitlements', !childEnt.includes('network.client') && !childEnt.includes('files.'))
 
+const openPathTestDir = mkdtempSync(join(tmpdir(), 'ferry-open-path-smoke-'))
+const openPathTestFile = join(openPathTestDir, 'external-editor.txt')
+writeFileSync(openPathTestFile, 'Ferry external-editor smoke test\\n')
+
 // Launch for real: the shell reports what the page rendered and whether sidecar RPC answers.
 const cmd = arch ? '/usr/bin/arch' : exe
 const cmdArgs = arch ? [`-${arch}`, exe] : []
 const result = await new Promise((resolveRun) => {
   const child = spawn(cmd, cmdArgs, {
-    env: { ...process.env, FERRY_SELFTEST: '1', FERRY_KEYCHAIN_SERVICE: keychainService },
+    env: {
+      ...process.env,
+      FERRY_SELFTEST: '1',
+      FERRY_KEYCHAIN_SERVICE: keychainService,
+      FERRY_SELFTEST_OPEN_PATH: openPathTestFile
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   })
   let log = ''
@@ -78,14 +88,26 @@ const result = await new Promise((resolveRun) => {
 })
 sh('security', ['delete-generic-password', '-s', keychainService])
 sh('pkill', ['-f', join(app, 'Contents/Resources/node')])
+rmSync(openPathTestDir, { recursive: true, force: true })
 
 check(`launches${arch ? ` as ${arch}` : ''} and runs the self-test`, result.ok, result.ok ? '' : result.log.slice(-200))
 if (result.ok) {
-  const payload = result.payload
-  check('renderer exposes window.api', payload.includes('"api":"object"'))
-  check('UI rendered', /Sites|New Tab/.test(payload))
-  check('sidecar RPC answered (fs:local:list)', payload.includes('\\"ok\\":true'))
-  check('updates reported as store-managed', payload.includes('the Mac App Store'))
+  let payload = null
+  try {
+    const decoded = JSON.parse(result.payload)
+    payload = typeof decoded === 'string' ? JSON.parse(decoded) : decoded
+  } catch (error) {
+    check('self-test payload is valid JSON', false, String(error))
+  }
+  check('renderer exposes window.api', payload?.api === 'object')
+  check('UI rendered', /Sites|New Tab/.test(payload?.text ?? ''))
+  check('sidecar RPC answered (fs:local:list)', typeof payload?.list === 'string' && payload.list.includes('"ok":true'), String(payload?.list ?? payload?.listError))
+  check('updates reported as store-managed', typeof payload?.update === 'string' && payload.update.includes('the Mac App Store'))
+  check(
+    'packaged sidecar opened a local file in the default app',
+    payload?.openPath?.ok === true,
+    JSON.stringify(payload?.openPath ?? payload?.openPathError)
+  )
 }
 
 if (failures.length) {

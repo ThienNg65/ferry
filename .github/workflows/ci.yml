@@ -68,3 +68,26 @@ jobs:
 
       - name: Smoke test Neutralino package
         run: npm run smoke:neutralino
+
+  verify-macos-open-path:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.5
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Verify platform opener and macOS Launch Services
+        run: npm test -- src/sidecar/nodeHost.test.ts
+
+      - name: Build sandboxed universal macOS app
+        run: npm run pack:macos
+
+      - name: Smoke test packaged app and external-editor opener
+        run: npm run smoke:macos
