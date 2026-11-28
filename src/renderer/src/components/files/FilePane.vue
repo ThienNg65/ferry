@@ -319,7 +319,7 @@ const onKeydown = usePaneKeyboard({
 })
 
 function onWindowKeydownFallback(event: KeyboardEvent): void {
-  if (ui.activePane !== props.side || (props.side === 'remote' && sessions.status !== 'connected') || collapsedRail.value) return
+  if (ui.activePane !== props.side || sessions.status !== 'connected' || collapsedRail.value) return
   if (event.defaultPrevented) return
   if (document.querySelector('[role="dialog"]:not([data-state="closed"]), [role="menu"]:not([data-state="closed"]), [role="listbox"]:not([data-state="closed"])')) return
   const target = event.target as HTMLElement | null
