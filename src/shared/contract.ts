@@ -34,6 +34,8 @@ export type IpcErrorCode =
   | 'AUTH'
   | 'HOST_KEY_MISMATCH'
   | 'PROXY_CONNECT'
+  | 'INVALID_TARGET'
+  | 'INVALID_PORT'
 
 /** Successful response wrapper. */
 export interface IpcOk<T> {

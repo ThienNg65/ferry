@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
-import { commitRemoteFile, copyRemote, listRemote, readRemoteBufferForDiffSudo, removeRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, copyRemote, downloadForEdit, listRemote, readRemoteBufferForDiffSudo, removeRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { SessionManager } from '../ssh/SessionManager'
 
@@ -664,5 +664,23 @@ describe('RemoteFsService.copyRemote', () => {
     expect(res.failures[1].error).toMatch(/Refusing to copy/i)
     expect(res.failures[2].error).toMatch(/Refusing to copy/i)
     expect(shell.exec).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('RemoteFsService.downloadForEdit cancellation', () => {
+  it.each([true, false])('rejects with CANCELLED (pre-aborted=%s)', async (preAborted) => {
+    const sftp = { createReadStream: vi.fn(() => new PassThrough()) }
+    vi.mocked(SessionManager.getInstance).mockReturnValue({
+      shell: vi.fn(() => ({ sftp: vi.fn(async () => sftp) }))
+    } as any)
+    const dir = await mkdtemp(join(tmpdir(), 'ferry-dl-'))
+    const controller = new AbortController()
+    if (preAborted) controller.abort()
+    const pending = downloadForEdit('s', '/r/file', join(dir, 'out'), undefined, controller.signal)
+    if (!preAborted) controller.abort()
+    await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await rm(dir, { recursive: true, force: true })
   })
 })

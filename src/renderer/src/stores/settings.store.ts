@@ -4,6 +4,9 @@ import type { AppSettings, KnownHostEntry, ProxyConfig, ProxyInfo, TermsAcceptan
 import { invoke } from '../api'
 import { useCompanionStore } from './companion.store'
 import { useUiStore } from './ui.store'
+import { useMonitorStore } from './monitor.store'
+import { useSessionsStore } from './sessions.store'
+import { useDockState } from '../composables/useDockState'
 
 interface SettingsState {
   bandwidthLimitKBps: number | null
@@ -48,6 +51,9 @@ export const useSettingsStore = defineStore('settings', {
             const prefs = settings.uiPrefs ?? {}
             useUiStore().hydrateFromPrefs(prefs)
             useCompanionStore().hydrateFromPrefs(prefs)
+            useDockState().reloadCollapsed()
+            useMonitorStore().reloadIntervalMs()
+            useSessionsStore().reloadRecentQuickConnects()
           }
           this.loaded = true
         } finally {

@@ -57,6 +57,7 @@ describe('ui store layout state', () => {
       clear: () => data.clear()
     })
     vi.stubGlobal('window', { innerHeight: 900 })
+    ;(await import('../utils/uiPref')).clearDirtyUiPrefs()
     setActivePinia(createPinia())
     const { useUiStore } = await import('./ui.store')
     return { ui: useUiStore(), data }
@@ -541,5 +542,15 @@ describe('ui store layout state', () => {
     expect(data.get('ferry:ui:glassUi')).toBe('true')
     expect(ui.glassUiPromoDismissed).toBe(true)
     expect(data.get('ferry:ui:glassUiPromoDismissed')).toBe('true')
+  })
+
+  it('does not overwrite a pref written through the shared helper before hydration', async () => {
+    const { ui, data } = await freshStore()
+    const { writeStored } = await import('../utils/uiPref')
+    writeStored('ferry:ui:monitorIntervalMs', '5000')
+
+    ui.hydrateFromPrefs({ 'ferry:ui:monitorIntervalMs': '1000' })
+
+    expect(data.get('ferry:ui:monitorIntervalMs')).toBe('5000')
   })
 })

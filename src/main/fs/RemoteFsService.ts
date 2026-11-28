@@ -248,7 +248,7 @@ export async function downloadForEdit(
       if (settled) return
       settled = true
       cleanup()
-      reject(new Error('Operation cancelled'))
+      reject(new SshError('CANCELLED', 'Operation cancelled'))
     }
     const cleanup = (): void => {
       signal?.removeEventListener('abort', onAbort)
@@ -259,7 +259,7 @@ export async function downloadForEdit(
     if (signal) {
       if (signal.aborted) {
         cleanup()
-        return reject(new Error('Operation cancelled'))
+        return reject(new SshError('CANCELLED', 'Operation cancelled'))
       }
       signal.addEventListener('abort', onAbort, { once: true })
     }

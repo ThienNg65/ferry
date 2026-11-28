@@ -232,7 +232,7 @@ describe('RemoteShell recursive delete', () => {
       const { shell, sftp } = createSftpHarness()
       const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
 
-      await expect(shell.deleteRecursive(remotePath, remoteCwd)).rejects.toMatchObject({ code: 'VALIDATION' })
+      await expect(shell.deleteRecursive(remotePath, remoteCwd)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
       expect(exec).not.toHaveBeenCalled()
       expect(sftp.lstat).not.toHaveBeenCalled()
@@ -250,7 +250,7 @@ describe('RemoteShell recursive delete', () => {
         deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
       }).deleteRecursiveSftp
 
-      await expect(fallback.call(shell, remotePath, remoteCwd)).rejects.toMatchObject({ code: 'VALIDATION' })
+      await expect(fallback.call(shell, remotePath, remoteCwd)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
       expect(sftp.readdir).not.toHaveBeenCalled()
       expect(sftp.unlink).not.toHaveBeenCalled()
@@ -266,7 +266,7 @@ describe('RemoteShell recursive delete', () => {
       'deleteRecursiveSftp'
     ).mockResolvedValue(undefined)
 
-    await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(shell.deleteRecursive('link/..', '/home/user')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     expect(exec).not.toHaveBeenCalled()
     expect(fallback).not.toHaveBeenCalled()
@@ -280,7 +280,7 @@ describe('RemoteShell recursive delete', () => {
       'deleteRecursiveSftp'
     ).mockResolvedValue(undefined)
 
-    await expect(shell.deleteRecursive('/tmp/root-alias')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(shell.deleteRecursive('/tmp/root-alias')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     const command = exec.mock.calls[0][0]
     expect(command.startsWith("/bin/sh -c '")).toBe(true)
@@ -300,7 +300,7 @@ describe('RemoteShell recursive delete', () => {
       deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
     }).deleteRecursiveSftp
 
-    await expect(fallback.call(shell, '/tmp/root-alias')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(fallback.call(shell, '/tmp/root-alias')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     expect(sftp.lstat).toHaveBeenCalledWith('/tmp/root-alias', expect.any(Function))
     expect(sftp.realpath).toHaveBeenCalledWith('/tmp/root-alias', expect.any(Function))
@@ -340,7 +340,7 @@ describe('RemoteShell recursive delete', () => {
       const { shell, sftp } = createSftpHarness()
       const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
 
-      await expect(shell.deleteRecursive(remotePath, '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+      await expect(shell.deleteRecursive(remotePath, '/home/user')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
       expect(exec).not.toHaveBeenCalled()
       expect(sftp.lstat).not.toHaveBeenCalled()
@@ -358,7 +358,7 @@ describe('RemoteShell recursive delete', () => {
         deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
       }).deleteRecursiveSftp
 
-      await expect(fallback.call(shell, remotePath, '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+      await expect(fallback.call(shell, remotePath, '/home/user')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
       expect(sftp.lstat).not.toHaveBeenCalled()
       expect(sftp.readdir).not.toHaveBeenCalled()
@@ -371,7 +371,7 @@ describe('RemoteShell recursive delete', () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
 
-    await expect(shell.deleteRecursive('   ', '/home/user')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(shell.deleteRecursive('   ', '/home/user')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     expect(exec).not.toHaveBeenCalled()
   })
@@ -404,7 +404,7 @@ describe('RemoteShell recursive delete', () => {
     const { shell } = createHarness()
     const exec = vi.spyOn(shell, 'exec').mockResolvedValue({ stdout: '', stderr: '', code: 0 })
 
-    await expect(shell.deleteRecursive('/tmp/report\0backup')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(shell.deleteRecursive('/tmp/report\0backup')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
     expect(exec).not.toHaveBeenCalled()
   })
 
@@ -430,7 +430,7 @@ describe('RemoteShell recursive delete', () => {
       'deleteRecursiveSftp'
     ).mockResolvedValue(undefined)
 
-    await expect(shell.deleteRecursive('/tmp/report/')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(shell.deleteRecursive('/tmp/report/')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     const command = exec.mock.calls[0][0]
     expect(command).toContain(encodedTargetAssignment('/tmp/report/'))
@@ -457,7 +457,7 @@ describe('RemoteShell recursive delete', () => {
       deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
     }).deleteRecursiveSftp
 
-    await expect(fallback.call(shell, '/tmp/report/')).rejects.toMatchObject({ code: 'VALIDATION' })
+    await expect(fallback.call(shell, '/tmp/report/')).rejects.toMatchObject({ code: 'INVALID_TARGET' })
 
     expect(sftp.lstat).toHaveBeenCalledWith('/tmp/report', expect.any(Function))
     expect(sftp.unlink).not.toHaveBeenCalled()

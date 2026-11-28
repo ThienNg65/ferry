@@ -763,16 +763,16 @@ export class RemoteShell {
   private resolveDeletePath(remotePath: string, remoteCwd?: string): string {
     const inputPath = remotePath ?? ''
     if (!inputPath || !inputPath.trim()) {
-      throw new SshError('VALIDATION', `Refusing to delete remote root or empty path "${remotePath}"`)
+      throw new SshError('INVALID_TARGET', `Refusing to delete remote root or empty path "${remotePath}"`)
     }
     if (inputPath.includes('\0') || remoteCwd?.includes('\0')) {
-      throw new SshError('VALIDATION', 'Refusing to delete a path containing a null byte')
+      throw new SshError('INVALID_TARGET', 'Refusing to delete a path containing a null byte')
     }
     // A final dot component targets the current or parent directory itself.
     // `rm` refuses these operands, but an SFTP walk could otherwise delete their contents.
     const finalComponent = inputPath.split('/').filter(Boolean).at(-1)
     if (finalComponent === '.' || finalComponent === '..') {
-      throw new SshError('VALIDATION', 'Refusing to delete current or parent directory aliases')
+      throw new SshError('INVALID_TARGET', 'Refusing to delete current or parent directory aliases')
     }
 
     const cwd = remoteCwd && pathPosix.isAbsolute(remoteCwd)
@@ -785,7 +785,7 @@ export class RemoteShell {
         : inputPath
     const lexicalPath = pathPosix.isAbsolute(targetPath) ? pathPosix.resolve(targetPath) : null
     if (lexicalPath === '/' || lexicalPath === '/*') {
-      throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
+      throw new SshError('INVALID_TARGET', `Refusing to delete remote root or root wildcard "${remotePath}"`)
     }
     return targetPath
   }
@@ -804,7 +804,7 @@ export class RemoteShell {
       : `${(remoteCwd && pathPosix.isAbsolute(remoteCwd) ? remoteCwd : await this.realpath('.')).replace(/\/+$/, '')}/${targetPath}`
     const lexicalPath = pathPosix.resolve(absoluteTargetPath)
     if (lexicalPath === '/' || lexicalPath === '/*') {
-      throw new SshError('VALIDATION', `Refusing to delete remote root or root wildcard "${remotePath}"`)
+      throw new SshError('INVALID_TARGET', `Refusing to delete remote root or root wildcard "${remotePath}"`)
     }
 
     // Inspect the final entry without trailing separators. POSIX path resolution
@@ -822,14 +822,14 @@ export class RemoteShell {
     }
     if (!stats.isDirectory()) {
       if (targetEntryPath !== absoluteTargetPath) {
-        throw new SshError('VALIDATION', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
+        throw new SshError('INVALID_TARGET', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
       }
       return { path: absoluteTargetPath, stats }
     }
 
     const canonicalPath = await this.realpath(targetEntryPath)
     if (pathPosix.resolve(canonicalPath) === '/') {
-      throw new SshError('VALIDATION', `Refusing to delete remote root "${remotePath}"`)
+      throw new SshError('INVALID_TARGET', `Refusing to delete remote root "${remotePath}"`)
     }
     return { path: pathPosix.resolve(canonicalPath), stats }
   }
@@ -860,10 +860,10 @@ export class RemoteShell {
         return
       }
       if (result.code === 73) {
-        throw new SshError('VALIDATION', `Refusing to delete remote root "${remotePath}"`)
+        throw new SshError('INVALID_TARGET', `Refusing to delete remote root "${remotePath}"`)
       }
       if (result.code === 75) {
-        throw new SshError('VALIDATION', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
+        throw new SshError('INVALID_TARGET', `Refusing to delete non-directory target with trailing slash "${remotePath}"`)
       }
     } catch (e) {
       if (e instanceof SshError && (

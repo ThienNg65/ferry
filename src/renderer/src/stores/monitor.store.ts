@@ -3,20 +3,19 @@ import { EVENT_CHANNELS, INVOKE_CHANNELS } from '@shared/contract'
 import type { MonitorSample, MonitorStatus, MonitorStatusEvent } from '@shared/contract'
 import { invoke, onEvent } from '../api'
 import { useSessionsStore } from './sessions.store'
+import { migrateLegacyPref, readStored, writeStored } from '../utils/uiPref'
 
 /** ~3 minutes of history at the default 2s tick. */
 const HISTORY_LENGTH = 90
-const INTERVAL_KEY = 'ferry:monitor:intervalMs'
+const INTERVAL_KEY = 'ferry:ui:monitorIntervalMs'
+const LEGACY_INTERVAL_KEY = 'ferry:monitor:intervalMs'
 export const MONITOR_INTERVAL_OPTIONS = [1000, 2000, 5000, 10000, 30000] as const
 const DEFAULT_INTERVAL_MS = 2000
 
 function loadIntervalMs(): number {
-  try {
-    const raw = Number(localStorage.getItem(INTERVAL_KEY))
-    return (MONITOR_INTERVAL_OPTIONS as readonly number[]).includes(raw) ? raw : DEFAULT_INTERVAL_MS
-  } catch {
-    return DEFAULT_INTERVAL_MS
-  }
+  migrateLegacyPref(LEGACY_INTERVAL_KEY, INTERVAL_KEY)
+  const raw = Number(readStored(INTERVAL_KEY))
+  return (MONITOR_INTERVAL_OPTIONS as readonly number[]).includes(raw) ? raw : DEFAULT_INTERVAL_MS
 }
 
 /** Only lightweight points are needed for CPU history, not past process snapshots. */
@@ -137,16 +136,16 @@ export const useMonitorStore = defineStore('monitor', {
       await this.start(sessionId)
     },
 
+    reloadIntervalMs(): void {
+      this.intervalMs = loadIntervalMs()
+    },
+
     async setIntervalMs(sessionId: string | null, ms: number): Promise<void> {
       if (!(MONITOR_INTERVAL_OPTIONS as readonly number[]).includes(ms)) {
         return
       }
       this.intervalMs = ms
-      try {
-        localStorage.setItem(INTERVAL_KEY, String(ms))
-      } catch {
-        // Ignore storage errors (e.g. private browsing quota)
-      }
+      writeStored(INTERVAL_KEY, String(ms))
       if (sessionId && useSessionsStore().status === 'connected' && !this.ensureBucket(sessionId).paused) {
         await this.start(sessionId)
       }
