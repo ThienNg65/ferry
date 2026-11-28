@@ -111,8 +111,21 @@ jobs:
           docker logs ferry-test-sftp
           exit 1
 
+      - name: Wait for SSH test account
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker exec ferry-test-sftp id ferrytest >/dev/null 2>&1; then
+              echo "SSH test account is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ferry-test-sftp
+          exit 1
+
       - name: Prepare isolated test directory
-        run: docker exec ferry-test-sftp sh -c 'mkdir -p /config/ferry-test && chown ferrytest:users /config/ferry-test'
+        run: docker exec ferry-test-sftp sh -c 'mkdir -p /config/ferry-test && chown ferrytest:"$(id -gn ferrytest)" /config/ferry-test'
 
       - name: Run required real SSH/SFTP integration suite
         env:

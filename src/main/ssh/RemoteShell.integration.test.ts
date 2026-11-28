@@ -8,7 +8,7 @@
  *     -e PASSWORD_ACCESS=true -e USER_NAME=ferrytest -e USER_PASSWORD=ferrytest123 \
  *     -e SUDO_ACCESS=false linuxserver/openssh-server
  *   docker exec ferry-test-sftp mkdir -p /config/ferry-test
- *   docker exec ferry-test-sftp chown ferrytest:users /config/ferry-test
+ *   docker exec ferry-test-sftp sh -c 'chown ferrytest:"$(id -gn ferrytest)" /config/ferry-test'
  *
  * These tests connect a real ssh2.Client over TCP and exercise every
  * RemoteShell operation against real sshd/sftp-server behavior — nothing
