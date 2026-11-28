@@ -61,6 +61,7 @@ interface PerSessionFs {
   sortDirection: SortDirection
   dirCache: Map<string, DirCacheEntry>
   history: NavHistory
+  pendingRefreshPath: string | null
 }
 
 function freshFsState(): PerSessionFs {
@@ -75,7 +76,8 @@ function freshFsState(): PerSessionFs {
     sortColumn: 'name',
     sortDirection: 'asc',
     dirCache: new Map(),
-    history: emptyHistory()
+    history: emptyHistory(),
+    pendingRefreshPath: null
   }
 }
 
@@ -257,6 +259,11 @@ export const useRemoteFsStore = defineStore('remoteFs', {
           }
           if (this.requestSeq[sessionId] === seq && this.bySession[sessionId] === entry) {
             entry.loading = false
+            const pendingRefreshPath = entry.pendingRefreshPath
+            entry.pendingRefreshPath = null
+            if (pendingRefreshPath && normalizeDirPath(entry.currentPath) === pendingRefreshPath) {
+              await this.refreshSessionIfViewing(sessionId, pendingRefreshPath)
+            }
           }
         }
       })()
@@ -280,11 +287,18 @@ export const useRemoteFsStore = defineStore('remoteFs', {
       if (!normalizedTarget) return
 
       entry.dirCache.delete(normalizedTarget)
-      if (entry.loading || normalizeDirPath(entry.currentPath) !== normalizedTarget) {
+      if (normalizeDirPath(entry.currentPath) !== normalizedTarget) {
+        return
+      }
+      if (entry.loading) {
+        entry.pendingRefreshPath = normalizedTarget
         return
       }
 
-      const seqAtStart = this.requestSeq[sessionId] ?? 0
+      // Supersede any older SWR revalidation before starting the post-operation refresh.
+      // Cache-hit revalidations run in the background without setting entry.loading.
+      const seqAtStart = (this.requestSeq[sessionId] ?? 0) + 1
+      this.requestSeq[sessionId] = seqAtStart
       const pathAtStart = entry.currentPath
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, pathAtStart, true)

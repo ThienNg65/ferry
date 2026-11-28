@@ -160,7 +160,7 @@ const selectionSummary = computed(() => {
 
 const previewOpen = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
-const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string } | null>(null)
+const extractConflict = ref<{ entry: FileEntry; baseName: string; suggestedName: string; sessionId: string; targetDir: string } | null>(null)
 const renamingPath = ref<string | null>(null)
 let renameInFlight = false
 const chmodOpen = ref(false)
@@ -675,23 +675,26 @@ async function onCompress(entry: FileEntry): Promise<void> {
   const zipName = firstAvailableZipName(`${entry.name}.zip`)
   try {
     if (props.side === 'local') {
-      const sep = store.currentPath.includes('\\') ? '\\' : '/'
+      const targetDir = localFs.currentPath
+      const sep = targetDir.includes('\\') ? '\\' : '/'
       await invoke<void>(INVOKE_CHANNELS.archiveCompressLocal, {
         sourcePath: entry.path,
-        destPath: `${store.currentPath.replace(/[/\\]+$/, '')}${sep}${zipName}`
+        destPath: `${targetDir.replace(/[/\\]+$/, '')}${sep}${zipName}`
       })
+      await localFs.refreshIfViewing(targetDir)
     } else {
       const sessionId = sessions.activeSessionId
       if (!sessionId) {
         return
       }
+      const targetDir = remoteFs.currentPath
       await invoke<UnzipResult>(INVOKE_CHANNELS.archiveCompressRemote, {
         sessionId,
         sourcePath: entry.path,
-        destPath: `${remoteFs.currentPath.replace(/\/$/, '')}/${zipName}`
+        destPath: `${targetDir.replace(/\/$/, '')}/${zipName}`
       })
+      await remoteFs.refreshSessionIfViewing(sessionId, targetDir)
     }
-    await store.load(store.currentPath, { forceRefresh: true })
     notify.success('Compressed', `${entry.name} → ${zipName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
@@ -699,35 +702,38 @@ async function onCompress(entry: FileEntry): Promise<void> {
   }
 }
 
-async function performExtract(entry: FileEntry, folderName: string): Promise<void> {
-  const sessionId = sessions.activeSessionId
-  if (!sessionId) {
-    return
-  }
+async function performExtract(entry: FileEntry, folderName: string, sessionId: string, targetDir: string): Promise<void> {
   try {
     await invoke<UnzipResult>(INVOKE_CHANNELS.unzipRun, {
       sessionId,
       archivePath: entry.path,
-      targetDir: `${remoteFs.currentPath.replace(/\/$/, '')}/${folderName}`
+      targetDir: `${targetDir.replace(/\/$/, '')}/${folderName}`
     })
-    await remoteFs.load(remoteFs.currentPath, { forceRefresh: true })
+    await remoteFs.refreshSessionIfViewing(sessionId, targetDir)
     notify.success('Extracted', `${entry.name} → ${folderName}`)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    remoteFs.setError(message)
+    if (sessions.activeSessionId === sessionId) {
+      remoteFs.setError(message)
+    }
     notify.error('Extract failed', message)
   }
 }
 
 /** Extracts into a folder named after the archive (not the current directory) — prompts if that folder already exists. */
 async function onExtract(entry: FileEntry): Promise<void> {
+  const sessionId = sessions.activeSessionId
+  if (!sessionId) {
+    return
+  }
+  const targetDir = remoteFs.currentPath
   const baseName = archiveBaseName(entry.name)
   const exists = remoteFs.entries.some((e) => e.isDir && e.name === baseName)
   if (!exists) {
-    await performExtract(entry, baseName)
+    await performExtract(entry, baseName, sessionId, targetDir)
     return
   }
-  extractConflict.value = { entry, baseName, suggestedName: firstAvailableName(baseName) }
+  extractConflict.value = { entry, baseName, suggestedName: firstAvailableName(baseName), sessionId, targetDir }
 }
 
 async function resolveExtractConflict(choice: 'overwrite' | 'newFolder'): Promise<void> {
@@ -736,7 +742,7 @@ async function resolveExtractConflict(choice: 'overwrite' | 'newFolder'): Promis
     return
   }
   extractConflict.value = null
-  await performExtract(conflict.entry, choice === 'overwrite' ? conflict.baseName : conflict.suggestedName)
+  await performExtract(conflict.entry, choice === 'overwrite' ? conflict.baseName : conflict.suggestedName, conflict.sessionId, conflict.targetDir)
 }
 
 /** True for a native OS drag (from Explorer/Finder, or from a local row's native drag — see FileRow.vue) — never for our in-app pane-to-pane drag, which only ever carries `text/plain`. */

@@ -29,6 +29,7 @@ interface LocalFsState {
   sortDirection: SortDirection
   history: NavHistory
   requestSeq: number
+  pendingRefreshPath: string | null
 }
 
 export const useLocalFsStore = defineStore('localFs', {
@@ -43,7 +44,8 @@ export const useLocalFsStore = defineStore('localFs', {
     sortColumn: 'name',
     sortDirection: 'asc',
     history: emptyHistory(),
-    requestSeq: 0
+    requestSeq: 0,
+    pendingRefreshPath: null
   }),
 
   getters: {
@@ -82,6 +84,11 @@ export const useLocalFsStore = defineStore('localFs', {
       } finally {
         if (seq === this.requestSeq) {
           this.loading = false
+          const pendingRefreshPath = this.pendingRefreshPath
+          this.pendingRefreshPath = null
+          if (pendingRefreshPath && normalizeLocalDir(this.currentPath) === pendingRefreshPath) {
+            await this.refreshIfViewing(pendingRefreshPath)
+          }
         }
       }
     },
@@ -93,13 +100,20 @@ export const useLocalFsStore = defineStore('localFs', {
     /** Silently refreshes the current local directory if it matches `targetDir`, preserving selection and scroll. */
     async refreshIfViewing(targetDir: string): Promise<void> {
       const normalizedTarget = normalizeLocalDir(targetDir)
-      if (!normalizedTarget || this.loading || normalizeLocalDir(this.currentPath) !== normalizedTarget) {
+      if (!normalizedTarget || normalizeLocalDir(this.currentPath) !== normalizedTarget) {
         return
       }
+      if (this.loading) {
+        this.pendingRefreshPath = normalizedTarget
+        return
+      }
+
       const pathAtStart = this.currentPath
+      // Supersede older background refreshes so out-of-order responses cannot overwrite newer listings.
+      const requestSeqAtStart = ++this.requestSeq
       try {
         const result = await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, pathAtStart)
-        if (normalizeLocalDir(this.currentPath) !== normalizedTarget) {
+        if (this.requestSeq !== requestSeqAtStart || normalizeLocalDir(this.currentPath) !== normalizedTarget) {
           return
         }
         this.entries = result.entries.sort(compareEntries(this.sortColumn, this.sortDirection))

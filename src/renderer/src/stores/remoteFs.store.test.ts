@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRemoteFsStore } from './remoteFs.store'
+import type { FileEntry, FileListResult } from '@shared/contract'
 import * as api from '../api'
 
 vi.mock('../api', () => ({
@@ -250,4 +251,134 @@ describe('remoteFs.store with SWR cache', () => {
     await mkdirPromise
     expect(store.bySession['sess-1'].entries.map((e) => e.name)).toEqual(['newdir'])
   })
+  it('queues a refresh after an in-flight load so completed archive entries reach the listing and cache', async () => {
+    const store = useRemoteFsStore()
+    const existingEntry: FileEntry = {
+      name: 'notes.txt',
+      path: '/var/log/notes.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 10,
+      modifiedAt: null,
+      permissions: '0644'
+    }
+    const archiveEntry: FileEntry = {
+      name: 'notes.txt.zip',
+      path: '/var/log/notes.txt.zip',
+      isDir: false,
+      isSymlink: false,
+      size: 20,
+      modifiedAt: null,
+      permissions: '0644'
+    }
+
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/log',
+      entries: [existingEntry]
+    } as never)
+    await store.loadForSession('sess-1', '/var/log')
+
+    let resolveLoad!: (result: FileListResult) => void
+    vi.mocked(api.invoke)
+      .mockReturnValueOnce(new Promise<FileListResult>((resolve) => {
+        resolveLoad = resolve
+      }) as never)
+      .mockResolvedValueOnce({
+        path: '/var/log',
+        entries: [existingEntry, archiveEntry]
+      } as never)
+
+    const loadPromise = store.loadForSession('sess-1', '/var/log', { forceRefresh: true })
+    expect(store.bySession['sess-1'].loading).toBe(true)
+
+    await store.refreshSessionIfViewing('sess-1', '/var/log')
+    expect(api.invoke).toHaveBeenCalledTimes(2)
+    expect(store.bySession['sess-1'].dirCache.has('/var/log')).toBe(false)
+
+    resolveLoad({ path: '/var/log', entries: [existingEntry] })
+    await loadPromise
+
+    expect(api.invoke).toHaveBeenCalledTimes(3)
+    expect(api.invoke).toHaveBeenLastCalledWith('fs:remote:list', 'sess-1', '/var/log', true)
+    expect(store.bySession['sess-1'].entries.map((entry) => entry.name)).toContain('notes.txt.zip')
+    expect(store.bySession['sess-1'].dirCache.get('/var/log')?.entries.map((entry) => entry.name)).toContain('notes.txt.zip')
+  })
+
+
+  it('prevents an older SWR revalidation from overwriting an archive refresh', async () => {
+    const store = useRemoteFsStore()
+    const existingEntry: FileEntry = {
+      name: 'notes.txt',
+      path: '/var/log/notes.txt',
+      isDir: false,
+      isSymlink: false,
+      size: 10,
+      modifiedAt: null,
+      permissions: '0644'
+    }
+    const archiveEntry: FileEntry = {
+      name: 'notes.txt.zip',
+      path: '/var/log/notes.txt.zip',
+      isDir: false,
+      isSymlink: false,
+      size: 20,
+      modifiedAt: null,
+      permissions: '0644'
+    }
+
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/log',
+      entries: [existingEntry]
+    } as never)
+    await store.loadForSession('sess-1', '/var/log')
+
+    let resolveRevalidation!: (result: FileListResult) => void
+    vi.mocked(api.invoke)
+      .mockReturnValueOnce(new Promise<FileListResult>((resolve) => {
+        resolveRevalidation = resolve
+      }) as never)
+      .mockResolvedValueOnce({
+        path: '/var/log',
+        entries: [existingEntry, archiveEntry]
+      } as never)
+
+    await store.loadForSession('sess-1', '/var/log')
+    expect(api.invoke).toHaveBeenCalledTimes(2)
+
+    await store.refreshSessionIfViewing('sess-1', '/var/log')
+    expect(api.invoke).toHaveBeenCalledTimes(3)
+    expect(store.entries.map((entry) => entry.name)).toContain('notes.txt.zip')
+
+    resolveRevalidation({ path: '/var/log', entries: [existingEntry] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.entries.map((entry) => entry.name)).toContain('notes.txt.zip')
+    expect(store.bySession['sess-1'].dirCache.get('/var/log')?.entries.map((entry) => entry.name)).toContain('notes.txt.zip')
+  })
+
+  it('discards a queued refresh when the in-flight load navigates away from its target', async () => {
+    const store = useRemoteFsStore()
+    vi.mocked(api.invoke).mockResolvedValueOnce({
+      path: '/var/log',
+      entries: [{ name: 'notes.txt', path: '/var/log/notes.txt', isDir: false, size: 10 }]
+    } as never)
+    await store.loadForSession('sess-1', '/var/log')
+
+    let resolveNavigation!: (result: FileListResult) => void
+    vi.mocked(api.invoke).mockReturnValueOnce(new Promise<FileListResult>((resolve) => {
+      resolveNavigation = resolve
+    }) as never)
+
+    const navigationPromise = store.loadForSession('sess-1', '/var/other', { forceRefresh: true })
+    await store.refreshSessionIfViewing('sess-1', '/var/log')
+    resolveNavigation({ path: '/var/other', entries: [] })
+    await navigationPromise
+
+    expect(api.invoke).toHaveBeenCalledTimes(2)
+    expect(store.currentPath).toBe('/var/other')
+    expect(store.entries).toEqual([])
+    expect(store.bySession['sess-1'].dirCache.has('/var/log')).toBe(false)
+  })
+
 })
