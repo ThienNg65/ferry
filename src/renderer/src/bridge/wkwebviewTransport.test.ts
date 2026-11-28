@@ -46,6 +46,16 @@ describe('wkwebviewTransport', () => {
     await expect(p).resolves.toBeUndefined()
   })
 
+  it('opens external URLs through the native shell', async () => {
+    const { transport, posted } = setup()
+    const p = transport.openExternal!('https://example.com/path')
+    const call = posted.find((m) => m.op === 'openExternal')!
+
+    expect(call.args).toEqual({ url: 'https://example.com/path' })
+    window.__ferryNative!.reply(call.id, null)
+    await expect(p).resolves.toBeUndefined()
+  })
+
   it('resolves dropped files to host paths announced by the shell', () => {
     const { transport } = setup()
     window.__ferryNative!.setDropFiles([
