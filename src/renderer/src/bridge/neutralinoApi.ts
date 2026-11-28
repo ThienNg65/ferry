@@ -17,6 +17,7 @@ import {
   ok,
   type IpcResult
 } from '../../../shared/contract'
+import { createWKWebViewTransport, isWKWebViewHost } from './wkwebviewTransport'
 
 declare const __FERRY_APP_VERSION__: string | undefined
 
@@ -837,7 +838,7 @@ export function installNeutralinoApi(): void {
   if (typeof window === 'undefined' || window.api) {
     return
   }
-  const transport = createDefaultTransport()
+  const transport = isWKWebViewHost() ? createWKWebViewTransport() : createDefaultTransport()
   transport.init()
   window.api = createNeutralinoApi(transport)
 }
