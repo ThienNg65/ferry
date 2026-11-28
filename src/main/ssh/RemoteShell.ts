@@ -869,6 +869,7 @@ export class RemoteShell {
       if (e instanceof SshError && (
         e.code === 'CANCELLED' ||
         e.code === 'SSH_TIMEOUT' ||
+        e.code === 'INVALID_TARGET' ||
         e.code === 'VALIDATION'
       )) {
         throw e
