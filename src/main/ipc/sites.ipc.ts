@@ -2,11 +2,12 @@ import { readFile, stat, writeFile } from 'fs/promises'
 import { host } from '../host/host'
 import { handle } from './envelope'
 import { optionalString, requireNonEmptyString, requireObject, validateSiteInput } from './validation'
-import { INVOKE_CHANNELS, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
+import { INVOKE_CHANNELS, type ExportSshConfigResult, type ImportedSessionCandidate, type Site, type SiteInput } from '../../shared/contract'
 import { SshError } from '../ssh/errors'
 import { SiteStore } from '../sites/SiteStore'
 import { scanImportCandidates } from '../sites/SessionImporter'
 import { parseSitesBackup } from '../sites/sitesBackup'
+import { formatSitesAsSshConfig } from '../sites/sshConfigExporter'
 import { decryptVaultPayload, encryptVaultPayload, type FerryVaultSnippet } from '../sites/vaultCrypto'
 import { AppSettingsStore } from '../app/AppSettingsStore'
 import { BookmarkStore } from '../bookmarks/BookmarkStore'
@@ -45,6 +46,36 @@ export function registerSitesHandlers(): void {
 
   handle<string>(INVOKE_CHANNELS.sitesExport, () => {
     return SiteStore.getInstance().exportSites()
+  })
+
+  handle<ExportSshConfigResult>(INVOKE_CHANNELS.sitesExportSshConfig, (req?: unknown) => {
+    const channel = INVOKE_CHANNELS.sitesExportSshConfig
+    let siteIds: Set<string> | null = null
+    let includeHeader = true
+
+    if (req !== undefined && req !== null) {
+      const obj = requireObject(req, channel)
+      if (obj.siteIds !== undefined) {
+        if (!Array.isArray(obj.siteIds)) {
+          throw new SshError('VALIDATION', `${channel}: "siteIds" must be an array of site IDs`)
+        }
+        const ids = new Set<string>()
+        for (const entry of obj.siteIds) {
+          ids.add(requireNonEmptyString(entry, 'siteIds[]', channel))
+        }
+        siteIds = ids
+      }
+      if (obj.includeHeader !== undefined) {
+        if (typeof obj.includeHeader !== 'boolean') {
+          throw new SshError('VALIDATION', `${channel}: "includeHeader" must be a boolean`)
+        }
+        includeHeader = obj.includeHeader
+      }
+    }
+
+    const allSites = SiteStore.getInstance().list()
+    const targetSites = siteIds === null ? allSites : allSites.filter((s) => siteIds.has(s.id))
+    return formatSitesAsSshConfig(targetSites, { includeHeader })
   })
 
   handle<{ imported: number; skipped: number } | null>(INVOKE_CHANNELS.sitesImportJson, async (filePathArg?: unknown) => {

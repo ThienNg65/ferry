@@ -209,7 +209,7 @@ export function parseSshConfig(
       else if (key === 'port' && options.port === undefined) {
         const port = Number(value)
         options.port = Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 22
-      } else if (key === 'identityfile' && options.identityFile === undefined) options.identityFile = expandHome(value, home)
+      } else if (key === 'identityfile' && options.identityFile === undefined) options.identityFile = expandHome(value.replace(/%%/g, '%'), home)
       else if (key === 'proxyjump' && options.proxyJump === undefined) options.proxyJump = value
     }
   }

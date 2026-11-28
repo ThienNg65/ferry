@@ -154,4 +154,68 @@ describe('sites.ipc', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('sites:exportSshConfig exports all sites or a selected siteIds subset without secrets', async () => {
+    siteStoreMock.list.mockReturnValue([
+      {
+        id: '1',
+        name: 'Prod Web',
+        host: '10.0.1.10',
+        port: 22,
+        username: 'deploy',
+        authMethod: 'privateKey',
+        privateKeyPath: '/home/me/.ssh/id_ed25519',
+        hasPassword: false,
+        hasPassphrase: true,
+        createdAt: '',
+        updatedAt: ''
+      },
+      {
+        id: '2',
+        name: 'Staging DB',
+        host: 'db.staging.internal',
+        port: 2222,
+        username: 'postgres',
+        authMethod: 'password',
+        hasPassword: true,
+        hasPassphrase: false,
+        createdAt: '',
+        updatedAt: ''
+      }
+    ])
+
+    const allRes = await invoke(INVOKE_CHANNELS.sitesExportSshConfig)
+    expect(allRes.ok).toBe(true)
+    if (allRes.ok) {
+      const data = allRes.data as { content: string; exportedCount: number; skippedCount: number }
+      expect(data.exportedCount).toBe(2)
+      expect(data.content).toContain('Host Prod-Web')
+      expect(data.content).toContain('Host Staging-DB')
+    }
+
+    const subsetRes = await invoke(INVOKE_CHANNELS.sitesExportSshConfig, {
+      siteIds: ['2'],
+      includeHeader: false
+    })
+    expect(subsetRes.ok).toBe(true)
+    if (subsetRes.ok) {
+      const data = subsetRes.data as { content: string; exportedCount: number; skippedCount: number }
+      expect(data.exportedCount).toBe(1)
+      expect(data.content).not.toContain('Host Prod-Web')
+      expect(data.content).toContain('Host Staging-DB')
+      expect(data.content).not.toContain('# Exported from Ferry')
+    }
+  })
+
+  it('sites:exportSshConfig rejects invalid siteIds or includeHeader with VALIDATION error', async () => {
+    const badIds = await invoke(INVOKE_CHANNELS.sitesExportSshConfig, { siteIds: 'not-an-array' })
+    expect(badIds).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const emptyId = await invoke(INVOKE_CHANNELS.sitesExportSshConfig, { siteIds: [''] })
+    expect(emptyId).toMatchObject({ ok: false, code: 'VALIDATION' })
+
+    const badHeader = await invoke(INVOKE_CHANNELS.sitesExportSshConfig, { includeHeader: 'yes' })
+    expect(badHeader).toMatchObject({ ok: false, code: 'VALIDATION' })
+  })
+
 })

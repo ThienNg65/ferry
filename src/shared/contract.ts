@@ -34,6 +34,8 @@ export type IpcErrorCode =
   | 'AUTH'
   | 'HOST_KEY_MISMATCH'
   | 'PROXY_CONNECT'
+  | 'INVALID_TARGET'
+  | 'INVALID_PORT'
 
 /** Successful response wrapper. */
 export interface IpcOk<T> {
@@ -221,6 +223,17 @@ export interface ImportedSessionCandidate {
   privateKeyPath?: string
   remoteInitialPath?: string
   jumpHosts?: JumpHostConfig[]
+}
+
+export interface ExportSshConfigRequest {
+  siteIds?: string[]
+  includeHeader?: boolean
+}
+
+export interface ExportSshConfigResult {
+  content: string
+  exportedCount: number
+  skippedCount: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1131,6 +1144,7 @@ export const INVOKE_CHANNELS = {
   sitesDuplicate: 'sites:duplicate',
   sitesImportScan: 'sites:import-scan',
   sitesExport: 'sites:export',
+  sitesExportSshConfig: 'sites:exportSshConfig',
   sitesImportJson: 'sites:import-json',
   sitesExportVault: 'sites:exportVault',
   sitesImportVault: 'sites:importVault',

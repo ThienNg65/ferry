@@ -50,6 +50,8 @@ describe('SessionManager.close() during connect', () => {
   it('releases target and jump sockets even when an earlier teardown step throws', async () => {
     const { SessionManager } = await import('./SessionManager')
     const { TailManager } = await import('../tail/TailManager')
+    const { registerSessionTeardown } = await import('./registerSessionTeardown')
+    registerSessionTeardown()
     const manager = SessionManager.getInstance()
     const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions
     const target = {

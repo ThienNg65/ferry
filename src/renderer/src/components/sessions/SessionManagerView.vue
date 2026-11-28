@@ -17,6 +17,7 @@ import SiteRow from './SiteRow.vue'
 import SiteDetailsPanel from './SiteDetailsPanel.vue'
 const SiteFormDialog = defineAsyncComponent(() => import('./SiteFormDialog.vue'))
 const ImportSessionsDialog = defineAsyncComponent(() => import('./ImportSessionsDialog.vue'))
+const ExportSshConfigDialog = defineAsyncComponent(() => import('./ExportSshConfigDialog.vue'))
 // Not yet in the auto-generated global components.d.ts — deep-import instead
 // of relying on <UCheckbox> (see ImportSessionsDialog.vue for the same pattern).
 import UCheckbox from '@nuxt/ui/components/Checkbox.vue'
@@ -276,6 +277,13 @@ function openCreateDialog(): void {
 }
 
 const importOpen = ref(false)
+const exportSshOpen = ref(false)
+const exportSshInitialIds = ref<string[] | undefined>(undefined)
+
+function openExportSshDialog(siteIds?: string[]): void {
+  exportSshInitialIds.value = siteIds && siteIds.length > 0 ? [...siteIds] : undefined
+  exportSshOpen.value = true
+}
 
 function openEditDialog(site: Site): void {
   editingSite.value = site
@@ -302,7 +310,7 @@ function closeSiteDetails(): void {
 }
 
 function onViewEsc(): void {
-  if (formOpen.value || importOpen.value || !selectedSiteId.value) return
+  if (formOpen.value || importOpen.value || exportSshOpen.value || !selectedSiteId.value) return
   closeSiteDetails()
 }
 
@@ -422,6 +430,12 @@ const importExportMenuItems = computed<DropdownMenuItem[][]>(() => [
       icon: 'i-lucide-download',
       disabled: sites.sites.length === 0,
       onSelect: () => void onExportSites()
+    },
+    {
+      label: 'Export as OpenSSH config…',
+      icon: 'i-lucide-file-code-2',
+      disabled: sites.sites.length === 0,
+      onSelect: () => openExportSshDialog()
     }
   ]
 ])
@@ -796,15 +810,26 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
                     @click="toggleSelectAllFiltered"
                   />
                 </div>
-                <UButton
-                  label="Delete selected"
-                  icon="i-lucide-trash-2"
-                  size="xs"
-                  color="error"
-                  variant="soft"
-                  :disabled="selectedSiteIds.size === 0"
-                  @click="openBulkDeleteConfirm"
-                />
+                <div class="flex items-center gap-1.5">
+                  <UButton
+                    label="Export SSH config"
+                    icon="i-lucide-file-code-2"
+                    size="xs"
+                    color="neutral"
+                    variant="soft"
+                    :disabled="selectedSiteIds.size === 0"
+                    @click="openExportSshDialog(Array.from(selectedSiteIds))"
+                  />
+                  <UButton
+                    label="Delete selected"
+                    icon="i-lucide-trash-2"
+                    size="xs"
+                    color="error"
+                    variant="soft"
+                    :disabled="selectedSiteIds.size === 0"
+                    @click="openBulkDeleteConfirm"
+                  />
+                </div>
               </div>
               <div
                 class="flex flex-col gap-1 pr-0.5 @[860px]:max-h-[58vh] @[860px]:overflow-y-auto"
@@ -1003,5 +1028,6 @@ const groupedSites = computed<SiteGroupSection[]>(() => {
       @saved-and-connect="(site) => void onConnectSite(site)"
     />
     <ImportSessionsDialog v-model:open="importOpen" />
+    <ExportSshConfigDialog v-model:open="exportSshOpen" :initial-site-ids="exportSshInitialIds" />
   </div>
 </template>
