@@ -11,13 +11,21 @@ export function readStored(key: string): string | null {
   }
 }
 
-export function writeStored(key: string, value: string, dirtyKeys?: Set<string>): void {
-  dirtyKeys?.add(key)
+const dirtyUiPrefs = new Set<string>()
+
+export function isDirtyUiPref(key: string): boolean {
+  return dirtyUiPrefs.has(key)
+}
+
+export function clearDirtyUiPrefs(): void {
+  dirtyUiPrefs.clear()
+}
+
+export function writeStored(key: string, value: string): void {
+  dirtyUiPrefs.add(key)
   try {
     localStorage.setItem(key, value)
-  } catch {
-    return
-  }
+  } catch {}
   if (typeof window !== 'undefined' && window.api) {
     void invoke<void>(INVOKE_CHANNELS.settingsSetUiPref, { key, value }).catch(() => {})
   }

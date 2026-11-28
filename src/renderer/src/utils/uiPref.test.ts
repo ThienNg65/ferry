@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { migrateLegacyPref, readStored } from './uiPref'
+import { clearDirtyUiPrefs, isDirtyUiPref, migrateLegacyPref, readStored, writeStored } from './uiPref'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../api', () => ({ invoke }))
@@ -37,5 +37,32 @@ describe('migrateLegacyPref', () => {
     migrateLegacyPref('ferry:dock:collapsed', 'ferry:ui:dockCollapsed')
     expect(readStored('ferry:ui:dockCollapsed')).toBeNull()
     expect(invoke).not.toHaveBeenCalled()
+  })
+})
+
+describe('writeStored', () => {
+  beforeEach(() => {
+    clearDirtyUiPrefs()
+    invoke.mockClear()
+    vi.stubGlobal('window', { api: {} })
+  })
+
+  it('still syncs to the sidecar when localStorage throws', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('quota')
+      },
+      removeItem: () => undefined
+    })
+    writeStored('ferry:ui:dockCollapsed', 'false')
+    expect(invoke).toHaveBeenCalledWith('settings:setUiPref', { key: 'ferry:ui:dockCollapsed', value: 'false' })
+  })
+
+  it('marks a written key dirty so hydration can skip it', () => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined })
+    expect(isDirtyUiPref('ferry:ui:monitorIntervalMs')).toBe(false)
+    writeStored('ferry:ui:monitorIntervalMs', '5000')
+    expect(isDirtyUiPref('ferry:ui:monitorIntervalMs')).toBe(true)
   })
 })
