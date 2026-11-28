@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
-import { commitRemoteFile, copyRemote, downloadForEdit, listRemote, readRemoteBufferForDiffSudo, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
+import { commitRemoteFile, copyRemote, downloadForEdit, listRemote, readRemoteBufferForDiffSudo, removeRemote, renameRemote, uploadForEdit, uploadForEditSudo } from './RemoteFsService'
 import { SshError } from '../ssh/errors'
 import { SessionManager } from '../ssh/SessionManager'
 
@@ -94,6 +94,55 @@ describe('RemoteFsService.listRemote', () => {
     await listRemote('sess-1', '/var/log/nginx', true)
     expect(mockManager.setCwd).not.toHaveBeenCalled()
   })
+
+  it.each(['../escape', 'nested/escape', 'nested\\escape', ''])(
+    'omits unsafe SFTP entry name "%s" without aborting the listing',
+    async (filename) => {
+      mockShell.exec.mockResolvedValueOnce({ code: 127, stdout: '', stderr: 'exec unavailable' })
+      mockShell.realpath.mockResolvedValueOnce('/srv')
+      mockShell.readdir.mockResolvedValueOnce([
+        {
+          filename,
+          longname: filename,
+          isDirectory: false,
+          isSymlink: false,
+          size: 1,
+          mtimeMs: 0,
+          permissions: '0644'
+        },
+        {
+          filename: 'safe.txt',
+          longname: 'safe.txt',
+          isDirectory: false,
+          isSymlink: false,
+          size: 2,
+          mtimeMs: 0,
+          permissions: '0644'
+        }
+      ])
+
+      const result = await listRemote('sess-1', '/srv')
+
+      expect(result.entries).toHaveLength(1)
+      expect(result.entries[0]).toMatchObject({ name: 'safe.txt', path: '/srv/safe.txt' })
+      expect(mockManager.setCwd).toHaveBeenCalledWith('sess-1', '/srv')
+    }
+  )
+
+  it('resolves relative delete targets against the active session cwd', async () => {
+    const shell = { deleteRecursive: vi.fn(async () => undefined) }
+    const manager = {
+      shell: vi.fn(() => shell),
+      cwd: vi.fn(() => '/home/user')
+    }
+    vi.mocked(SessionManager.getInstance).mockReturnValue(manager as any)
+
+    await removeRemote('sess-1', '.')
+
+    expect(manager.cwd).toHaveBeenCalledWith('sess-1')
+    expect(shell.deleteRecursive).toHaveBeenCalledWith('.', '/home/user')
+  })
+
 })
 
 describe('RemoteFsService permission & sudo safety', () => {
@@ -617,6 +666,7 @@ describe('RemoteFsService.copyRemote', () => {
     expect(shell.exec).not.toHaveBeenCalled()
   })
 })
+
 
 describe('RemoteFsService.downloadForEdit cancellation', () => {
   it.each([true, false])('rejects with CANCELLED (pre-aborted=%s)', async (preAborted) => {

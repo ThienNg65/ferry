@@ -8,12 +8,13 @@
  *     -e PASSWORD_ACCESS=true -e USER_NAME=ferrytest -e USER_PASSWORD=ferrytest123 \
  *     -e SUDO_ACCESS=false linuxserver/openssh-server
  *   docker exec ferry-test-sftp mkdir -p /config/ferry-test
- *   docker exec ferry-test-sftp chown ferrytest:users /config/ferry-test
+ *   docker exec ferry-test-sftp sh -c 'chown ferrytest:"$(id -gn ferrytest)" /config/ferry-test'
  *
  * These tests connect a real ssh2.Client over TCP and exercise every
  * RemoteShell operation against real sshd/sftp-server behavior — nothing
- * here is mocked. Skips itself (with a console warning) if the server at
- * 127.0.0.1:2299 isn't reachable, rather than failing the whole suite.
+ * here is mocked. Skips itself during local runs when the server at
+ * 127.0.0.1:2299 isn't reachable. CI sets FERRY_REQUIRE_SSH_INTEGRATION=1
+ * so a missing server fails instead of silently skipping the suite.
  */
 import { Client } from 'ssh2'
 import { randomUUID } from 'crypto'
@@ -53,10 +54,12 @@ async function probeServer(): Promise<boolean> {
 // which a check inside beforeAll (running only once tests execute) could not.
 const serverAvailable = await probeServer()
 if (!serverAvailable) {
+  const message = `[RemoteShell.integration.test] No test SFTP server reachable at ${HOST}:${PORT}. See file header for the docker run command.`
+  if (process.env.FERRY_REQUIRE_SSH_INTEGRATION === '1') {
+    throw new Error(message)
+  }
   // eslint-disable-next-line no-console
-  console.warn(
-    `[RemoteShell.integration.test] Skipping — no test SFTP server reachable at ${HOST}:${PORT}. See file header for the docker run command.`
-  )
+  console.warn(`[RemoteShell.integration.test] Skipping — ${message}`)
 }
 
 let client: Client
@@ -276,4 +279,85 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
 
     await expect(shell.stat(`${testDir}/fallback`)).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  it.each(['/', '//', '///', '/./', '/..', '/*'])(
+    'rejects root alias "%s" before issuing shell or SFTP operations',
+    async (remotePath) => {
+      const execSpy = vi.spyOn(shell, 'exec').mockRejectedValue(new Error('Unexpected shell operation'))
+      const lstatSpy = vi.spyOn(shell, 'lstat').mockRejectedValue(new Error('Unexpected SFTP lstat'))
+      const realpathSpy = vi.spyOn(shell, 'realpath').mockRejectedValue(new Error('Unexpected SFTP realpath'))
+      const readdirSpy = vi.spyOn(shell, 'readdir').mockRejectedValue(new Error('Unexpected SFTP readdir'))
+      const unlinkSpy = vi.spyOn(shell, 'unlink').mockRejectedValue(new Error('Unexpected SFTP unlink'))
+      const rmdirSpy = vi.spyOn(shell, 'rmdir').mockRejectedValue(new Error('Unexpected SFTP rmdir'))
+
+      try {
+        await expect(shell.deleteRecursive(remotePath, testDir)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
+        expect(execSpy).not.toHaveBeenCalled()
+        expect(lstatSpy).not.toHaveBeenCalled()
+        expect(realpathSpy).not.toHaveBeenCalled()
+        expect(readdirSpy).not.toHaveBeenCalled()
+        expect(unlinkSpy).not.toHaveBeenCalled()
+        expect(rmdirSpy).not.toHaveBeenCalled()
+      } finally {
+        execSpy.mockRestore()
+        lstatSpy.mockRestore()
+        realpathSpy.mockRestore()
+        readdirSpy.mockRestore()
+        unlinkSpy.mockRestore()
+        rmdirSpy.mockRestore()
+      }
+    }
+  )
+
+  it.each(['/', '//', '///', '/./', '/..', '/*'])(
+    'independently rejects root alias "%s" before SFTP fallback operations',
+    async (remotePath) => {
+      const lstatSpy = vi.spyOn(shell, 'lstat').mockRejectedValue(new Error('Unexpected SFTP lstat'))
+      const realpathSpy = vi.spyOn(shell, 'realpath').mockRejectedValue(new Error('Unexpected SFTP realpath'))
+      const readdirSpy = vi.spyOn(shell, 'readdir').mockRejectedValue(new Error('Unexpected SFTP readdir'))
+      const unlinkSpy = vi.spyOn(shell, 'unlink').mockRejectedValue(new Error('Unexpected SFTP unlink'))
+      const rmdirSpy = vi.spyOn(shell, 'rmdir').mockRejectedValue(new Error('Unexpected SFTP rmdir'))
+      const fallback = (shell as unknown as {
+        deleteRecursiveSftp: (path: string, cwd?: string) => Promise<void>
+      }).deleteRecursiveSftp
+
+      try {
+        await expect(fallback.call(shell, remotePath, testDir)).rejects.toMatchObject({ code: 'INVALID_TARGET' })
+        expect(lstatSpy).not.toHaveBeenCalled()
+        expect(realpathSpy).not.toHaveBeenCalled()
+        expect(readdirSpy).not.toHaveBeenCalled()
+        expect(unlinkSpy).not.toHaveBeenCalled()
+        expect(rmdirSpy).not.toHaveBeenCalled()
+      } finally {
+        lstatSpy.mockRestore()
+        realpathSpy.mockRestore()
+        readdirSpy.mockRestore()
+        unlinkSpy.mockRestore()
+        rmdirSpy.mockRestore()
+      }
+    }
+  )
+
+  it.each(['shell', 'sftp'] as const)(
+    'deletes a symlink to the remote root as a leaf through the %s path',
+    async (strategy) => {
+      const linkPath = `${testDir}/root-link-${strategy}`
+      const created = await shell.exec(`ln -s / '${linkPath}'`)
+      expect(created.code).toBe(0)
+
+      const execSpy = strategy === 'sftp'
+        ? vi.spyOn(shell, 'exec').mockRejectedValue(new Error('Exec unavailable'))
+        : undefined
+      try {
+        await shell.deleteRecursive(`${linkPath}/`)
+      } finally {
+        execSpy?.mockRestore()
+      }
+
+      await expect(shell.lstat(linkPath)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect((await shell.stat('/')).isDirectory()).toBe(true)
+      expect((await shell.exec('test -f /etc/passwd')).code).toBe(0)
+    }
+  )
+
 })

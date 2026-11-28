@@ -68,3 +68,70 @@ jobs:
 
       - name: Smoke test Neutralino package
         run: npm run smoke:neutralino
+
+
+  remote-shell-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.5
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+
+      - name: Start disposable OpenSSH/SFTP server
+        run: |
+          docker run -d --name ferry-test-sftp \
+            -p 2299:2222 \
+            -e PUID=1000 \
+            -e PGID=1000 \
+            -e TZ=Etc/UTC \
+            -e PASSWORD_ACCESS=true \
+            -e USER_NAME=ferrytest \
+            -e USER_PASSWORD=ferrytest123 \
+            -e SUDO_ACCESS=false \
+            lscr.io/linuxserver/openssh-server@sha256:c8431b8982e7eb3935ebf9c46607d19c6417e39c12ce884cc66945df2e9334e8
+
+      - name: Wait for SSH server
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if timeout 1 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/2299' 2>/dev/null; then
+              echo "SSH/SFTP server is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ferry-test-sftp
+          exit 1
+
+      - name: Wait for SSH test account
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker exec ferry-test-sftp id ferrytest >/dev/null 2>&1; then
+              echo "SSH test account is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ferry-test-sftp
+          exit 1
+
+      - name: Prepare isolated test directory
+        run: docker exec ferry-test-sftp sh -c 'mkdir -p /config/ferry-test && chown ferrytest:"$(id -gn ferrytest)" /config/ferry-test'
+
+      - name: Run required real SSH/SFTP integration suite
+        env:
+          FERRY_REQUIRE_SSH_INTEGRATION: '1'
+        run: npm test -- src/main/ssh/RemoteShell.integration.test.ts
+
+      - name: Remove disposable SSH/SFTP server
+        if: always()
+        run: docker rm --force ferry-test-sftp || true

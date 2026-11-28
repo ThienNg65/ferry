@@ -23,7 +23,16 @@ import { buildRemoteListCommand, parseRemoteListOutput } from './remoteExecList'
 /** Cap on how much of a file is read for preview — huge logs are truncated, not rejected. */
 const MAX_TEXT_PREVIEW_BYTES = 1_048_576
 
-function toFileEntry(basePath: string, entry: SftpEntry): FileEntry {
+function toFileEntry(basePath: string, entry: SftpEntry): FileEntry | null {
+  if (
+    !entry.filename ||
+    entry.filename === '.' ||
+    entry.filename === '..' ||
+    entry.filename.includes('/') ||
+    entry.filename.includes('\\')
+  ) {
+    return null
+  }
   const prefix = basePath === '/' ? '' : basePath.replace(/\/+$/, '')
   return {
     name: entry.filename,
@@ -80,6 +89,7 @@ async function listRemoteSftp(shell: RemoteShell, rawPath: string): Promise<File
   const rawEntries = (await shell.readdir(resolved))
     .filter((e) => e.filename !== '.' && e.filename !== '..')
     .map((e) => toFileEntry(resolved, e))
+    .filter((entry): entry is FileEntry => entry !== null)
   const entries = await Promise.all(
     rawEntries.map((e) => (e.isSymlink ? resolveSymlink(shell, e) : e))
   )
@@ -203,7 +213,8 @@ export async function readRemoteBufferForDiff(
 
 /** Recursively deletes a remote file or directory. */
 export async function removeRemote(sessionId: string, targetPath: string): Promise<void> {
-  await SessionManager.getInstance().shell(sessionId).deleteRecursive(targetPath)
+  const manager = SessionManager.getInstance()
+  await manager.shell(sessionId).deleteRecursive(targetPath, manager.cwd(sessionId))
 }
 
 /**
