@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { INVOKE_CHANNELS } from '@shared/contract'
+import { INVOKE_CHANNELS, MAX_TEXT_EDITOR_BYTES } from '@shared/contract'
 import type {
   CopyManyResult,
   FileEntry,
@@ -594,7 +594,7 @@ async function onTail(entry: FileEntry): Promise<void> {
 }
 
 async function onEdit(entry: FileEntry): Promise<void> {
-  const isLarge = entry.size > 5 * 1024 * 1024 // 5MB
+  const isLarge = entry.size > MAX_TEXT_EDITOR_BYTES // 5MB
   if (isArchive(entry.name) || isLarge) {
     const archive = isArchive(entry.name)
     const proceed = await confirm({
@@ -616,7 +616,7 @@ async function onEdit(entry: FileEntry): Promise<void> {
 async function performEdit(entry: FileEntry, viaSudo = false): Promise<void> {
   try {
     if (props.side === 'local') {
-      if (isTextPreviewable(entry.name) && entry.size <= 5 * 1024 * 1024) {
+      if (isTextPreviewable(entry.name) && entry.size <= MAX_TEXT_EDITOR_BYTES) {
         editorState.value = { editId: null, localTempPath: entry.path, remotePath: null }
         editorOpen.value = true
         return

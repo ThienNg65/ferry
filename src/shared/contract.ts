@@ -374,7 +374,13 @@ export interface FileListResult {
   entries: FileEntry[]
 }
 
-/** Result of reading a text file's content for preview — capped, never the full file for huge logs. */
+/** Default byte limit for text previews. */
+export const MAX_TEXT_PREVIEW_BYTES = 1_048_576
+
+/** Maximum byte limit for the built-in text editor. */
+export const MAX_TEXT_EDITOR_BYTES = 5 * 1024 * 1024
+
+/** Result of reading a text file's content — capped when the source exceeds the requested limit. */
 export interface FileReadResult {
   path: string
   content: string
