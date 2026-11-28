@@ -29,8 +29,11 @@ jobs:
       - name: Test external URL bridge
         run: npm test -- src/renderer/src/bridge/neutralinoApi.test.ts src/renderer/src/bridge/wkwebviewTransport.test.ts src/renderer/src/bridge/openExternal.test.ts
 
-      - name: Build native macOS shell
-        run: swift build --package-path macos
+      - name: Build sandboxed universal macOS app
+        run: npm run pack:macos
+
+      - name: Smoke test external HTTPS URL through Launch Services
+        run: node scripts/smoke-macos-external-url.mjs
 
   verify:
     runs-on: windows-latest
