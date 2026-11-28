@@ -341,8 +341,8 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
   it.each(['shell', 'sftp'] as const)(
     'deletes a symlink to the remote root as a leaf through the %s path',
     async (strategy) => {
-      const linkPath = \`\${testDir}/root-link-\${strategy}\`
-      const created = await shell.exec(\`ln -s / '\${linkPath}'\`)
+      const linkPath = `${testDir}/root-link-${strategy}`
+      const created = await shell.exec(`ln -s / '${linkPath}'`)
       expect(created.code).toBe(0)
 
       const execSpy = strategy === 'sftp'
