@@ -28,6 +28,37 @@ All notable changes to Ferry are documented in this file, in Keep a Changelog st
 - Protected log tail regex search against ReDoS (256-char limit, nested/brace quantifier rejection, and per-line length/match caps).
 - Disabled Neutralino production file logging, ignored `.tmp/` and `*.tmp` in `.gitignore`, removed unused `@codemirror/*` direct dependencies, and resolved production dependency vulnerabilities via `npm audit fix`.
 
+## [1.7.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.6.0...ferry-v1.7.0) (2026-11-28)
+
+
+### Features
+
+* **macos:** native sandboxed Mac App Store shell (Phase 2, [#213](https://github.com/ThienNg65/ferry/issues/213)) ([b621c28](https://github.com/ThienNg65/ferry/commit/b621c2893b68162272e2b069d8c8141532c9f04f))
+* **macos:** native WKWebView shell running the Vue UI and sidecar over stdio (M1) ([64e03e4](https://github.com/ThienNg65/ferry/commit/64e03e443d7302cb55c98846b69793c96541fdb0))
+* **macos:** persist picked files and folders with security-scoped bookmarks (M2) ([c5739ae](https://github.com/ThienNg65/ferry/commit/c5739aef59b7523d07ebdc44efcce8da003d7bfb))
+* **mas:** hide update controls when an app store manages updates ([ecca594](https://github.com/ThienNg65/ferry/commit/ecca594c76f2d31d15dfd106b57d9f9f5085b21e))
+* **mas:** store-managed detection for Mac App Store and sandbox entitlements ([c909369](https://github.com/ThienNg65/ferry/commit/c909369c7b09eaaa58713e3e9de112364b5abbf5))
+* **sites:** export saved sites to standard OpenSSH config ([#257](https://github.com/ThienNg65/ferry/issues/257)) ([fc40f64](https://github.com/ThienNg65/ferry/commit/fc40f64168d16d9c78f2dfbfbbaf2a6684e3c4d3))
+
+
+### Bug Fixes
+
+* **macos:** keep fs grants out of the sidecar's bookmarks.json; add scripted self-test hook (M3) ([7e41b6f](https://github.com/ThienNg65/ferry/commit/7e41b6f49c41e3ab79d831d9aa1d0a1cccffef77))
+* **mas:** add network.server entitlement so Neutralino's local server can start in the sandbox ([4cbe98f](https://github.com/ThienNg65/ferry/commit/4cbe98fff0cb6ea6233e4e540465a90b919a65f8))
+* **session:** unify session teardown, IPC error codes and synced UI prefs ([#272](https://github.com/ThienNg65/ferry/issues/272)) ([82c33eb](https://github.com/ThienNg65/ferry/commit/82c33eb74c0149bf7e9148b903ec0ce946dbda1d))
+
+
+### Documentation
+
+* **legal:** macOS privacy policy and legal version 1.1 ([328f09b](https://github.com/ThienNg65/ferry/commit/328f09b395278fa68851d0794b96c9246ae2b484))
+* **macos:** local signing identity section ([5b8bedd](https://github.com/ThienNg65/ferry/commit/5b8beddc3946410f9e28d5f1e0db42aaaddbcdce))
+* replace local signing identity section with dev-build note ([d24a205](https://github.com/ThienNg65/ferry/commit/d24a205760f755346dcfdc636fc3f43879032181))
+
+
+### Tests
+
+* restore localStorage in happy-dom tests on Node 25+ ([2fa1bcf](https://github.com/ThienNg65/ferry/commit/2fa1bcf3350a6a9b2f9b0dcd7363ec2e06abd9ff))
+
 ## [1.6.0](https://github.com/ThienNg65/ferry/compare/ferry-v1.5.0...ferry-v1.6.0) (2026-11-27)
 
 

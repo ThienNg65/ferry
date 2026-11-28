@@ -1,7 +1,7 @@
 {
   "name": "ferry",
-  "version": "1.6.0",
-  "description": "Ferry \u2014 a lightweight SFTP client with live remote log tailing",
+  "version": "1.7.0",
+  "description": "Ferry — a lightweight SFTP client with live remote log tailing",
   "main": "out/sidecar/index.cjs",
   "engines": {
     "node": ">=22.22.2"
