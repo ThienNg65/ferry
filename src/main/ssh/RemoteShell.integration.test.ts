@@ -349,7 +349,7 @@ describe.skipIf(!serverAvailable)('RemoteShell against a real SFTP/SSH server', 
         ? vi.spyOn(shell, 'exec').mockRejectedValue(new Error('Exec unavailable'))
         : undefined
       try {
-        await shell.deleteRecursive(\`\${linkPath}/\`)
+        await shell.deleteRecursive(`${linkPath}/`)
       } finally {
         execSpy?.mockRestore()
       }
