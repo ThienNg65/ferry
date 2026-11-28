@@ -216,6 +216,7 @@ describe('RemoteShell UTF-8 output', () => {
 describe('RemoteShell recursive delete', () => {
   const rootAliases = [
     { remotePath: '/', remoteCwd: '/home/user' },
+    { remotePath: 'link/..', remoteCwd: '/home/user' },
     { remotePath: '//', remoteCwd: '/home/user' },
     { remotePath: '///', remoteCwd: '/home/user' },
     { remotePath: '/./', remoteCwd: '/home/user' },
