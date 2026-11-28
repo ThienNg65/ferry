@@ -126,6 +126,7 @@ export function createWKWebViewTransport(bridge?: NativeBridge): NeutralinoTrans
     setWindowSize: (options) => fire('window.setSize', options),
     moveWindow: (x, y) => fire('window.move', { x, y }),
     exitApp: () => fire('app.exit'),
+    openExternal: (url) => fire('openExternal', { url }),
     showOpenDialog: (title, options) => call('dialog.open', { title, ...options }),
     showFolderDialog: (title, options) => call('dialog.folder', { title, ...options }),
     showSaveDialog: (title, options) => call('dialog.save', { title, ...options }),
