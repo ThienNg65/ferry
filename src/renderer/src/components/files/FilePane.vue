@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { INVOKE_CHANNELS } from '@shared/contract'
-import type { FileEntry, FileListResult, StageDropBeginResult, StageDropEntryInput, UnzipResult } from '@shared/contract'
+import type {
+  CopyManyResult,
+  FileEntry,
+  FileListResult,
+  LocalCopyRequest,
+  RemoteCopyRequest,
+  StageDropBeginResult,
+  StageDropEntryInput,
+  UnzipResult
+} from '@shared/contract'
 import { collectDroppedEntry, recordCollectedDropEntry } from '../../utils/osDrop'
 import type { CollectedDropEntry, DropCollectionState, MinimalFsEntry } from '../../utils/osDrop'
 import { invoke, IpcError } from '../../api'
@@ -12,6 +21,8 @@ import { useBookmarksStore } from '../../stores/bookmarks.store'
 import { useTransferQueueStore } from '../../stores/transferQueue.store'
 import { useTailStreamsStore } from '../../stores/tailStreams.store'
 import { useUiStore } from '../../stores/ui.store'
+import { OPEN_REMOTE_EDITOR_EVENT, useCompanionStore } from '../../stores/companion.store'
+import { useFileClipboardStore } from '../../stores/fileClipboard.store'
 import { resolveConnectionFilterKey, resolveLegacyConnectionFilterKey, useFileFiltersStore } from '../../stores/fileFilters.store'
 import { useDragAndDrop } from '../../composables/useDragAndDrop'
 import { useNotify } from '../../composables/useNotify'
@@ -43,16 +54,19 @@ const EditorDialog = defineAsyncComponent(() => import('./EditorDialog.vue'))
 const ChmodDialog = defineAsyncComponent(() => import('./ChmodDialog.vue'))
 const SyncDialog = defineAsyncComponent(() => import('./SyncDialog.vue'))
 const CompareDialog = defineAsyncComponent(() => import('./CompareDialog.vue'))
+const FileDiffModal = defineAsyncComponent(() => import('./FileDiffModal.vue'))
 
 const props = defineProps<{ side: 'local' | 'remote' }>()
 
 const localFs = useLocalFsStore()
 const remoteFs = useRemoteFsStore()
 const sessions = useSessionsStore()
+const companion = useCompanionStore()
 const bookmarks = useBookmarksStore()
 const transfers = useTransferQueueStore()
 const tailStreams = useTailStreamsStore()
 const ui = useUiStore()
+const clipboard = useFileClipboardStore()
 const fileFilters = useFileFiltersStore()
 const { getDragPayload, clearDrag } = useDragAndDrop()
 const notify = useNotify()
@@ -153,6 +167,8 @@ const chmodOpen = ref(false)
 const chmodTarget = ref<FileEntry | null>(null)
 const editorOpen = ref(false)
 const editorState = ref<{ editId: string | null; localTempPath: string; remotePath: string | null } | null>(null)
+const diffOpen = ref(false)
+const diffState = ref<{ sessionId: string; localPath: string; remotePath: string } | null>(null)
 
 /** Navigating away mid-rename would otherwise leave a stale edit box pointing at a path that's no longer listed. */
 watch(
@@ -175,6 +191,91 @@ watch(filteredEntries, (entries) => {
 const collapsedRail = computed(() => props.side === 'local' && !ui.showLocalPane)
 const showBody = computed(() => props.side !== 'local' || ui.showLocalPane)
 
+const canPaste = computed(
+  () =>
+    Boolean(store.currentPath) &&
+    clipboard.canPasteInto(props.side, sessions.activeSessionId, sessions.status === 'connected')
+)
+
+function onCopyEntries(entries: FileEntry[]): void {
+  if (entries.length === 0) return
+  clipboard.copy(props.side, entries, props.side === 'remote' ? sessions.activeSessionId : null)
+  toast.add({
+    title: 'Copied to clipboard',
+    description: entries.length === 1 ? entries[0].name : `${entries.length} items`,
+    icon: 'i-lucide-copy',
+    color: 'info'
+  })
+}
+
+function onCopySelected(): void {
+  onCopyEntries(visibleSelectedEntries.value)
+}
+
+function onCopyFromRow(entry: FileEntry): void {
+  if (visibleSelectedEntries.value.length > 1 && store.selected.has(entry.path)) {
+    onCopyEntries(visibleSelectedEntries.value)
+    return
+  }
+  onCopyEntries([entry])
+}
+
+async function onPaste(): Promise<void> {
+  if (!canPaste.value || !clipboard.payload) return
+  const { side: sourceSide, entries } = clipboard.payload
+  const targetDir = store.currentPath
+  const sessionId = sessions.activeSessionId
+  const refreshTarget = (): Promise<void> =>
+    props.side === 'local'
+      ? localFs.refreshIfViewing(targetDir)
+      : sessionId
+        ? remoteFs.refreshSessionIfViewing(sessionId, targetDir)
+        : Promise.resolve()
+
+  try {
+    if (sourceSide !== props.side) {
+      if (!sessionId) return
+      const intents: TransferIntent[] = []
+      for (const entry of entries) {
+        const intent = buildTransferIntent(sourceSide, entry, sessionId, targetDir)
+        if (intent) intents.push(intent)
+      }
+      if (intents.length > 0) {
+        await checkAndQueueTransfers(intents, store)
+      }
+      return
+    }
+    const sourcePaths = entries.map((e) => e.path)
+    let res: CopyManyResult
+    if (props.side === 'local') {
+      const req: LocalCopyRequest = { sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsLocalCopy, req)
+    } else {
+      if (!sessionId) return
+      const req: RemoteCopyRequest = { sessionId, sourcePaths, targetDir }
+      res = await invoke<CopyManyResult>(INVOKE_CHANNELS.fsRemoteCopy, req)
+    }
+    await refreshTarget()
+    if (res.copied.length > 0) {
+      notify.success('Pasted', res.copied.length === 1 ? res.copied[0].targetPath : `${res.copied.length} items`)
+    }
+    if (res.failures.length > 0) {
+      toast.add({
+        title: 'Some items could not be copied',
+        description: res.failures.map((f) => f.error).join('; '),
+        icon: 'i-lucide-triangle-alert',
+        color: 'warning'
+      })
+    }
+  } catch (e) {
+    await refreshTarget().catch(() => undefined)
+    if (e instanceof IpcError && e.code === 'CANCELLED') {
+      return
+    }
+    notify.error('Paste failed', e instanceof Error ? e.message : String(e))
+  }
+}
+
 const unregisterPaneActions = registerPaneActions(props.side, {
   selectedCount: () => visibleSelectedEntries.value.length,
   rename: () => {
@@ -194,7 +295,10 @@ const unregisterPaneActions = registerPaneActions(props.side, {
     if (entry && !entry.isDir) {
       void onEdit(entry)
     }
-  }
+  },
+  copy: () => onCopySelected(),
+  paste: () => void onPaste(),
+  canPaste: () => canPaste.value
 })
 onBeforeUnmount(unregisterPaneActions)
 
@@ -208,7 +312,10 @@ const onKeydown = usePaneKeyboard({
   fileListRef,
   onTransferSelected,
   onOpen,
-  confirmDeleteEntries
+  confirmDeleteEntries,
+  onCopySelected,
+  onPaste,
+  canPaste: () => canPaste.value
 })
 
 function onWindowKeydownFallback(event: KeyboardEvent): void {
@@ -228,8 +335,37 @@ function onWindowKeydownFallback(event: KeyboardEvent): void {
   void onKeydown(event)
 }
 
-onMounted(() => window.addEventListener('keydown', onWindowKeydownFallback))
-onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydownFallback))
+async function onOpenRemoteEditorEvent(event: Event): Promise<void> {
+  if (props.side !== 'remote' || sessions.status !== 'connected') return
+  const remotePath = (event as CustomEvent<{ remotePath?: string }>).detail?.remotePath?.trim()
+  const sessionId = sessions.activeSessionId
+  if (!remotePath || !sessionId) return
+  try {
+    const res = await invoke<{ editId: string; localTempPath: string }>(INVOKE_CHANNELS.editOpenRemote, {
+      sessionId,
+      path: remotePath,
+      builtin: true,
+      viaSudo: false
+    })
+    editorState.value = { editId: res.editId, localTempPath: res.localTempPath, remotePath }
+    editorOpen.value = true
+  } catch (e) {
+    notify.error('Could not open for editing', e instanceof Error ? e.message : String(e))
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onWindowKeydownFallback)
+  if (props.side === 'remote') {
+    window.addEventListener(OPEN_REMOTE_EDITOR_EVENT, onOpenRemoteEditorEvent)
+  }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onWindowKeydownFallback)
+  if (props.side === 'remote') {
+    window.removeEventListener(OPEN_REMOTE_EDITOR_EVENT, onOpenRemoteEditorEvent)
+  }
+})
 
 void bookmarks.ensureLoaded()
 
@@ -314,6 +450,16 @@ watch(
   (visible) => {
     if (!visible && props.side === 'local') {
       previewOpen.value = false
+      diffOpen.value = false
+    }
+  }
+)
+
+watch(
+  () => [sessions.status, sessions.activeSessionId] as const,
+  ([status]) => {
+    if (status !== 'connected') {
+      diffOpen.value = false
     }
   }
 )
@@ -326,8 +472,39 @@ const transferIcon = computed(() => {
 })
 
 const showTail = computed(() => props.side === 'remote' && sessions.status === 'connected')
+const canCompare = computed(() => sessions.status === 'connected' && Boolean(sessions.activeSessionId))
 const syncDialogOpen = ref(false)
 const compareDialogOpen = ref(false)
+
+function onDiffWithOpposite(entry: FileEntry): void {
+  if (entry.isDir || entry.symlinkBroken) return
+  const sessionId = sessions.activeSessionId
+  if (!sessionId || sessions.status !== 'connected') {
+    notify.error('Not connected', 'Connect to a server to compare local and remote files.')
+    return
+  }
+  const oppositeEntries = props.side === 'local' ? remoteFs.entries : localFs.entries
+  const oppositeSelected = props.side === 'local' ? remoteFs.selected : localFs.selected
+  const selectedOppositeFiles = oppositeEntries.filter(
+    (e) => !e.isDir && !e.symlinkBroken && oppositeSelected.has(e.path)
+  )
+  const counterpart =
+    selectedOppositeFiles.length === 1
+      ? selectedOppositeFiles[0]
+      : oppositeEntries.find((e) => !e.isDir && !e.symlinkBroken && e.name === entry.name)
+  if (!counterpart) {
+    notify.error(
+      'No matching file in opposite pane',
+      `Select a file in the opposite pane or open a folder containing "${entry.name}".`
+    )
+    return
+  }
+  diffState.value =
+    props.side === 'local'
+      ? { sessionId, localPath: entry.path, remotePath: counterpart.path }
+      : { sessionId, localPath: counterpart.path, remotePath: entry.path }
+  diffOpen.value = true
+}
 
 function onOpen(entry: FileEntry): void {
   if (entry.isDir) {
@@ -792,6 +969,19 @@ async function moveInto(folder: FileEntry, fromPath: string, name: string): Prom
   }
 }
 
+async function queueIntoFolder(folder: FileEntry, intents: TransferIntent[], sessionId: string): Promise<void> {
+  if (intents.length === 0) return
+  try {
+    const listing =
+      props.side === 'remote'
+        ? await invoke<FileListResult>(INVOKE_CHANNELS.fsRemoteList, sessionId, folder.path, true)
+        : await invoke<FileListResult>(INVOKE_CHANNELS.fsLocalList, folder.path)
+    await checkAndQueueTransfers(intents, { entries: listing.entries })
+  } catch {
+    await enqueueIntents(intents)
+  }
+}
+
 async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void> {
   isDropTarget.value = false
   const sessionId = sessions.activeSessionId
@@ -826,7 +1016,7 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
       if (unusedStagedPaths.length > 0) {
         await invoke<void>(INVOKE_CHANNELS.fsLocalCleanupStagedDrop, { paths: unusedStagedPaths }).catch(() => undefined)
       }
-      if (intents.length > 0) await enqueueIntents(intents)
+      if (intents.length > 0 && sessionId) await queueIntoFolder(folder, intents, sessionId)
       if (moved) await store.load(store.currentPath, { forceRefresh: true })
       if (cleanupFailed) {
         notify.error('Temporary drop cleanup failed', 'The item was moved, but its temporary staging folder could not be removed.')
@@ -842,7 +1032,7 @@ async function onDropOnFolder(folder: FileEntry, event: DragEvent): Promise<void
       await store.load(store.currentPath, { forceRefresh: true })
     } else if (sessionId) {
       const intent = buildTransferIntent(payload.side, payload.entry, sessionId, folder.path)
-      if (intent) await enqueueIntents([intent])
+      if (intent) await queueIntoFolder(folder, [intent], sessionId)
     }
   } catch (e) {
     if (moved) {
@@ -889,6 +1079,10 @@ async function onRename(entry: FileEntry, newName: string): Promise<void> {
       const destination = target.path.slice(0, target.path.length - target.name.length) + newName
       const replaced = await confirm({
         title: 'Replace existing item?',
+        prodWarning:
+          !local && companion.isProd
+            ? `Connected to ${companion.prodSiteLabel}. Replacing an existing file on Production cannot be undone.`
+            : undefined,
         body: 'Renaming will replace the item at this path.',
         items: [destination],
         confirmLabel: 'Replace',
@@ -939,6 +1133,10 @@ async function confirmDeleteEntries(entries: FileEntry[]): Promise<void> {
   const server = sessionId ? sessions.activeTab.hostLabel || sessions.activeTab.label : null
   await confirm({
     title: 'Delete',
+    prodWarning:
+      sessionId && companion.isProd
+        ? `Connected to ${companion.prodSiteLabel}. Double-check remote paths before deleting from Production.`
+        : undefined,
     body: single
       ? `Delete this ${single.isDir ? 'folder and everything inside it' : 'item'}${server ? ` on ${server}` : ''}? This cannot be undone.`
       : `Delete these ${targets.length} items${server ? ` on ${server}` : ''}? This cannot be undone.`,
@@ -1120,9 +1318,11 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :transfer-icon="transferIcon"
         :show-tail="showTail"
         :allow-extract="showTail"
+        :can-compare="canCompare"
         :renaming-path="renamingPath"
         :sort-column="store.sortColumn"
         :sort-direction="store.sortDirection"
+        :can-paste="canPaste"
         @select="onSelect"
         @select-many="(paths: string[]) => store.selectPaths(paths)"
         @open="onOpen"
@@ -1140,6 +1340,9 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         @hover-dir="onHoverDir"
         @drop-on="onDropOnFolder"
         @edit-root="onEditAsRoot"
+        @diff="onDiffWithOpposite"
+        @copy="onCopyFromRow"
+        @paste="onPaste"
         @clear-filter="filterText = ''"
         @clear-visibility-filter="clearVisibilityFilter"
       />
@@ -1174,15 +1377,29 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
             Hidden off
           </button>
         </div>
-        <div v-if="selectionSummary" class="flex shrink-0 items-center gap-1.5">
-          <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
-          <button
-            type="button"
-            class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
-            @click="store.selectAll([])"
-          >
-            Clear
-          </button>
+        <div class="flex shrink-0 items-center gap-2">
+          <div v-if="clipboard.hasItems && clipboard.sourceSide === side" class="flex items-center gap-1.5">
+            <span class="text-primary tabular-nums">Copied: {{ clipboard.count }}</span>
+            <button
+              type="button"
+              aria-label="Clear clipboard"
+              class="text-muted hover:text-default hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+              @click="clipboard.clear()"
+            >
+              Clear
+            </button>
+          </div>
+          <div v-if="selectionSummary" class="flex items-center gap-1.5">
+            <span class="font-medium text-default tabular-nums">{{ selectionSummary }}</span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              class="text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary rounded-xs"
+              @click="store.selectAll([])"
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </div>
       <FilePreviewDialog
@@ -1214,6 +1431,12 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
         :initial-local-path="localFs.currentPath"
         :initial-remote-path="remoteFs.currentPath"
       />
+      <FileDiffModal
+        v-model:open="diffOpen"
+        :session-id="diffState?.sessionId ?? null"
+        :local-path="diffState?.localPath ?? null"
+        :remote-path="diffState?.remotePath ?? null"
+      />
       <UModal
         :open="Boolean(extractConflict)"
         title="Folder already exists"
@@ -1232,7 +1455,7 @@ async function onSubmitChmod(entry: FileEntry, mode: string, extras: { recursive
           <UButton color="neutral" variant="outline" @click="resolveExtractConflict('newFolder')">
             Use "{{ extractConflict?.suggestedName }}"
           </UButton>
-          <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract Here</UButton>
+          <UButton color="primary" @click="resolveExtractConflict('overwrite')">Extract here</UButton>
         </template>
       </UModal>
       <TransferConflictDialog
