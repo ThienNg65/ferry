@@ -680,9 +680,9 @@ export class RemoteShell {
   private async mkdirRecursiveSftp(remotePath: string): Promise<void> {
     const isAbsolute = remotePath.startsWith('/')
     const parts = remotePath.split('/').filter(Boolean)
-    let current = isAbsolute ? '' : '.'
+    let current = isAbsolute ? '/' : '.'
     for (const part of parts) {
-      current = current === '.' ? part : `${current}/${part}`
+      current = current === '.' ? part : current === '/' ? `/${part}` : `${current}/${part}`
       try {
         const existing = await this.stat(current)
         if (!existing.isDirectory()) {

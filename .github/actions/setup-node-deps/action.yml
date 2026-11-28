@@ -10,5 +10,5 @@ runs:
         cache: npm
         cache-dependency-path: package-lock.json
 
-    - run: npm ci
+    - run: npm ci --registry=https://registry.npmjs.org
       shell: bash
