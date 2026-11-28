@@ -710,7 +710,7 @@ describe('archive operation refresh targets', () => {
     expect(wrapper.text()).toContain('already exists here')
 
     sessions.activeTabId = secondTab.tabId
-    const extractButton = wrapper.findAll('button').find((item) => item.text() === 'Extract Here')
+    const extractButton = wrapper.findAll('button').find((item) => item.text() === 'Extract here')
     expect(extractButton).toBeDefined()
     await extractButton!.trigger('click')
     await flushPromises()
