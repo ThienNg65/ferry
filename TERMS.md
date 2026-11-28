@@ -1,7 +1,7 @@
 # Terms of Service for Ferry
 
-**Effective Date:** 2026-11-27  
-**Terms Version:** 1.1  
+**Effective Date:** 2026-11-28  
+**Terms Version:** 1.2  
 **Maintainer:** ThienNg65  
 **Contact:** [GitHub Issues](https://github.com/ThienNg65/ferry/issues) · [GitHub Security Advisories](https://github.com/ThienNg65/ferry/security)
 
@@ -20,7 +20,7 @@ You are solely responsible for how you use Ferry and for all data you transfer o
 
 ## 3. Security & Unsigned Installer Notice
 
-Ferry stores site credentials locally using Windows DPAPI encryption, but no local storage mechanism can protect against a compromised host OS or user account. Additionally, until code-signing is enabled, Windows SmartScreen may warn on unsigned installers; always verify downloads come from the official [Ferry Releases](https://github.com/ThienNg65/ferry-release/releases) repository.
+Ferry stores site credentials locally, encrypted with a master key protected by Windows DPAPI on Windows or the macOS Keychain on macOS, but no local storage mechanism can protect against a compromised host OS or user account. Additionally, until code-signing is enabled, Windows SmartScreen may warn on unsigned installers (builds from the Mac App Store and Microsoft Store are signed by their stores); always verify downloads come from the official [Ferry Releases](https://github.com/ThienNg65/ferry-release/releases) repository.
 
 ## 4. Disclaimer of Warranties & Limitation of Liability
 

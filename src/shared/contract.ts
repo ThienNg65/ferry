@@ -1040,7 +1040,7 @@ export interface UpdateDownloadedEvent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Current version of Ferry's Privacy Policy and Terms of Service. */
-export const LEGAL_POLICY_VERSION = '1.1'
+export const LEGAL_POLICY_VERSION = '1.2'
 
 /** Recorded local acceptance of Ferry's Privacy Policy and Terms of Service. */
 export interface TermsAcceptance {
