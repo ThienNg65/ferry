@@ -10,7 +10,7 @@ function setup() {
     configurable: true,
     value: { messageHandlers: { ferry: { postMessage: vi.fn() } } }
   })
-  window.api = { openExternal: nativeOpen } as unknown as FerryAPI
+  window.api = { openExternal: nativeOpen } as unknown as typeof window.api
 
   return { nativeOpen, windowOpen }
 }
