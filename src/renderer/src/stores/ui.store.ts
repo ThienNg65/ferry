@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { INVOKE_CHANNELS, type WindowThemeSyncInput } from '@shared/contract'
 import { invoke } from '../api'
+import { readStored, writeStored } from '../utils/uiPref'
 import { clampColumnWidth, parseColumnPrefs, type ColumnKey, type ColumnPrefs } from '../utils/columnPrefs'
 import { generateShadeRamp, isWarmAccent } from '../utils/colorRamp'
 import {
@@ -33,28 +34,6 @@ export interface TerminalAppearance {
 function loadScrollback(): number {
   const stored = Number(readStored(TERM_SCROLLBACK_KEY))
   return SCROLLBACK_OPTIONS.includes(stored) ? stored : 5000
-}
-
-function readStored(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function writeStored(key: string, value: string, dirtyKeys?: Set<string>): void {
-  dirtyKeys?.add(key)
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // Ignore storage quota / restricted context errors.
-  }
-  if (typeof window !== 'undefined' && window.api) {
-    void invoke<void>(INVOKE_CHANNELS.settingsSetUiPref, { key, value }).catch(() => {
-      // Non-fatal in isolated unit tests or disconnected contexts.
-    })
-  }
 }
 
 const STORAGE_KEY = 'ferry:ui:showLocalPane'

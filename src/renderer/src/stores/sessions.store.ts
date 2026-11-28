@@ -17,6 +17,7 @@ import type {
 } from '@shared/contract'
 import { invoke, IpcError, onEvent } from '../api'
 import { useNotify } from '../composables/useNotify'
+import { MAX_UI_PREF_LENGTH, migrateLegacyPref, readStored, writeStored } from '../utils/uiPref'
 import { useCompanionStore } from './companion.store'
 import { useLocalFsStore } from './localFs.store'
 import { useRemoteFsStore } from './remoteFs.store'
@@ -39,7 +40,8 @@ export interface RecentQuickConnect {
   proxyMode?: 'inherit' | 'none' | 'custom'
 }
 
-const RECENT_QUICK_CONNECT_KEY = 'ferry:recentQuickConnect'
+const RECENT_QUICK_CONNECT_KEY = 'ferry:ui:recentQuickConnect'
+const LEGACY_RECENT_QUICK_CONNECT_KEY = 'ferry:recentQuickConnect'
 const MAX_RECENT_QUICK_CONNECTS = 8
 
 /** Volatile in-memory Quick Connect credentials keyed by tabId — never persisted to localStorage. */
@@ -80,8 +82,8 @@ function toRecentEntry(
 
 function loadRecentQuickConnects(): RecentQuickConnect[] {
   try {
-    if (typeof localStorage === 'undefined') return []
-    const raw = localStorage.getItem(RECENT_QUICK_CONNECT_KEY)
+    migrateLegacyPref(LEGACY_RECENT_QUICK_CONNECT_KEY, RECENT_QUICK_CONNECT_KEY)
+    const raw = readStored(RECENT_QUICK_CONNECT_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -115,13 +117,14 @@ function loadRecentQuickConnects(): RecentQuickConnect[] {
   }
 }
 
+export function serializeRecentQuickConnects(entries: RecentQuickConnect[]): string {
+  const kept = entries.slice(0, MAX_RECENT_QUICK_CONNECTS)
+  while (kept.length > 0 && JSON.stringify(kept).length > MAX_UI_PREF_LENGTH) kept.pop()
+  return JSON.stringify(kept)
+}
+
 function saveRecentQuickConnects(entries: RecentQuickConnect[]): void {
-  try {
-    if (typeof localStorage === 'undefined') return
-    localStorage.setItem(RECENT_QUICK_CONNECT_KEY, JSON.stringify(entries.slice(0, MAX_RECENT_QUICK_CONNECTS)))
-  } catch {
-    // Ignore storage quota / disabled localStorage errors.
-  }
+  writeStored(RECENT_QUICK_CONNECT_KEY, serializeRecentQuickConnects(entries))
 }
 
 /** One open site tab — a browser-tab-like slot that is either "picker" (not yet connected) or bound to a live session. */
@@ -585,6 +588,10 @@ export const useSessionsStore = defineStore('sessions', {
           tab.connectPromise = null
         }
       }
+    },
+
+    reloadRecentQuickConnects(): void {
+      this.recentQuickConnects = loadRecentQuickConnects()
     },
 
     recordRecentQuickConnect(input: Omit<QuickConnectInput, 'password' | 'passphrase'>): void {

@@ -105,6 +105,17 @@ describe('sessions.store quick connect and promotion', () => {
     })
   })
 
+  it('trims the recent quick-connect list to fit the 4096-char sync cap', async () => {
+    const { serializeRecentQuickConnects } = await import('../sessions.store')
+    const entries = Array.from({ length: 8 }, (_, i) => ({
+      host: `h${i}.${'x'.repeat(900)}`, port: 22, username: 'u', authMethod: 'password' as const
+    }))
+    const out = serializeRecentQuickConnects(entries)
+    expect(out.length).toBeLessThanOrEqual(4096)
+    expect(JSON.parse(out).length).toBeGreaterThan(0)
+    expect(JSON.parse(out)[0].host).toBe(entries[0].host)
+  })
+
   it('stores quickConnectInput on tab without password or passphrase and records non-secret MRU up to 8 entries', async () => {
     const { useSessionsStore } = await import('../sessions.store')
     const store = useSessionsStore()
@@ -140,7 +151,7 @@ describe('sessions.store quick connect and promotion', () => {
     })
     expect(store.recentQuickConnects[7].host).toBe('host-3.example.com')
 
-    const persistedRaw = storageData.get('ferry:recentQuickConnect') ?? ''
+    const persistedRaw = storageData.get('ferry:ui:recentQuickConnect') ?? ''
     expect(persistedRaw).not.toContain('super-secret')
     expect(persistedRaw).not.toContain('passphrase-')
 
@@ -217,8 +228,10 @@ describe('sessions.store quick connect and promotion', () => {
         proxyMode: undefined
       }
     ])
+    expect(storageData.has('ferry:recentQuickConnect')).toBe(false)
+    expect(JSON.parse(storageData.get('ferry:ui:recentQuickConnect') ?? '[]')).toHaveLength(3)
 
-    storageData.set('ferry:recentQuickConnect', '{not-valid-json')
+    storageData.set('ferry:ui:recentQuickConnect', '{not-valid-json')
     vi.resetModules()
     setActivePinia(createPinia())
     const { useSessionsStore: useSessionsStoreCorrupt } = await import('../sessions.store')
